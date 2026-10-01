@@ -21,6 +21,8 @@ Workspace crates: `chda` (binary), `chda-ui`, `chda-core`, `chda-term`, `chda-pt
 
 - Rust stable, `cargo fmt`, `cargo clippy -D warnings`, tests pass on macOS; build passes on Linux and Windows.
 - Branch + pull request for every change. Commit messages and PR text in English.
+- Commit subjects and PR titles follow Conventional Commits: `<type>(<scope>)?: <description>`, types `feat`, `fix`, `perf`, `refactor`, `docs`, `test`, `build`, `ci`, `chore`, `revert`; `!` before the colon marks a breaking change. CI rejects anything else. release-plz turns `feat` and `fix` commits into the changelog and the next version, so write the description as a user-facing sentence: `fix(sidebar): detect squash-merged branches`.
+- Do not edit `CHANGELOG.md` or the workspace version by hand; the release pull request does that.
 - Do not add AI attribution, signatures, or marketing lines to code, commits, or PRs.
 - No secrets, tokens, or user-specific paths in the repository.
 - Remove dead code and compatibility shims when you replace them.

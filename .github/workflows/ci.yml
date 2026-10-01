@@ -26,6 +26,28 @@ jobs:
           components: rustfmt
       - run: cargo fmt --all --check
 
+  commits:
+    name: commit messages
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+      - name: Check Conventional Commits
+        env:
+          EVENT: ${{ github.event_name }}
+          BEFORE: ${{ github.event.before }}
+          BASE: ${{ github.event.pull_request.base.sha }}
+          TITLE: ${{ github.event.pull_request.title }}
+        run: |
+          if [ "$EVENT" = "pull_request" ]; then
+            scripts/check-commits.sh "$BASE..HEAD" "$TITLE"
+          elif [ "$BEFORE" = "0000000000000000000000000000000000000000" ]; then
+            scripts/check-commits.sh "HEAD~1..HEAD"
+          else
+            scripts/check-commits.sh "$BEFORE..HEAD"
+          fi
+
   deny:
     name: cargo deny
     runs-on: ubuntu-latest

@@ -13,7 +13,7 @@ The first build fetches the Zed repository (for GPUI) and the Ghostty repository
 
 ## Workflow
 
-- Branch from `main`, open a pull request. Commit messages and PR text in English.
+- Branch from `main`, open a pull request. Commit messages and PR text in English, in Conventional Commits form (`fix: ...`, `feat(sidebar): ...`); `scripts/check-commits.sh` runs in CI.
 - CI must be green: `cargo fmt --all --check`, `cargo clippy --workspace --all-targets -- -D warnings`, `cargo deny check`, tests on macOS, release builds on macOS, Linux and Windows.
 - Crate dependency direction is enforced by `deny.toml`. See `docs/architecture.md` before adding a dependency between crates.
 - Architecture changes go through an ADR under `docs/decisions/`.
@@ -41,5 +41,16 @@ builds `target/bundle/chda.app` and a zip. Without `CHDA_SIGN_IDENTITY` the
 app is ad-hoc signed; with it plus `APPLE_ID`, `APPLE_TEAM_ID` and
 `APPLE_APP_PASSWORD` it is signed with hardened runtime and notarized. The
 `Release` workflow does the same for `v*` tags using repository secrets and
-attaches the zip to a GitHub release. `packaging/homebrew/chda.rb` is the cask
-template for the tap.
+attaches the zip to a GitHub release, then fills `packaging/homebrew/chda.rb`
+and pushes it to `magicsih/homebrew-tap`.
+
+## Releases
+
+Releases are cut by [release-plz](https://release-plz.dev): every push to
+`main` updates a pull request titled `chore: release vX.Y.Z` that bumps the
+workspace version and writes the `CHANGELOG.md` section from `feat` and `fix`
+commits since the last tag. Merging it creates the `vX.Y.Z` tag, and the
+`Release` workflow builds, signs, notarizes, publishes and updates the cask.
+Both workflows need the `RELEASE_TOKEN` secret, a fine-grained personal
+access token with contents and pull requests read/write on this repository
+and contents read/write on the tap.

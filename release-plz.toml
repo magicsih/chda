@@ -1,0 +1,84 @@
+# release-plz: on every push to main it keeps a release pull request open
+# (version bump + CHANGELOG from conventional commits); merging that PR
+# creates the `v<version>` tag, which runs the Release workflow.
+# chda is an application, not a library: nothing is published to crates.io
+# and the whole workspace shares one version.
+
+[workspace]
+git_only = true
+semver_check = false
+release_always = false
+dependencies_update = false
+changelog_update = false
+git_tag_enable = false
+git_release_enable = false
+git_tag_name = "v{{ version }}"
+pr_name = "chore: release v{{ version }}"
+pr_labels = ["release"]
+
+[[package]]
+name = "chda"
+version_group = "chda"
+changelog_update = true
+changelog_path = "./CHANGELOG.md"
+changelog_include = ["chda-ui", "chda-core", "chda-term", "chda-pty", "chda-git", "chda-agents", "chda-config"]
+git_tag_enable = true
+
+[[package]]
+name = "chda-ui"
+version_group = "chda"
+
+[[package]]
+name = "chda-core"
+version_group = "chda"
+
+[[package]]
+name = "chda-term"
+version_group = "chda"
+
+[[package]]
+name = "chda-pty"
+version_group = "chda"
+
+[[package]]
+name = "chda-git"
+version_group = "chda"
+
+[[package]]
+name = "chda-agents"
+version_group = "chda"
+
+[[package]]
+name = "chda-config"
+version_group = "chda"
+
+[changelog]
+header = """# Changelog
+
+All notable changes to chda. The format follows
+[Keep a Changelog](https://keepachangelog.com/en/1.1.0/); entries are
+generated from conventional commit messages by release-plz.
+
+"""
+body = """
+## [{{ version }}]{%- if release_link -%}({{ release_link }}){% endif %} - {{ timestamp | date(format="%Y-%m-%d") }}
+{% for group, commits in commits | group_by(attribute="group") %}
+### {{ group | striptags | trim | upper_first }}
+{% for commit in commits %}
+- {% if commit.scope %}*({{ commit.scope }})* {% endif %}{% if commit.breaking %}[**breaking**] {% endif %}{{ commit.message }}
+{%- endfor %}
+{% endfor %}
+"""
+commit_parsers = [
+    { message = "^feat", group = "<!-- 0 -->Added" },
+    { message = "^fix", group = "<!-- 1 -->Fixed" },
+    { message = "^perf", group = "<!-- 2 -->Changed" },
+    { message = "^refactor", group = "<!-- 2 -->Changed" },
+    { message = "^revert", group = "<!-- 2 -->Changed" },
+    { message = "^docs", skip = true },
+    { message = "^test", skip = true },
+    { message = "^build", skip = true },
+    { message = "^ci", skip = true },
+    { message = "^chore", skip = true },
+    { message = "^.*", group = "<!-- 3 -->Other" },
+]

@@ -65,3 +65,9 @@ jobs:
           fi
         env:
           GH_TOKEN: ${{ github.token }}
+      - name: Update Homebrew cask
+        if: ${{ env.RELEASE_TOKEN != '' }}
+        env:
+          RELEASE_TOKEN: ${{ secrets.RELEASE_TOKEN }}
+          GH_TOKEN: ${{ secrets.RELEASE_TOKEN }}
+        run: scripts/update-cask.sh "${GITHUB_REF_NAME#v}" target/bundle/chda-*.zip

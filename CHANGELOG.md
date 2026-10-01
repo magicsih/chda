@@ -1,19 +1,8 @@
 # Changelog
 
 All notable changes to chda. The format follows
-[Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
-
-## [Unreleased]
-
-### Fixed
-- The `merged` marker now recognises squash and rebase merges (by patch
-  content), compares against `origin/<default>` after a quiet fetch (at most
-  once a minute per repository), and honours a merged pull request from `gh`.
-  Previously only branches whose commits were ancestors of the local default
-  branch counted, so GitHub squash merges and stale local checkouts showed
-  nothing. (#23)
-- `merged` is shown whenever the branch is merged; the clean/unpushed checks
-  now only decide whether deletion is recommended as safe.
+[Keep a Changelog](https://keepachangelog.com/en/1.1.0/); entries are
+generated from conventional commit messages by release-plz.
 
 ## [0.1.2] - 2026-10-01
 
@@ -52,7 +41,6 @@ First release. macOS, Apple silicon.
   command palette.
 - Signed and notarized app bundle, Homebrew cask.
 
-[Unreleased]: https://github.com/magicsih/chda/compare/v0.1.2...HEAD
 [0.1.2]: https://github.com/magicsih/chda/compare/v0.1.1...v0.1.2
 [0.1.1]: https://github.com/magicsih/chda/compare/v0.1.0...v0.1.1
 [0.1.0]: https://github.com/magicsih/chda/releases/tag/v0.1.0
