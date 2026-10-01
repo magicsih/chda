@@ -80,7 +80,7 @@ pub struct Terminal {
 }
 
 impl Terminal {
-    /// Create a terminal with the given size and scrollback limit in lines.
+    /// Create a terminal with the given size and scrollback limit in bytes.
     pub fn new(size: Size, max_scrollback: usize) -> Result<Self> {
         let mut vt = VtTerminal::new(Options {
             cols: size.cols,
@@ -361,6 +361,26 @@ impl Terminal {
             .set_macos_option_as_alt(key::OptionAsAlt::True);
         let mut out = Vec::new();
         self.keys.encode_to_vec(&event, &mut out)?;
+        Ok(out)
+    }
+
+    /// Encode committed text. Plain modes send the UTF-8 as is; when the
+    /// application enabled the kitty keyboard protocol each character goes
+    /// through the key encoder so it is reported the way the app expects.
+    pub fn encode_text(&mut self, text: &str) -> Result<Vec<u8>> {
+        let flags = self.vt.kitty_keyboard_flags()?;
+        if flags.is_empty() {
+            return Ok(text.as_bytes().to_vec());
+        }
+        let mut out = Vec::new();
+        for c in text.chars() {
+            out.extend(self.encode_key(&KeyInput {
+                action: KeyAction::Press,
+                key: KeyCode::Char(c),
+                mods: Modifiers::default(),
+                text: Some(c.to_string()),
+            })?);
+        }
         Ok(out)
     }
 
@@ -755,6 +775,12 @@ mod tests {
                 .unwrap(),
             b"\x1bOA"
         );
+        assert_eq!(term.encode_text("한a").unwrap(), "한a".as_bytes());
+        term.feed(b"\x1b[>1u");
+        assert_eq!(term.encode_text("a").unwrap(), b"a");
+        term.feed(b"\x1b[>8u");
+        assert_eq!(term.encode_text("a").unwrap(), b"\x1b[97u");
+        term.feed(b"\x1b[<u\x1b[<u");
         assert_eq!(term.encode_paste("a\nb").unwrap(), b"a\rb");
         term.feed(b"\x1b[?2004h");
         assert_eq!(

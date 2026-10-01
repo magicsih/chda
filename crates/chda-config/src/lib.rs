@@ -65,7 +65,7 @@ pub struct GhosttyConfig {
     /// `palette = N=#rrggbb` entries, in file order.
     pub palette: Vec<(u8, Color)>,
     pub padding: Padding,
-    /// Byte limit from `scrollback-limit`.
+    /// `scrollback-limit` in bytes, as Ghostty defines it.
     pub scrollback_limit: Option<u64>,
 }
 

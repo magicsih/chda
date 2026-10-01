@@ -1,5 +1,6 @@
 //! GPUI views, elements and theme. The only crate that may depend on GPUI.
 
+mod platform;
 mod settings;
 mod terminal_element;
 mod terminal_view;

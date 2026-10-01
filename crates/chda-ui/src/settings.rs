@@ -1,7 +1,9 @@
 //! UI settings derived from the Ghostty config subset.
 
 use chda_config::{Color, CursorStyle, GhosttyConfig, Padding};
-use chda_term::{ColorConfig, CursorShape, Rgb};
+use chda_term::{ColorConfig, CursorShape, DEFAULT_SCROLLBACK, Rgb};
+
+use crate::platform;
 use gpui::{Font, FontFeatures, FontStyle, FontWeight, Pixels, px};
 
 #[derive(Clone, Debug)]
@@ -12,6 +14,8 @@ pub struct Settings {
     pub colors: ColorConfig,
     pub selection_background: Option<Rgb>,
     pub selection_foreground: Option<Rgb>,
+    /// Scrollback limit in bytes.
+    pub scrollback: usize,
 }
 
 impl Default for Settings {
@@ -32,9 +36,10 @@ impl Settings {
     /// Ghostty's defaults fill in whatever the config leaves unset.
     pub fn from_ghostty(c: &GhosttyConfig) -> Self {
         Self {
-            // Ghostty bundles JetBrains Mono; chda has no bundled font yet, so
-            // fall back to the platform's monospace face.
-            font_family: c.font_family.clone().unwrap_or_else(|| "Menlo".into()),
+            font_family: c
+                .font_family
+                .clone()
+                .unwrap_or_else(|| platform::DEFAULT_MONOSPACE.into()),
             font_size: px(c.font_size.unwrap_or(13.0)),
             padding: c.padding,
             colors: ColorConfig {
@@ -63,6 +68,10 @@ impl Settings {
             },
             selection_background: c.selection_background.map(rgb),
             selection_foreground: c.selection_foreground.map(rgb),
+            scrollback: c
+                .scrollback_limit
+                .map(|b| usize::try_from(b).unwrap_or(usize::MAX))
+                .unwrap_or(DEFAULT_SCROLLBACK),
         }
     }
 

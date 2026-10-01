@@ -62,6 +62,7 @@ impl TerminalView {
         let session = Session::spawn(
             SessionOptions {
                 colors: settings.colors.clone(),
+                scrollback: settings.scrollback,
                 ..Default::default()
             },
             events_tx,
@@ -233,7 +234,7 @@ impl TerminalView {
         self.marked_text = None;
         self.touch();
         if !text.is_empty() {
-            self.session.write(text.as_bytes().to_vec());
+            self.session.text(text.to_owned());
         }
         cx.notify();
     }

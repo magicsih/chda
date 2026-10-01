@@ -17,8 +17,12 @@ use crate::frame::{ColorConfig, Frame, Size};
 use crate::input::{KeyCode, KeyInput, Modifiers, MouseInput};
 use crate::vt::Terminal;
 
-/// Default scrollback kept per session, in rows.
-pub const DEFAULT_SCROLLBACK: usize = 10_000;
+/// Default scrollback kept per session, in bytes (Ghostty's default).
+///
+/// libghostty's header calls `max_scrollback` a line count, but Ghostty
+/// passes its byte-sized `scrollback-limit` straight through and the screen
+/// treats it as bytes.
+pub const DEFAULT_SCROLLBACK: usize = 50_000_000;
 
 /// Shortest interval between two frame rebuilds while output is streaming.
 const FRAME_INTERVAL: Duration = Duration::from_millis(8);
@@ -46,6 +50,7 @@ pub struct SessionOptions {
     pub size: Size,
     pub cell_width_px: u32,
     pub cell_height_px: u32,
+    /// Scrollback limit in bytes. Zero disables scrollback.
     pub scrollback: usize,
     pub colors: ColorConfig,
     /// Program and arguments. `None` runs the login shell.
@@ -76,6 +81,7 @@ impl Default for SessionOptions {
 enum Command {
     Key(KeyInput),
     Paste(String),
+    Text(String),
     Bytes(Vec<u8>),
     Focus(bool),
     Resize {
@@ -176,6 +182,12 @@ impl Session {
 
     pub fn paste(&self, text: String) {
         self.send(Command::Paste(text));
+    }
+
+    /// Send typed or IME-committed text. Goes through the key encoder when
+    /// the application enabled the kitty keyboard protocol.
+    pub fn text(&self, text: String) {
+        self.send(Command::Text(text));
     }
 
     /// Send raw bytes to the child.
@@ -380,6 +392,17 @@ fn handle_command(
         }
         Command::Paste(text) => {
             if let Ok(bytes) = term.encode_paste(&text) {
+                term.clear_selection();
+                term.scroll_to_bottom();
+                let _ = pty.write_all(&bytes);
+                return true;
+            }
+            false
+        }
+        Command::Text(text) => {
+            if let Ok(bytes) = term.encode_text(&text)
+                && !bytes.is_empty()
+            {
                 term.clear_selection();
                 term.scroll_to_bottom();
                 let _ = pty.write_all(&bytes);
