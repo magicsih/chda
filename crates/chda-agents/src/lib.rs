@@ -2,3 +2,101 @@
 //! and the session indexer.
 //!
 //! Platform-specific IPC code lives under `ipc`.
+
+mod claude;
+mod codex;
+mod hook;
+pub mod ipc;
+mod session;
+
+use std::path::{Path, PathBuf};
+use std::process::Command;
+
+pub use claude::ClaudeAdapter;
+pub use codex::CodexAdapter;
+pub use hook::{HookEvent, HookKind, hook_main};
+pub use session::{AgentSession, SessionCache, SessionId};
+
+/// Which agent a thing belongs to.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord)]
+pub enum AgentId {
+    Claude,
+    Codex,
+}
+
+impl AgentId {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            AgentId::Claude => "claude",
+            AgentId::Codex => "codex",
+        }
+    }
+
+    pub fn parse(s: &str) -> Option<Self> {
+        match s {
+            "claude" => Some(AgentId::Claude),
+            "codex" => Some(AgentId::Codex),
+            _ => None,
+        }
+    }
+}
+
+/// How hooks were (or were not) installed for an agent.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct HookInstallReport {
+    /// File chda wrote, if any.
+    pub file: Option<PathBuf>,
+    /// Why status tracking may be degraded, if it is.
+    pub note: Option<String>,
+}
+
+/// Everything chda needs to know about one coding agent.
+pub trait AgentAdapter: Send + Sync {
+    fn id(&self) -> AgentId;
+    fn display_name(&self) -> &str;
+    /// Whether the agent's binary is on `PATH`.
+    fn is_installed(&self) -> bool;
+    /// Command that runs the agent in `cwd`, optionally resuming a session.
+    /// `hook_bin` is the chda executable the agent should call for hooks.
+    fn launch_command(&self, cwd: &Path, resume: Option<&SessionId>, hook_bin: &Path) -> Command;
+    /// Directories holding session transcripts.
+    fn session_roots(&self) -> Vec<PathBuf>;
+    /// Parse one transcript file; `None` when it is not a session.
+    fn parse_session(&self, file: &Path) -> Option<AgentSession>;
+    /// Write hook configuration under `data_dir` so the agent reports to
+    /// `hook_bin`. Never touches the user's own config files.
+    fn install_hooks(&self, data_dir: &Path, hook_bin: &Path)
+    -> std::io::Result<HookInstallReport>;
+}
+
+/// The adapters chda ships.
+pub fn adapters() -> Vec<Box<dyn AgentAdapter>> {
+    vec![Box::new(ClaudeAdapter), Box::new(CodexAdapter)]
+}
+
+/// Find an executable on `PATH`.
+pub fn which(name: &str) -> Option<PathBuf> {
+    let path = std::env::var_os("PATH")?;
+    std::env::split_paths(&path)
+        .map(|dir| dir.join(name))
+        .find(|p| p.is_file())
+}
+
+/// Index every session of every adapter, newest first.
+pub fn index_sessions(
+    adapters: &[Box<dyn AgentAdapter>],
+    cache: &mut SessionCache,
+) -> Vec<AgentSession> {
+    let mut out = Vec::new();
+    for adapter in adapters {
+        for root in adapter.session_roots() {
+            for file in session::jsonl_files(&root) {
+                if let Some(s) = cache.get_or_parse(&file, || adapter.parse_session(&file)) {
+                    out.push(s);
+                }
+            }
+        }
+    }
+    out.sort_by_key(|s| std::cmp::Reverse(s.started_at));
+    out
+}

@@ -1,10 +1,14 @@
 //! Ghostty config parser (supported subset) and chda's own TOML config.
 //!
-//! Only the keys chda honors are kept; everything else is ignored silently,
-//! as Ghostty itself does for unknown keys.
+//! Only the Ghostty keys chda honors are kept; everything else is ignored
+//! silently, as Ghostty itself does for unknown keys.
+
+mod chda;
 
 use std::fs;
 use std::path::{Path, PathBuf};
+
+pub use chda::*;
 
 /// RGB color.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
