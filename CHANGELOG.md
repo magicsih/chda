@@ -4,6 +4,13 @@ All notable changes to chda. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); entries are
 generated from conventional commit messages by release-plz.
 
+## [0.1.3](https://github.com/magicsih/chda/compare/v0.1.2...v0.1.3) - 2026-10-01
+
+### Other
+
+- Detect squash and rebase merges and compare against origin for the merged marker
+- Add issue and PR templates, security policy, changelog, Pages workflow and onboarding copy
+
 ## [0.1.2] - 2026-10-01
 
 ### Added
