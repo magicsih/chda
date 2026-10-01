@@ -4,21 +4,36 @@ use std::ops::Range;
 use std::sync::Arc;
 use std::sync::mpsc;
 
+use std::time::Duration;
+
 use chda_term::{
-    Event, Frame, KeyAction, KeyCode, KeyInput, Modifiers, Session, SessionOptions, Size,
+    Event, Frame, KeyAction, KeyCode, KeyInput, Modifiers, MouseAction, MouseButton as TermButton,
+    MouseInput, Session, SessionOptions, Size,
 };
 use futures::StreamExt;
 use futures::channel::mpsc::{UnboundedReceiver, unbounded};
 use gpui::{
     App, Bounds, ClipboardItem, Context, EntityInputHandler, FocusHandle, Focusable, KeyDownEvent,
-    Keystroke, MouseButton, MouseDownEvent, Pixels, Point, Render, ScrollWheelEvent, TouchPhase,
-    UTF16Selection, Window, actions, div, prelude::*, px,
+    Keystroke, Modifiers as GpuiModifiers, MouseButton, MouseDownEvent, MouseMoveEvent,
+    MouseUpEvent, Pixels, Point, Render, ScrollWheelEvent, TouchPhase, UTF16Selection, Window,
+    actions, div, prelude::*, px,
 };
 
 use crate::settings::Settings;
 use crate::terminal_element::TerminalElement;
 
-actions!(terminal, [Paste, Quit]);
+actions!(terminal, [Copy, Paste, Quit]);
+
+/// Where the cell grid sits in the window, from the last layout.
+#[derive(Clone, Copy, Debug)]
+pub struct GridGeometry {
+    pub origin: Point<Pixels>,
+    pub cell_width: Pixels,
+    pub line_height: Pixels,
+    pub size: Size,
+}
+
+const BLINK_INTERVAL: Duration = Duration::from_millis(600);
 
 pub struct TerminalView {
     session: Session,
@@ -33,6 +48,11 @@ pub struct TerminalView {
     pub marked_text: Option<String>,
     /// Cursor cell bounds from the last layout, for the IME candidate window.
     pub cursor_bounds: Option<Bounds<Pixels>>,
+    pub geometry: Option<GridGeometry>,
+    /// Blink phase; the cursor is drawn when true.
+    pub blink_on: bool,
+    /// Bumped on input so the blink restarts in the visible phase.
+    blink_epoch: u64,
 }
 
 impl TerminalView {
@@ -53,6 +73,7 @@ impl TerminalView {
         let frame = session.frame();
 
         Self::drive(wake_rx, window, cx);
+        Self::blink(window, cx);
 
         let focus_handle = cx.focus_handle();
         cx.on_focus(&focus_handle, window, |this, _, _| this.session.focus(true))
@@ -72,7 +93,42 @@ impl TerminalView {
             scroll_px: 0.0,
             marked_text: None,
             cursor_bounds: None,
+            geometry: None,
+            blink_on: true,
+            blink_epoch: 0,
         }
+    }
+
+    /// Toggle the cursor phase while the terminal asks for a blinking cursor.
+    fn blink(window: &mut Window, cx: &mut Context<Self>) {
+        cx.spawn_in(window, async move |this, cx| {
+            let mut epoch = 0;
+            loop {
+                cx.background_executor().timer(BLINK_INTERVAL).await;
+                let alive = this.update(cx, |view, cx| {
+                    if view.blink_epoch != epoch {
+                        // Input happened: stay visible for a full interval.
+                        epoch = view.blink_epoch;
+                        view.blink_on = true;
+                    } else if view.frame.cursor.is_some_and(|c| c.blinking) {
+                        view.blink_on = !view.blink_on;
+                        cx.notify();
+                    } else if !view.blink_on {
+                        view.blink_on = true;
+                        cx.notify();
+                    }
+                });
+                if alive.is_err() {
+                    break;
+                }
+            }
+        })
+        .detach();
+    }
+
+    fn touch(&mut self) {
+        self.blink_epoch += 1;
+        self.blink_on = true;
     }
 
     /// Pump session events into the view whenever the terminal thread wakes us.
@@ -103,9 +159,10 @@ impl TerminalView {
                     window.set_window_title(title);
                 }
                 Event::PwdChanged(_) | Event::Bell => {}
-                Event::ClipboardWrite(text) => {
+                Event::ClipboardWrite(text) | Event::SelectionText(Some(text)) => {
                     cx.write_to_clipboard(ClipboardItem::new_string(text))
                 }
+                Event::SelectionText(None) => {}
                 Event::Exited(_) => exited = true,
             }
         }
@@ -149,6 +206,7 @@ impl TerminalView {
         let Some(key) = key_code(ks) else {
             return;
         };
+        self.touch();
         let text = ks
             .key_char
             .as_deref()
@@ -164,12 +222,7 @@ impl TerminalView {
                 KeyAction::Press
             },
             key,
-            mods: Modifiers {
-                shift: ks.modifiers.shift,
-                alt: ks.modifiers.alt,
-                ctrl: ks.modifiers.control,
-                meta: false,
-            },
+            mods: modifiers(ks.modifiers),
             text,
         });
         cx.stop_propagation();
@@ -178,6 +231,7 @@ impl TerminalView {
     /// Send committed text (typed characters or a finished IME composition).
     fn commit_text(&mut self, text: &str, cx: &mut Context<Self>) {
         self.marked_text = None;
+        self.touch();
         if !text.is_empty() {
             self.session.write(text.as_bytes().to_vec());
         }
@@ -190,17 +244,79 @@ impl TerminalView {
         }
     }
 
-    fn mouse_down(&mut self, _: &MouseDownEvent, window: &mut Window, cx: &mut Context<Self>) {
-        self.focus(window, cx);
+    fn copy(&mut self, _: &Copy, _: &mut Window, _: &mut Context<Self>) {
+        self.session.copy_selection();
     }
 
-    fn scroll_wheel(
-        &mut self,
-        event: &ScrollWheelEvent,
-        window: &mut Window,
-        _: &mut Context<Self>,
-    ) {
-        let line_height = window.line_height();
+    /// Translate a window position into a grid cell and grid-relative pixels.
+    fn mouse_input(
+        &self,
+        action: MouseAction,
+        button: MouseButton,
+        position: Point<Pixels>,
+        mods: GpuiModifiers,
+    ) -> Option<MouseInput> {
+        let g = self.geometry?;
+        let button = match button {
+            MouseButton::Left => TermButton::Left,
+            MouseButton::Middle => TermButton::Middle,
+            MouseButton::Right => TermButton::Right,
+            _ => return None,
+        };
+        let px_x = f32::from(position.x - g.origin.x).max(0.0);
+        let px_y = f32::from(position.y - g.origin.y).max(0.0);
+        let cell_x = ((px_x / f32::from(g.cell_width)) as u16).min(g.size.cols.saturating_sub(1));
+        let cell_y = ((px_y / f32::from(g.line_height)) as u16).min(g.size.rows.saturating_sub(1));
+        Some(MouseInput {
+            action,
+            button,
+            mods: modifiers(mods),
+            cell_x,
+            cell_y,
+            px_x: px_x as u32,
+            px_y: px_y as u32,
+        })
+    }
+
+    fn mouse_down(&mut self, event: &MouseDownEvent, window: &mut Window, cx: &mut Context<Self>) {
+        self.focus(window, cx);
+        let click_count = event.click_count.clamp(1, 3) as u8;
+        if let Some(input) = self.mouse_input(
+            MouseAction::Down { click_count },
+            event.button,
+            event.position,
+            event.modifiers,
+        ) {
+            self.session.mouse(input);
+        }
+    }
+
+    fn mouse_up(&mut self, event: &MouseUpEvent, _: &mut Window, _: &mut Context<Self>) {
+        if let Some(input) = self.mouse_input(
+            MouseAction::Up,
+            event.button,
+            event.position,
+            event.modifiers,
+        ) {
+            self.session.mouse(input);
+        }
+    }
+
+    fn mouse_move(&mut self, event: &MouseMoveEvent, _: &mut Window, _: &mut Context<Self>) {
+        let (action, button) = match event.pressed_button {
+            Some(b) => (MouseAction::Drag, b),
+            None => (MouseAction::Move, MouseButton::Left),
+        };
+        if let Some(input) = self.mouse_input(action, button, event.position, event.modifiers) {
+            self.session.mouse(input);
+        }
+    }
+
+    fn scroll_wheel(&mut self, event: &ScrollWheelEvent, _: &mut Window, _: &mut Context<Self>) {
+        let Some(g) = self.geometry else {
+            return;
+        };
+        let line_height = g.line_height;
         match event.touch_phase {
             TouchPhase::Started => self.scroll_px = 0.0,
             TouchPhase::Ended | TouchPhase::Cancelled => return,
@@ -211,9 +327,21 @@ impl TerminalView {
         let after = (self.scroll_px / f32::from(line_height)) as i32;
         let lines = after - before;
         if lines != 0 {
+            let px_x = f32::from(event.position.x - g.origin.x).max(0.0) as u32;
+            let px_y = f32::from(event.position.y - g.origin.y).max(0.0) as u32;
             // Wheel up (positive delta) moves the viewport towards history.
-            self.session.scroll(-(lines as isize));
+            self.session
+                .scroll(-(lines as isize), modifiers(event.modifiers), px_x, px_y);
         }
+    }
+}
+
+fn modifiers(m: GpuiModifiers) -> Modifiers {
+    Modifiers {
+        shift: m.shift,
+        alt: m.alt,
+        ctrl: m.control,
+        meta: m.platform,
     }
 }
 
@@ -349,9 +477,16 @@ impl Render for TerminalView {
             .pb(px(p.bottom as f32))
             .track_focus(&self.focus_handle)
             .key_context("Terminal")
+            .on_action(cx.listener(Self::copy))
             .on_action(cx.listener(Self::paste))
             .on_key_down(cx.listener(Self::key_down))
             .on_mouse_down(MouseButton::Left, cx.listener(Self::mouse_down))
+            .on_mouse_down(MouseButton::Right, cx.listener(Self::mouse_down))
+            .on_mouse_down(MouseButton::Middle, cx.listener(Self::mouse_down))
+            .on_mouse_up(MouseButton::Left, cx.listener(Self::mouse_up))
+            .on_mouse_up(MouseButton::Right, cx.listener(Self::mouse_up))
+            .on_mouse_up(MouseButton::Middle, cx.listener(Self::mouse_up))
+            .on_mouse_move(cx.listener(Self::mouse_move))
             .on_scroll_wheel(cx.listener(Self::scroll_wheel))
             .child(TerminalElement::new(cx.entity(), self.focus_handle.clone()))
     }

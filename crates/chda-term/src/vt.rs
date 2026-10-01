@@ -4,13 +4,16 @@ use std::cell::{Cell as StdCell, RefCell};
 use std::rc::Rc;
 
 use libghostty_vt::key::{self, Encoder as KeyEncoder};
+use libghostty_vt::mouse::{self, Encoder as MouseEncoder};
 use libghostty_vt::render::{
     CellIterator, CursorVisualStyle, Dirty, RenderState, RowIterator, Snapshot,
 };
-use libghostty_vt::screen::{CellWide, RowSemanticPrompt, Screen};
+use libghostty_vt::screen::{CellWide, RowSemanticPrompt, Screen, TrackedGridRef};
+use libghostty_vt::selection::{FormatOptions, SelectLineOptions, SelectWordOptions, Selection};
 use libghostty_vt::style::{Palette, PaletteIndex, RgbColor, StyleColor, Underline as VtUnderline};
 use libghostty_vt::terminal::{
-    CursorStyle as VtCursorStyle, Mode, Options, ScrollViewport, Terminal as VtTerminal,
+    CursorStyle as VtCursorStyle, Mode, Options, Point, PointCoordinate, ScrollViewport,
+    Terminal as VtTerminal,
 };
 use libghostty_vt::{focus, paste};
 
@@ -18,7 +21,7 @@ use crate::frame::{
     Cell, CellStyle, CellWidth, ColorConfig, Cursor, CursorShape, Frame, Rgb, Row, Scrollbar,
     SemanticPrompt, Size, Underline,
 };
-use crate::input::{KeyAction, KeyCode, KeyInput};
+use crate::input::{KeyAction, KeyCode, KeyInput, Modifiers, MouseAction, MouseButton, MouseInput};
 
 /// Error raised by the terminal core.
 #[derive(Clone, Copy, Debug)]
@@ -68,6 +71,10 @@ pub struct Terminal {
     rows: RowIterator<'static>,
     cells: CellIterator<'static>,
     keys: KeyEncoder<'static>,
+    mouse: MouseEncoder<'static>,
+    /// Where a left-button selection started.
+    anchor: Option<TrackedGridRef>,
+    cell_px: (u32, u32),
     hooks: Rc<Hooks>,
     generation: u64,
 }
@@ -116,6 +123,9 @@ impl Terminal {
             rows: RowIterator::new()?,
             cells: CellIterator::new()?,
             keys: KeyEncoder::new()?,
+            mouse: MouseEncoder::new()?,
+            anchor: None,
+            cell_px: (0, 0),
             hooks,
             generation: 0,
         })
@@ -161,9 +171,149 @@ impl Terminal {
     }
 
     pub fn resize(&mut self, size: Size, cell_width_px: u32, cell_height_px: u32) -> Result<()> {
+        self.cell_px = (cell_width_px, cell_height_px);
         self.vt
             .resize(size.cols, size.rows, cell_width_px, cell_height_px)?;
         Ok(())
+    }
+
+    /// Whether the application asked for mouse reports.
+    pub fn mouse_tracking(&self) -> bool {
+        self.vt.is_mouse_tracking().unwrap_or(false)
+    }
+
+    /// Alternate scroll: wheel events become arrow keys in full-screen apps.
+    pub fn alt_scroll(&self) -> bool {
+        self.alternate_screen() && self.vt.mode(Mode::ALT_SCROLL).unwrap_or(true)
+    }
+
+    /// Encode a mouse event for an application that tracks the mouse.
+    /// Returns an empty vector when the current mode reports nothing.
+    pub fn encode_mouse(&mut self, input: &MouseInput) -> Result<Vec<u8>> {
+        let mut event = mouse::Event::new()?;
+        event
+            .set_action(match input.action {
+                MouseAction::Down { .. } => mouse::Action::Press,
+                MouseAction::Up => mouse::Action::Release,
+                MouseAction::Drag | MouseAction::Move => mouse::Action::Motion,
+            })
+            .set_button(match input.action {
+                MouseAction::Move => None,
+                _ => Some(match input.button {
+                    MouseButton::Left => mouse::Button::Left,
+                    MouseButton::Middle => mouse::Button::Middle,
+                    MouseButton::Right => mouse::Button::Right,
+                }),
+            })
+            .set_mods(key_mods(input.mods))
+            .set_position(mouse::Position {
+                x: input.px_x as f32,
+                y: input.px_y as f32,
+            });
+        self.mouse_options();
+        self.mouse
+            .set_any_button_pressed(matches!(input.action, MouseAction::Drag));
+        let mut out = Vec::new();
+        self.mouse.encode_to_vec(&event, &mut out)?;
+        Ok(out)
+    }
+
+    /// Encode one wheel notch as a mouse report (buttons 4 and 5).
+    pub fn encode_wheel(
+        &mut self,
+        up: bool,
+        mods: Modifiers,
+        px_x: u32,
+        px_y: u32,
+    ) -> Result<Vec<u8>> {
+        let mut event = mouse::Event::new()?;
+        event
+            .set_action(mouse::Action::Press)
+            .set_button(Some(if up {
+                mouse::Button::Four
+            } else {
+                mouse::Button::Five
+            }))
+            .set_mods(key_mods(mods))
+            .set_position(mouse::Position {
+                x: px_x as f32,
+                y: px_y as f32,
+            });
+        self.mouse_options();
+        let mut out = Vec::new();
+        self.mouse.encode_to_vec(&event, &mut out)?;
+        Ok(out)
+    }
+
+    fn mouse_options(&mut self) {
+        let (cw, ch) = self.cell_px;
+        let cols = u32::from(self.vt.cols().unwrap_or(1));
+        let rows = u32::from(self.vt.rows().unwrap_or(1));
+        self.mouse
+            .set_options_from_terminal(&self.vt)
+            .set_size(mouse::EncoderSize {
+                screen_width: cw.max(1) * cols,
+                screen_height: ch.max(1) * rows,
+                cell_width: cw.max(1),
+                cell_height: ch.max(1),
+                padding_top: 0,
+                padding_bottom: 0,
+                padding_right: 0,
+                padding_left: 0,
+            });
+    }
+
+    /// Update the selection from a left-button gesture.
+    pub fn select(&mut self, input: &MouseInput) -> Result<()> {
+        let point = Point::Viewport(PointCoordinate {
+            x: input.cell_x,
+            y: u32::from(input.cell_y),
+        });
+        match input.action {
+            MouseAction::Down { click_count } => {
+                self.anchor = None;
+                self.vt.set_selection(None)?;
+                let here = self.vt.grid_ref(point)?;
+                match click_count {
+                    1 => self.anchor = Some(self.vt.track_grid_ref(point)?),
+                    2 => {
+                        let sel = self.vt.select_word(SelectWordOptions::new(here))?;
+                        self.vt.set_selection(sel.as_ref())?;
+                    }
+                    _ => {
+                        let sel = self.vt.select_line(SelectLineOptions::new(here))?;
+                        self.vt.set_selection(sel.as_ref())?;
+                    }
+                }
+            }
+            MouseAction::Drag => {
+                let Some(anchor) = self.anchor.as_ref() else {
+                    return Ok(());
+                };
+                let Some(start) = anchor.snapshot(&self.vt)? else {
+                    return Ok(());
+                };
+                let end = self.vt.grid_ref(point)?;
+                let sel = Selection::new(start, end, input.mods.alt);
+                self.vt.set_selection(Some(&sel))?;
+            }
+            MouseAction::Up | MouseAction::Move => {}
+        }
+        Ok(())
+    }
+
+    pub fn clear_selection(&mut self) {
+        self.anchor = None;
+        let _ = self.vt.set_selection(None);
+    }
+
+    /// The selected text, unwrapped and trimmed, if anything is selected.
+    pub fn selection_text(&self) -> Result<Option<String>> {
+        let opts = FormatOptions::new().with_unwrap(true).with_trim(true);
+        Ok(self
+            .vt
+            .format_selection_alloc(None, opts)?
+            .map(|b| String::from_utf8_lossy(&b).into_owned()))
     }
 
     pub fn title(&self) -> String {
@@ -197,16 +347,11 @@ impl Terminal {
             KeyAction::Repeat => key::Action::Repeat,
             KeyAction::Release => key::Action::Release,
         };
-        let mut mods = key::Mods::empty();
-        mods.set(key::Mods::SHIFT, input.mods.shift);
-        mods.set(key::Mods::ALT, input.mods.alt);
-        mods.set(key::Mods::CTRL, input.mods.ctrl);
-        mods.set(key::Mods::SUPER, input.mods.meta);
         let (vt_key, unshifted) = map_key(input.key);
         event
             .set_action(action)
             .set_key(vt_key)
-            .set_mods(mods)
+            .set_mods(key_mods(input.mods))
             .set_utf8(input.text.as_deref().filter(|t| !t.is_empty()));
         if let Some(c) = unshifted {
             event.set_unshifted_codepoint(c);
@@ -368,6 +513,15 @@ impl Terminal {
         snapshot.set_dirty(Dirty::Clean)?;
         Ok(frame)
     }
+}
+
+fn key_mods(m: Modifiers) -> key::Mods {
+    let mut mods = key::Mods::empty();
+    mods.set(key::Mods::SHIFT, m.shift);
+    mods.set(key::Mods::ALT, m.alt);
+    mods.set(key::Mods::CTRL, m.ctrl);
+    mods.set(key::Mods::SUPER, m.meta);
+    mods
 }
 
 fn vt_rgb(c: Rgb) -> RgbColor {
@@ -612,6 +766,63 @@ mod tests {
         assert_eq!(term.encode_focus(true), b"\x1b[I");
     }
 
+    fn mouse(action: MouseAction, x: u16, y: u16) -> MouseInput {
+        MouseInput {
+            action,
+            button: MouseButton::Left,
+            mods: Modifiers::default(),
+            cell_x: x,
+            cell_y: y,
+            px_x: u32::from(x) * 8 + 4,
+            px_y: u32::from(y) * 16 + 8,
+        }
+    }
+
+    #[test]
+    fn drag_selects_text_and_double_click_selects_a_word() {
+        let mut term = term();
+        term.feed(b"hello brave world\r\nsecond line");
+        term.select(&mouse(MouseAction::Down { click_count: 1 }, 6, 0))
+            .unwrap();
+        term.select(&mouse(MouseAction::Drag, 2, 1)).unwrap();
+        assert_eq!(
+            term.selection_text().unwrap().as_deref(),
+            Some("brave world\nsec")
+        );
+        let frame = term.frame().unwrap();
+        assert!(frame.cell(6, 0).unwrap().selected);
+        assert!(!frame.cell(5, 0).unwrap().selected);
+
+        term.select(&mouse(MouseAction::Down { click_count: 2 }, 7, 0))
+            .unwrap();
+        assert_eq!(term.selection_text().unwrap().as_deref(), Some("brave"));
+        term.select(&mouse(MouseAction::Down { click_count: 3 }, 7, 0))
+            .unwrap();
+        assert_eq!(
+            term.selection_text().unwrap().as_deref(),
+            Some("hello brave world")
+        );
+        term.clear_selection();
+        assert_eq!(term.selection_text().unwrap(), None);
+    }
+
+    #[test]
+    fn mouse_reports_follow_tracking_mode() {
+        let mut term = term();
+        term.resize(Size { cols: 20, rows: 5 }, 8, 16).unwrap();
+        assert!(!term.mouse_tracking());
+        term.feed(b"\x1b[?1000h\x1b[?1006h");
+        assert!(term.mouse_tracking());
+        let bytes = term
+            .encode_mouse(&mouse(MouseAction::Down { click_count: 1 }, 3, 2))
+            .unwrap();
+        assert_eq!(bytes, b"\x1b[<0;4;3M");
+        let bytes = term.encode_mouse(&mouse(MouseAction::Up, 3, 2)).unwrap();
+        assert_eq!(bytes, b"\x1b[<0;4;3m");
+        let bytes = term.encode_wheel(true, Modifiers::default(), 4, 8).unwrap();
+        assert_eq!(bytes, b"\x1b[<64;1;1M");
+    }
+
     #[test]
     fn default_colors_and_palette_apply() {
         let mut term = term();
@@ -652,5 +863,48 @@ mod tests {
         term.feed(b"\x1b[?1049h");
         assert!(term.alternate_screen());
         assert!(term.frame().unwrap().alternate_screen);
+    }
+}
+
+/// Throughput check for the parse-and-snapshot path. Run with
+/// `CHDA_BENCH_FILE=<path> cargo test --release -p chda-term -- --ignored bench --nocapture`.
+#[cfg(test)]
+mod bench {
+    use super::*;
+    use std::time::{Duration, Instant};
+
+    #[test]
+    #[ignore = "throughput check; needs CHDA_BENCH_FILE"]
+    fn bench_feed_and_frame() {
+        let Some(path) = std::env::var_os("CHDA_BENCH_FILE") else {
+            return;
+        };
+        let data = std::fs::read(path).unwrap();
+        let mut term = Terminal::new(
+            Size {
+                cols: 120,
+                rows: 40,
+            },
+            10_000,
+        )
+        .unwrap();
+        let start = Instant::now();
+        let mut frames = 0;
+        let mut last_frame = start;
+        for chunk in data.chunks(64 * 1024) {
+            term.feed(chunk);
+            if last_frame.elapsed() >= Duration::from_millis(8) {
+                term.frame().unwrap();
+                frames += 1;
+                last_frame = Instant::now();
+            }
+        }
+        term.frame().unwrap();
+        let elapsed = start.elapsed();
+        eprintln!(
+            "fed {} bytes in {elapsed:?} ({:.1} MB/s), {frames} frames built",
+            data.len(),
+            data.len() as f64 / 1e6 / elapsed.as_secs_f64()
+        );
     }
 }

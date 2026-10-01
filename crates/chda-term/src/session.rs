@@ -14,7 +14,7 @@ use std::time::{Duration, Instant};
 use chda_pty::{ExitStatus, Pty, PtySize, SpawnOptions};
 
 use crate::frame::{ColorConfig, Frame, Size};
-use crate::input::KeyInput;
+use crate::input::{KeyCode, KeyInput, Modifiers, MouseInput};
 use crate::vt::Terminal;
 
 /// Default scrollback kept per session, in rows.
@@ -34,6 +34,8 @@ pub enum Event {
     Bell,
     /// An application asked to set the clipboard (OSC 52).
     ClipboardWrite(String),
+    /// Reply to [`Session::copy_selection`]; absent when nothing is selected.
+    SelectionText(Option<String>),
     /// The child exited; the session is finished.
     Exited(ExitStatus),
 }
@@ -81,8 +83,15 @@ enum Command {
         cell_width_px: u32,
         cell_height_px: u32,
     },
-    Scroll(isize),
+    Scroll {
+        lines: isize,
+        mods: Modifiers,
+        px_x: u32,
+        px_y: u32,
+    },
     ScrollToBottom,
+    Mouse(MouseInput),
+    CopySelection,
 }
 
 enum Msg {
@@ -186,9 +195,24 @@ impl Session {
         });
     }
 
-    /// Scroll the viewport by `delta` rows; negative is towards history.
-    pub fn scroll(&self, delta: isize) {
-        self.send(Command::Scroll(delta));
+    /// Wheel movement of `lines` rows; negative is towards history. Goes to
+    /// the application when it tracks the mouse or runs full screen.
+    pub fn scroll(&self, lines: isize, mods: Modifiers, px_x: u32, px_y: u32) {
+        self.send(Command::Scroll {
+            lines,
+            mods,
+            px_x,
+            px_y,
+        });
+    }
+
+    pub fn mouse(&self, input: MouseInput) {
+        self.send(Command::Mouse(input));
+    }
+
+    /// Ask for the selected text; it arrives as [`Event::SelectionText`].
+    pub fn copy_selection(&self) {
+        self.send(Command::CopySelection);
     }
 
     pub fn scroll_to_bottom(&self) {
@@ -255,6 +279,7 @@ fn run(
     let mut last_frame = Instant::now() - FRAME_INTERVAL;
     let mut dirty = true;
     let mut closed = false;
+    let mut replies: Vec<Event> = Vec::new();
 
     loop {
         // Block for the first message, then drain whatever else is queued so
@@ -279,7 +304,7 @@ fn run(
                     closed = true;
                 }
                 Msg::Command(cmd) => {
-                    if handle_command(&mut term, &mut pty, cmd) {
+                    if handle_command(&mut term, &mut pty, cmd, &mut replies) {
                         dirty = true;
                     }
                 }
@@ -312,6 +337,9 @@ fn run(
         if let Some(text) = fx.clipboard_write {
             emit(Event::ClipboardWrite(text));
         }
+        for reply in replies.drain(..) {
+            emit(reply);
+        }
 
         if closed {
             break;
@@ -332,12 +360,18 @@ fn run(
 }
 
 /// Apply a command. Returns whether the viewport may have changed.
-fn handle_command(term: &mut Terminal, pty: &mut Pty, cmd: Command) -> bool {
+fn handle_command(
+    term: &mut Terminal,
+    pty: &mut Pty,
+    cmd: Command,
+    replies: &mut Vec<Event>,
+) -> bool {
     match cmd {
         Command::Key(input) => {
             if let Ok(bytes) = term.encode_key(&input)
                 && !bytes.is_empty()
             {
+                term.clear_selection();
                 term.scroll_to_bottom();
                 let _ = pty.write_all(&bytes);
                 return true;
@@ -346,6 +380,7 @@ fn handle_command(term: &mut Terminal, pty: &mut Pty, cmd: Command) -> bool {
         }
         Command::Paste(text) => {
             if let Ok(bytes) = term.encode_paste(&text) {
+                term.clear_selection();
                 term.scroll_to_bottom();
                 let _ = pty.write_all(&bytes);
                 return true;
@@ -377,13 +412,67 @@ fn handle_command(term: &mut Terminal, pty: &mut Pty, cmd: Command) -> bool {
             });
             true
         }
-        Command::Scroll(delta) => {
-            term.scroll(delta);
+        Command::Scroll {
+            lines,
+            mods,
+            px_x,
+            px_y,
+        } => {
+            if lines == 0 {
+                return false;
+            }
+            let up = lines < 0;
+            if term.mouse_tracking() && !mods.shift {
+                for _ in 0..lines.unsigned_abs() {
+                    if let Ok(bytes) = term.encode_wheel(up, mods, px_x, px_y) {
+                        let _ = pty.write_all(&bytes);
+                    }
+                }
+                return false;
+            }
+            if term.alt_scroll() {
+                let key = KeyInput {
+                    action: crate::input::KeyAction::Press,
+                    key: if up {
+                        KeyCode::ArrowUp
+                    } else {
+                        KeyCode::ArrowDown
+                    },
+                    mods: Modifiers::default(),
+                    text: None,
+                };
+                for _ in 0..lines.unsigned_abs() {
+                    if let Ok(bytes) = term.encode_key(&key) {
+                        let _ = pty.write_all(&bytes);
+                    }
+                }
+                return false;
+            }
+            term.scroll(lines);
             true
         }
         Command::ScrollToBottom => {
             term.scroll_to_bottom();
             true
+        }
+        Command::Mouse(input) => {
+            if term.mouse_tracking() && !input.mods.shift {
+                if let Ok(bytes) = term.encode_mouse(&input)
+                    && !bytes.is_empty()
+                {
+                    let _ = pty.write_all(&bytes);
+                }
+                return false;
+            }
+            if input.button != crate::input::MouseButton::Left {
+                return false;
+            }
+            let _ = term.select(&input);
+            true
+        }
+        Command::CopySelection => {
+            replies.push(Event::SelectionText(term.selection_text().unwrap_or(None)));
+            false
         }
     }
 }
@@ -495,6 +584,7 @@ mod tests {
         assert_eq!(p.session.frame().title, "hello-title");
 
         p.session.resize(Size { cols: 50, rows: 8 }, 0, 0);
+        p.session.scroll(-1, Modifiers::default(), 0, 0);
         p.session.paste("\n".into());
         let frame = p.wait_for_text("8 50");
         assert_eq!(frame.size, Size { cols: 50, rows: 8 });

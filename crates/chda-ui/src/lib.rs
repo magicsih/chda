@@ -9,12 +9,13 @@ use gpui::{
 };
 
 pub use settings::Settings;
-use terminal_view::{Paste, Quit, TerminalView};
+use terminal_view::{Copy, Paste, Quit, TerminalView};
 
 /// Start the application and open the main window.
 pub fn run(settings: Settings) {
     gpui_platform::application().run(|cx: &mut App| {
         cx.bind_keys([
+            KeyBinding::new("cmd-c", Copy, Some("Terminal")),
             KeyBinding::new("cmd-v", Paste, Some("Terminal")),
             KeyBinding::new("cmd-q", Quit, None),
         ]);

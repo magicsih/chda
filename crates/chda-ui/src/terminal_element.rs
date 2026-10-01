@@ -9,7 +9,7 @@ use gpui::{
     px, relative, size,
 };
 
-use crate::terminal_view::TerminalView;
+use crate::terminal_view::{GridGeometry, TerminalView};
 
 /// Cell dimensions for the current font.
 #[derive(Clone, Copy, Debug)]
@@ -132,10 +132,16 @@ impl Element for TerminalElement {
             rows: rows.max(2),
         };
         self.view.update(cx, |view, _| {
-            view.set_grid(grid, metrics.cell_width, metrics.line_height)
+            view.set_grid(grid, metrics.cell_width, metrics.line_height);
+            view.geometry = Some(GridGeometry {
+                origin: bounds.origin,
+                cell_width: metrics.cell_width,
+                line_height: metrics.line_height,
+                size: grid,
+            });
         });
 
-        let (frame, marked_text, selection) = {
+        let (frame, marked_text, selection, blink_on) = {
             let view = self.view.read(cx);
             (
                 view.frame(),
@@ -144,6 +150,7 @@ impl Element for TerminalElement {
                     view.settings.selection_background.map(hsla),
                     view.settings.selection_foreground.map(hsla),
                 ),
+                view.blink_on,
             )
         };
         let focused = self.focus.is_focused(window);
@@ -165,6 +172,9 @@ impl Element for TerminalElement {
             &mut layout,
             window,
         );
+        if focused && !blink_on {
+            layout.cursor = None;
+        }
 
         if let (Some(text), Some(cursor)) = (marked_text, &layout.cursor) {
             let run = TextRun {
