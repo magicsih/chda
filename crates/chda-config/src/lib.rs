@@ -64,6 +64,8 @@ pub struct GhosttyConfig {
     pub foreground: Option<Color>,
     pub cursor_color: Option<Color>,
     pub cursor_style: Option<CursorStyle>,
+    /// `cursor-style-blink`; unset lets the terminal decide.
+    pub cursor_blink: Option<bool>,
     pub selection_background: Option<Color>,
     pub selection_foreground: Option<Color>,
     /// `palette = N=#rrggbb` entries, in file order.
@@ -95,6 +97,13 @@ impl GhosttyConfig {
                     "bar" => Some(CursorStyle::Bar),
                     "underline" => Some(CursorStyle::Underline),
                     "block_hollow" => Some(CursorStyle::BlockHollow),
+                    _ => None,
+                }
+            }
+            "cursor-style-blink" => {
+                self.cursor_blink = match value {
+                    "true" => Some(true),
+                    "false" => Some(false),
                     _ => None,
                 }
             }
@@ -141,6 +150,7 @@ impl GhosttyConfig {
             foreground,
             cursor_color,
             cursor_style,
+            cursor_blink,
             selection_background,
             selection_foreground,
             scrollback_limit,

@@ -19,6 +19,7 @@ struct Metrics {
     font_size: Pixels,
 }
 
+#[derive(Clone)]
 struct TextBatch {
     origin: Point<Pixels>,
     line: ShapedLine,
@@ -30,6 +31,14 @@ struct CursorLayout {
     color: Hsla,
     /// The glyph under a block cursor, drawn in the background color.
     text: Option<ShapedLine>,
+}
+
+/// Shaped text and background rects for one frame, reused while the frame,
+/// metrics and origin stay the same (cursor blinks do not re-shape text).
+pub struct CachedLayout {
+    pub key: (u64, Pixels, Pixels, Point<Pixels>, bool),
+    rects: Vec<(Bounds<Pixels>, Hsla)>,
+    text: Vec<TextBatch>,
 }
 
 pub struct Layout {
@@ -141,7 +150,7 @@ impl Element for TerminalElement {
             });
         });
 
-        let (frame, marked_text, selection, blink_on) = {
+        let (frame, marked_text, selection, blink_on, cached) = {
             let view = self.view.read(cx);
             (
                 view.frame(),
@@ -151,6 +160,7 @@ impl Element for TerminalElement {
                     view.settings.selection_foreground.map(hsla),
                 ),
                 view.blink_on,
+                view.layout_cache.clone(),
             )
         };
         let focused = self.focus.is_focused(window);
@@ -163,15 +173,39 @@ impl Element for TerminalElement {
             marked: None,
             metrics,
         };
-        layout_frame(
-            &frame,
-            &font,
+        let key = (
+            frame.generation,
+            metrics.cell_width,
+            metrics.line_height,
             bounds.origin,
             focused,
-            selection,
-            &mut layout,
-            window,
         );
+        match cached.filter(|c| c.key == key) {
+            Some(c) => {
+                layout.rects = c.rects.clone();
+                layout.text = c.text.clone();
+                layout.cursor =
+                    cursor_layout(&frame, &font, bounds.origin, focused, &layout, window);
+            }
+            None => {
+                layout_frame(
+                    &frame,
+                    &font,
+                    bounds.origin,
+                    focused,
+                    selection,
+                    &mut layout,
+                    window,
+                );
+                let cache = std::rc::Rc::new(CachedLayout {
+                    key,
+                    rects: layout.rects.clone(),
+                    text: layout.text.clone(),
+                });
+                self.view
+                    .update(cx, |view, _| view.layout_cache = Some(cache));
+            }
+        }
         if focused && !blink_on {
             layout.cursor = None;
         }
@@ -455,6 +489,25 @@ fn layout_frame(
         flush(&mut batch, layout);
     }
 
+    layout.cursor = cursor_layout(frame, font, origin, focused, layout, window);
+}
+
+fn cursor_layout(
+    frame: &Frame,
+    font: &Font,
+    origin: Point<Pixels>,
+    focused: bool,
+    layout: &Layout,
+    window: &Window,
+) -> Option<CursorLayout> {
+    let m = layout.metrics;
+    let text_system = window.text_system();
+    let cell_origin = |x: u16, y: u16| {
+        point(
+            origin.x + m.cell_width * f32::from(x),
+            origin.y + m.line_height * f32::from(y),
+        )
+    };
     if let Some(cursor) = frame.cursor {
         let x = cursor.x.saturating_sub(u16::from(cursor.at_wide_tail));
         let cell = frame.cell(x, cursor.y);
@@ -486,13 +539,14 @@ fn layout_frame(
             }
             _ => None,
         };
-        layout.cursor = Some(CursorLayout {
+        return Some(CursorLayout {
             bounds,
             shape,
             color,
             text,
         });
     }
+    None
 }
 
 fn rect(origin: Point<Pixels>, cells: u16, m: Metrics) -> Bounds<Pixels> {

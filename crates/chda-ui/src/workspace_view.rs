@@ -67,10 +67,11 @@ actions!(
 
 /// Fraction of the tab a keyboard resize moves the divider by.
 const RESIZE_STEP: f32 = 0.05;
-/// How often git badges are refreshed while the sidebar is visible.
-const STATUS_REFRESH: Duration = Duration::from_secs(5);
-/// How often session transcripts are re-indexed.
-const SESSION_REFRESH: Duration = Duration::from_secs(30);
+/// Safety-net refresh while the window is active; the real triggers are
+/// shell prompts, `.git` changes and agent events.
+const STATUS_REFRESH: Duration = Duration::from_secs(60);
+/// How often session transcripts are re-indexed while the window is active.
+const SESSION_REFRESH: Duration = Duration::from_secs(120);
 
 /// A popup menu anchored at a window position.
 struct ContextMenu {
@@ -519,6 +520,13 @@ impl WorkspaceView {
                 self.ws.focus_pane(pane);
                 self.context_menu = None;
                 self.reviewed_focused(cx);
+            }
+            TerminalEvent::Prompt => {
+                if self.sidebar_visible
+                    && let Some(cwd) = self.ws.pane(pane).and_then(|i| i.cwd.clone())
+                {
+                    self.refresh_repo_of(&cwd, cx);
+                }
             }
         }
         self.sync_title(window);

@@ -123,14 +123,13 @@ fn user_text(message: &Value) -> Option<String> {
 /// Parse a Claude Code transcript. The format is internal to Claude Code;
 /// this reads only `type == "user"` lines and tolerates anything else.
 pub fn parse_transcript(file: &Path) -> Option<AgentSession> {
-    let text = fs::read_to_string(file).ok()?;
     let mut id = None;
     let mut cwd = None;
     let mut started_at = None;
     let mut first = None;
     let mut count = 0;
-    for line in text.lines() {
-        let Ok(v) = serde_json::from_str::<Value>(line) else {
+    for line in crate::session::matching_lines(file, &["\"type\":\"user\""]).ok()? {
+        let Ok(v) = serde_json::from_str::<Value>(&line) else {
             continue;
         };
         if v.get("type").and_then(Value::as_str) != Some("user")

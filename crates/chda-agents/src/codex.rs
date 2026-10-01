@@ -121,14 +121,13 @@ fn user_message_text(item: &Value) -> Option<String> {
 /// Parse a Codex rollout: `session_meta` for id and cwd, then
 /// `event_msg`/`item_completed` with a `UserMessage` item per prompt.
 pub fn parse_rollout(file: &Path) -> Option<AgentSession> {
-    let text = fs::read_to_string(file).ok()?;
     let mut id = None;
     let mut cwd = None;
     let mut started_at = None;
     let mut first = None;
     let mut count = 0;
-    for line in text.lines() {
-        let Ok(v) = serde_json::from_str::<Value>(line) else {
+    for line in crate::session::matching_lines(file, &["session_meta", "UserMessage"]).ok()? {
+        let Ok(v) = serde_json::from_str::<Value>(&line) else {
             continue;
         };
         let payload = v.get("payload");

@@ -844,6 +844,7 @@ dependencies = [
 name = "chda-agents"
 version = "0.0.1"
 dependencies = [
+ "memchr",
  "serde",
  "serde_json",
 ]

@@ -55,6 +55,29 @@ impl SessionCache {
     }
 }
 
+/// Iterate the lines of a transcript that contain any of `needles`, without
+/// reading the whole file into memory. Lines that fail to decode are skipped.
+pub(crate) fn matching_lines(
+    file: &Path,
+    needles: &'static [&'static str],
+) -> std::io::Result<impl Iterator<Item = String>> {
+    use std::io::BufRead;
+    let reader = std::io::BufReader::with_capacity(256 * 1024, std::fs::File::open(file)?);
+    let finders: Vec<memchr::memmem::Finder<'static>> = needles
+        .iter()
+        .map(|n| memchr::memmem::Finder::new(n.as_bytes()))
+        .collect();
+    Ok(reader
+        .split(b'\n')
+        .filter_map(Result::ok)
+        .filter_map(move |line| {
+            if !finders.iter().any(|f| f.find(&line).is_some()) {
+                return None;
+            }
+            String::from_utf8(line).ok()
+        }))
+}
+
 /// All `.jsonl` files under `root`, recursively.
 pub(crate) fn jsonl_files(root: &Path) -> Vec<PathBuf> {
     let mut out = Vec::new();

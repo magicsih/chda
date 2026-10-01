@@ -66,6 +66,7 @@ impl Settings {
                     CursorStyle::Underline => CursorShape::Underline,
                     CursorStyle::BlockHollow => CursorShape::BlockHollow,
                 }),
+                cursor_blink: c.cursor_blink,
             },
             selection_background: c.selection_background.map(rgb),
             selection_foreground: c.selection_foreground.map(rgb),

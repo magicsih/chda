@@ -42,6 +42,8 @@ pub enum Event {
     SelectionText(Option<String>),
     /// Reply to [`Session::query_cwd`]: the foreground process's directory.
     Cwd(Option<std::path::PathBuf>),
+    /// A shell prompt appeared, so the previous command finished.
+    PromptShown,
     /// The child exited; the session is finished.
     Exited(ExitStatus),
 }
@@ -366,6 +368,9 @@ fn run(
         }
         for reply in replies.drain(..) {
             emit(reply);
+        }
+        if term.take_effects().prompt_shown {
+            emit(Event::PromptShown);
         }
 
         if closed {

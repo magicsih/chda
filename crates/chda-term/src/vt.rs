@@ -53,6 +53,8 @@ pub struct Effects {
     pub pwd_changed: bool,
     /// Text an application asked to put on the clipboard (OSC 52).
     pub clipboard_write: Option<String>,
+    /// The cursor arrived on a shell prompt (OSC 133 A): a command ended.
+    pub prompt_shown: bool,
 }
 
 #[derive(Default)]
@@ -62,6 +64,7 @@ struct Hooks {
     title_changed: StdCell<bool>,
     pwd_changed: StdCell<bool>,
     clipboard_write: RefCell<Option<String>>,
+    prompt_shown: StdCell<bool>,
 }
 
 /// A terminal: VT parser plus screen state, driven from a single thread.
@@ -77,6 +80,8 @@ pub struct Terminal {
     cell_px: (u32, u32),
     hooks: Rc<Hooks>,
     generation: u64,
+    /// Absolute row of the prompt the cursor last sat on.
+    last_prompt_row: Option<u64>,
 }
 
 impl Terminal {
@@ -128,6 +133,7 @@ impl Terminal {
             cell_px: (0, 0),
             hooks,
             generation: 0,
+            last_prompt_row: None,
         })
     }
 
@@ -144,6 +150,7 @@ impl Terminal {
             }
             vt.set_default_color_palette(Some(palette))?;
         }
+        vt.set_default_cursor_blink(colors.cursor_blink)?;
         vt.set_default_cursor_style(colors.cursor_shape.map(|s| match s {
             CursorShape::Bar => VtCursorStyle::Bar,
             CursorShape::Block => VtCursorStyle::Block,
@@ -167,6 +174,7 @@ impl Terminal {
             title_changed: h.title_changed.replace(false),
             pwd_changed: h.pwd_changed.replace(false),
             clipboard_write: h.clipboard_write.borrow_mut().take(),
+            prompt_shown: h.prompt_shown.replace(false),
         }
     }
 
@@ -572,6 +580,19 @@ impl Terminal {
             }
         }
         snapshot.set_dirty(Dirty::Clean)?;
+        // A prompt on a row we have not seen a prompt on before means the
+        // previous command finished, even if no frame caught the output.
+        let prompt_row = frame.cursor.and_then(|c| {
+            let row = frame.rows.get(usize::from(c.y))?;
+            (row.semantic_prompt == SemanticPrompt::Prompt)
+                .then_some(frame.scrollbar.offset + u64::from(c.y))
+        });
+        if let Some(row) = prompt_row
+            && self.last_prompt_row != Some(row)
+        {
+            self.hooks.prompt_shown.set(true);
+            self.last_prompt_row = Some(row);
+        }
         Ok(frame)
     }
 }
@@ -901,6 +922,7 @@ mod tests {
             cursor: None,
             palette: vec![(1, red)],
             cursor_shape: Some(CursorShape::Bar),
+            cursor_blink: Some(false),
         })
         .unwrap();
         term.feed(b"\x1b[31mx");
@@ -909,6 +931,7 @@ mod tests {
         assert_eq!(frame.foreground, Rgb { r: 9, g: 9, b: 9 });
         assert_eq!(frame.cell(0, 0).unwrap().fg, red);
         assert_eq!(frame.cursor.unwrap().shape, CursorShape::Bar);
+        assert!(!frame.cursor.unwrap().blinking);
     }
 
     #[test]
@@ -927,6 +950,17 @@ mod tests {
         assert!(term.jump_to_prompt(1));
         assert_eq!(term.frame().unwrap().row_text(0), "$ cmd4");
         assert!(!term.jump_to_prompt(-10));
+        // The prompt mark surfaced once per prompt arrival.
+        let mut t2 = Terminal::new(Size { cols: 20, rows: 5 }, 100).unwrap();
+        t2.feed(b"\x1b]133;A\x07$ ");
+        t2.frame().unwrap();
+        assert!(t2.take_effects().prompt_shown);
+        t2.feed(b"x");
+        t2.frame().unwrap();
+        assert!(!t2.take_effects().prompt_shown);
+        t2.feed(b"\r\n\x1b]133;C\x07out\r\n\x1b]133;A\x07$ ");
+        t2.frame().unwrap();
+        assert!(t2.take_effects().prompt_shown);
     }
 
     #[test]

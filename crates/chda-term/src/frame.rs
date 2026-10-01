@@ -17,6 +17,8 @@ pub struct ColorConfig {
     /// Palette overrides by index.
     pub palette: Vec<(u8, Rgb)>,
     pub cursor_shape: Option<CursorShape>,
+    /// Whether the cursor blinks unless the application says otherwise.
+    pub cursor_blink: Option<bool>,
 }
 
 /// Terminal size in cells.

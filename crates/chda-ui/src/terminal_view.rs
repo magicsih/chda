@@ -38,6 +38,8 @@ pub enum TerminalEvent {
     Bell,
     /// The user clicked into this pane.
     Focused,
+    /// A command finished and the shell shows its prompt again.
+    Prompt,
 }
 
 const CWD_POLL: Duration = Duration::from_secs(1);
@@ -67,10 +69,15 @@ pub struct TerminalView {
     /// Cursor cell bounds from the last layout, for the IME candidate window.
     pub cursor_bounds: Option<Bounds<Pixels>>,
     pub geometry: Option<GridGeometry>,
+    /// Shaped text reused across cursor blinks.
+    pub layout_cache: Option<std::rc::Rc<crate::terminal_element::CachedLayout>>,
     /// Blink phase; the cursor is drawn when true.
     pub blink_on: bool,
     /// Bumped on input so the blink restarts in the visible phase.
     blink_epoch: u64,
+    /// Cached so the blink timer never needs the window.
+    focused: bool,
+    window_active: bool,
     /// Once the shell reports OSC 7 the process fallback is not needed.
     osc7_seen: bool,
     cwd: Option<PathBuf>,
@@ -107,14 +114,22 @@ impl TerminalView {
         let frame = session.frame();
 
         Self::drive(wake_rx, window, cx);
-        Self::blink(window, cx);
+        Self::blink(cx);
         Self::poll_cwd(window, cx);
 
         let focus_handle = cx.focus_handle();
-        cx.on_focus(&focus_handle, window, |this, _, _| this.session.focus(true))
-            .detach();
+        cx.on_focus(&focus_handle, window, |this, _, _| {
+            this.focused = true;
+            this.session.focus(true)
+        })
+        .detach();
         cx.on_blur(&focus_handle, window, |this, _, _| {
+            this.focused = false;
             this.session.focus(false)
+        })
+        .detach();
+        cx.observe_window_activation(window, |this, window, _| {
+            this.window_active = window.is_window_active();
         })
         .detach();
 
@@ -129,8 +144,11 @@ impl TerminalView {
             marked_text: None,
             cursor_bounds: None,
             geometry: None,
+            layout_cache: None,
             blink_on: true,
             blink_epoch: 0,
+            focused: false,
+            window_active: window.is_window_active(),
             osc7_seen: false,
             cwd,
         }
@@ -164,17 +182,25 @@ impl TerminalView {
     }
 
     /// Toggle the cursor phase while the terminal asks for a blinking cursor.
-    fn blink(window: &mut Window, cx: &mut Context<Self>) {
-        cx.spawn_in(window, async move |this, cx| {
+    /// Runs without window access: an `update_in` would redraw the window
+    /// every tick even when nothing changed.
+    fn blink(cx: &mut Context<Self>) {
+        cx.spawn(async move |this, cx| {
             let mut epoch = 0;
             loop {
                 cx.background_executor().timer(BLINK_INTERVAL).await;
                 let alive = this.update(cx, |view, cx| {
+                    let should_blink = view.window_active
+                        && view.focused
+                        && view.frame.cursor.is_some_and(|c| c.blinking);
                     if view.blink_epoch != epoch {
                         // Input happened: stay visible for a full interval.
                         epoch = view.blink_epoch;
-                        view.blink_on = true;
-                    } else if view.frame.cursor.is_some_and(|c| c.blinking) {
+                        if !view.blink_on {
+                            view.blink_on = true;
+                            cx.notify();
+                        }
+                    } else if should_blink {
                         view.blink_on = !view.blink_on;
                         cx.notify();
                     } else if !view.blink_on {
@@ -227,6 +253,7 @@ impl TerminalView {
                 Event::Cwd(Some(path)) => self.set_cwd(path, cx),
                 Event::Cwd(None) => {}
                 Event::Bell => cx.emit(TerminalEvent::Bell),
+                Event::PromptShown => cx.emit(TerminalEvent::Prompt),
                 Event::ClipboardWrite(text) | Event::SelectionText(Some(text)) => {
                     cx.write_to_clipboard(ClipboardItem::new_string(text))
                 }
