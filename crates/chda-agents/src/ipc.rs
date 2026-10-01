@@ -66,8 +66,8 @@ mod unix {
 pub use unix::{send, serve};
 
 #[cfg(not(unix))]
-pub fn send(_: &Path, _: &HookEvent) -> io::Result<()> {
-    Err(io::Error::other(
+pub fn send(_: &Path, _: &crate::HookEvent) -> std::io::Result<()> {
+    Err(std::io::Error::other(
         "hook IPC is not implemented on this platform",
     ))
 }
@@ -75,10 +75,10 @@ pub fn send(_: &Path, _: &HookEvent) -> io::Result<()> {
 #[cfg(not(unix))]
 pub fn serve(
     _: &Path,
-    _: std::sync::mpsc::Sender<HookEvent>,
+    _: std::sync::mpsc::Sender<crate::HookEvent>,
     _: impl Fn() + Send + 'static,
-) -> io::Result<std::thread::JoinHandle<()>> {
-    Err(io::Error::other(
+) -> std::io::Result<std::thread::JoinHandle<()>> {
+    Err(std::io::Error::other(
         "hook IPC is not implemented on this platform",
     ))
 }
