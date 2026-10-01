@@ -38,4 +38,22 @@ streams, and sends `Event`s (frame, title, pwd, bell, clipboard, exit) over a
 channel plus a wake callback. The UI never touches the VT state; it reads the
 latest frame when it paints.
 
+## Workspace model
+
+`chda-core` holds the window model: tabs, each with a binary split tree of
+pane ids, the focused pane, and per-pane info (title, cwd, bell). It does
+geometry (layout in the unit square, directional focus, resize, zoom) but
+knows nothing about views. `chda-ui`'s `WorkspaceView` maps pane ids to
+`TerminalView` entities, renders the tab bar and split tree, and turns
+terminal events (exit, title, cwd, bell, focus) into model updates.
+
+## Shell integration
+
+`chda-term` ships its own zsh scripts (`shell-integration/zsh`) that emit
+OSC 133 prompt marks, OSC 7 working-directory reports and an OSC 2 title.
+They are written to the per-user data directory on first use and loaded by
+pointing `ZDOTDIR` at them, which then restores the user's own `ZDOTDIR`.
+Shells without integration fall back to asking the OS for the foreground
+process's directory (`chda-pty`, macOS only so far).
+
 Decisions that are hard to reverse are recorded under `docs/decisions/`.

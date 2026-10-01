@@ -1,7 +1,7 @@
 //! UI settings derived from the Ghostty config subset.
 
 use chda_config::{Color, CursorStyle, GhosttyConfig, Padding};
-use chda_term::{ColorConfig, CursorShape, DEFAULT_SCROLLBACK, Rgb};
+use chda_term::{ColorConfig, CursorShape, DEFAULT_SCROLLBACK, Rgb, ShellIntegration};
 
 use crate::platform;
 use gpui::{Font, FontFeatures, FontStyle, FontWeight, Pixels, px};
@@ -16,6 +16,7 @@ pub struct Settings {
     pub selection_foreground: Option<Rgb>,
     /// Scrollback limit in bytes.
     pub scrollback: usize,
+    pub shell_integration: ShellIntegration,
 }
 
 impl Default for Settings {
@@ -72,6 +73,10 @@ impl Settings {
                 .scrollback_limit
                 .map(|b| usize::try_from(b).unwrap_or(usize::MAX))
                 .unwrap_or(DEFAULT_SCROLLBACK),
+            shell_integration: match c.shell_integration.as_deref() {
+                Some("none") => ShellIntegration::None,
+                _ => ShellIntegration::Detect,
+            },
         }
     }
 

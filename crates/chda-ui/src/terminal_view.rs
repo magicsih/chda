@@ -1,6 +1,7 @@
 //! A view that owns one terminal session and forwards input to it.
 
 use std::ops::Range;
+use std::path::PathBuf;
 use std::sync::Arc;
 use std::sync::mpsc;
 
@@ -8,21 +9,38 @@ use std::time::Duration;
 
 use chda_term::{
     Event, Frame, KeyAction, KeyCode, KeyInput, Modifiers, MouseAction, MouseButton as TermButton,
-    MouseInput, Session, SessionOptions, Size,
+    MouseInput, Session, SessionOptions, Size, default_data_dir, env_for, login_shell,
+    parse_pwd_report,
 };
 use futures::StreamExt;
 use futures::channel::mpsc::{UnboundedReceiver, unbounded};
 use gpui::{
-    App, Bounds, ClipboardItem, Context, EntityInputHandler, FocusHandle, Focusable, KeyDownEvent,
-    Keystroke, Modifiers as GpuiModifiers, MouseButton, MouseDownEvent, MouseMoveEvent,
-    MouseUpEvent, Pixels, Point, Render, ScrollWheelEvent, TouchPhase, UTF16Selection, Window,
-    actions, div, prelude::*, px,
+    App, Bounds, ClipboardItem, Context, EntityInputHandler, EventEmitter, FocusHandle, Focusable,
+    KeyDownEvent, Keystroke, Modifiers as GpuiModifiers, MouseButton, MouseDownEvent,
+    MouseMoveEvent, MouseUpEvent, Pixels, Point, Render, ScrollWheelEvent, TouchPhase,
+    UTF16Selection, Window, actions, div, prelude::*, px,
 };
 
 use crate::settings::Settings;
 use crate::terminal_element::TerminalElement;
 
-actions!(terminal, [Copy, Paste, Quit]);
+actions!(terminal, [Copy, Paste]);
+
+/// What a terminal tells its workspace.
+#[derive(Clone, Debug, PartialEq)]
+pub enum TerminalEvent {
+    /// The shell exited; the pane should go away.
+    Exited,
+    /// OSC 0/2 title; empty means cleared.
+    Title(String),
+    /// Working directory, from OSC 7 or the process fallback.
+    Cwd(PathBuf),
+    Bell,
+    /// The user clicked into this pane.
+    Focused,
+}
+
+const CWD_POLL: Duration = Duration::from_secs(1);
 
 /// Where the cell grid sits in the window, from the last layout.
 #[derive(Clone, Copy, Debug)]
@@ -53,28 +71,42 @@ pub struct TerminalView {
     pub blink_on: bool,
     /// Bumped on input so the blink restarts in the visible phase.
     blink_epoch: u64,
+    /// Once the shell reports OSC 7 the process fallback is not needed.
+    osc7_seen: bool,
+    cwd: Option<PathBuf>,
 }
 
+impl EventEmitter<TerminalEvent> for TerminalView {}
+
 impl TerminalView {
-    pub fn new(settings: Settings, window: &mut Window, cx: &mut Context<Self>) -> Self {
+    pub fn new(
+        settings: Settings,
+        cwd: Option<PathBuf>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> Self {
         let (events_tx, events) = mpsc::channel();
         let (wake_tx, wake_rx) = unbounded::<()>();
-        let session = Session::spawn(
-            SessionOptions {
-                colors: settings.colors.clone(),
-                scrollback: settings.scrollback,
-                ..Default::default()
-            },
-            events_tx,
-            move || {
-                let _ = wake_tx.unbounded_send(());
-            },
-        )
+        let mut options = SessionOptions {
+            colors: settings.colors.clone(),
+            scrollback: settings.scrollback,
+            cwd: cwd.clone(),
+            ..Default::default()
+        };
+        if let (Some(shell), Some(data_dir)) = (login_shell(), default_data_dir())
+            && let Ok(env) = env_for(settings.shell_integration, &shell, &data_dir)
+        {
+            options.env.extend(env);
+        }
+        let session = Session::spawn(options, events_tx, move || {
+            let _ = wake_tx.unbounded_send(());
+        })
         .expect("failed to start the shell");
         let frame = session.frame();
 
         Self::drive(wake_rx, window, cx);
         Self::blink(window, cx);
+        Self::poll_cwd(window, cx);
 
         let focus_handle = cx.focus_handle();
         cx.on_focus(&focus_handle, window, |this, _, _| this.session.focus(true))
@@ -97,6 +129,35 @@ impl TerminalView {
             geometry: None,
             blink_on: true,
             blink_epoch: 0,
+            osc7_seen: false,
+            cwd,
+        }
+    }
+
+    /// Ask the OS for the shell's directory until the shell starts
+    /// reporting it itself.
+    fn poll_cwd(window: &mut Window, cx: &mut Context<Self>) {
+        cx.spawn_in(window, async move |this, cx| {
+            loop {
+                cx.background_executor().timer(CWD_POLL).await;
+                let keep_going = this.update(cx, |view, _| {
+                    if !view.osc7_seen {
+                        view.session.query_cwd();
+                    }
+                    !view.osc7_seen
+                });
+                if !keep_going.unwrap_or(false) {
+                    break;
+                }
+            }
+        })
+        .detach();
+    }
+
+    fn set_cwd(&mut self, cwd: PathBuf, cx: &mut Context<Self>) {
+        if self.cwd.as_ref() != Some(&cwd) {
+            self.cwd = Some(cwd.clone());
+            cx.emit(TerminalEvent::Cwd(cwd));
         }
     }
 
@@ -147,28 +208,29 @@ impl TerminalView {
         .detach();
     }
 
-    fn drain_events(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        let mut exited = false;
+    fn drain_events(&mut self, _: &mut Window, cx: &mut Context<Self>) {
         while let Ok(event) = self.events.try_recv() {
             match event {
                 Event::Frame => {
                     self.frame = self.session.frame();
                     cx.notify();
                 }
-                Event::TitleChanged(title) => {
-                    let title = if title.is_empty() { "chda" } else { &title };
-                    window.set_window_title(title);
+                Event::TitleChanged(title) => cx.emit(TerminalEvent::Title(title)),
+                Event::PwdChanged(raw) => {
+                    if let Some(path) = parse_pwd_report(&raw) {
+                        self.osc7_seen = true;
+                        self.set_cwd(path, cx);
+                    }
                 }
-                Event::PwdChanged(_) | Event::Bell => {}
+                Event::Cwd(Some(path)) => self.set_cwd(path, cx),
+                Event::Cwd(None) => {}
+                Event::Bell => cx.emit(TerminalEvent::Bell),
                 Event::ClipboardWrite(text) | Event::SelectionText(Some(text)) => {
                     cx.write_to_clipboard(ClipboardItem::new_string(text))
                 }
                 Event::SelectionText(None) => {}
-                Event::Exited(_) => exited = true,
+                Event::Exited(_) => cx.emit(TerminalEvent::Exited),
             }
-        }
-        if exited {
-            cx.quit();
         }
     }
 
@@ -280,7 +342,10 @@ impl TerminalView {
     }
 
     fn mouse_down(&mut self, event: &MouseDownEvent, window: &mut Window, cx: &mut Context<Self>) {
-        self.focus(window, cx);
+        if !self.focus_handle.is_focused(window) {
+            self.focus(window, cx);
+            cx.emit(TerminalEvent::Focused);
+        }
         let click_count = event.click_count.clamp(1, 3) as u8;
         if let Some(input) = self.mouse_input(
             MouseAction::Down { click_count },

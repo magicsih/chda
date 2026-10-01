@@ -40,6 +40,8 @@ pub enum Event {
     ClipboardWrite(String),
     /// Reply to [`Session::copy_selection`]; absent when nothing is selected.
     SelectionText(Option<String>),
+    /// Reply to [`Session::query_cwd`]: the foreground process's directory.
+    Cwd(Option<std::path::PathBuf>),
     /// The child exited; the session is finished.
     Exited(ExitStatus),
 }
@@ -98,6 +100,7 @@ enum Command {
     ScrollToBottom,
     Mouse(MouseInput),
     CopySelection,
+    QueryCwd,
 }
 
 enum Msg {
@@ -225,6 +228,12 @@ impl Session {
     /// Ask for the selected text; it arrives as [`Event::SelectionText`].
     pub fn copy_selection(&self) {
         self.send(Command::CopySelection);
+    }
+
+    /// Ask the OS for the foreground process's working directory; it
+    /// arrives as [`Event::Cwd`]. For shells without OSC 7.
+    pub fn query_cwd(&self) {
+        self.send(Command::QueryCwd);
     }
 
     pub fn scroll_to_bottom(&self) {
@@ -497,6 +506,10 @@ fn handle_command(
             replies.push(Event::SelectionText(term.selection_text().unwrap_or(None)));
             false
         }
+        Command::QueryCwd => {
+            replies.push(Event::Cwd(pty.foreground_cwd()));
+            false
+        }
     }
 }
 
@@ -514,12 +527,18 @@ mod tests {
 
     impl Probe {
         fn spawn(command: &[&str]) -> Self {
+            Self::spawn_with(SessionOptions {
+                command: Some(command.iter().map(|s| s.to_string()).collect()),
+                ..Default::default()
+            })
+        }
+
+        fn spawn_with(opts: SessionOptions) -> Self {
             let (tx, events) = mpsc::channel();
             let session = Session::spawn(
                 SessionOptions {
                     size: Size { cols: 40, rows: 6 },
-                    command: Some(command.iter().map(|s| s.to_string()).collect()),
-                    ..Default::default()
+                    ..opts
                 },
                 tx,
                 || {},
@@ -593,6 +612,53 @@ mod tests {
                 signal: None
             })
         );
+    }
+
+    #[test]
+    fn zsh_integration_reports_cwd_and_prompt_marks() {
+        if !std::path::Path::new("/bin/zsh").exists() {
+            return;
+        }
+        let home = std::env::temp_dir().join(format!("chda-zsh-{}", std::process::id()));
+        std::fs::create_dir_all(&home).unwrap();
+        let mut env = SessionOptions::default().env;
+        env.push(("HOME".into(), home.to_string_lossy().into_owned()));
+        env.extend(
+            crate::env_for(
+                crate::ShellIntegration::Detect,
+                std::path::Path::new("/bin/zsh"),
+                &home,
+            )
+            .unwrap(),
+        );
+        let mut p = Probe::spawn_with(SessionOptions {
+            command: Some(vec!["/bin/zsh".into(), "-i".into()]),
+            cwd: Some(std::path::PathBuf::from("/private/tmp")),
+            env,
+            ..Default::default()
+        });
+        let ev = p.wait_for(|e| matches!(e, Event::PwdChanged(_)));
+        assert_eq!(
+            ev,
+            Event::PwdChanged(format!("file://{}/private/tmp", hostname()))
+        );
+        let frame = p.wait_for_text("%");
+        assert_eq!(frame.rows[0].semantic_prompt, crate::SemanticPrompt::Prompt);
+        p.session.text("exit\n".into());
+        p.wait_for(|e| matches!(e, Event::Exited(_)));
+        std::fs::remove_dir_all(&home).unwrap();
+    }
+
+    fn hostname() -> String {
+        String::from_utf8(
+            std::process::Command::new("hostname")
+                .output()
+                .unwrap()
+                .stdout,
+        )
+        .unwrap()
+        .trim()
+        .to_owned()
     }
 
     #[test]

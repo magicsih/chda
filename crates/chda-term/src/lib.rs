@@ -3,11 +3,15 @@
 
 mod frame;
 mod input;
+mod pwd;
 mod session;
+mod shell_integration;
 mod vt;
 
 pub use chda_pty::ExitStatus;
 pub use frame::*;
 pub use input::*;
+pub use pwd::parse_pwd_report;
 pub use session::{DEFAULT_SCROLLBACK, Event, Session, SessionOptions};
+pub use shell_integration::{ShellIntegration, default_data_dir, env_for, login_shell};
 pub use vt::{Effects, Error, Result, Terminal};

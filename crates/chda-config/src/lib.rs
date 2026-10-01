@@ -67,6 +67,8 @@ pub struct GhosttyConfig {
     pub padding: Padding,
     /// `scrollback-limit` in bytes, as Ghostty defines it.
     pub scrollback_limit: Option<u64>,
+    /// `shell-integration = none` turns prompt and cwd reporting off.
+    pub shell_integration: Option<String>,
 }
 
 impl GhosttyConfig {
@@ -117,6 +119,7 @@ impl GhosttyConfig {
                 }
             }
             "scrollback-limit" => self.scrollback_limit = value.parse().ok(),
+            "shell-integration" => self.shell_integration = Some(value.to_owned()),
             _ => {}
         }
     }
@@ -136,7 +139,8 @@ impl GhosttyConfig {
             cursor_style,
             selection_background,
             selection_foreground,
-            scrollback_limit
+            scrollback_limit,
+            shell_integration
         );
         self.palette.extend(other.palette.iter().copied());
         if other.padding != Padding::default() {

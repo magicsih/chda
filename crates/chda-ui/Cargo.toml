@@ -9,6 +9,7 @@ publish.workspace = true
 
 [dependencies]
 chda-config.workspace = true
+chda-core.workspace = true
 chda-term.workspace = true
 futures.workspace = true
 gpui.workspace = true

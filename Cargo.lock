@@ -839,6 +839,7 @@ version = "0.0.1"
 name = "chda-pty"
 version = "0.0.1"
 dependencies = [
+ "libc",
  "portable-pty",
 ]
 
@@ -855,6 +856,7 @@ name = "chda-ui"
 version = "0.0.1"
 dependencies = [
  "chda-config",
+ "chda-core",
  "chda-term",
  "futures",
  "gpui",

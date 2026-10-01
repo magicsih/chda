@@ -4,7 +4,7 @@
 
 use std::ffi::OsStr;
 use std::io::{self, Read, Write};
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 use portable_pty::{Child, CommandBuilder, MasterPty, PtyPair, native_pty_system};
 
@@ -64,7 +64,9 @@ impl From<portable_pty::ExitStatus> for ExitStatus {
 /// A PTY with a child process attached.
 ///
 /// Reads happen on a reader obtained from [`Pty::reader`], usually on a
-/// dedicated thread. Writes and resizes go through this handle.
+/// dedicated thread. Writes and resizes go through this handle. Keep reading
+/// for as long as the child lives: the tty holds the child's exit until its
+/// output is drained.
 pub struct Pty {
     master: Box<dyn MasterPty + Send>,
     writer: Box<dyn Write + Send>,
@@ -146,6 +148,66 @@ impl Pty {
     pub fn kill(&mut self) -> io::Result<()> {
         self.child.kill()
     }
+
+    /// Working directory of the process in the foreground of this PTY, for
+    /// shells that do not report it through OSC 7. macOS only for now.
+    pub fn foreground_cwd(&self) -> Option<PathBuf> {
+        #[cfg(target_os = "macos")]
+        {
+            let fd = self.master.as_raw_fd()?;
+            let pgrp = unsafe { libc::tcgetpgrp(fd) };
+            if pgrp <= 0 {
+                return None;
+            }
+            macos::process_cwd(pgrp)
+        }
+        #[cfg(not(target_os = "macos"))]
+        {
+            None
+        }
+    }
+}
+
+#[cfg(target_os = "macos")]
+mod macos {
+    use std::ffi::CStr;
+    use std::path::PathBuf;
+
+    // From <libproc.h>: PROC_PIDVNODEPATHINFO fills a proc_vnodepathinfo whose
+    // first member, pvi_cdir, holds the current directory path at this
+    // offset. Sizes checked against the SDK headers with clang.
+    const PROC_PIDVNODEPATHINFO: libc::c_int = 9;
+    const VNODEPATHINFO_SIZE: usize = 2352;
+    const CDIR_PATH_OFFSET: usize = 152;
+
+    unsafe extern "C" {
+        fn proc_pidinfo(
+            pid: libc::c_int,
+            flavor: libc::c_int,
+            arg: u64,
+            buffer: *mut libc::c_void,
+            buffersize: libc::c_int,
+        ) -> libc::c_int;
+    }
+
+    pub fn process_cwd(pid: libc::pid_t) -> Option<PathBuf> {
+        let mut buf = [0u8; VNODEPATHINFO_SIZE];
+        let n = unsafe {
+            proc_pidinfo(
+                pid,
+                PROC_PIDVNODEPATHINFO,
+                0,
+                buf.as_mut_ptr().cast(),
+                VNODEPATHINFO_SIZE as libc::c_int,
+            )
+        };
+        if n as usize != VNODEPATHINFO_SIZE {
+            return None;
+        }
+        let path = CStr::from_bytes_until_nul(&buf[CDIR_PATH_OFFSET..]).ok()?;
+        let path = path.to_str().ok()?;
+        (!path.is_empty()).then(|| PathBuf::from(path))
+    }
 }
 
 #[cfg(all(test, unix))]
@@ -180,6 +242,39 @@ mod tests {
         assert!(text.contains("hello-pty"), "output was {text:?}");
         let status = pty.wait().unwrap();
         assert_eq!(status.code, 3);
+    }
+
+    #[test]
+    #[cfg(target_os = "macos")]
+    fn foreground_cwd_follows_the_child() {
+        let mut pty = Pty::spawn(
+            size(),
+            SpawnOptions {
+                command: Some(&["/bin/sh", "-c", "cd /private/tmp && read x"]),
+                ..Default::default()
+            },
+        )
+        .unwrap();
+        // The tty blocks the child's exit until its output is drained, so a
+        // PTY must always have a reader, even in tests.
+        let mut reader = pty.reader().unwrap();
+        let drain = std::thread::spawn(move || {
+            let mut sink = Vec::new();
+            let _ = reader.read_to_end(&mut sink);
+        });
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+        let mut cwd = None;
+        while std::time::Instant::now() < deadline {
+            cwd = pty.foreground_cwd();
+            if cwd.as_deref() == Some(Path::new("/private/tmp")) {
+                break;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(50));
+        }
+        assert_eq!(cwd.as_deref(), Some(Path::new("/private/tmp")));
+        pty.write_all(b"\n").unwrap();
+        assert!(pty.wait().unwrap().success());
+        drain.join().unwrap();
     }
 
     #[test]
