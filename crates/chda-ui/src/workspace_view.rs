@@ -152,6 +152,8 @@ pub struct WorkspaceView {
     gh_ok: bool,
     /// Last time pull requests were fetched per repository.
     pr_fetched: HashMap<PathBuf, std::time::Instant>,
+    /// Last `origin/<default>` fetch per repository.
+    base_fetched: HashMap<PathBuf, std::time::Instant>,
     /// Message shown briefly at the bottom of the sidebar.
     status_line: Option<String>,
 }
@@ -200,6 +202,7 @@ impl WorkspaceView {
             tab_group: None,
             gh_ok: false,
             pr_fetched: HashMap::new(),
+            base_fetched: HashMap::new(),
             status_line: None,
         };
         let gh = cx.background_spawn(async { chda_core::gh_available() });
@@ -447,9 +450,19 @@ impl WorkspaceView {
             return;
         }
         self.refreshing.insert(repo.clone());
+        // Fetch the default branch at most once a minute so merges made
+        // elsewhere (and squash merges) show up without a manual pull.
+        let now = std::time::Instant::now();
+        let fetch = self
+            .base_fetched
+            .get(&repo)
+            .is_none_or(|t| now.duration_since(*t) > Duration::from_secs(60));
+        if fetch {
+            self.base_fetched.insert(repo.clone(), now);
+        }
         let task = cx.background_spawn({
             let repo = repo.clone();
-            async move { chda_core::worktrees_of(&repo) }
+            async move { chda_core::worktrees_of(&repo, fetch) }
         });
         cx.spawn(async move |this, cx| {
             let result = task.await;
@@ -1072,10 +1085,10 @@ impl WorkspaceView {
                     .find(|r| r.path == repo)
                     .map(|r| r.worktrees.clone())
                     .unwrap_or_default();
-                let stale: Vec<chda_core::WorktreeEntry> =
-                    chda_core::stale_worktrees(&repo, &worktrees)
-                        .map(|v| v.into_iter().cloned().collect())
-                        .unwrap_or_default();
+                let stale: Vec<chda_core::WorktreeEntry> = chda_core::stale_worktrees(&worktrees)
+                    .into_iter()
+                    .cloned()
+                    .collect();
                 if stale.is_empty() {
                     self.status_line = Some("No merged, clean worktrees to remove".into());
                     cx.notify();
@@ -1161,7 +1174,7 @@ impl WorkspaceView {
                             .iter()
                             .map(|b| b.to_string())
                             .collect();
-                        if !entry.merged {
+                        if !entry.is_merged() {
                             lines.insert(0, "Not merged into the default branch.".into());
                         }
                         lines.push("Force delete discards uncommitted changes and deletes the branch anyway.".into());

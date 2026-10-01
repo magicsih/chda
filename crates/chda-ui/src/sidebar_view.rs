@@ -205,7 +205,7 @@ impl SidebarView {
                     .into_any_element(),
             );
         }
-        if wt.safe_to_delete() {
+        if wt.is_merged() && !wt.is_main {
             badges.push(
                 div()
                     .text_color(gpui::rgb(0xa6e3a1))

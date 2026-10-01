@@ -5,6 +5,16 @@ All notable changes to chda. The format follows
 
 ## [Unreleased]
 
+### Fixed
+- The `merged` marker now recognises squash and rebase merges (by patch
+  content), compares against `origin/<default>` after a quiet fetch (at most
+  once a minute per repository), and honours a merged pull request from `gh`.
+  Previously only branches whose commits were ancestors of the local default
+  branch counted, so GitHub squash merges and stale local checkouts showed
+  nothing. (#23)
+- `merged` is shown whenever the branch is merged; the clean/unpushed checks
+  now only decide whether deletion is recommended as safe.
+
 ## [0.1.2] - 2026-10-01
 
 ### Added

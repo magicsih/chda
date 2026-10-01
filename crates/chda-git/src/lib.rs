@@ -6,6 +6,7 @@ mod read;
 
 pub use cli::{
     MergeOutcome, add_worktree, branches_merged_into, current_branch, default_branch,
-    delete_branch, local_branches, merge_into, remove_worktree,
+    delete_branch, fetch_default_branch, local_branches, merge_into, merge_target, patch_merged,
+    remove_worktree, resolve,
 };
 pub use read::{GitStatus, WorktreeInfo, list_worktrees, main_worktree, status};

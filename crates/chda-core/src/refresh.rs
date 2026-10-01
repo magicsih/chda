@@ -1,5 +1,6 @@
 //! Blocking refresh helpers the UI runs on background threads.
 
+use std::collections::HashMap;
 use std::io;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
@@ -19,13 +20,70 @@ fn badges(status: chda_git::GitStatus) -> GitBadges {
     }
 }
 
-/// Worktrees of `repo` with fresh git badges and merged flags.
-pub fn worktrees_of(repo: &Path) -> io::Result<Vec<WorktreeEntry>> {
-    let merged: Vec<String> = chda_git::default_branch(repo)
-        .and_then(|base| chda_git::branches_merged_into(repo, &base))
+/// `git cherry` results keyed by (repo, base id, branch id). Both ids change
+/// whenever the answer could, so entries never go stale; the map stays small
+/// because only current pairs are looked up and old ones are dropped.
+/// (repo, base id, branch id) -> merged by patch content.
+type PatchCache = HashMap<(PathBuf, String, String), bool>;
+
+static PATCH_MERGED: Mutex<Option<PatchCache>> = Mutex::new(None);
+
+/// Branches of `repo` merged into `base` by ancestry or by patch content
+/// (squash and rebase merges).
+fn merged_branches(repo: &Path, base: &str, branches: &[String]) -> Vec<String> {
+    let mut merged = chda_git::branches_merged_into(repo, base).unwrap_or_default();
+    let rest: Vec<&String> = branches.iter().filter(|b| !merged.contains(b)).collect();
+    if rest.is_empty() {
+        return merged;
+    }
+    let refs: Vec<&str> = std::iter::once(base)
+        .chain(rest.iter().map(|b| b.as_str()))
+        .collect();
+    let Ok(ids) = chda_git::resolve(repo, &refs) else {
+        return merged;
+    };
+    let Some(base_id) = ids[0].clone() else {
+        return merged;
+    };
+    let mut cache = PATCH_MERGED.lock().unwrap_or_else(|e| e.into_inner());
+    let old = cache.take().unwrap_or_default();
+    let mut fresh = HashMap::new();
+    for (branch, id) in rest.into_iter().zip(ids.into_iter().skip(1)) {
+        let Some(id) = id else { continue };
+        let key = (repo.to_path_buf(), base_id.clone(), id);
+        let hit = match old.get(&key) {
+            Some(v) => *v,
+            None => chda_git::patch_merged(repo, base, branch).unwrap_or(false),
+        };
+        fresh.insert(key, hit);
+        if hit {
+            merged.push(branch.clone());
+        }
+    }
+    // Keep other repositories' entries.
+    fresh.extend(old.into_iter().filter(|(k, _)| k.0 != repo));
+    *cache = Some(fresh);
+    merged
+}
+
+/// Worktrees of `repo` with fresh git badges and merged flags. With `fetch`,
+/// the default branch is fetched from `origin` first so merges made
+/// elsewhere are seen.
+pub fn worktrees_of(repo: &Path, fetch: bool) -> io::Result<Vec<WorktreeEntry>> {
+    if fetch {
+        let _ = chda_git::fetch_default_branch(repo);
+    }
+    let infos = chda_git::list_worktrees(repo)?;
+    let branches: Vec<String> = infos
+        .iter()
+        .filter(|i| !i.is_main)
+        .filter_map(|i| i.branch.clone())
+        .collect();
+    let merged = chda_git::merge_target(repo)
+        .map(|base| merged_branches(repo, &base, &branches))
         .unwrap_or_default();
     let mut out = Vec::new();
-    for info in chda_git::list_worktrees(repo)? {
+    for info in infos {
         let badges = chda_git::status(&info.path).map(badges).unwrap_or_default();
         let merged = info.branch.as_ref().is_some_and(|b| merged.contains(b));
         out.push(WorktreeEntry {

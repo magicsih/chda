@@ -75,7 +75,8 @@ pub struct WorktreeEntry {
     pub is_main: bool,
     pub badges: GitBadges,
     pub pr: Option<PrInfo>,
-    /// The branch is fully contained in the default branch.
+    /// The branch's commits are in the default branch, by ancestry or by
+    /// patch content (squash or rebase merge).
     pub merged: bool,
     /// Agent status per agent id.
     pub agents: BTreeMap<String, AgentStatus>,
@@ -88,10 +89,20 @@ pub struct WorktreeEntry {
 }
 
 impl WorktreeEntry {
+    /// Merged by git, or the branch's pull request was merged (covers squash
+    /// merges on a machine whose default branch is stale).
+    pub fn is_merged(&self) -> bool {
+        self.merged
+            || self
+                .pr
+                .as_ref()
+                .is_some_and(|pr| pr.state == PrState::Merged)
+    }
+
     /// Merged, clean and not the main worktree: safe to remove.
     pub fn safe_to_delete(&self) -> bool {
         !self.is_main
-            && self.merged
+            && self.is_merged()
             && self.badges.dirty_count() == 0
             && self.badges.ahead.unwrap_or(0) == 0
     }
@@ -370,6 +381,25 @@ pub enum AgentEvent {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn merged_pull_request_counts_as_merged() {
+        let mut w = WorktreeEntry {
+            branch: Some("feat".into()),
+            ..Default::default()
+        };
+        assert!(!w.is_merged());
+        w.pr = Some(PrInfo {
+            number: 7,
+            url: String::new(),
+            state: PrState::Merged,
+            checks: CheckState::None,
+        });
+        assert!(w.is_merged());
+        assert!(w.safe_to_delete());
+        w.badges.ahead = Some(1);
+        assert!(!w.safe_to_delete());
+    }
 
     fn wt(path: &str, branch: &str, is_main: bool) -> WorktreeEntry {
         WorktreeEntry {

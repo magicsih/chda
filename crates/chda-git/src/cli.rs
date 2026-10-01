@@ -140,6 +140,103 @@ pub fn default_branch(repo: &Path) -> io::Result<String> {
     Err(io::Error::other("no main or master branch"))
 }
 
+/// The ref to judge "merged" against: `origin/<default>` when the remote
+/// tracking branch exists (it reflects merges made elsewhere even when the
+/// local branch is stale), else the local default branch.
+pub fn merge_target(repo: &Path) -> io::Result<String> {
+    let base = default_branch(repo)?;
+    let remote = format!("origin/{base}");
+    let exists = run(
+        repo,
+        &[
+            "rev-parse",
+            "--verify",
+            "--quiet",
+            &format!("refs/remotes/{remote}"),
+        ],
+    )?
+    .status
+    .success();
+    Ok(if exists { remote } else { base })
+}
+
+/// Update `refs/remotes/origin/<default>` from the remote, quietly. Errors
+/// (offline, no remote, auth) are returned but callers usually ignore them.
+pub fn fetch_default_branch(repo: &Path) -> io::Result<()> {
+    let base = default_branch(repo)?;
+    check(repo, &["fetch", "--quiet", "--no-tags", "origin", &base])
+}
+
+/// Whether `branch` has been merged into `base` by patch content, which
+/// `branches_merged_into` (ancestry) cannot see:
+/// - rebase merge: every commit of `branch` has an equal patch in `base`;
+/// - squash merge: the whole branch diff, squashed into one commit, has an
+///   equal patch in `base`.
+pub fn patch_merged(repo: &Path, base: &str, branch: &str) -> io::Result<bool> {
+    if cherry_all_applied(repo, base, branch)? {
+        return Ok(true);
+    }
+    let merge_base = output(repo, &["merge-base", base, branch])?;
+    let squashed = output(
+        repo,
+        &[
+            "-c",
+            "user.name=chda",
+            "-c",
+            "user.email=chda@localhost",
+            "commit-tree",
+            &format!("{branch}^{{tree}}"),
+            "-p",
+            &merge_base,
+            "-m",
+            "squashed for merge check",
+        ],
+    )?;
+    cherry_all_applied(repo, base, &squashed)
+}
+
+/// `git cherry`: true when no commit of `head` is missing from `base`.
+fn cherry_all_applied(repo: &Path, base: &str, head: &str) -> io::Result<bool> {
+    Ok(output(repo, &["cherry", base, head])?
+        .lines()
+        .all(|l| !l.starts_with('+')))
+}
+
+/// Trimmed stdout of a git command that must succeed.
+fn output(repo: &Path, args: &[&str]) -> io::Result<String> {
+    let out = run(repo, args)?;
+    if !out.status.success() {
+        return Err(io::Error::other(format!(
+            "git {} failed: {}",
+            args.join(" "),
+            String::from_utf8_lossy(&out.stderr).trim()
+        )));
+    }
+    Ok(String::from_utf8_lossy(&out.stdout).trim().to_owned())
+}
+
+/// Object ids of `refs`, in order; `None` for refs that do not resolve.
+pub fn resolve(repo: &Path, refs: &[&str]) -> io::Result<Vec<Option<String>>> {
+    let mut out = Vec::with_capacity(refs.len());
+    for r in refs {
+        let res = run(
+            repo,
+            &[
+                "rev-parse",
+                "--verify",
+                "--quiet",
+                &format!("{r}^{{commit}}"),
+            ],
+        )?;
+        out.push(
+            res.status
+                .success()
+                .then(|| String::from_utf8_lossy(&res.stdout).trim().to_owned()),
+        );
+    }
+    Ok(out)
+}
+
 /// Local branches whose commits are all contained in `base`.
 pub fn branches_merged_into(repo: &Path, base: &str) -> io::Result<Vec<String>> {
     let out = run(
@@ -288,5 +385,55 @@ mod tests {
         let merged = branches_merged_into(&repo.path, "main").unwrap();
         assert!(merged.contains(&"done".to_string()));
         assert!(!merged.contains(&"ahead".to_string()));
+    }
+
+    #[test]
+    fn squash_merged_branch_counts_as_patch_merged() {
+        let repo = TempRepo::new("squash");
+        let wt = repo.root.join("repo.worktrees").join("feat");
+        add_worktree(&repo.path, "feat", &wt, None).unwrap();
+        repo.commit_file(&wt, "b.txt", "b\n");
+        repo.commit_file(&wt, "c.txt", "c\n");
+        assert!(!patch_merged(&repo.path, "main", "feat").unwrap());
+
+        TempRepo::git(&repo.path, &["merge", "--squash", "feat"]);
+        TempRepo::git(&repo.path, &["commit", "-q", "-m", "feat (squashed)"]);
+        assert!(
+            !branches_merged_into(&repo.path, "main")
+                .unwrap()
+                .contains(&"feat".to_string())
+        );
+        assert!(patch_merged(&repo.path, "main", "feat").unwrap());
+
+        // A later commit on the branch makes it unmerged again.
+        repo.commit_file(&wt, "d.txt", "d\n");
+        assert!(!patch_merged(&repo.path, "main", "feat").unwrap());
+
+        // Rebase merge: the commits land on main one by one with new ids.
+        let wt2 = repo.root.join("repo.worktrees").join("other");
+        add_worktree(&repo.path, "other", &wt2, None).unwrap();
+        repo.commit_file(&wt2, "e.txt", "e\n");
+        repo.commit_file(&wt2, "f.txt", "f\n");
+        TempRepo::git(&repo.path, &["cherry-pick", "main..other"]);
+        assert!(patch_merged(&repo.path, "main", "other").unwrap());
+
+        let ids = resolve(&repo.path, &["main", "feat", "nope"]).unwrap();
+        assert!(ids[0].is_some() && ids[1].is_some() && ids[2].is_none());
+    }
+
+    #[test]
+    fn merge_target_prefers_the_remote_tracking_branch() {
+        let repo = TempRepo::new("target");
+        assert_eq!(merge_target(&repo.path).unwrap(), "main");
+        assert!(fetch_default_branch(&repo.path).is_err());
+
+        let remote = repo.root.join("remote.git");
+        TempRepo::git(&repo.root, &["clone", "-q", "--bare", "repo", "remote.git"]);
+        TempRepo::git(
+            &repo.path,
+            &["remote", "add", "origin", remote.to_str().unwrap()],
+        );
+        fetch_default_branch(&repo.path).unwrap();
+        assert_eq!(merge_target(&repo.path).unwrap(), "origin/main");
     }
 }

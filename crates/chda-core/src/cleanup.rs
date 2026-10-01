@@ -109,18 +109,8 @@ pub fn merge_and_clean(
 
 /// Worktrees whose branch is already merged into the default branch and
 /// that have nothing uncommitted or unpushed: safe to remove in bulk.
-pub fn stale_worktrees<'a>(
-    repo: &Path,
-    worktrees: &'a [WorktreeEntry],
-) -> io::Result<Vec<&'a WorktreeEntry>> {
-    let base = chda_git::default_branch(repo)?;
-    let merged = chda_git::branches_merged_into(repo, &base)?;
-    Ok(worktrees
-        .iter()
-        .filter(|w| !w.is_main)
-        .filter(|w| w.branch.as_ref().is_some_and(|b| merged.contains(b)))
-        .filter(|w| blockers(w).is_empty())
-        .collect())
+pub fn stale_worktrees(worktrees: &[WorktreeEntry]) -> Vec<&WorktreeEntry> {
+    worktrees.iter().filter(|w| w.safe_to_delete()).collect()
 }
 
 /// Remove a stale worktree and its branch without merging.
