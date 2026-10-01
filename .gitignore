@@ -1,0 +1,11 @@
+/target
+**/*.rs.bk
+.DS_Store
+*.log
+
+# Agent-local files (private notes, machine-specific paths)
+CLAUDE.md
+CLAUDE.local.md
+AGENTS.local.md
+.agents/local/
+.claude/settings.local.json
