@@ -13,7 +13,7 @@ use std::time::{Duration, Instant};
 
 use chda_pty::{ExitStatus, Pty, PtySize, SpawnOptions};
 
-use crate::frame::{Frame, Size};
+use crate::frame::{ColorConfig, Frame, Size};
 use crate::input::KeyInput;
 use crate::vt::Terminal;
 
@@ -45,6 +45,7 @@ pub struct SessionOptions {
     pub cell_width_px: u32,
     pub cell_height_px: u32,
     pub scrollback: usize,
+    pub colors: ColorConfig,
     /// Program and arguments. `None` runs the login shell.
     pub command: Option<Vec<String>>,
     pub cwd: Option<std::path::PathBuf>,
@@ -58,6 +59,7 @@ impl Default for SessionOptions {
             cell_width_px: 0,
             cell_height_px: 0,
             scrollback: DEFAULT_SCROLLBACK,
+            colors: ColorConfig::default(),
             command: None,
             cwd: None,
             env: vec![
@@ -244,6 +246,7 @@ fn run(
             return;
         }
     };
+    let _ = term.set_colors(&opts.colors);
     let emit = |event: Event| {
         let _ = events.send(event);
         wake();

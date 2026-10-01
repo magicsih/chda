@@ -815,6 +815,7 @@ dependencies = [
 name = "chda"
 version = "0.0.1"
 dependencies = [
+ "chda-config",
  "chda-ui",
 ]
 
@@ -853,6 +854,7 @@ dependencies = [
 name = "chda-ui"
 version = "0.0.1"
 dependencies = [
+ "chda-config",
  "chda-term",
  "futures",
  "gpui",

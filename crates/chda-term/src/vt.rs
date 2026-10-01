@@ -8,13 +8,15 @@ use libghostty_vt::render::{
     CellIterator, CursorVisualStyle, Dirty, RenderState, RowIterator, Snapshot,
 };
 use libghostty_vt::screen::{CellWide, RowSemanticPrompt, Screen};
-use libghostty_vt::style::{RgbColor, StyleColor, Underline as VtUnderline};
-use libghostty_vt::terminal::{Mode, Options, ScrollViewport, Terminal as VtTerminal};
+use libghostty_vt::style::{Palette, PaletteIndex, RgbColor, StyleColor, Underline as VtUnderline};
+use libghostty_vt::terminal::{
+    CursorStyle as VtCursorStyle, Mode, Options, ScrollViewport, Terminal as VtTerminal,
+};
 use libghostty_vt::{focus, paste};
 
 use crate::frame::{
-    Cell, CellStyle, CellWidth, Cursor, CursorShape, Frame, Rgb, Row, Scrollbar, SemanticPrompt,
-    Size, Underline,
+    Cell, CellStyle, CellWidth, ColorConfig, Cursor, CursorShape, Frame, Rgb, Row, Scrollbar,
+    SemanticPrompt, Size, Underline,
 };
 use crate::input::{KeyAction, KeyCode, KeyInput};
 
@@ -117,6 +119,28 @@ impl Terminal {
             hooks,
             generation: 0,
         })
+    }
+
+    /// Set the default colors and cursor shape (the values a reset returns to).
+    pub fn set_colors(&mut self, colors: &ColorConfig) -> Result<()> {
+        let vt = &mut self.vt;
+        vt.set_default_fg_color(colors.foreground.map(vt_rgb))?;
+        vt.set_default_bg_color(colors.background.map(vt_rgb))?;
+        vt.set_default_cursor_color(colors.cursor.map(vt_rgb))?;
+        if !colors.palette.is_empty() {
+            let mut palette = Palette::default();
+            for &(i, c) in &colors.palette {
+                palette.set(PaletteIndex(i), vt_rgb(c));
+            }
+            vt.set_default_color_palette(Some(palette))?;
+        }
+        vt.set_default_cursor_style(colors.cursor_shape.map(|s| match s {
+            CursorShape::Bar => VtCursorStyle::Bar,
+            CursorShape::Block => VtCursorStyle::Block,
+            CursorShape::Underline => VtCursorStyle::Underline,
+            CursorShape::BlockHollow => VtCursorStyle::BlockHollow,
+        }))?;
+        Ok(())
     }
 
     /// Feed raw bytes from the PTY into the VT parser.
@@ -343,6 +367,14 @@ impl Terminal {
         }
         snapshot.set_dirty(Dirty::Clean)?;
         Ok(frame)
+    }
+}
+
+fn vt_rgb(c: Rgb) -> RgbColor {
+    RgbColor {
+        r: c.r,
+        g: c.g,
+        b: c.b,
     }
 }
 
@@ -578,6 +610,27 @@ mod tests {
         assert!(term.encode_focus(true).is_empty());
         term.feed(b"\x1b[?1004h");
         assert_eq!(term.encode_focus(true), b"\x1b[I");
+    }
+
+    #[test]
+    fn default_colors_and_palette_apply() {
+        let mut term = term();
+        let red = Rgb { r: 255, g: 0, b: 0 };
+        let bg = Rgb { r: 1, g: 2, b: 3 };
+        term.set_colors(&ColorConfig {
+            foreground: Some(Rgb { r: 9, g: 9, b: 9 }),
+            background: Some(bg),
+            cursor: None,
+            palette: vec![(1, red)],
+            cursor_shape: Some(CursorShape::Bar),
+        })
+        .unwrap();
+        term.feed(b"\x1b[31mx");
+        let frame = term.frame().unwrap();
+        assert_eq!(frame.background, bg);
+        assert_eq!(frame.foreground, Rgb { r: 9, g: 9, b: 9 });
+        assert_eq!(frame.cell(0, 0).unwrap().fg, red);
+        assert_eq!(frame.cursor.unwrap().shape, CursorShape::Bar);
     }
 
     #[test]

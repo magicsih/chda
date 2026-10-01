@@ -1,5 +1,6 @@
 //! A view that owns one terminal session and forwards input to it.
 
+use std::ops::Range;
 use std::sync::Arc;
 use std::sync::mpsc;
 
@@ -9,61 +10,45 @@ use chda_term::{
 use futures::StreamExt;
 use futures::channel::mpsc::{UnboundedReceiver, unbounded};
 use gpui::{
-    App, ClipboardItem, Context, FocusHandle, Focusable, Font, FontFeatures, FontStyle, FontWeight,
-    KeyDownEvent, Keystroke, MouseButton, MouseDownEvent, Pixels, Render, ScrollWheelEvent,
-    TouchPhase, Window, actions, div, prelude::*, px,
+    App, Bounds, ClipboardItem, Context, EntityInputHandler, FocusHandle, Focusable, KeyDownEvent,
+    Keystroke, MouseButton, MouseDownEvent, Pixels, Point, Render, ScrollWheelEvent, TouchPhase,
+    UTF16Selection, Window, actions, div, prelude::*, px,
 };
 
+use crate::settings::Settings;
 use crate::terminal_element::TerminalElement;
 
 actions!(terminal, [Paste, Quit]);
-
-/// Font used for the cell grid. Read from the Ghostty config later (M1).
-#[derive(Clone, Debug)]
-pub struct FontConfig {
-    pub family: String,
-    pub size: Pixels,
-}
-
-impl Default for FontConfig {
-    fn default() -> Self {
-        Self {
-            family: "Menlo".into(),
-            size: px(13.0),
-        }
-    }
-}
-
-impl FontConfig {
-    pub fn font(&self) -> Font {
-        Font {
-            family: self.family.clone().into(),
-            features: FontFeatures::disable_ligatures(),
-            fallbacks: None,
-            weight: FontWeight::NORMAL,
-            style: FontStyle::Normal,
-        }
-    }
-}
 
 pub struct TerminalView {
     session: Session,
     events: mpsc::Receiver<Event>,
     frame: Arc<Frame>,
     focus_handle: FocusHandle,
-    pub font: FontConfig,
+    pub settings: Settings,
     /// Grid size last sent to the session.
     grid: Size,
     scroll_px: f32,
+    /// In-progress IME composition shown at the cursor.
+    pub marked_text: Option<String>,
+    /// Cursor cell bounds from the last layout, for the IME candidate window.
+    pub cursor_bounds: Option<Bounds<Pixels>>,
 }
 
 impl TerminalView {
-    pub fn new(window: &mut Window, cx: &mut Context<Self>) -> Self {
+    pub fn new(settings: Settings, window: &mut Window, cx: &mut Context<Self>) -> Self {
         let (events_tx, events) = mpsc::channel();
         let (wake_tx, wake_rx) = unbounded::<()>();
-        let session = Session::spawn(SessionOptions::default(), events_tx, move || {
-            let _ = wake_tx.unbounded_send(());
-        })
+        let session = Session::spawn(
+            SessionOptions {
+                colors: settings.colors.clone(),
+                ..Default::default()
+            },
+            events_tx,
+            move || {
+                let _ = wake_tx.unbounded_send(());
+            },
+        )
         .expect("failed to start the shell");
         let frame = session.frame();
 
@@ -82,9 +67,11 @@ impl TerminalView {
             events,
             frame,
             focus_handle,
-            font: FontConfig::default(),
+            settings,
             grid: Size { cols: 80, rows: 24 },
             scroll_px: 0.0,
+            marked_text: None,
+            cursor_bounds: None,
         }
     }
 
@@ -154,6 +141,11 @@ impl TerminalView {
         if ks.modifiers.platform {
             return;
         }
+        // Plain characters arrive through the input handler (IME path) when
+        // the platform prefers it; sending them here too would double them.
+        if event.prefer_character_input && ks.key_char.is_some() {
+            return;
+        }
         let Some(key) = key_code(ks) else {
             return;
         };
@@ -181,6 +173,15 @@ impl TerminalView {
             text,
         });
         cx.stop_propagation();
+    }
+
+    /// Send committed text (typed characters or a finished IME composition).
+    fn commit_text(&mut self, text: &str, cx: &mut Context<Self>) {
+        self.marked_text = None;
+        if !text.is_empty() {
+            self.session.write(text.as_bytes().to_vec());
+        }
+        cx.notify();
     }
 
     fn paste(&mut self, _: &Paste, _: &mut Window, cx: &mut Context<Self>) {
@@ -250,6 +251,84 @@ fn key_code(ks: &Keystroke) -> Option<KeyCode> {
     })
 }
 
+impl EntityInputHandler for TerminalView {
+    fn text_for_range(
+        &mut self,
+        _: Range<usize>,
+        _: &mut Option<Range<usize>>,
+        _: &mut Window,
+        _: &mut Context<Self>,
+    ) -> Option<String> {
+        None
+    }
+
+    fn selected_text_range(
+        &mut self,
+        _: bool,
+        _: &mut Window,
+        _: &mut Context<Self>,
+    ) -> Option<UTF16Selection> {
+        // An empty selection keeps the IME candidate window anchored at the cursor.
+        Some(UTF16Selection {
+            range: 0..0,
+            reversed: false,
+        })
+    }
+
+    fn marked_text_range(&self, _: &mut Window, _: &mut Context<Self>) -> Option<Range<usize>> {
+        self.marked_text
+            .as_ref()
+            .map(|t| 0..t.encode_utf16().count())
+    }
+
+    fn unmark_text(&mut self, _: &mut Window, cx: &mut Context<Self>) {
+        if self.marked_text.take().is_some() {
+            cx.notify();
+        }
+    }
+
+    fn replace_text_in_range(
+        &mut self,
+        _: Option<Range<usize>>,
+        text: &str,
+        _: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.commit_text(text, cx);
+    }
+
+    fn replace_and_mark_text_in_range(
+        &mut self,
+        _: Option<Range<usize>>,
+        new_text: &str,
+        _: Option<Range<usize>>,
+        _: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.marked_text = (!new_text.is_empty()).then(|| new_text.to_owned());
+        cx.notify();
+    }
+
+    fn bounds_for_range(
+        &mut self,
+        _: Range<usize>,
+        _: Bounds<Pixels>,
+        _: &mut Window,
+        _: &mut Context<Self>,
+    ) -> Option<Bounds<Pixels>> {
+        self.cursor_bounds
+    }
+
+    fn character_index_for_point(
+        &mut self,
+        _: Point<Pixels>,
+        _: &mut Window,
+        _: &mut Context<Self>,
+    ) -> Option<usize> {
+        None
+    }
+}
+
 impl Focusable for TerminalView {
     fn focus_handle(&self, _: &App) -> FocusHandle {
         self.focus_handle.clone()
@@ -258,8 +337,16 @@ impl Focusable for TerminalView {
 
 impl Render for TerminalView {
     fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        let p = self.settings.padding;
         div()
             .size_full()
+            .bg(crate::terminal_element::hsla(
+                self.settings.colors.background.unwrap_or_default(),
+            ))
+            .pl(px(p.left as f32))
+            .pr(px(p.right as f32))
+            .pt(px(p.top as f32))
+            .pb(px(p.bottom as f32))
             .track_focus(&self.focus_handle)
             .key_context("Terminal")
             .on_action(cx.listener(Self::paste))
