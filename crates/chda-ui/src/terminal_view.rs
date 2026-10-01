@@ -8,17 +8,18 @@ use std::sync::mpsc;
 use std::time::Duration;
 
 use chda_term::{
-    Event, Frame, KeyAction, KeyCode, KeyInput, Modifiers, MouseAction, MouseButton as TermButton,
-    MouseInput, SearchQuery, SearchStatus, Session, SessionOptions, Size, default_data_dir,
-    env_for, login_shell, parse_pwd_report,
+    Event, Frame, KeyAction, KeyCode, KeyInput, LinkTarget, Modifiers, MouseAction,
+    MouseButton as TermButton, MouseInput, SearchQuery, SearchStatus, Session, SessionOptions,
+    Size, default_data_dir, env_for, login_shell, parse_pwd_report,
 };
 use futures::StreamExt;
 use futures::channel::mpsc::{UnboundedReceiver, unbounded};
 use gpui::{
     App, Bounds, ClipboardItem, Context, Entity, EntityInputHandler, EventEmitter, FocusHandle,
-    Focusable, KeyDownEvent, Keystroke, Modifiers as GpuiModifiers, MouseButton, MouseDownEvent,
-    MouseMoveEvent, MouseUpEvent, Pixels, Point, Render, ScrollWheelEvent, Subscription,
-    TouchPhase, UTF16Selection, Window, actions, div, prelude::*, px,
+    Focusable, KeyDownEvent, Keystroke, Modifiers as GpuiModifiers, ModifiersChangedEvent,
+    MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent, Pixels, Point, Render,
+    ScrollWheelEvent, Subscription, TouchPhase, UTF16Selection, Window, actions, div, prelude::*,
+    px,
 };
 
 use crate::settings::Settings;
@@ -66,6 +67,31 @@ pub enum TerminalEvent {
     Prompt,
     /// Output or input happened (at most once per second).
     Activity(u64),
+    /// The user cmd-clicked an existing file path.
+    OpenPath {
+        path: PathBuf,
+        line: Option<u32>,
+        column: Option<u32>,
+    },
+}
+
+/// Where a cmd-clicked link goes.
+#[derive(Clone, Debug, PartialEq)]
+pub enum LinkOpen {
+    Url(String),
+    Path {
+        path: PathBuf,
+        line: Option<u32>,
+        column: Option<u32>,
+    },
+}
+
+/// The link under the mouse while cmd is held.
+#[derive(Clone, Debug, PartialEq)]
+pub struct HoveredLink {
+    /// `(row, first col, last col)` per viewport row.
+    pub cells: Vec<(u16, u16, u16)>,
+    pub open: LinkOpen,
 }
 
 fn now_ms() -> u64 {
@@ -116,6 +142,10 @@ pub struct TerminalView {
     cwd: Option<PathBuf>,
     last_activity_sent: u64,
     search: Option<SearchBar>,
+    /// Viewport cell under the mouse, while it is over the grid.
+    hover_cell: Option<(u16, u16)>,
+    cmd_held: bool,
+    pub hovered_link: Option<HoveredLink>,
 }
 
 impl EventEmitter<TerminalEvent> for TerminalView {}
@@ -188,6 +218,9 @@ impl TerminalView {
             cwd,
             last_activity_sent: 0,
             search: None,
+            hover_cell: None,
+            cmd_held: false,
+            hovered_link: None,
         }
     }
 
@@ -286,6 +319,7 @@ impl TerminalView {
             match event {
                 Event::Frame => {
                     self.frame = self.session.frame();
+                    self.update_link(cx);
                     self.note_activity(cx);
                     cx.notify();
                 }
@@ -636,10 +670,91 @@ impl TerminalView {
         })
     }
 
+    /// Recompute the link under the mouse; only shown while cmd is held.
+    fn update_link(&mut self, cx: &mut Context<Self>) {
+        let link = match (self.cmd_held, self.hover_cell) {
+            (true, Some((x, y))) => chda_term::link_at(&self.frame, x, y)
+                .and_then(|l| Some((self.resolve_link(l.target)?, l.cells)))
+                .map(|(open, cells)| HoveredLink { cells, open }),
+            _ => None,
+        };
+        if link != self.hovered_link {
+            self.hovered_link = link;
+            cx.notify();
+        }
+    }
+
+    /// URLs open as they are; paths must exist, relative to the shell's
+    /// directory or the home directory for `~`.
+    fn resolve_link(&self, target: LinkTarget) -> Option<LinkOpen> {
+        match target {
+            LinkTarget::Url(url) => Some(LinkOpen::Url(url)),
+            LinkTarget::Path { path, line, column } => {
+                let p = if let Some(rest) = path.strip_prefix("~/") {
+                    PathBuf::from(std::env::var_os("HOME")?).join(rest)
+                } else {
+                    let p = PathBuf::from(&path);
+                    if p.is_absolute() {
+                        p
+                    } else {
+                        self.cwd.as_ref()?.join(p)
+                    }
+                };
+                p.exists().then_some(LinkOpen::Path {
+                    path: p,
+                    line,
+                    column,
+                })
+            }
+        }
+    }
+
+    /// Track the cell under the mouse and whether cmd is held.
+    fn track_hover(
+        &mut self,
+        position: Point<Pixels>,
+        mods: GpuiModifiers,
+        cx: &mut Context<Self>,
+    ) {
+        self.cmd_held = mods.platform;
+        self.hover_cell = self.geometry.and_then(|g| {
+            let x = f32::from(position.x - g.origin.x) / f32::from(g.cell_width);
+            let y = f32::from(position.y - g.origin.y) / f32::from(g.line_height);
+            (x >= 0.0 && y >= 0.0 && x < f32::from(g.size.cols) && y < f32::from(g.size.rows))
+                .then_some((x as u16, y as u16))
+        });
+        self.update_link(cx);
+    }
+
+    fn modifiers_changed(
+        &mut self,
+        event: &ModifiersChangedEvent,
+        _: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if self.cmd_held != event.modifiers.platform {
+            self.cmd_held = event.modifiers.platform;
+            self.update_link(cx);
+        }
+    }
+
     fn mouse_down(&mut self, event: &MouseDownEvent, window: &mut Window, cx: &mut Context<Self>) {
         if !self.focus_handle.is_focused(window) {
             self.focus(window, cx);
             cx.emit(TerminalEvent::Focused);
+        }
+        self.track_hover(event.position, event.modifiers, cx);
+        if event.button == MouseButton::Left
+            && event.modifiers.platform
+            && let Some(link) = self.hovered_link.clone()
+        {
+            match link.open {
+                LinkOpen::Url(url) => cx.open_url(&url),
+                LinkOpen::Path { path, line, column } => {
+                    cx.emit(TerminalEvent::OpenPath { path, line, column })
+                }
+            }
+            return;
         }
         let click_count = event.click_count.clamp(1, 3) as u8;
         if let Some(input) = self.mouse_input(
@@ -663,7 +778,8 @@ impl TerminalView {
         }
     }
 
-    fn mouse_move(&mut self, event: &MouseMoveEvent, _: &mut Window, _: &mut Context<Self>) {
+    fn mouse_move(&mut self, event: &MouseMoveEvent, _: &mut Window, cx: &mut Context<Self>) {
+        self.track_hover(event.position, event.modifiers, cx);
         let (action, button) = match event.pressed_button {
             Some(b) => (MouseAction::Drag, b),
             None => (MouseAction::Move, MouseButton::Left),
@@ -855,6 +971,7 @@ impl Render for TerminalView {
             .on_mouse_up(MouseButton::Right, cx.listener(Self::mouse_up))
             .on_mouse_up(MouseButton::Middle, cx.listener(Self::mouse_up))
             .on_mouse_move(cx.listener(Self::mouse_move))
+            .on_modifiers_changed(cx.listener(Self::modifiers_changed))
             .on_scroll_wheel(cx.listener(Self::scroll_wheel))
             .child(TerminalElement::new(cx.entity(), self.focus_handle.clone()))
             .children(search)

@@ -3,6 +3,7 @@
 
 mod frame;
 mod input;
+mod links;
 mod pwd;
 mod search;
 mod session;
@@ -12,6 +13,7 @@ mod vt;
 pub use chda_pty::ExitStatus;
 pub use frame::*;
 pub use input::*;
+pub use links::{Hyperlink, Link, LinkTarget, link_at};
 pub use pwd::parse_pwd_report;
 pub use search::{SearchMark, SearchQuery, SearchStatus};
 pub use session::{DEFAULT_SCROLLBACK, Event, Session, SessionOptions};

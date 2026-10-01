@@ -159,6 +159,8 @@ pub struct Frame {
     pub pwd: String,
     /// The alternate screen is active (full-screen apps).
     pub alternate_screen: bool,
+    /// OSC 8 hyperlinks in the viewport.
+    pub hyperlinks: Vec<crate::links::Hyperlink>,
     /// Monotonic counter, bumped on every rebuild.
     pub generation: u64,
 }

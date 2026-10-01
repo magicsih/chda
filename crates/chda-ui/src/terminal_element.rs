@@ -49,6 +49,8 @@ pub struct Layout {
     cursor: Option<CursorLayout>,
     /// IME composition drawn over the cursor cell.
     marked: Option<(Bounds<Pixels>, ShapedLine)>,
+    /// Underlines for the link under the mouse while cmd is held.
+    link: Vec<(Bounds<Pixels>, Hsla)>,
     metrics: Metrics,
 }
 
@@ -171,8 +173,22 @@ impl Element for TerminalElement {
             text: Vec::new(),
             cursor: None,
             marked: None,
+            link: Vec::new(),
             metrics,
         };
+        if let Some(link) = self.view.read(cx).hovered_link.as_ref() {
+            let color = hsla(frame.foreground);
+            for &(row, from, to) in &link.cells {
+                let origin = point(
+                    bounds.origin.x + metrics.cell_width * f32::from(from),
+                    bounds.origin.y + metrics.line_height * f32::from(row + 1) - px(1.0),
+                );
+                let width = metrics.cell_width * f32::from(to - from + 1);
+                layout
+                    .link
+                    .push((Bounds::new(origin, size(width, px(1.0))), color));
+            }
+        }
         let key = (
             frame.generation,
             metrics.cell_width,
@@ -255,7 +271,12 @@ impl Element for TerminalElement {
             cx,
         );
         window.with_content_mask(Some(ContentMask { bounds }), |window| {
-            window.set_cursor_style(CursorStyle::IBeam, &layout.hitbox);
+            let cursor = if layout.link.is_empty() {
+                CursorStyle::IBeam
+            } else {
+                CursorStyle::PointingHand
+            };
+            window.set_cursor_style(cursor, &layout.hitbox);
             window.paint_quad(fill(bounds, layout.background));
             for (rect, color) in &layout.rects {
                 window.paint_quad(fill(*rect, *color));
@@ -269,6 +290,9 @@ impl Element for TerminalElement {
                     window,
                     cx,
                 );
+            }
+            for (rect, color) in &layout.link {
+                window.paint_quad(fill(*rect, *color));
             }
             if let Some((bounds, line)) = &layout.marked {
                 window.paint_quad(fill(*bounds, layout.background));

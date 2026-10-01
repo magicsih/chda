@@ -45,6 +45,10 @@ pub struct ChdaConfig {
     pub sidebar_width: u32,
     pub sidebar_visible: bool,
     pub notifications: bool,
+    /// Command that opens a cmd-clicked file path, with `{file}`, `{line}`
+    /// and `{column}` placeholders, e.g. `zed {file}:{line}:{column}`.
+    /// Unset opens the file with the system's default application.
+    pub editor: Option<String>,
 }
 
 impl Default for ChdaConfig {
@@ -58,6 +62,7 @@ impl Default for ChdaConfig {
             sidebar_width: 280,
             sidebar_visible: true,
             notifications: true,
+            editor: None,
         }
     }
 }
@@ -108,6 +113,28 @@ impl ChdaConfig {
     }
 }
 
+/// Fill an editor command template. The template is split on blanks first,
+/// so a path with spaces stays one argument. Missing line or column numbers
+/// default to 1.
+pub fn editor_command(
+    template: &str,
+    file: &Path,
+    line: Option<u32>,
+    column: Option<u32>,
+) -> Vec<String> {
+    let file = file.to_string_lossy();
+    let line = line.unwrap_or(1).to_string();
+    let column = column.unwrap_or(1).to_string();
+    template
+        .split_whitespace()
+        .map(|t| {
+            t.replace("{file}", &file)
+                .replace("{line}", &line)
+                .replace("{column}", &column)
+        })
+        .collect()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -133,5 +160,18 @@ mod tests {
         assert_eq!(c.sidebar_width, 320);
         assert_eq!(c.agents, vec!["claude", "codex"]);
         fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn editor_templates_keep_paths_whole() {
+        assert_eq!(
+            editor_command(
+                "code --goto {file}:{line}:{column}",
+                Path::new("/a b/c.rs"),
+                Some(3),
+                None
+            ),
+            vec!["code", "--goto", "/a b/c.rs:3:1"]
+        );
     }
 }

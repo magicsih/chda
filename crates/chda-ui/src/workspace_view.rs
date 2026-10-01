@@ -716,6 +716,9 @@ impl WorkspaceView {
                     self.refresh_repo_of(&cwd, cx);
                 }
             }
+            TerminalEvent::OpenPath { path, line, column } => {
+                self.open_path(path, *line, *column, cx);
+            }
             TerminalEvent::Activity(at) => {
                 if let Some(info) = self.ws.pane_mut(pane) {
                     info.last_activity = *at;
@@ -725,6 +728,34 @@ impl WorkspaceView {
         }
         self.sync_title(window);
         cx.notify();
+    }
+
+    /// Open a cmd-clicked file with the configured editor, else the system's
+    /// default application.
+    fn open_path(
+        &mut self,
+        path: &Path,
+        line: Option<u32>,
+        column: Option<u32>,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(template) = self.config.editor.as_deref() else {
+            cx.open_with_system(path);
+            return;
+        };
+        let argv = chda_config::editor_command(template, path, line, column);
+        let Some((program, args)) = argv.split_first() else {
+            return;
+        };
+        if let Err(e) = std::process::Command::new(program)
+            .args(args)
+            .stdin(std::process::Stdio::null())
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null())
+            .spawn()
+        {
+            self.status_line = Some(format!("editor `{program}`: {e}"));
+        }
     }
 
     /// Looking at a pane clears "review" for its worktree.

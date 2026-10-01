@@ -656,8 +656,11 @@ impl Terminal {
             title,
             pwd,
             alternate_screen,
+            hyperlinks: Vec::new(),
             generation: self.generation,
         };
+        // Cells carrying an OSC 8 link; their URIs are looked up afterwards.
+        let mut linked: Vec<(u16, u16)> = Vec::new();
 
         let mut text = String::new();
         {
@@ -673,10 +676,16 @@ impl Terminal {
                     },
                 });
 
+                let y = (frame.rows.len() - 1) as u16;
+                let mut x = 0u16;
                 let mut cell_iter = self.cells.update(row)?;
                 while let Some(c) = cell_iter.next() {
                     let style = c.style()?;
                     let raw = c.raw_cell()?;
+                    if raw.has_hyperlink().unwrap_or(false) {
+                        linked.push((x, y));
+                    }
+                    x += 1;
                     let width = match raw.wide() {
                         Ok(CellWide::Wide) => CellWidth::Wide,
                         Ok(CellWide::SpacerTail) => CellWidth::SpacerTail,
@@ -734,6 +743,7 @@ impl Terminal {
         }
         snapshot.set_dirty(Dirty::Clean)?;
         self.mark_search(&mut frame);
+        frame.hyperlinks = self.hyperlinks(&linked);
         // A prompt on a row we have not seen a prompt on before means the
         // previous command finished, even if no frame caught the output.
         let prompt_row = frame.cursor.and_then(|c| {
@@ -752,6 +762,40 @@ impl Terminal {
 }
 
 impl Terminal {
+    /// URIs of linked viewport cells, merged into runs of the same link.
+    fn hyperlinks(&self, cells: &[(u16, u16)]) -> Vec<crate::links::Hyperlink> {
+        let mut out: Vec<crate::links::Hyperlink> = Vec::new();
+        let mut buf = vec![0u8; 256];
+        for &(x, y) in cells {
+            let point = Point::Viewport(PointCoordinate { x, y: u32::from(y) });
+            let Ok(grid) = self.vt.grid_ref(point) else {
+                continue;
+            };
+            let len = match grid.hyperlink_uri(&mut buf) {
+                Ok(n) => n,
+                Err(libghostty_vt::Error::OutOfSpace { required }) => {
+                    buf.resize(required, 0);
+                    grid.hyperlink_uri(&mut buf).unwrap_or(0)
+                }
+                Err(_) => 0,
+            };
+            if len == 0 {
+                continue;
+            }
+            let uri = String::from_utf8_lossy(&buf[..len]);
+            match out.last_mut() {
+                Some(h) if h.row == y && h.end + 1 == x && h.uri == uri => h.end = x,
+                _ => out.push(crate::links::Hyperlink {
+                    row: y,
+                    start: x,
+                    end: x,
+                    uri: uri.into_owned(),
+                }),
+            }
+        }
+        out
+    }
+
     /// Highlight the search matches that fall in the viewport.
     fn mark_search(&self, frame: &mut Frame) {
         let Some(s) = &self.search else {
@@ -1167,6 +1211,22 @@ mod tests {
         term.feed(b"\x1b[?1049h");
         assert!(term.alternate_screen());
         assert!(term.frame().unwrap().alternate_screen);
+    }
+
+    #[test]
+    fn osc8_hyperlinks_reach_the_frame() {
+        let mut t = term();
+        t.feed(b"go \x1b]8;;https://example.com/x\x1b\\here\x1b]8;;\x1b\\ now");
+        let frame = t.frame().unwrap();
+        assert_eq!(
+            frame.hyperlinks,
+            vec![crate::links::Hyperlink {
+                row: 0,
+                start: 3,
+                end: 6,
+                uri: "https://example.com/x".into()
+            }]
+        );
     }
 
     #[test]
