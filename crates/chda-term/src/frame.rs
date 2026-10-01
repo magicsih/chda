@@ -8,6 +8,17 @@ pub struct Rgb {
     pub b: u8,
 }
 
+/// Default colors handed to the terminal at creation.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct ColorConfig {
+    pub foreground: Option<Rgb>,
+    pub background: Option<Rgb>,
+    pub cursor: Option<Rgb>,
+    /// Palette overrides by index.
+    pub palette: Vec<(u8, Rgb)>,
+    pub cursor_shape: Option<CursorShape>,
+}
+
 /// Terminal size in cells.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct Size {

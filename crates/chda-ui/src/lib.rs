@@ -1,5 +1,6 @@
 //! GPUI views, elements and theme. The only crate that may depend on GPUI.
 
+mod settings;
 mod terminal_element;
 mod terminal_view;
 
@@ -7,10 +8,11 @@ use gpui::{
     App, AppContext, Bounds, KeyBinding, TitlebarOptions, WindowBounds, WindowOptions, px, size,
 };
 
+pub use settings::Settings;
 use terminal_view::{Paste, Quit, TerminalView};
 
 /// Start the application and open the main window.
-pub fn run() {
+pub fn run(settings: Settings) {
     gpui_platform::application().run(|cx: &mut App| {
         cx.bind_keys([
             KeyBinding::new("cmd-v", Paste, Some("Terminal")),
@@ -29,7 +31,7 @@ pub fn run() {
                     }),
                     ..Default::default()
                 },
-                |window, cx| cx.new(|cx| TerminalView::new(window, cx)),
+                |window, cx| cx.new(|cx| TerminalView::new(settings, window, cx)),
             )
             .expect("failed to open main window");
         window

@@ -13,6 +13,7 @@ name = "chda"
 path = "src/main.rs"
 
 [dependencies]
+chda-config.workspace = true
 chda-ui.workspace = true
 
 [lints]

@@ -2,12 +2,12 @@
 
 use chda_term::{Cell, CellWidth, CursorShape, Frame, Rgb, Size, Underline};
 use gpui::{
-    App, BorderStyle, Bounds, CursorStyle, Element, ElementId, FocusHandle, Font, FontStyle,
-    FontWeight, GlobalElementId, Hitbox, HitboxBehavior, Hsla, InspectorElementId, IntoElement,
-    LayoutId, Pixels, Point, Rgba, ShapedLine, StrikethroughStyle, Style, TextAlign, TextRun,
-    UnderlineStyle, Window, fill, outline, point, px, relative, size,
+    App, BorderStyle, Bounds, ContentMask, CursorStyle, Element, ElementId, ElementInputHandler,
+    Entity, FocusHandle, Font, FontStyle, FontWeight, GlobalElementId, Hitbox, HitboxBehavior,
+    Hsla, InspectorElementId, IntoElement, LayoutId, Pixels, Point, Rgba, ShapedLine,
+    StrikethroughStyle, Style, TextAlign, TextRun, UnderlineStyle, Window, fill, outline, point,
+    px, relative, size,
 };
-use gpui::{ContentMask, Entity};
 
 use crate::terminal_view::TerminalView;
 
@@ -38,6 +38,8 @@ pub struct Layout {
     rects: Vec<(Bounds<Pixels>, Hsla)>,
     text: Vec<TextBatch>,
     cursor: Option<CursorLayout>,
+    /// IME composition drawn over the cursor cell.
+    marked: Option<(Bounds<Pixels>, ShapedLine)>,
     metrics: Metrics,
 }
 
@@ -52,9 +54,9 @@ impl TerminalElement {
     }
 
     fn metrics(&self, window: &Window, cx: &App) -> (Font, Metrics) {
-        let font = self.view.read(cx).font.clone();
-        let font_size = font.size;
-        let font = font.font();
+        let settings = &self.view.read(cx).settings;
+        let font_size = settings.font_size;
+        let font = settings.font();
         let text_system = window.text_system();
         let font_id = text_system.resolve_font(&font);
         let cell_width = text_system
@@ -133,7 +135,17 @@ impl Element for TerminalElement {
             view.set_grid(grid, metrics.cell_width, metrics.line_height)
         });
 
-        let frame = self.view.read(cx).frame();
+        let (frame, marked_text, selection) = {
+            let view = self.view.read(cx);
+            (
+                view.frame(),
+                view.marked_text.clone(),
+                (
+                    view.settings.selection_background.map(hsla),
+                    view.settings.selection_foreground.map(hsla),
+                ),
+            )
+        };
         let focused = self.focus.is_focused(window);
         let mut layout = Layout {
             hitbox,
@@ -141,9 +153,45 @@ impl Element for TerminalElement {
             rects: Vec::new(),
             text: Vec::new(),
             cursor: None,
+            marked: None,
             metrics,
         };
-        layout_frame(&frame, &font, bounds.origin, focused, &mut layout, window);
+        layout_frame(
+            &frame,
+            &font,
+            bounds.origin,
+            focused,
+            selection,
+            &mut layout,
+            window,
+        );
+
+        if let (Some(text), Some(cursor)) = (marked_text, &layout.cursor) {
+            let run = TextRun {
+                len: text.len(),
+                font: font.clone(),
+                color: hsla(frame.foreground),
+                background_color: None,
+                underline: Some(UnderlineStyle {
+                    thickness: px(1.0),
+                    color: Some(hsla(frame.foreground)),
+                    wavy: false,
+                }),
+                strikethrough: None,
+            };
+            let line = window.text_system().shape_line(
+                text.into(),
+                metrics.font_size,
+                &[run],
+                Some(metrics.cell_width),
+            );
+            let mut b = cursor.bounds;
+            b.size.width = line.width().max(metrics.cell_width);
+            layout.marked = Some((b, line));
+        }
+        let cursor_bounds = layout.cursor.as_ref().map(|c| c.bounds);
+        self.view
+            .update(cx, |view, _| view.cursor_bounds = cursor_bounds);
         layout
     }
 
@@ -157,6 +205,11 @@ impl Element for TerminalElement {
         window: &mut Window,
         cx: &mut App,
     ) {
+        window.handle_input(
+            &self.focus,
+            ElementInputHandler::new(bounds, self.view.clone()),
+            cx,
+        );
         window.with_content_mask(Some(ContentMask { bounds }), |window| {
             window.set_cursor_style(CursorStyle::IBeam, &layout.hitbox);
             window.paint_quad(fill(bounds, layout.background));
@@ -172,6 +225,18 @@ impl Element for TerminalElement {
                     window,
                     cx,
                 );
+            }
+            if let Some((bounds, line)) = &layout.marked {
+                window.paint_quad(fill(*bounds, layout.background));
+                let _ = line.paint(
+                    bounds.origin,
+                    layout.metrics.line_height,
+                    TextAlign::Left,
+                    None,
+                    window,
+                    cx,
+                );
+                return;
             }
             if let Some(cursor) = &layout.cursor {
                 match cursor.shape {
@@ -208,7 +273,7 @@ impl Element for TerminalElement {
     }
 }
 
-fn hsla(c: Rgb) -> Hsla {
+pub fn hsla(c: Rgb) -> Hsla {
     Rgba {
         r: f32::from(c.r) / 255.0,
         g: f32::from(c.g) / 255.0,
@@ -228,15 +293,19 @@ struct RunStyle {
     strikethrough: Option<StrikethroughStyle>,
 }
 
+/// Selection colors from the config; `None` inverts the cell.
+type SelectionColors = (Option<Hsla>, Option<Hsla>);
+
 impl RunStyle {
-    fn of(cell: &Cell, frame: &Frame) -> Self {
+    fn of(cell: &Cell, frame: &Frame, selection: SelectionColors) -> Self {
         let mut fg = hsla(cell.fg);
         if cell.style.faint {
             fg.a *= 0.7;
         }
         if cell.selected {
-            // Selection is drawn as an inverted cell.
-            fg = hsla(cell.bg.unwrap_or(frame.background));
+            fg = selection
+                .1
+                .unwrap_or_else(|| hsla(cell.bg.unwrap_or(frame.background)));
         }
         let underline = (cell.style.underline != Underline::None).then(|| UnderlineStyle {
             thickness: px(1.0),
@@ -285,6 +354,7 @@ fn layout_frame(
     font: &Font,
     origin: Point<Pixels>,
     focused: bool,
+    selection: SelectionColors,
     layout: &mut Layout,
     window: &Window,
 ) {
@@ -305,7 +375,7 @@ fn layout_frame(
         for (x, cell) in cells.iter().enumerate() {
             let x = x as u16;
             let bg = if cell.selected {
-                Some(hsla(cell.fg))
+                Some(selection.0.unwrap_or_else(|| hsla(cell.fg)))
             } else {
                 cell.bg.map(hsla)
             };
@@ -356,7 +426,7 @@ fn layout_frame(
                 flush(&mut batch, layout);
                 continue;
             }
-            let style = RunStyle::of(cell, frame);
+            let style = RunStyle::of(cell, frame, selection);
             let wide = cell.width == CellWidth::Wide;
             match batch.as_mut() {
                 Some((_, end, s, buf)) if !wide && *s == style && *end + 1 == x => {
