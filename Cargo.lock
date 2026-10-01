@@ -833,7 +833,7 @@ dependencies = [
 
 [[package]]
 name = "chda"
-version = "0.1.1"
+version = "0.1.2"
 dependencies = [
  "chda-agents",
  "chda-config",
@@ -842,7 +842,7 @@ dependencies = [
 
 [[package]]
 name = "chda-agents"
-version = "0.1.1"
+version = "0.1.2"
 dependencies = [
  "memchr",
  "serde",
@@ -851,7 +851,7 @@ dependencies = [
 
 [[package]]
 name = "chda-config"
-version = "0.1.1"
+version = "0.1.2"
 dependencies = [
  "serde",
  "toml 1.1.6+spec-1.1.0",
@@ -859,7 +859,7 @@ dependencies = [
 
 [[package]]
 name = "chda-core"
-version = "0.1.1"
+version = "0.1.2"
 dependencies = [
  "chda-agents",
  "chda-git",
@@ -869,14 +869,14 @@ dependencies = [
 
 [[package]]
 name = "chda-git"
-version = "0.1.1"
+version = "0.1.2"
 dependencies = [
  "gix",
 ]
 
 [[package]]
 name = "chda-pty"
-version = "0.1.1"
+version = "0.1.2"
 dependencies = [
  "libc",
  "portable-pty",
@@ -884,7 +884,7 @@ dependencies = [
 
 [[package]]
 name = "chda-term"
-version = "0.1.1"
+version = "0.1.2"
 dependencies = [
  "chda-pty",
  "libghostty-vt",
@@ -892,7 +892,7 @@ dependencies = [
 
 [[package]]
 name = "chda-ui"
-version = "0.1.1"
+version = "0.1.2"
 dependencies = [
  "chda-config",
  "chda-core",
