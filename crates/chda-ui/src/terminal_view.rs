@@ -153,6 +153,7 @@ impl EventEmitter<TerminalEvent> for TerminalView {}
 impl TerminalView {
     pub fn new(
         settings: Settings,
+        pane_id: u64,
         cwd: Option<PathBuf>,
         command: Option<Vec<String>>,
         window: &mut Window,
@@ -167,6 +168,10 @@ impl TerminalView {
             command,
             ..Default::default()
         };
+        // Agents started in this pane report it back with their hook events.
+        options
+            .env
+            .push((chda_core::agents::PANE_ENV.to_owned(), pane_id.to_string()));
         if let (Some(shell), Some(data_dir)) = (login_shell(), default_data_dir())
             && let Ok(launch) = launch_for(settings.shell_integration, &shell, &data_dir)
         {
@@ -368,6 +373,11 @@ impl TerminalView {
         self.settings = settings;
         self.layout_cache = None;
         cx.notify();
+    }
+
+    /// Scroll to the last shell prompt (where an agent was started).
+    pub fn jump_to_last_prompt(&self) {
+        self.session.jump_to_last_prompt();
     }
 
     pub fn focus(&self, window: &mut Window, cx: &mut App) {

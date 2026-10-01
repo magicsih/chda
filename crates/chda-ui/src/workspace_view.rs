@@ -70,6 +70,7 @@ actions!(
         IncreaseFontSize,
         DecreaseFontSize,
         ResetFontSize,
+        GoToWaitingAgent,
     ]
 );
 
@@ -84,6 +85,9 @@ const FONT_SIZE_MAX: f32 = 255.0;
 const STATUS_REFRESH: Duration = Duration::from_secs(60);
 /// How often session transcripts are re-indexed while the window is active.
 const SESSION_REFRESH: Duration = Duration::from_secs(120);
+/// Step of the "working" dot pulse; the timer only runs while an agent works.
+const PULSE_STEP: Duration = Duration::from_millis(250);
+const PULSE_STEPS: u8 = 8;
 
 /// A popup menu anchored at a window position.
 struct ContextMenu {
@@ -173,6 +177,11 @@ pub struct WorkspaceView {
     config_watcher: Option<FileWatcher>,
     /// The last reload found a broken config; its message is on the status line.
     config_problem: Option<String>,
+    /// Phase of the "working" dot pulse, and whether its timer runs.
+    pulse: u8,
+    pulsing: bool,
+    /// The pane "go to waiting agent" jumped to last, to cycle onwards.
+    last_jump: Option<PaneId>,
 }
 
 impl WorkspaceView {
@@ -227,7 +236,17 @@ impl WorkspaceView {
             ghostty_sources: ghostty.sources,
             config_watcher: None,
             config_problem: None,
+            pulse: 0,
+            pulsing: false,
+            last_jump: None,
         };
+        Self::start_notification_clicks(window, cx);
+        cx.observe_window_activation(window, |this, window, cx| {
+            if window.is_window_active() {
+                this.reviewed_focused(cx);
+            }
+        })
+        .detach();
         this.config_watcher = Self::start_config_watcher(window, cx);
         this.watch_config_files();
         let gh = cx.background_spawn(async { chda_core::gh_available() });
@@ -504,47 +523,263 @@ impl WorkspaceView {
             HookKind::Stopped => AgentEvent::Stopped,
             HookKind::SessionEnd => AgentEvent::SessionEnd,
         };
+        let status = match event {
+            AgentEvent::SessionStart | AgentEvent::PromptSubmitted => AgentStatus::Working,
+            AgentEvent::WaitingInput => AgentStatus::WaitingInput,
+            AgentEvent::Stopped => AgentStatus::Review,
+            AgentEvent::SessionEnd => AgentStatus::Idle,
+        };
         let focused_cwd = self.focused_cwd();
         let window_active = window.is_window_active();
-        let changed = self.sidebar.update(cx, |s, cx| {
+        let worktree_changed = self.sidebar.update(cx, |s, cx| {
             let r = s
                 .model
                 .apply_agent_event(&ev.agent, &ev.cwd, event, ev.timestamp);
             cx.notify();
             r
         });
-        if let Some((worktree, status)) = changed {
-            let looking = window_active
-                && focused_cwd
+        let pane = self.pane_for_event(&ev, cx);
+        let pane_changed =
+            pane.is_some_and(|p| self.ws.set_agent_status(p, &ev.agent, status, ev.timestamp));
+        if worktree_changed.is_none() && !pane_changed {
+            return;
+        }
+        let worktree = worktree_changed
+            .as_ref()
+            .map(|(w, _)| w.clone())
+            .unwrap_or_else(|| ev.cwd.clone());
+        let looking = window_active
+            && match pane {
+                Some(p) => self.ws.focused_pane() == Some(p),
+                None => focused_cwd
                     .as_ref()
-                    .is_some_and(|c| c.starts_with(&worktree));
-            let name = worktree
-                .file_name()
-                .map(|n| n.to_string_lossy().into_owned())
-                .unwrap_or_default();
-            let agent = self
-                .adapters
-                .iter()
-                .find(|a| a.id() == ev.agent_id().unwrap_or(AgentId::Claude))
-                .map(|a| a.display_name().to_owned())
-                .unwrap_or(ev.agent.clone());
-            match status {
-                AgentStatus::WaitingInput if self.config.notifications => {
-                    platform::notify(&format!("{agent} is waiting"), &name);
-                }
-                AgentStatus::Review if self.config.notifications && !looking => {
-                    platform::notify(&format!("{agent} finished"), &name);
-                }
-                AgentStatus::Review if looking => {
-                    self.sidebar.update(cx, |s, _| {
-                        s.model.mark_reviewed(&worktree);
-                    });
-                }
-                _ => {}
+                    .is_some_and(|c| c.starts_with(&worktree)),
+            };
+        let name = self
+            .sidebar
+            .read(cx)
+            .model
+            .worktree_for_path(&worktree)
+            .and_then(|(_, w)| w.branch.clone())
+            .or_else(|| {
+                worktree
+                    .file_name()
+                    .map(|n| n.to_string_lossy().into_owned())
+            })
+            .unwrap_or_default();
+        let agent = self.agent_name(&ev.agent);
+        let target = platform::NotificationTarget {
+            pane: pane.map(PaneId::raw),
+            worktree: worktree.clone(),
+        };
+        match status {
+            AgentStatus::WaitingInput if self.config.notifications => {
+                platform::notify(
+                    &format!("{agent} is waiting"),
+                    &format!("in {name}"),
+                    &target,
+                );
             }
-            if matches!(event, AgentEvent::Stopped | AgentEvent::SessionEnd) {
-                self.refresh_repo_of(&worktree, cx);
-                self.refresh_sessions(cx);
+            AgentStatus::Review if self.config.notifications && !looking => {
+                platform::notify(&format!("{agent} finished"), &format!("in {name}"), &target);
+            }
+            _ => {}
+        }
+        if looking {
+            self.reviewed_focused(cx);
+        }
+        if worktree_changed.is_some()
+            && matches!(event, AgentEvent::Stopped | AgentEvent::SessionEnd)
+        {
+            self.refresh_repo_of(&worktree, cx);
+            self.refresh_sessions(cx);
+        }
+        self.sync_attention(cx);
+    }
+
+    /// The pane an agent event belongs to: the one its hook named through
+    /// `CHDA_PANE_ID`, else (agents started outside a chda shell) the most
+    /// recently active pane in the event's worktree.
+    fn pane_for_event(&self, ev: &HookEvent, cx: &App) -> Option<PaneId> {
+        if let Some(p) = ev.pane.and_then(|raw| self.ws.pane_by_raw(raw)) {
+            return Some(p);
+        }
+        let root = self
+            .sidebar
+            .read(cx)
+            .model
+            .worktree_for_path(&ev.cwd)
+            .map(|(_, w)| w.path.clone())
+            .unwrap_or_else(|| ev.cwd.clone());
+        self.ws
+            .tabs()
+            .iter()
+            .flat_map(|t| t.panes())
+            .filter_map(|p| Some((p, self.ws.pane(p)?)))
+            .filter(|(_, i)| i.cwd.as_ref().is_some_and(|c| c.starts_with(&root)))
+            .max_by_key(|(_, i)| i.last_activity)
+            .map(|(p, _)| p)
+    }
+
+    /// Display name of an agent id, e.g. "Claude Code" for `claude`.
+    fn agent_name(&self, id: &str) -> String {
+        self.adapters
+            .iter()
+            .find(|a| Some(a.id()) == AgentId::parse(id))
+            .map(|a| a.display_name().to_owned())
+            .unwrap_or_else(|| id.to_owned())
+    }
+
+    /// After agent status or focus changes: refresh the activity list, the
+    /// Dock badge and the pulse timer.
+    fn sync_attention(&mut self, cx: &mut Context<Self>) {
+        self.sync_panes(cx);
+        platform::set_badge(self.ws.unseen_waiting());
+        self.ensure_pulse(cx);
+        cx.notify();
+    }
+
+    fn any_working(&self) -> bool {
+        self.ws
+            .tabs()
+            .iter()
+            .flat_map(|t| t.panes())
+            .filter_map(|p| self.ws.pane(p)?.agent.as_ref())
+            .any(|a| a.status == AgentStatus::Working)
+    }
+
+    /// Run the pulse timer while some agent works; it stops by itself.
+    fn ensure_pulse(&mut self, cx: &mut Context<Self>) {
+        if self.pulsing || !self.any_working() {
+            return;
+        }
+        self.pulsing = true;
+        cx.spawn(async move |this, cx| {
+            loop {
+                cx.background_executor().timer(PULSE_STEP).await;
+                let keep = this.update(cx, |view, cx| {
+                    if !view.any_working() {
+                        view.pulsing = false;
+                        view.pulse = 0;
+                        cx.notify();
+                        return false;
+                    }
+                    view.pulse = (view.pulse + 1) % PULSE_STEPS;
+                    cx.notify();
+                    true
+                });
+                if !keep.unwrap_or(false) {
+                    break;
+                }
+            }
+        })
+        .detach();
+    }
+
+    /// Opacity of a "working" dot for the current pulse phase.
+    fn pulse_opacity(&self) -> f32 {
+        let t = f32::from(self.pulse) / f32::from(PULSE_STEPS) * std::f32::consts::TAU;
+        0.6 + 0.4 * t.cos()
+    }
+
+    /// Cycle through panes whose agent waits for input, then those with a
+    /// finished turn, newest first; scroll each to its last prompt.
+    fn go_to_waiting_agent(
+        &mut self,
+        _: &GoToWaitingAgent,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let panes = self.ws.attention_panes();
+        if panes.is_empty() {
+            self.status_line = Some("No agent is waiting".into());
+            cx.notify();
+            return;
+        }
+        let next = match self
+            .last_jump
+            .and_then(|last| panes.iter().position(|p| *p == last))
+        {
+            Some(i) => panes[(i + 1) % panes.len()],
+            None => panes[0],
+        };
+        self.last_jump = Some(next);
+        self.jump_to_pane(next, window, cx);
+    }
+
+    /// Focus a pane (activating its tab) and scroll it to its last prompt.
+    fn jump_to_pane(&mut self, pane: PaneId, window: &mut Window, cx: &mut Context<Self>) {
+        if !self.ws.focus_pane(pane) {
+            return;
+        }
+        if let Some((view, _)) = self.panes.get(&pane) {
+            view.read(cx).jump_to_last_prompt();
+        }
+        self.focus_active(window, cx);
+    }
+
+    /// The sidebar's status dot for a worktree: jump to the pane that needs
+    /// attention there, else any of its panes, else open one.
+    fn jump_to_worktree_agent(&mut self, path: &Path, window: &mut Window, cx: &mut Context<Self>) {
+        let panes: Vec<PaneId> = self
+            .sidebar
+            .read(cx)
+            .model
+            .worktree_for_path(path)
+            .map(|(_, w)| w.panes.clone())
+            .unwrap_or_default();
+        let pane = self
+            .ws
+            .attention_panes()
+            .into_iter()
+            .find(|p| panes.contains(p))
+            .or_else(|| panes.first().copied());
+        match pane {
+            Some(p) => self.jump_to_pane(p, window, cx),
+            None => self.open_worktree(path, window, cx),
+        }
+    }
+
+    /// Bring the window forward when the user clicks one of our
+    /// notifications, and show the agent's pane, or its worktree when the
+    /// pane is gone.
+    fn start_notification_clicks(window: &mut Window, cx: &mut Context<Self>) {
+        let (tx, mut rx) = unbounded::<platform::NotificationTarget>();
+        platform::init_notifications(move |target| {
+            let _ = tx.unbounded_send(target);
+        });
+        cx.spawn_in(window, async move |this, cx| {
+            while let Some(target) = rx.next().await {
+                if this
+                    .update_in(cx, |view, window, cx| {
+                        view.on_notification_click(target, window, cx)
+                    })
+                    .is_err()
+                {
+                    break;
+                }
+            }
+        })
+        .detach();
+    }
+
+    fn on_notification_click(
+        &mut self,
+        target: platform::NotificationTarget,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        cx.activate(true);
+        platform::restore_windows();
+        window.activate_window();
+        match target.pane.and_then(|raw| self.ws.pane_by_raw(raw)) {
+            Some(pane) => self.jump_to_pane(pane, window, cx),
+            None => {
+                if !self.sidebar_visible {
+                    self.toggle_sidebar(&ToggleSidebar, window, cx);
+                }
+                self.sidebar
+                    .update(cx, |s, cx| s.select(&target.worktree, cx));
             }
         }
     }
@@ -768,6 +1003,14 @@ impl WorkspaceView {
                 .tabs_by_activity()
                 .into_iter()
                 .map(|(tab, title, repo, last_activity)| ActiveTab {
+                    status: self
+                        .ws
+                        .tabs()
+                        .iter()
+                        .find(|t| t.id == tab)
+                        .and_then(|t| self.ws.tab_agent(t))
+                        .map(|a| a.status)
+                        .unwrap_or_default(),
                     tab,
                     title,
                     repo: repo.and_then(|r| {
@@ -811,7 +1054,7 @@ impl WorkspaceView {
             info.cwd = cwd.clone();
         }
         let settings = self.settings.clone();
-        let view = cx.new(|cx| TerminalView::new(settings, cwd, command, window, cx));
+        let view = cx.new(|cx| TerminalView::new(settings, pane.raw(), cwd, command, window, cx));
         let sub = cx.subscribe_in(&view, window, move |this, _, event, window, cx| {
             this.on_pane_event(pane, event, window, cx)
         });
@@ -911,7 +1154,8 @@ impl WorkspaceView {
         }
     }
 
-    /// Looking at a pane clears "review" for its worktree.
+    /// Looking at a pane clears "review" for it and its worktree, and marks
+    /// a waiting agent there as seen (which clears the Dock badge).
     fn reviewed_focused(&mut self, cx: &mut Context<Self>) {
         if let Some(cwd) = self.focused_cwd() {
             self.sidebar.update(cx, |s, cx| {
@@ -919,6 +1163,11 @@ impl WorkspaceView {
                     cx.notify();
                 }
             });
+        }
+        if let Some(pane) = self.ws.focused_pane()
+            && self.ws.mark_seen(pane)
+        {
+            self.sync_attention(cx);
         }
     }
 
@@ -1175,6 +1424,7 @@ impl WorkspaceView {
             }
             SidebarEvent::AddRepo => self.add_repo(&AddRepo, window, cx),
             SidebarEvent::OpenUrl(url) => cx.open_url(&url),
+            SidebarEvent::JumpToAgent(path) => self.jump_to_worktree_agent(&path, window, cx),
             SidebarEvent::FocusTab(tab) => {
                 if self.ws.activate_tab_id(tab) {
                     self.focus_active(window, cx);
@@ -1609,6 +1859,7 @@ impl WorkspaceView {
             ("Increase font size", "cmd-=", "font_bigger"),
             ("Decrease font size", "cmd--", "font_smaller"),
             ("Reset font size", "cmd-0", "font_reset"),
+            ("Go to waiting agent", "cmd-shift-a", "waiting_agent"),
         ]
         .into_iter()
         .map(|(label, detail, action)| PaletteItem {
@@ -1711,6 +1962,7 @@ impl WorkspaceView {
                 "font_bigger" => self.increase_font_size(&IncreaseFontSize, window, cx),
                 "font_smaller" => self.decrease_font_size(&DecreaseFontSize, window, cx),
                 "font_reset" => self.reset_font_size(&ResetFontSize, window, cx),
+                "waiting_agent" => self.go_to_waiting_agent(&GoToWaitingAgent, window, cx),
                 "rename_tab" => {
                     if let Some(tab) = self.ws.active_tab().map(|t| t.id) {
                         self.start_rename(tab, window, cx);
@@ -1829,16 +2081,37 @@ impl WorkspaceView {
                         .child(input.clone());
                 }
                 let tab_id = tab.id;
+                let agent = self.ws.tab_agent(tab).cloned();
+                let tip = agent.as_ref().map(|a| {
+                    let name = self.agent_name(&a.agent);
+                    match a.status {
+                        AgentStatus::Working => format!("{name} is working"),
+                        AgentStatus::WaitingInput => format!("{name} is waiting for input"),
+                        AgentStatus::Review => format!("{name} finished; not looked at yet"),
+                        AgentStatus::Idle => name,
+                    }
+                });
+                let dot = agent.map(|a| {
+                    let mut color = crate::sidebar_view::status_color(a.status);
+                    if a.status == AgentStatus::Working {
+                        color = color.opacity(self.pulse_opacity());
+                    }
+                    div().flex_shrink_0().text_color(color).child("\u{25cf}")
+                });
                 div()
                     .id(("tab", i))
+                    .flex()
+                    .flex_row()
+                    .items_center()
+                    .gap_1()
                     .px_3()
                     .py_1()
                     .min_w_0()
                     .flex_1()
                     .overflow_hidden()
                     .whitespace_nowrap()
-                    .text_ellipsis()
                     .cursor_pointer()
+                    .when_some(tip, |d, tip| d.tooltip(crate::tooltip::text(tip)))
                     .when(is_active, |d| d.bg(bg))
                     .when(!is_active, |d| d.text_color(fg.opacity(0.6)))
                     .on_click(cx.listener(move |this, e: &gpui::ClickEvent, window, cx| {
@@ -1848,12 +2121,19 @@ impl WorkspaceView {
                             this.goto_tab(i, window, cx);
                         }
                     }))
-                    .child(format!(
-                        "{}{}  {}",
-                        if bell { "\u{25cf} " } else { "" },
-                        i + 1,
-                        title
-                    ))
+                    .children(dot)
+                    .child(
+                        div()
+                            .min_w_0()
+                            .overflow_hidden()
+                            .text_ellipsis()
+                            .child(format!(
+                                "{}{}  {}",
+                                if bell { "\u{1f514} " } else { "" },
+                                i + 1,
+                                title
+                            )),
+                    )
             }));
         Some(bar.into_any_element())
     }
@@ -2206,6 +2486,7 @@ impl Render for WorkspaceView {
             .on_action(cx.listener(Self::increase_font_size))
             .on_action(cx.listener(Self::decrease_font_size))
             .on_action(cx.listener(Self::reset_font_size))
+            .on_action(cx.listener(Self::go_to_waiting_agent))
             .on_action(cx.listener(|this, _: &NextTab, w, cx| {
                 this.ws.cycle_tab_in_group(true);
                 this.focus_active(w, cx);

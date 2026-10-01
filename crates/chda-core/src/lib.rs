@@ -17,7 +17,8 @@ pub use refresh::*;
 pub mod agents {
     pub use chda_agents::hook::data_dir;
     pub use chda_agents::{
-        AgentAdapter, AgentId, HookEvent, HookKind, SessionCache, SessionId, adapters, ipc,
+        AgentAdapter, AgentId, HookEvent, HookKind, PANE_ENV, SessionCache, SessionId, adapters,
+        ipc,
     };
 }
 pub use sidebar::*;

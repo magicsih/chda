@@ -29,11 +29,15 @@ pub enum SidebarEvent {
     OpenUrl(String),
     /// Focus an open tab from the activity list.
     FocusTab(chda_core::TabId),
+    /// The status dot of a worktree was clicked: go to its agent's pane.
+    JumpToAgent(PathBuf),
 }
 
 pub struct SidebarView {
     pub model: Sidebar,
     expanded: Vec<PathBuf>,
+    /// Highlighted worktree (e.g. after a notification for a closed pane).
+    selected: Option<PathBuf>,
     focus_handle: FocusHandle,
     fg: Hsla,
     bg: Hsla,
@@ -55,9 +59,25 @@ impl SidebarView {
         Self {
             model: Sidebar::new(),
             expanded: Vec::new(),
+            selected: None,
             focus_handle: cx.focus_handle(),
             fg,
             bg,
+        }
+    }
+
+    /// Highlight a worktree and make sure its repository is expanded.
+    pub fn select(&mut self, worktree: &std::path::Path, cx: &mut Context<Self>) {
+        let found = self
+            .model
+            .worktree_for_path(worktree)
+            .map(|(r, w)| (r.path.clone(), w.path.clone()));
+        if let Some((repo, path)) = found {
+            if let Some(r) = self.model.repo_mut(&repo) {
+                r.collapsed = false;
+            }
+            self.selected = Some(path);
+            cx.notify();
         }
     }
 
@@ -243,10 +263,16 @@ impl SidebarView {
             .pr_2()
             .py_0p5()
             .cursor_pointer()
+            .when(self.selected.as_ref() == Some(&wt.path), |d| {
+                d.bg(fg.opacity(0.14))
+            })
             .hover(|s| s.bg(fg.opacity(0.08)))
             .on_click({
                 let path = path.clone();
-                cx.listener(move |_, _, _, cx| cx.emit(SidebarEvent::OpenWorktree(path.clone())))
+                cx.listener(move |this, _, _, cx| {
+                    this.selected = Some(path.clone());
+                    cx.emit(SidebarEvent::OpenWorktree(path.clone()))
+                })
             })
             .on_mouse_down(MouseButton::Right, {
                 let path = path.clone();
@@ -278,8 +304,18 @@ impl SidebarView {
             )
             .child(
                 div()
+                    .id(ElementId::Name(
+                        format!("wt-dot:{}", wt.path.display()).into(),
+                    ))
                     .flex_shrink_0()
                     .text_color(status_color(status))
+                    .on_click({
+                        let path = path.clone();
+                        cx.listener(move |_, _, _, cx| {
+                            cx.stop_propagation();
+                            cx.emit(SidebarEvent::JumpToAgent(path.clone()));
+                        })
+                    })
                     .child("\u{25cf}"),
             )
             .child(
@@ -381,6 +417,16 @@ impl Render for SidebarView {
                     .cursor_pointer()
                     .hover(|s| s.bg(fg.opacity(0.08)))
                     .on_click(cx.listener(move |_, _, _, cx| cx.emit(SidebarEvent::FocusTab(id))))
+                    .child(
+                        div()
+                            .flex_shrink_0()
+                            .text_color(if t.status == AgentStatus::Idle {
+                                gpui::transparent_black()
+                            } else {
+                                status_color(t.status)
+                            })
+                            .child("\u{25cf}"),
+                    )
                     .child(
                         div()
                             .flex_1()

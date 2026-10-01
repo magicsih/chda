@@ -71,6 +71,7 @@ fn key_bindings() -> Vec<KeyBinding> {
         KeyBinding::new("cmd-+", IncreaseFontSize, None),
         KeyBinding::new("cmd--", DecreaseFontSize, None),
         KeyBinding::new("cmd-0", ResetFontSize, None),
+        KeyBinding::new("cmd-shift-a", GoToWaitingAgent, None),
         // Global bindings count as matching at the focused element's depth,
         // so these name the focused field and come last: on equal depth the
         // later binding wins over the global escape (Dismiss).

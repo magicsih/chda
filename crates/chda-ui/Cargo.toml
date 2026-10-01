@@ -16,5 +16,21 @@ futures.workspace = true
 gpui.workspace = true
 gpui_platform.workspace = true
 
+[target.'cfg(target_os = "macos")'.dependencies]
+block2.workspace = true
+objc2.workspace = true
+objc2-app-kit = { workspace = true, features = ["NSApplication", "NSDockTile", "NSResponder", "NSWindow"] }
+objc2-foundation = { workspace = true, features = ["NSBundle", "NSError", "NSString"] }
+objc2-user-notifications = { workspace = true, features = [
+    "block2",
+    "UNNotification",
+    "UNNotificationContent",
+    "UNNotificationRequest",
+    "UNNotificationResponse",
+    "UNNotificationSound",
+    "UNNotificationTrigger",
+    "UNUserNotificationCenter",
+] }
+
 [lints]
 workspace = true

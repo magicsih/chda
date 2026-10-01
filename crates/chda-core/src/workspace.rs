@@ -2,9 +2,18 @@
 
 use std::path::{Path, PathBuf};
 
+use crate::AgentStatus;
+
 /// Identifies a terminal pane across the workspace.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub struct PaneId(u64);
+
+impl PaneId {
+    /// The number agents report back through `CHDA_PANE_ID`.
+    pub fn raw(self) -> u64 {
+        self.0
+    }
+}
 
 /// Identifies a tab.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord)]
@@ -256,6 +265,21 @@ pub struct PaneInfo {
     pub bell: bool,
     /// Milliseconds since the epoch of the last output or input.
     pub last_activity: u64,
+    /// The coding agent running in the pane, as its hooks report it.
+    pub agent: Option<PaneAgent>,
+}
+
+/// An agent's state in one pane.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct PaneAgent {
+    /// Agent id, e.g. `claude` or `codex`.
+    pub agent: String,
+    /// Never `Idle`: an idle agent is no agent.
+    pub status: AgentStatus,
+    /// Milliseconds since the epoch when the status last changed.
+    pub since: u64,
+    /// The user has looked at the pane since it started waiting.
+    pub seen: bool,
 }
 
 /// How automatic tab titles are chosen.
@@ -411,6 +435,91 @@ impl Workspace {
         out
     }
 
+    /// The pane an agent reported through `CHDA_PANE_ID`.
+    pub fn pane_by_raw(&self, raw: u64) -> Option<PaneId> {
+        self.panes.keys().copied().find(|p| p.0 == raw)
+    }
+
+    /// Record an agent's status in a pane; `Idle` clears it. Returns whether
+    /// anything changed.
+    pub fn set_agent_status(
+        &mut self,
+        pane: PaneId,
+        agent: &str,
+        status: AgentStatus,
+        at: u64,
+    ) -> bool {
+        let Some(info) = self.panes.get_mut(&pane) else {
+            return false;
+        };
+        let next = (status != AgentStatus::Idle).then(|| match &info.agent {
+            Some(a) if a.status == status && a.agent == agent => a.clone(),
+            _ => PaneAgent {
+                agent: agent.to_owned(),
+                status,
+                since: at,
+                seen: false,
+            },
+        });
+        let changed = info.agent != next;
+        info.agent = next;
+        changed
+    }
+
+    /// The user looked at a pane: a finished turn is reviewed (cleared) and
+    /// a waiting agent counts as seen. Returns whether anything changed.
+    pub fn mark_seen(&mut self, pane: PaneId) -> bool {
+        let Some(info) = self.panes.get_mut(&pane) else {
+            return false;
+        };
+        match &mut info.agent {
+            Some(a) if a.status == AgentStatus::Review => {
+                info.agent = None;
+                true
+            }
+            Some(a) if a.status == AgentStatus::WaitingInput && !a.seen => {
+                a.seen = true;
+                true
+            }
+            _ => false,
+        }
+    }
+
+    /// The most urgent agent among a tab's panes.
+    pub fn tab_agent(&self, tab: &Tab) -> Option<&PaneAgent> {
+        tab.panes()
+            .iter()
+            .filter_map(|p| self.panes.get(p)?.agent.as_ref())
+            .max_by_key(|a| (a.status.urgency(), a.since))
+    }
+
+    /// Panes that need the user: waiting for input first, then finished and
+    /// not yet reviewed, newest first within each group.
+    pub fn attention_panes(&self) -> Vec<PaneId> {
+        let mut out: Vec<(PaneId, &PaneAgent)> = self
+            .panes
+            .iter()
+            .filter_map(|(p, i)| Some((*p, i.agent.as_ref()?)))
+            .filter(|(_, a)| matches!(a.status, AgentStatus::WaitingInput | AgentStatus::Review))
+            .collect();
+        out.sort_by_key(|(_, a)| {
+            (
+                std::cmp::Reverse(a.status.urgency()),
+                std::cmp::Reverse(a.since),
+            )
+        });
+        out.into_iter().map(|(p, _)| p).collect()
+    }
+
+    /// Agents waiting for input in panes the user has not looked at since.
+    pub fn unseen_waiting(&self) -> usize {
+        self.panes
+            .values()
+            .filter_map(|i| i.agent.as_ref())
+            .filter(|a| a.status == AgentStatus::WaitingInput && !a.seen)
+            .count()
+    }
+
     /// Open a tab with one pane after the active tab and focus it.
     pub fn new_tab(&mut self) -> (TabId, PaneId) {
         let pane = PaneId(self.next());
@@ -432,6 +541,33 @@ impl Workspace {
         );
         self.active = Some(tab);
         (tab, pane)
+    }
+
+    /// Register a pane that is not in any tab yet (restore builds trees).
+    pub(crate) fn add_pane(&mut self, info: PaneInfo) -> PaneId {
+        let pane = PaneId(self.next());
+        self.panes.insert(pane, info);
+        pane
+    }
+
+    /// Append a tab built from registered panes.
+    pub(crate) fn push_tab(
+        &mut self,
+        root: Node,
+        focused: PaneId,
+        zoomed: Option<PaneId>,
+        custom_title: Option<String>,
+    ) -> TabId {
+        let id = TabId(self.next());
+        self.tabs.push(Tab {
+            id,
+            root,
+            focused,
+            zoomed,
+            custom_title,
+        });
+        self.active.get_or_insert(id);
+        id
     }
 
     /// Set or clear (empty string) a tab's custom title.
@@ -737,5 +873,38 @@ mod tests {
         ws.rename_tab(tab.id, "");
         let tab = ws.active_tab().unwrap().clone();
         assert_eq!(ws.tab_title(&tab), "feat/x");
+    }
+
+    #[test]
+    fn pane_agents_drive_tab_status_and_attention_order() {
+        let mut ws = Workspace::new();
+        let (_, a) = ws.new_tab();
+        let b = ws.split(Axis::Horizontal).unwrap();
+        let (_, c) = ws.new_tab();
+        assert_eq!(ws.pane_by_raw(a.raw()), Some(a));
+        assert_eq!(ws.pane_by_raw(999), None);
+
+        assert!(ws.set_agent_status(a, "claude", AgentStatus::Working, 1));
+        assert!(!ws.set_agent_status(a, "claude", AgentStatus::Working, 2));
+        assert!(ws.set_agent_status(b, "codex", AgentStatus::Review, 3));
+        assert!(ws.set_agent_status(c, "claude", AgentStatus::WaitingInput, 4));
+        let first = ws.tabs()[0].clone();
+        assert_eq!(
+            ws.tab_agent(&first).map(|a| a.status),
+            Some(AgentStatus::Working)
+        );
+        assert_eq!(ws.attention_panes(), vec![c, b]);
+        assert_eq!(ws.unseen_waiting(), 1);
+
+        // Looking at the waiting pane keeps it waiting but seen; looking at
+        // the reviewed one clears it.
+        assert!(ws.mark_seen(c));
+        assert!(!ws.mark_seen(c));
+        assert_eq!(ws.unseen_waiting(), 0);
+        assert!(ws.mark_seen(b));
+        assert_eq!(ws.attention_panes(), vec![c]);
+        assert!(ws.set_agent_status(c, "claude", AgentStatus::Idle, 5));
+        assert!(ws.attention_panes().is_empty());
+        assert_eq!(ws.pane(c).unwrap().agent, None);
     }
 }

@@ -14,7 +14,7 @@ use std::process::Command;
 
 pub use claude::ClaudeAdapter;
 pub use codex::CodexAdapter;
-pub use hook::{HookEvent, HookKind, hook_main};
+pub use hook::{HookEvent, HookKind, PANE_ENV, hook_main};
 pub use session::{AgentSession, SessionCache, SessionId};
 
 /// Which agent a thing belongs to.

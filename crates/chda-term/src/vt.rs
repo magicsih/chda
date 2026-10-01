@@ -399,6 +399,28 @@ impl Terminal {
         true
     }
 
+    /// Scroll so the last prompt (OSC 133 A) sits at the top, or to the
+    /// bottom when there is none. Looks back at most `MAX_PROMPT_SCAN` rows.
+    pub fn jump_to_last_prompt(&mut self) {
+        const MAX_PROMPT_SCAN: usize = 100_000;
+        let total = self.vt.total_rows().unwrap_or(0);
+        let is_prompt = |y: usize| {
+            let point = Point::Screen(PointCoordinate { x: 0, y: y as u32 });
+            self.vt
+                .grid_ref(point)
+                .and_then(|r| r.row())
+                .and_then(|row| row.semantic_prompt())
+                .is_ok_and(|p| p == RowSemanticPrompt::Prompt)
+        };
+        let found = (total.saturating_sub(MAX_PROMPT_SCAN)..total)
+            .rev()
+            .find(|&y| is_prompt(y) && (y == 0 || !is_prompt(y - 1)));
+        match found {
+            Some(y) => self.vt.scroll_viewport(ScrollViewport::Row(y)),
+            None => self.vt.scroll_viewport(ScrollViewport::Bottom),
+        }
+    }
+
     /// Start, change or (with `None`) end a scrollback search. The newest
     /// match becomes current and is scrolled into view.
     pub fn search(&mut self, query: Option<SearchQuery>) -> SearchStatus {
@@ -1211,6 +1233,26 @@ mod tests {
         term.feed(b"\x1b[?1049h");
         assert!(term.alternate_screen());
         assert!(term.frame().unwrap().alternate_screen);
+    }
+
+    #[test]
+    fn jumps_to_the_last_prompt_mark() {
+        let mut t = Terminal::new(Size { cols: 20, rows: 3 }, 100_000).unwrap();
+        t.feed(b"\x1b]133;A\x07$ old\r\n");
+        for i in 0..5 {
+            t.feed(format!("out {i}\r\n").as_bytes());
+        }
+        t.feed(b"\x1b]133;A\x07$ claude\r\n");
+        for i in 0..10 {
+            t.feed(format!("agent {i}\r\n").as_bytes());
+        }
+        t.jump_to_last_prompt();
+        let frame = t.frame().unwrap();
+        assert_eq!(frame.row_text(0), "$ claude");
+        let mut plain = term();
+        plain.feed(b"no marks\r\n");
+        plain.jump_to_last_prompt();
+        assert_eq!(plain.frame().unwrap().scrollbar.offset, 0);
     }
 
     #[test]

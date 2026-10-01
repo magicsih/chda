@@ -104,6 +104,7 @@ mod tests {
             cwd: "/w".into(),
             kind: HookKind::Stopped,
             timestamp: 7,
+            pane: Some(3),
         };
         send(&path, &event).unwrap();
         assert_eq!(

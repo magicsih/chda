@@ -16,6 +16,18 @@ pub enum AgentStatus {
     Review,
 }
 
+impl AgentStatus {
+    /// How much a status needs the user, for picking the most urgent one.
+    pub fn urgency(self) -> u8 {
+        match self {
+            AgentStatus::Idle => 0,
+            AgentStatus::Review => 1,
+            AgentStatus::Working => 2,
+            AgentStatus::WaitingInput => 3,
+        }
+    }
+}
+
 /// Counts shown as git badges.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct GitBadges {
@@ -112,12 +124,7 @@ impl WorktreeEntry {
         self.agents
             .values()
             .copied()
-            .max_by_key(|s| match s {
-                AgentStatus::Idle => 0,
-                AgentStatus::Review => 1,
-                AgentStatus::Working => 2,
-                AgentStatus::WaitingInput => 3,
-            })
+            .max_by_key(|s| s.urgency())
             .unwrap_or_default()
     }
 }
@@ -146,6 +153,8 @@ pub enum SortOrder {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct ActiveTab {
     pub tab: crate::TabId,
+    /// Most urgent agent status among the tab's panes.
+    pub status: AgentStatus,
     pub title: String,
     /// Repository name, or `None` outside any repository.
     pub repo: Option<String>,

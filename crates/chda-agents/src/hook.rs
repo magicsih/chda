@@ -34,7 +34,15 @@ pub struct HookEvent {
     pub kind: HookKind,
     /// Milliseconds since the Unix epoch, taken when the hook ran.
     pub timestamp: u64,
+    /// The chda pane the agent runs in, from [`PANE_ENV`]; absent when the
+    /// agent was started outside chda.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub pane: Option<u64>,
 }
+
+/// Environment variable chda sets in every pane's shell. Agents inherit it
+/// and so do their hooks, which report it back with each event.
+pub const PANE_ENV: &str = "CHDA_PANE_ID";
 
 impl HookEvent {
     pub fn agent_id(&self) -> Option<AgentId> {
@@ -91,6 +99,7 @@ pub fn claude_event(payload: &Value) -> Option<HookEvent> {
         cwd: PathBuf::from(payload.get("cwd")?.as_str()?),
         kind,
         timestamp: now_ms(),
+        pane: None,
     })
 }
 
@@ -116,6 +125,7 @@ pub fn codex_event(payload: &Value, cwd: &Path) -> Option<HookEvent> {
             .unwrap_or_else(|| cwd.to_path_buf()),
         kind,
         timestamp: now_ms(),
+        pane: None,
     })
 }
 
@@ -145,7 +155,8 @@ pub fn hook_main(args: &[String]) -> i32 {
         }
         _ => None,
     };
-    if let Some(event) = event {
+    if let Some(mut event) = event {
+        event.pane = std::env::var(PANE_ENV).ok().and_then(|v| v.parse().ok());
         deliver(&event);
     }
     // Claude Code reads stdout as JSON; an empty object means "carry on".
@@ -226,5 +237,17 @@ mod tests {
             (c.kind, c.session_id.as_str(), c.cwd.as_path()),
             (HookKind::Stopped, "t1", Path::new("/work"))
         );
+        // Events from older hooks have no pane and still parse.
+        let old: HookEvent = serde_json::from_str(
+            r#"{"agent":"claude","session_id":"s","cwd":"/w","kind":"stopped","timestamp":1}"#,
+        )
+        .unwrap();
+        assert_eq!(old.pane, None);
+        let line = serde_json::to_string(&HookEvent {
+            pane: Some(7),
+            ..old
+        })
+        .unwrap();
+        assert!(line.contains(r#""pane":7"#), "{line}");
     }
 }
