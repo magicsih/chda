@@ -108,6 +108,65 @@ pub fn merge_into(repo: &Path, from: &str, into: &str) -> io::Result<MergeOutcom
     Ok(MergeOutcome::Conflicted)
 }
 
+/// The branch worktrees should be merged into: `origin/HEAD` if set, else
+/// `main` or `master`, whichever exists.
+pub fn default_branch(repo: &Path) -> io::Result<String> {
+    let out = run(
+        repo,
+        &["symbolic-ref", "--short", "-q", "refs/remotes/origin/HEAD"],
+    )?;
+    if out.status.success() {
+        let name = String::from_utf8_lossy(&out.stdout).trim().to_owned();
+        if let Some(branch) = name.strip_prefix("origin/") {
+            return Ok(branch.to_owned());
+        }
+    }
+    for candidate in ["main", "master"] {
+        if run(
+            repo,
+            &[
+                "rev-parse",
+                "--verify",
+                "--quiet",
+                &format!("refs/heads/{candidate}"),
+            ],
+        )?
+        .status
+        .success()
+        {
+            return Ok(candidate.to_owned());
+        }
+    }
+    Err(io::Error::other("no main or master branch"))
+}
+
+/// Local branches whose commits are all contained in `base`.
+pub fn branches_merged_into(repo: &Path, base: &str) -> io::Result<Vec<String>> {
+    let out = run(
+        repo,
+        &["branch", "--format=%(refname:short)", "--merged", base],
+    )?;
+    if !out.status.success() {
+        return Err(io::Error::other(
+            String::from_utf8_lossy(&out.stderr).trim().to_owned(),
+        ));
+    }
+    Ok(String::from_utf8_lossy(&out.stdout)
+        .lines()
+        .map(|l| l.trim().to_owned())
+        .filter(|l| !l.is_empty() && l != base)
+        .collect())
+}
+
+/// The branch checked out in `worktree`, if not detached.
+pub fn current_branch(worktree: &Path) -> io::Result<Option<String>> {
+    let out = run(worktree, &["symbolic-ref", "--short", "-q", "HEAD"])?;
+    Ok(out
+        .status
+        .success()
+        .then(|| String::from_utf8_lossy(&out.stdout).trim().to_owned()))
+}
+
 #[cfg(test)]
 pub(crate) mod testing {
     use super::*;
@@ -198,5 +257,16 @@ mod tests {
         assert!(delete_branch(&repo.path, "feat", false).is_err());
         delete_branch(&repo.path, "feat", true).unwrap();
         assert!(merge_into(&repo.path, "feat", "develop").is_err());
+
+        assert_eq!(default_branch(&repo.path).unwrap(), "main");
+        assert_eq!(current_branch(&repo.path).unwrap().as_deref(), Some("main"));
+        TempRepo::git(&repo.path, &["branch", "done"]);
+        TempRepo::git(&repo.path, &["branch", "ahead"]);
+        let wt2 = repo.root.join("repo.worktrees").join("ahead");
+        add_worktree(&repo.path, "ahead", &wt2, None).unwrap();
+        repo.commit_file(&wt2, "z.txt", "z\n");
+        let merged = branches_merged_into(&repo.path, "main").unwrap();
+        assert!(merged.contains(&"done".to_string()));
+        assert!(!merged.contains(&"ahead".to_string()));
     }
 }

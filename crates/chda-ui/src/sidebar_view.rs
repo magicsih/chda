@@ -2,7 +2,7 @@
 
 use std::path::PathBuf;
 
-use chda_core::{AgentStatus, RepoEntry, Sidebar, WorktreeEntry};
+use chda_core::{AgentStatus, CheckState, PrState, RepoEntry, Sidebar, WorktreeEntry};
 use gpui::{
     AnyElement, App, Context, ElementId, EventEmitter, FocusHandle, Focusable, Hsla, MouseButton,
     MouseDownEvent, Pixels, Point, Render, Window, div, prelude::*,
@@ -25,6 +25,8 @@ pub enum SidebarEvent {
         session: String,
     },
     AddRepo,
+    /// Open a URL (a pull request badge was clicked).
+    OpenUrl(String),
 }
 
 pub struct SidebarView {
@@ -177,6 +179,29 @@ impl SidebarView {
             if bh > 0 {
                 badges.push(div().child(format!("\u{2193}{bh}")).into_any_element());
             }
+        }
+        if let Some(pr) = &wt.pr {
+            let (icon, color): (&str, Hsla) = match (pr.state, pr.checks) {
+                (PrState::Merged, _) => ("\u{2713}", gpui::rgb(0xcba6f7).into()),
+                (PrState::Closed, _) => ("\u{2715}", fg.opacity(0.5)),
+                (PrState::Open, CheckState::Success) => ("\u{25cf}", gpui::rgb(0xa6e3a1).into()),
+                (PrState::Open, CheckState::Failure) => ("\u{25cf}", gpui::rgb(0xf38ba8).into()),
+                (PrState::Open, CheckState::Pending) => ("\u{25cb}", gpui::rgb(0xf9e2af).into()),
+                (PrState::Open, CheckState::None) => ("", fg.opacity(0.7)),
+            };
+            let url = pr.url.clone();
+            badges.push(
+                div()
+                    .id(ElementId::Name(format!("pr:{}", wt.path.display()).into()))
+                    .text_color(color)
+                    .cursor_pointer()
+                    .on_click(cx.listener(move |_, _, _, cx| {
+                        cx.stop_propagation();
+                        cx.emit(SidebarEvent::OpenUrl(url.clone()));
+                    }))
+                    .child(format!("#{}{}", pr.number, icon))
+                    .into_any_element(),
+            );
         }
         if !wt.panes.is_empty() {
             badges.push(

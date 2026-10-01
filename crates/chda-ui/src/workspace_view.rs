@@ -20,6 +20,7 @@ use gpui::{
     relative,
 };
 
+use crate::palette::{Palette, PaletteCommand, PaletteEvent, PaletteItem};
 use crate::platform;
 use crate::settings::Settings;
 use crate::sidebar_view::{SidebarEvent, SidebarView};
@@ -60,6 +61,7 @@ actions!(
         ToggleSidebar,
         AddRepo,
         NewWorktree,
+        TogglePalette,
         Dismiss,
         Quit,
     ]
@@ -85,8 +87,23 @@ enum MenuAction {
     RunAgent(PathBuf, AgentId),
     NewWorktree(PathBuf),
     DeleteWorktree(PathBuf, PathBuf),
+    /// Merge into the default branch, remove the worktree and branch.
+    MergeAndClean {
+        repo: PathBuf,
+        worktree: PathBuf,
+        force: bool,
+    },
+    /// Remove every merged, clean worktree of the repository.
+    CleanStale(PathBuf),
     RemoveRepo(PathBuf),
     RefreshRepo(PathBuf),
+}
+
+/// A yes/no sheet before a destructive action.
+struct ConfirmSheet {
+    title: String,
+    lines: Vec<String>,
+    action: MenuAction,
 }
 
 /// The "new worktree" sheet.
@@ -115,6 +132,12 @@ pub struct WorkspaceView {
     watch_events: Option<mpsc::Receiver<PathBuf>>,
     context_menu: Option<ContextMenu>,
     sheet: Option<NewWorktreeSheet>,
+    confirm: Option<ConfirmSheet>,
+    palette: Option<(Entity<Palette>, Subscription)>,
+    /// `gh` is installed and authenticated; checked once.
+    gh_ok: bool,
+    /// Last time pull requests were fetched per repository.
+    pr_fetched: HashMap<PathBuf, std::time::Instant>,
     /// Message shown briefly at the bottom of the sidebar.
     status_line: Option<String>,
 }
@@ -152,8 +175,23 @@ impl WorkspaceView {
             watch_events,
             context_menu: None,
             sheet: None,
+            confirm: None,
+            palette: None,
+            gh_ok: false,
+            pr_fetched: HashMap::new(),
             status_line: None,
         };
+        let gh = cx.background_spawn(async { chda_core::gh_available() });
+        cx.spawn(async move |this, cx| {
+            let ok = gh.await;
+            let _ = this.update(cx, |view, cx| {
+                view.gh_ok = ok;
+                if ok {
+                    view.refresh_prs(false, cx);
+                }
+            });
+        })
+        .detach();
         for repo in this.config.repos.clone() {
             this.sidebar.update(cx, |s, _| {
                 s.model.add_repo(repo.clone());
@@ -410,10 +448,75 @@ impl WorkspaceView {
                 view.sync_panes(cx);
                 if view.refresh_again.remove(&repo) {
                     view.refresh_repo(repo, cx);
+                } else {
+                    view.refresh_prs(false, cx);
                 }
             });
         })
         .detach();
+    }
+
+    /// Fetch pull request state for every non-main worktree through `gh`,
+    /// at most once a minute per repository unless `force`.
+    fn refresh_prs(&mut self, force: bool, cx: &mut Context<Self>) {
+        if !self.gh_ok {
+            return;
+        }
+        let now = std::time::Instant::now();
+        let repos: Vec<(PathBuf, Vec<(PathBuf, String)>)> = self
+            .sidebar
+            .read(cx)
+            .model
+            .repos
+            .iter()
+            .filter(|r| {
+                force
+                    || self
+                        .pr_fetched
+                        .get(&r.path)
+                        .is_none_or(|t| now.duration_since(*t) > Duration::from_secs(60))
+            })
+            .map(|r| {
+                (
+                    r.path.clone(),
+                    r.worktrees
+                        .iter()
+                        .filter(|w| !w.is_main)
+                        .filter_map(|w| w.branch.clone().map(|b| (w.path.clone(), b)))
+                        .collect(),
+                )
+            })
+            .collect();
+        for (repo, branches) in repos {
+            if branches.is_empty() {
+                continue;
+            }
+            self.pr_fetched.insert(repo.clone(), now);
+            let task = cx.background_spawn({
+                let repo = repo.clone();
+                async move {
+                    branches
+                        .into_iter()
+                        .map(|(path, branch)| (path, chda_core::pr_for_branch(&repo, &branch)))
+                        .collect::<Vec<_>>()
+                }
+            });
+            cx.spawn(async move |this, cx| {
+                let results = task.await;
+                let _ = this.update(cx, |view, cx| {
+                    view.sidebar.update(cx, |s, cx| {
+                        let mut changed = false;
+                        for (path, pr) in results {
+                            changed |= s.model.set_pr(&path, pr);
+                        }
+                        if changed {
+                            cx.notify();
+                        }
+                    });
+                });
+            })
+            .detach();
+        }
     }
 
     fn refresh_sessions(&mut self, cx: &mut Context<Self>) {
@@ -711,6 +814,14 @@ impl WorkspaceView {
                 ));
                 if !is_main {
                     items.push((
+                        "Merge into main and clean up".into(),
+                        MenuAction::MergeAndClean {
+                            repo: repo.clone(),
+                            worktree: path.clone(),
+                            force: false,
+                        },
+                    ));
+                    items.push((
                         "Delete worktree".into(),
                         MenuAction::DeleteWorktree(repo, path),
                     ));
@@ -724,6 +835,10 @@ impl WorkspaceView {
                         (
                             "New worktree...".into(),
                             MenuAction::NewWorktree(repo.clone()),
+                        ),
+                        (
+                            "Clean up merged worktrees...".into(),
+                            MenuAction::CleanStale(repo.clone()),
                         ),
                         ("Refresh".into(), MenuAction::RefreshRepo(repo.clone())),
                         ("Remove from sidebar".into(), MenuAction::RemoveRepo(repo)),
@@ -741,6 +856,7 @@ impl WorkspaceView {
                 }
             }
             SidebarEvent::AddRepo => self.add_repo(&AddRepo, window, cx),
+            SidebarEvent::OpenUrl(url) => cx.open_url(&url),
         }
         cx.notify();
     }
@@ -828,6 +944,131 @@ impl WorkspaceView {
                 }
                 self.refresh_repo(repo, cx);
             }
+            MenuAction::MergeAndClean {
+                repo,
+                worktree,
+                force,
+            } => {
+                let entry = self
+                    .sidebar
+                    .read(cx)
+                    .model
+                    .worktree_for_path(&worktree)
+                    .map(|(_, w)| w.clone())
+                    .filter(|w| w.path == worktree);
+                let Some(entry) = entry else {
+                    return;
+                };
+                let blockers = chda_core::blockers(&entry);
+                if !force && !blockers.is_empty() {
+                    let name = entry.branch.clone().unwrap_or_default();
+                    self.confirm = Some(ConfirmSheet {
+                        title: format!("{name} is not ready to clean up"),
+                        lines: blockers
+                            .iter()
+                            .map(|b| b.to_string())
+                            .chain(std::iter::once(
+                                "Force: merge anyway, discard changes and delete the branch."
+                                    .into(),
+                            ))
+                            .collect(),
+                        action: MenuAction::MergeAndClean {
+                            repo,
+                            worktree,
+                            force: true,
+                        },
+                    });
+                    cx.notify();
+                    return;
+                }
+                let task = cx.background_spawn({
+                    let repo = repo.clone();
+                    async move { chda_core::merge_and_clean(&repo, &entry, force) }
+                });
+                cx.spawn(async move |this, cx| {
+                    let result = task.await;
+                    let _ = this.update(cx, |view, cx| {
+                        view.status_line = Some(match result {
+                            Ok(r) => {
+                                format!("Merged {} and removed {}", r.branch, r.removed.display())
+                            }
+                            Err(e) => e.to_string(),
+                        });
+                        view.refresh_repo(repo, cx);
+                        cx.notify();
+                    });
+                })
+                .detach();
+            }
+            MenuAction::CleanStale(repo) => {
+                let worktrees: Vec<chda_core::WorktreeEntry> = self
+                    .sidebar
+                    .read(cx)
+                    .model
+                    .repos
+                    .iter()
+                    .find(|r| r.path == repo)
+                    .map(|r| r.worktrees.clone())
+                    .unwrap_or_default();
+                let stale: Vec<chda_core::WorktreeEntry> =
+                    chda_core::stale_worktrees(&repo, &worktrees)
+                        .map(|v| v.into_iter().cloned().collect())
+                        .unwrap_or_default();
+                if stale.is_empty() {
+                    self.status_line = Some("No merged, clean worktrees to remove".into());
+                    cx.notify();
+                    return;
+                }
+                if self
+                    .confirm
+                    .as_ref()
+                    .is_none_or(|c| !matches!(c.action, MenuAction::CleanStale(_)))
+                {
+                    self.confirm = Some(ConfirmSheet {
+                        title: format!("Remove {} merged worktree(s)?", stale.len()),
+                        lines: stale
+                            .iter()
+                            .map(|w| {
+                                format!(
+                                    "{}  {}",
+                                    w.branch.clone().unwrap_or_default(),
+                                    w.path.display()
+                                )
+                            })
+                            .collect(),
+                        action: MenuAction::CleanStale(repo),
+                    });
+                    cx.notify();
+                    return;
+                }
+                let task = cx.background_spawn({
+                    let repo = repo.clone();
+                    async move {
+                        stale
+                            .iter()
+                            .map(|w| chda_core::remove_stale(&repo, w).map(|_| w.path.clone()))
+                            .collect::<Vec<_>>()
+                    }
+                });
+                cx.spawn(async move |this, cx| {
+                    let results = task.await;
+                    let _ = this.update(cx, |view, cx| {
+                        let ok = results.iter().filter(|r| r.is_ok()).count();
+                        let errors: Vec<String> = results
+                            .iter()
+                            .filter_map(|r| r.as_ref().err().map(|e| e.to_string()))
+                            .collect();
+                        view.status_line = Some(if errors.is_empty() {
+                            format!("Removed {ok} worktree(s)")
+                        } else {
+                            format!("Removed {ok}; failed: {}", errors.join("; "))
+                        });
+                        view.refresh_repo(repo, cx);
+                        cx.notify();
+                    });
+                })
+                .detach();
+            }
             MenuAction::RemoveRepo(repo) => {
                 if let Some(w) = &mut self.watcher {
                     w.unwatch(&repo);
@@ -842,6 +1083,7 @@ impl WorkspaceView {
             MenuAction::RefreshRepo(repo) => {
                 self.refresh_repo(repo, cx);
                 self.refresh_sessions(cx);
+                self.refresh_prs(true, cx);
             }
         }
         cx.notify();
@@ -929,8 +1171,166 @@ impl WorkspaceView {
         cx.notify();
     }
 
+    fn palette_items(&self, cx: &App) -> Vec<PaletteItem> {
+        let mut items: Vec<PaletteItem> = [
+            ("New tab", "cmd-t", "new_tab"),
+            ("Close pane", "cmd-w", "close"),
+            ("Split right", "cmd-d", "split_right"),
+            ("Split down", "cmd-shift-d", "split_down"),
+            ("Toggle zoom", "cmd-shift-enter", "zoom"),
+            ("Equalize splits", "cmd-ctrl-=", "equalize"),
+            ("Toggle sidebar", "cmd-b", "sidebar"),
+            ("Add repository...", "cmd-shift-o", "add_repo"),
+        ]
+        .into_iter()
+        .map(|(label, detail, action)| PaletteItem {
+            label: label.into(),
+            detail: detail.into(),
+            command: PaletteCommand::Action(action),
+        })
+        .collect();
+        let sidebar = &self.sidebar.read(cx).model;
+        for repo in &sidebar.repos {
+            items.push(PaletteItem {
+                label: format!("New worktree in {}", repo.name),
+                detail: repo.path.to_string_lossy().into_owned(),
+                command: PaletteCommand::NewWorktree(repo.path.clone()),
+            });
+            for wt in &repo.worktrees {
+                let branch = wt.branch.clone().unwrap_or_else(|| "(detached)".into());
+                items.push(PaletteItem {
+                    label: format!("Go to {}/{branch}", repo.name),
+                    detail: wt.path.to_string_lossy().into_owned(),
+                    command: PaletteCommand::GoToWorktree(wt.path.clone()),
+                });
+                for a in self.adapters.iter() {
+                    items.push(PaletteItem {
+                        label: format!("Run {} in {}/{branch}", a.display_name(), repo.name),
+                        detail: wt.path.to_string_lossy().into_owned(),
+                        command: PaletteCommand::RunAgent(wt.path.clone(), a.id().as_str().into()),
+                    });
+                }
+                for s in wt.sessions.iter().take(5) {
+                    items.push(PaletteItem {
+                        label: format!("Resume {} in {}/{branch}", s.agent, repo.name),
+                        detail: s.snippet.clone(),
+                        command: PaletteCommand::ResumeSession {
+                            worktree: wt.path.clone(),
+                            agent: s.agent.clone(),
+                            session: s.id.clone(),
+                        },
+                    });
+                }
+            }
+        }
+        items
+    }
+
+    fn toggle_palette(&mut self, _: &TogglePalette, window: &mut Window, cx: &mut Context<Self>) {
+        if self.palette.take().is_some() {
+            self.focus_active(window, cx);
+            return;
+        }
+        let bg = hsla(self.settings.colors.background.unwrap_or_default());
+        let fg = hsla(self.settings.colors.foreground.unwrap_or_default());
+        let items = self.palette_items(cx);
+        let palette = cx.new(|cx| Palette::new(items, fg, blend(bg, fg, 0.08), window, cx));
+        let sub = cx.subscribe_in(&palette, window, |this, _, event, window, cx| {
+            this.palette = None;
+            match event {
+                PaletteEvent::Chosen(command) => {
+                    this.run_palette_command(command.clone(), window, cx)
+                }
+                PaletteEvent::Dismissed => this.focus_active(window, cx),
+            }
+            cx.notify();
+        });
+        self.palette = Some((palette, sub));
+        cx.notify();
+    }
+
+    fn run_palette_command(
+        &mut self,
+        command: PaletteCommand,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        match command {
+            PaletteCommand::Action(name) => match name {
+                "new_tab" => self.new_tab(&NewTab, window, cx),
+                "close" => self.close_surface(&CloseSurface, window, cx),
+                "split_right" => self.split(Axis::Horizontal, window, cx),
+                "split_down" => self.split(Axis::Vertical, window, cx),
+                "zoom" => {
+                    self.ws.toggle_zoom();
+                    self.focus_active(window, cx);
+                }
+                "equalize" => {
+                    self.ws.equalize();
+                    self.focus_active(window, cx);
+                }
+                "sidebar" => self.toggle_sidebar(&ToggleSidebar, window, cx),
+                "add_repo" => self.add_repo(&AddRepo, window, cx),
+                _ => {}
+            },
+            PaletteCommand::GoToWorktree(path) => self.open_worktree(&path, window, cx),
+            PaletteCommand::RunAgent(path, agent) => {
+                if let Some(agent) = AgentId::parse(&agent) {
+                    self.run_agent(&path, agent, None, window, cx);
+                }
+            }
+            PaletteCommand::ResumeSession {
+                worktree,
+                agent,
+                session,
+            } => {
+                if let Some(agent) = AgentId::parse(&agent) {
+                    self.run_agent(&worktree, agent, Some(SessionId(session)), window, cx);
+                }
+            }
+            PaletteCommand::NewWorktree(repo) => self.open_sheet(repo, window, cx),
+        }
+    }
+
+    fn render_palette(&self) -> Option<AnyElement> {
+        let (palette, _) = self.palette.as_ref()?;
+        Some(
+            deferred(
+                div()
+                    .absolute()
+                    .size_full()
+                    .top_0()
+                    .left_0()
+                    .flex()
+                    .items_start()
+                    .justify_center()
+                    .pt_12()
+                    .occlude()
+                    .child(palette.clone()),
+            )
+            .into_any_element(),
+        )
+    }
+
+    fn confirm_action(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if let Some(confirm) = self.confirm.take() {
+            // CleanStale runs when the confirm sheet is still set; re-arm it
+            // so the action sees the confirmation.
+            if matches!(confirm.action, MenuAction::CleanStale(_)) {
+                let action = confirm.action.clone();
+                self.confirm = Some(confirm);
+                self.run_menu_action(action, window, cx);
+                self.confirm = None;
+            } else {
+                self.run_menu_action(confirm.action, window, cx);
+            }
+        }
+    }
+
     fn dismiss(&mut self, _: &Dismiss, window: &mut Window, cx: &mut Context<Self>) {
         if self.sheet.take().is_some()
+            || self.confirm.take().is_some()
+            || self.palette.take().is_some()
             || self.context_menu.take().is_some()
             || self.status_line.take().is_some()
         {
@@ -1088,6 +1488,85 @@ impl WorkspaceView {
         )
     }
 
+    fn render_confirm(&self, cx: &mut Context<Self>) -> Option<AnyElement> {
+        let confirm = self.confirm.as_ref()?;
+        let bg = hsla(self.settings.colors.background.unwrap_or_default());
+        let fg = hsla(self.settings.colors.foreground.unwrap_or_default());
+        Some(
+            deferred(
+                div()
+                    .absolute()
+                    .size_full()
+                    .top_0()
+                    .left_0()
+                    .flex()
+                    .items_start()
+                    .justify_center()
+                    .pt_16()
+                    .bg(gpui::black().opacity(0.3))
+                    .occlude()
+                    .child(
+                        div()
+                            .w(px(480.0))
+                            .p_3()
+                            .rounded_md()
+                            .bg(blend(bg, fg, 0.08))
+                            .border_1()
+                            .border_color(fg.opacity(0.2))
+                            .shadow_lg()
+                            .text_sm()
+                            .text_color(fg)
+                            .flex()
+                            .flex_col()
+                            .gap_2()
+                            .child(
+                                div()
+                                    .font_weight(gpui::FontWeight::BOLD)
+                                    .child(confirm.title.clone()),
+                            )
+                            .children(confirm.lines.iter().map(|l| {
+                                div().text_xs().text_color(fg.opacity(0.8)).child(l.clone())
+                            }))
+                            .child(
+                                div()
+                                    .flex()
+                                    .flex_row()
+                                    .gap_2()
+                                    .justify_end()
+                                    .child(
+                                        div()
+                                            .id("confirm-cancel")
+                                            .px_3()
+                                            .py_1()
+                                            .rounded_sm()
+                                            .bg(fg.opacity(0.1))
+                                            .cursor_pointer()
+                                            .on_click(cx.listener(|this, _, window, cx| {
+                                                this.confirm = None;
+                                                this.focus_active(window, cx);
+                                            }))
+                                            .child("Cancel"),
+                                    )
+                                    .child(
+                                        div()
+                                            .id("confirm-ok")
+                                            .px_3()
+                                            .py_1()
+                                            .rounded_sm()
+                                            .bg(gpui::rgb(0xf38ba8).opacity(0.6))
+                                            .cursor_pointer()
+                                            .on_click(cx.listener(|this, _, window, cx| {
+                                                this.confirm_action(window, cx)
+                                            }))
+                                            .child("Proceed"),
+                                    ),
+                            ),
+                    ),
+            )
+            .into_any_element(),
+        )
+    }
+
     fn render_sheet(&self, cx: &mut Context<Self>) -> Option<AnyElement> {
         let sheet = self.sheet.as_ref()?;
         let bg = hsla(self.settings.colors.background.unwrap_or_default());
@@ -1203,6 +1682,7 @@ impl Render for WorkspaceView {
             .on_action(cx.listener(Self::toggle_sidebar))
             .on_action(cx.listener(Self::add_repo))
             .on_action(cx.listener(Self::new_worktree_action))
+            .on_action(cx.listener(Self::toggle_palette))
             .on_action(cx.listener(Self::dismiss))
             .on_action(cx.listener(|this, _: &NextTab, w, cx| {
                 this.ws.cycle_tab(true);
@@ -1301,5 +1781,7 @@ impl Render for WorkspaceView {
             .child(main)
             .children(self.render_context_menu(cx))
             .children(self.render_sheet(cx))
+            .children(self.render_confirm(cx))
+            .children(self.render_palette())
     }
 }

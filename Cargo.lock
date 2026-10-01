@@ -864,6 +864,7 @@ dependencies = [
  "chda-agents",
  "chda-git",
  "notify",
+ "serde_json",
 ]
 
 [[package]]

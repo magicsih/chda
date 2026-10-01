@@ -4,5 +4,8 @@
 mod cli;
 mod read;
 
-pub use cli::{MergeOutcome, add_worktree, delete_branch, merge_into, remove_worktree};
+pub use cli::{
+    MergeOutcome, add_worktree, branches_merged_into, current_branch, default_branch,
+    delete_branch, merge_into, remove_worktree,
+};
 pub use read::{GitStatus, WorktreeInfo, list_worktrees, main_worktree, status};

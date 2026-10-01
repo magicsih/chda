@@ -2,11 +2,15 @@
 //!
 //! This crate knows nothing about GPUI, libghostty, or gix.
 
+mod cleanup;
+mod github;
 mod refresh;
 mod sidebar;
 mod watch;
 mod workspace;
 
+pub use cleanup::*;
+pub use github::{gh_available, pr_for_branch};
 pub use refresh::*;
 
 /// Agent integration surface the UI needs (ADR: the UI talks to core only).

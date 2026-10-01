@@ -33,6 +33,31 @@ impl GitBadges {
     }
 }
 
+/// Pull request state for a worktree's branch, from `gh`.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct PrInfo {
+    pub number: u64,
+    pub url: String,
+    pub state: PrState,
+    pub checks: CheckState,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum PrState {
+    Open,
+    Merged,
+    Closed,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum CheckState {
+    /// No checks reported.
+    None,
+    Pending,
+    Success,
+    Failure,
+}
+
 /// A past agent session that can be resumed in this worktree.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct SessionEntry {
@@ -49,6 +74,7 @@ pub struct WorktreeEntry {
     pub branch: Option<String>,
     pub is_main: bool,
     pub badges: GitBadges,
+    pub pr: Option<PrInfo>,
     /// Agent status per agent id.
     pub agents: BTreeMap<String, AgentStatus>,
     /// Newest first.
@@ -152,6 +178,7 @@ impl Sidebar {
                     w.sessions = prev.sessions.clone();
                     w.last_activity = prev.last_activity;
                     w.panes = prev.panes.clone();
+                    w.pr = prev.pr.clone();
                 }
                 w
             })
@@ -259,6 +286,18 @@ impl Sidebar {
             if let Some(w) = self.worktree_mut_for_path(cwd) {
                 w.panes.push(*pane);
             }
+        }
+    }
+
+    /// Store pull request info for a worktree's branch.
+    pub fn set_pr(&mut self, worktree: &Path, pr: Option<PrInfo>) -> bool {
+        match self.worktree_mut_for_path(worktree) {
+            Some(w) if w.path == worktree => {
+                let changed = w.pr != pr;
+                w.pr = pr;
+                changed
+            }
+            _ => false,
         }
     }
 

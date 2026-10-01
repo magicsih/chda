@@ -71,4 +71,11 @@ refreshes badges every 5 s while the sidebar is visible, one refresh per
 repository at a time, and re-indexes sessions every 30 s with an mtime/size
 cache. The UI reaches git and agents only through `chda-core`.
 
+Finishing a worktree (`chda-core::cleanup`) merges its branch into the
+default branch inside the main worktree, removes the worktree and deletes
+the branch; blockers (uncommitted changes, unpushed commits, an open pull
+request, the base branch not being checked out) stop it unless the user
+forces. Pull request badges come from `gh pr list` per branch, fetched at
+most once a minute per repository.
+
 Decisions that are hard to reverse are recorded under `docs/decisions/`.

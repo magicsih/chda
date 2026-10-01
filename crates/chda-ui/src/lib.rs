@@ -1,5 +1,6 @@
 //! GPUI views, elements and theme. The only crate that may depend on GPUI.
 
+mod palette;
 mod platform;
 mod settings;
 mod sidebar_view;
@@ -57,6 +58,7 @@ fn key_bindings() -> Vec<KeyBinding> {
         KeyBinding::new("cmd-b", ToggleSidebar, None),
         KeyBinding::new("cmd-shift-o", AddRepo, None),
         KeyBinding::new("cmd-n", NewWorktree, None),
+        KeyBinding::new("cmd-shift-p", TogglePalette, None),
         KeyBinding::new("escape", Dismiss, None),
     ]
 }
