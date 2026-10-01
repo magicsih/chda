@@ -5,7 +5,7 @@
 
 mod claude;
 mod codex;
-mod hook;
+pub mod hook;
 pub mod ipc;
 mod session;
 
@@ -99,4 +99,25 @@ pub fn index_sessions(
     }
     out.sort_by_key(|s| std::cmp::Reverse(s.started_at));
     out
+}
+
+#[cfg(test)]
+mod real_sessions {
+    #[test]
+    #[ignore = "indexes the real ~/.claude and ~/.codex session files; run with CHDA_REAL=1"]
+    fn index_real_sessions() {
+        if std::env::var_os("CHDA_REAL").is_none() {
+            return;
+        }
+        let adapters = super::adapters();
+        let mut cache = super::SessionCache::new();
+        let start = std::time::Instant::now();
+        let sessions = super::index_sessions(&adapters, &mut cache);
+        eprintln!("{} sessions in {:?}", sessions.len(), start.elapsed());
+        for s in sessions.iter().take(5) {
+            eprintln!("{:?} {} {} {:?} {}", s.agent, s.started_at, s.message_count, s.cwd, s.snippet);
+        }
+        let chda: Vec<_> = sessions.iter().filter(|s| s.cwd.ends_with("magicsih/chda")).collect();
+        eprintln!("chda sessions: {}", chda.len());
+    }
 }

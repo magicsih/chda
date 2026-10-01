@@ -21,3 +21,26 @@ pub fn beep() {
 unsafe extern "C" {
     fn NSBeep();
 }
+
+/// Show a user notification. Uses the system scripting bridge on macOS
+/// until the app ships as a signed bundle (then UNUserNotification).
+pub fn notify(title: &str, body: &str) {
+    #[cfg(target_os = "macos")]
+    {
+        let esc = |s: &str| s.replace('\\', "\\\\").replace('"', "\\\"");
+        let script = format!(
+            "display notification \"{}\" with title \"{}\"",
+            esc(body),
+            esc(title)
+        );
+        let _ = std::process::Command::new("osascript")
+            .args(["-e", &script])
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null())
+            .spawn();
+    }
+    #[cfg(not(target_os = "macos"))]
+    {
+        let _ = (title, body);
+    }
+}

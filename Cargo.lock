@@ -859,6 +859,10 @@ dependencies = [
 [[package]]
 name = "chda-core"
 version = "0.0.1"
+dependencies = [
+ "chda-agents",
+ "chda-git",
+]
 
 [[package]]
 name = "chda-git"
@@ -893,6 +897,7 @@ dependencies = [
  "futures",
  "gpui",
  "gpui_platform",
+ "serde_json",
 ]
 
 [[package]]

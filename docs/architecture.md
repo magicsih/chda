@@ -56,4 +56,19 @@ pointing `ZDOTDIR` at them, which then restores the user's own `ZDOTDIR`.
 Shells without integration fall back to asking the OS for the foreground
 process's directory (`chda-pty`, macOS only so far).
 
+## Sidebar and agents
+
+`chda-core::Sidebar` holds registered repositories, their worktrees with git
+badges, per-agent status (idle, working, waiting for input, review) and the
+sessions found in agent transcripts. `chda-git` reads with gix and writes
+with the `git` binary. `chda-agents` knows each agent: how to launch it with
+hooks (Claude Code gets a per-launch `--settings` file; Codex gets a
+`-c notify=[...]` override that chains the user's own notify program), where
+its transcripts live and how to parse them. Agents report through
+`chda hook <agent>`, which forwards the event over a Unix socket in the data
+directory, or appends to `events.jsonl` when no app is running. The UI
+refreshes badges every 5 s while the sidebar is visible, one refresh per
+repository at a time, and re-indexes sessions every 30 s with an mtime/size
+cache. The UI reaches git and agents only through `chda-core`.
+
 Decisions that are hard to reverse are recorded under `docs/decisions/`.

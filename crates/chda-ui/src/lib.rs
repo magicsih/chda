@@ -2,8 +2,10 @@
 
 mod platform;
 mod settings;
+mod sidebar_view;
 mod terminal_element;
 mod terminal_view;
+mod text_input;
 mod workspace_view;
 
 use gpui::{
@@ -52,6 +54,10 @@ fn key_bindings() -> Vec<KeyBinding> {
         KeyBinding::new("cmd-ctrl-down", ResizeDown, None),
         KeyBinding::new("cmd-ctrl-=", EqualizeSplits, None),
         KeyBinding::new("cmd-shift-enter", ToggleZoom, None),
+        KeyBinding::new("cmd-b", ToggleSidebar, None),
+        KeyBinding::new("cmd-shift-o", AddRepo, None),
+        KeyBinding::new("cmd-n", NewWorktree, None),
+        KeyBinding::new("escape", Dismiss, None),
     ]
 }
 

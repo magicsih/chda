@@ -82,6 +82,7 @@ impl TerminalView {
     pub fn new(
         settings: Settings,
         cwd: Option<PathBuf>,
+        command: Option<Vec<String>>,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Self {
@@ -91,6 +92,7 @@ impl TerminalView {
             colors: settings.colors.clone(),
             scrollback: settings.scrollback,
             cwd: cwd.clone(),
+            command,
             ..Default::default()
         };
         if let (Some(shell), Some(data_dir)) = (login_shell(), default_data_dir())
