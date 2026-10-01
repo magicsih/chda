@@ -22,6 +22,8 @@ pub enum PaletteCommand {
         session: String,
     },
     NewWorktree(PathBuf),
+    /// Check out an existing branch as a new worktree of the repository.
+    CheckoutBranch(PathBuf, String),
 }
 
 #[derive(Clone, Debug, PartialEq)]

@@ -7,12 +7,13 @@ use std::sync::mpsc;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
-use chda_config::{ChdaConfig, DefaultAction};
+use chda_config::{ChdaConfig, DefaultAction, TabTitle};
 use chda_core::agents::{
     AgentAdapter, AgentId, HookEvent, HookKind, SessionCache, SessionId, adapters, data_dir, ipc,
 };
 use chda_core::{
-    AgentEvent, AgentStatus, Axis, Direction, Node, PaneId, RepoWatcher, TabId, Workspace,
+    ActiveTab, AgentEvent, AgentStatus, Axis, Direction, Node, PaneId, RepoWatcher, TabId,
+    TitleMode, Workspace,
 };
 use futures::StreamExt;
 use futures::channel::mpsc::unbounded;
@@ -88,7 +89,6 @@ enum MenuAction {
     OpenTerminal(PathBuf),
     RunAgent(PathBuf, AgentId),
     NewWorktree(PathBuf),
-    DeleteWorktree(PathBuf, PathBuf),
     /// Merge into the default branch, remove the worktree and branch.
     MergeAndClean {
         repo: PathBuf,
@@ -97,6 +97,14 @@ enum MenuAction {
     },
     /// Remove every merged, clean worktree of the repository.
     CleanStale(PathBuf),
+    /// Remove one worktree and its branch; `force` discards changes.
+    DeleteWorktreeAndBranch {
+        repo: PathBuf,
+        worktree: PathBuf,
+        force: bool,
+    },
+    /// Pick an existing branch to check out as a new worktree.
+    PickBranch(PathBuf),
     RemoveRepo(PathBuf),
     RefreshRepo(PathBuf),
 }
@@ -138,6 +146,8 @@ pub struct WorkspaceView {
     palette: Option<(Entity<Palette>, Subscription)>,
     /// Inline editor for a tab title.
     renaming: Option<(TabId, Entity<TextInput>, Subscription)>,
+    /// Repository whose tabs the tab bar shows (`None`: tabs outside repos).
+    tab_group: Option<PathBuf>,
     /// `gh` is installed and authenticated; checked once.
     gh_ok: bool,
     /// Last time pull requests were fetched per repository.
@@ -161,11 +171,16 @@ impl WorkspaceView {
         let hook_events = Self::start_hook_receiver(window, cx);
         let (watcher, watch_events) = Self::start_watcher(window, cx);
 
+        let mut ws = Workspace::new();
+        ws.title_mode = match config.tab_title {
+            TabTitle::Branch => TitleMode::Branch,
+            TabTitle::Path => TitleMode::Path,
+        };
         let mut this = Self {
             sidebar_visible: config.sidebar_visible,
             settings,
             config,
-            ws: Workspace::new(),
+            ws,
             panes: HashMap::new(),
             focus_handle: cx.focus_handle(),
             sidebar,
@@ -182,6 +197,7 @@ impl WorkspaceView {
             confirm: None,
             palette: None,
             renaming: None,
+            tab_group: None,
             gh_ok: false,
             pr_fetched: HashMap::new(),
             status_line: None,
@@ -540,7 +556,8 @@ impl WorkspaceView {
         .detach();
     }
 
-    /// Tell the sidebar which panes live in which worktree.
+    /// Tell the sidebar which panes live in which worktree, and remember each
+    /// pane's branch and repository for tab titles and grouping.
     fn sync_panes(&mut self, cx: &mut Context<Self>) {
         let panes: Vec<(PaneId, PathBuf)> = self
             .ws
@@ -549,8 +566,47 @@ impl WorkspaceView {
             .flat_map(|t| t.panes())
             .filter_map(|p| self.ws.pane(p).and_then(|i| i.cwd.clone()).map(|c| (p, c)))
             .collect();
+        let located: Vec<(PaneId, Option<String>, Option<PathBuf>)> = {
+            let model = &self.sidebar.read(cx).model;
+            panes
+                .iter()
+                .map(|(p, cwd)| match model.worktree_for_path(cwd) {
+                    Some((repo, wt)) => (*p, wt.branch.clone(), Some(repo.path.clone())),
+                    None => (*p, None, None),
+                })
+                .collect()
+        };
+        for (p, branch, repo) in located {
+            if let Some(info) = self.ws.pane_mut(p) {
+                info.branch = branch;
+                info.repo = repo;
+            }
+        }
+        if let Some(active) = self.ws.active_tab() {
+            self.tab_group = self.ws.tab_repo(active);
+        }
+        let active_tabs: Vec<ActiveTab> = {
+            let model = &self.sidebar.read(cx).model;
+            self.ws
+                .tabs_by_activity()
+                .into_iter()
+                .map(|(tab, title, repo, last_activity)| ActiveTab {
+                    tab,
+                    title,
+                    repo: repo.and_then(|r| {
+                        model
+                            .repos
+                            .iter()
+                            .find(|e| e.path == r)
+                            .map(|e| e.name.clone())
+                    }),
+                    last_activity,
+                })
+                .collect()
+        };
         self.sidebar.update(cx, |s, cx| {
             s.model.set_panes(&panes);
+            s.model.active_tabs = active_tabs;
             cx.notify();
         });
     }
@@ -636,6 +692,12 @@ impl WorkspaceView {
                     self.refresh_repo_of(&cwd, cx);
                 }
             }
+            TerminalEvent::Activity(at) => {
+                if let Some(info) = self.ws.pane_mut(pane) {
+                    info.last_activity = *at;
+                }
+                self.sync_panes(cx);
+            }
         }
         self.sync_title(window);
         cx.notify();
@@ -659,6 +721,9 @@ impl WorkspaceView {
         {
             let handle = view.read(cx).focus_handle(cx);
             window.focus(&handle, cx);
+        }
+        if let Some(active) = self.ws.active_tab() {
+            self.tab_group = self.ws.tab_repo(active);
         }
         self.reviewed_focused(cx);
         self.sync_title(window);
@@ -722,7 +787,8 @@ impl WorkspaceView {
     }
 
     fn goto_tab(&mut self, index: usize, window: &mut Window, cx: &mut Context<Self>) {
-        if self.ws.activate_tab(index) {
+        let group = self.tab_group.clone();
+        if self.ws.activate_tab_in(group.as_deref(), index) {
             self.focus_active(window, cx);
         }
     }
@@ -827,8 +893,12 @@ impl WorkspaceView {
                         },
                     ));
                     items.push((
-                        "Delete worktree".into(),
-                        MenuAction::DeleteWorktree(repo, path),
+                        "Delete worktree...".into(),
+                        MenuAction::DeleteWorktreeAndBranch {
+                            repo,
+                            worktree: path,
+                            force: false,
+                        },
                     ));
                 }
                 self.context_menu = Some(ContextMenu { position, items });
@@ -840,6 +910,10 @@ impl WorkspaceView {
                         (
                             "New worktree...".into(),
                             MenuAction::NewWorktree(repo.clone()),
+                        ),
+                        (
+                            "New worktree from branch...".into(),
+                            MenuAction::PickBranch(repo.clone()),
                         ),
                         (
                             "Clean up merged worktrees...".into(),
@@ -862,6 +936,11 @@ impl WorkspaceView {
             }
             SidebarEvent::AddRepo => self.add_repo(&AddRepo, window, cx),
             SidebarEvent::OpenUrl(url) => cx.open_url(&url),
+            SidebarEvent::FocusTab(tab) => {
+                if self.ws.activate_tab_id(tab) {
+                    self.focus_active(window, cx);
+                }
+            }
         }
         cx.notify();
     }
@@ -927,28 +1006,6 @@ impl WorkspaceView {
             MenuAction::OpenTerminal(path) => self.open_tab_at(Some(path), None, window, cx),
             MenuAction::RunAgent(path, agent) => self.run_agent(&path, agent, None, window, cx),
             MenuAction::NewWorktree(repo) => self.open_sheet(repo, window, cx),
-            MenuAction::DeleteWorktree(repo, path) => {
-                let dirty = self
-                    .sidebar
-                    .read(cx)
-                    .model
-                    .worktree_for_path(&path)
-                    .is_some_and(|(_, w)| {
-                        w.badges.dirty_count() > 0 || w.badges.ahead.unwrap_or(0) > 0
-                    });
-                if dirty {
-                    self.status_line = Some(format!(
-                        "{}: has changes or unpushed commits; not deleted",
-                        path.display()
-                    ));
-                } else {
-                    match chda_core::delete_worktree(&repo, &path, false) {
-                        Ok(()) => self.status_line = Some(format!("Deleted {}", path.display())),
-                        Err(e) => self.status_line = Some(e.to_string()),
-                    }
-                }
-                self.refresh_repo(repo, cx);
-            }
             MenuAction::MergeAndClean {
                 repo,
                 worktree,
@@ -1073,6 +1130,107 @@ impl WorkspaceView {
                     });
                 })
                 .detach();
+            }
+            MenuAction::DeleteWorktreeAndBranch {
+                repo,
+                worktree,
+                force,
+            } => {
+                let entry = self
+                    .sidebar
+                    .read(cx)
+                    .model
+                    .worktree_for_path(&worktree)
+                    .map(|(_, w)| w.clone())
+                    .filter(|w| w.path == worktree);
+                let Some(entry) = entry else {
+                    return;
+                };
+                if !force {
+                    let name = entry.branch.clone().unwrap_or_default();
+                    let (title, lines) = if entry.safe_to_delete() {
+                        (
+                            format!("Delete {name}?"),
+                            vec![
+                                "Already merged into the default branch with nothing uncommitted or unpushed: safe to delete.".to_owned(),
+                                format!("Removes {} and the branch.", entry.path.display()),
+                            ],
+                        )
+                    } else {
+                        let mut lines: Vec<String> = chda_core::blockers(&entry)
+                            .iter()
+                            .map(|b| b.to_string())
+                            .collect();
+                        if !entry.merged {
+                            lines.insert(0, "Not merged into the default branch.".into());
+                        }
+                        lines.push("Force delete discards uncommitted changes and deletes the branch anyway.".into());
+                        (format!("Force delete {name}?"), lines)
+                    };
+                    self.confirm = Some(ConfirmSheet {
+                        title,
+                        lines,
+                        action: MenuAction::DeleteWorktreeAndBranch {
+                            repo,
+                            worktree,
+                            force: true,
+                        },
+                    });
+                    cx.notify();
+                    return;
+                }
+                let task = cx.background_spawn({
+                    let repo = repo.clone();
+                    async move {
+                        chda_core::delete_worktree(&repo, &entry.path, true)?;
+                        if let Some(branch) = &entry.branch {
+                            chda_core::delete_branch(&repo, branch, true)?;
+                        }
+                        Ok::<_, std::io::Error>(entry.path.clone())
+                    }
+                });
+                cx.spawn(async move |this, cx| {
+                    let result = task.await;
+                    let _ = this.update(cx, |view, cx| {
+                        view.status_line = Some(match result {
+                            Ok(p) => format!("Deleted {}", p.display()),
+                            Err(e) => e.to_string(),
+                        });
+                        view.refresh_repo(repo, cx);
+                        cx.notify();
+                    });
+                })
+                .detach();
+            }
+            MenuAction::PickBranch(repo) => {
+                let worktrees: Vec<chda_core::WorktreeEntry> = self
+                    .sidebar
+                    .read(cx)
+                    .model
+                    .repos
+                    .iter()
+                    .find(|r| r.path == repo)
+                    .map(|r| r.worktrees.clone())
+                    .unwrap_or_default();
+                let branches = chda_core::unchecked_branches(&repo, &worktrees).unwrap_or_default();
+                if branches.is_empty() {
+                    self.status_line = Some("Every local branch already has a worktree".into());
+                    cx.notify();
+                    return;
+                }
+                let items: Vec<PaletteItem> = branches
+                    .into_iter()
+                    .map(|b| PaletteItem {
+                        label: b.clone(),
+                        detail: self
+                            .config
+                            .worktree_path(&repo, &b)
+                            .to_string_lossy()
+                            .into_owned(),
+                        command: PaletteCommand::CheckoutBranch(repo.clone(), b),
+                    })
+                    .collect();
+                self.open_palette(items, window, cx);
             }
             MenuAction::RemoveRepo(repo) => {
                 if let Some(w) = &mut self.watcher {
@@ -1259,9 +1417,18 @@ impl WorkspaceView {
             self.focus_active(window, cx);
             return;
         }
+        let items = self.palette_items(cx);
+        self.open_palette(items, window, cx);
+    }
+
+    fn open_palette(
+        &mut self,
+        items: Vec<PaletteItem>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
         let bg = hsla(self.settings.colors.background.unwrap_or_default());
         let fg = hsla(self.settings.colors.foreground.unwrap_or_default());
-        let items = self.palette_items(cx);
         let palette = cx.new(|cx| Palette::new(items, fg, blend(bg, fg, 0.08), window, cx));
         let sub = cx.subscribe_in(&palette, window, |this, _, event, window, cx| {
             this.palette = None;
@@ -1322,6 +1489,19 @@ impl WorkspaceView {
                 }
             }
             PaletteCommand::NewWorktree(repo) => self.open_sheet(repo, window, cx),
+            PaletteCommand::CheckoutBranch(repo, branch) => {
+                let path = self.config.worktree_path(&repo, &branch);
+                match chda_core::create_worktree(&repo, &branch, &path) {
+                    Ok(()) => {
+                        self.refresh_repo(repo, cx);
+                        self.open_tab_at(Some(path), None, window, cx);
+                    }
+                    Err(e) => {
+                        self.status_line = Some(e.to_string());
+                        cx.notify();
+                    }
+                }
+            }
         }
     }
 
@@ -1373,13 +1553,13 @@ impl WorkspaceView {
     }
 
     fn render_tab_bar(&self, cx: &mut Context<Self>) -> Option<AnyElement> {
-        let tabs = self.ws.tabs();
+        let tabs = self.ws.tabs_in(self.tab_group.as_deref());
         if tabs.len() < 2 {
             return None;
         }
         let bg = hsla(self.settings.colors.background.unwrap_or_default());
         let fg = hsla(self.settings.colors.foreground.unwrap_or_default());
-        let active = self.ws.active_index();
+        let active = self.ws.active_index_in(self.tab_group.as_deref());
         let bar = div()
             .flex()
             .flex_row()
@@ -1388,7 +1568,7 @@ impl WorkspaceView {
             .bg(blend(bg, fg, 0.06))
             .text_sm()
             .text_color(fg)
-            .children(tabs.iter().enumerate().map(|(i, tab)| {
+            .children(tabs.into_iter().enumerate().map(|(i, tab)| {
                 let title = self.ws.tab_title(tab);
                 let bell = self.ws.pane(tab.focused).is_some_and(|p| p.bell);
                 let is_active = active == Some(i);
@@ -1736,11 +1916,11 @@ impl Render for WorkspaceView {
             .on_action(cx.listener(Self::toggle_palette))
             .on_action(cx.listener(Self::dismiss))
             .on_action(cx.listener(|this, _: &NextTab, w, cx| {
-                this.ws.cycle_tab(true);
+                this.ws.cycle_tab_in_group(true);
                 this.focus_active(w, cx);
             }))
             .on_action(cx.listener(|this, _: &PrevTab, w, cx| {
-                this.ws.cycle_tab(false);
+                this.ws.cycle_tab_in_group(false);
                 this.focus_active(w, cx);
             }))
             .on_action(cx.listener(|this, _: &GotoTab1, w, cx| this.goto_tab(0, w, cx)))
@@ -1752,7 +1932,8 @@ impl Render for WorkspaceView {
             .on_action(cx.listener(|this, _: &GotoTab7, w, cx| this.goto_tab(6, w, cx)))
             .on_action(cx.listener(|this, _: &GotoTab8, w, cx| this.goto_tab(7, w, cx)))
             .on_action(cx.listener(|this, _: &LastTab, w, cx| {
-                let last = this.ws.tabs().len().saturating_sub(1);
+                let group = this.tab_group.clone();
+                let last = this.ws.tabs_in(group.as_deref()).len().saturating_sub(1);
                 this.goto_tab(last, w, cx)
             }))
             .on_action(

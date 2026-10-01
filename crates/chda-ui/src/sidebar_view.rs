@@ -27,6 +27,8 @@ pub enum SidebarEvent {
     AddRepo,
     /// Open a URL (a pull request badge was clicked).
     OpenUrl(String),
+    /// Focus an open tab from the activity list.
+    FocusTab(chda_core::TabId),
 }
 
 pub struct SidebarView {
@@ -203,11 +205,24 @@ impl SidebarView {
                     .into_any_element(),
             );
         }
+        if wt.safe_to_delete() {
+            badges.push(
+                div()
+                    .text_color(gpui::rgb(0xa6e3a1))
+                    .child("merged")
+                    .into_any_element(),
+            );
+        }
         if !wt.panes.is_empty() {
+            let n = wt.panes.len();
             badges.push(
                 div()
                     .text_color(fg.opacity(0.6))
-                    .child(format!("\u{2b1a}{}", wt.panes.len()))
+                    .child(if n == 1 {
+                        "1 tab".to_owned()
+                    } else {
+                        format!("{n} tabs")
+                    })
                     .into_any_element(),
             );
         }
@@ -343,6 +358,40 @@ impl Render for SidebarView {
             .map(|r| self.render_repo(r, cx))
             .collect();
         let empty = self.model.repos.is_empty();
+        let active: Vec<AnyElement> = self
+            .model
+            .active_tabs
+            .iter()
+            .map(|t| {
+                let id = t.tab;
+                div()
+                    .id(ElementId::Name(format!("active:{:?}", t.tab).into()))
+                    .flex()
+                    .flex_row()
+                    .gap_1()
+                    .px_2()
+                    .py_0p5()
+                    .cursor_pointer()
+                    .hover(|s| s.bg(fg.opacity(0.08)))
+                    .on_click(cx.listener(move |_, _, _, cx| cx.emit(SidebarEvent::FocusTab(id))))
+                    .child(
+                        div()
+                            .flex_1()
+                            .min_w_0()
+                            .overflow_hidden()
+                            .whitespace_nowrap()
+                            .text_ellipsis()
+                            .child(t.title.clone()),
+                    )
+                    .child(
+                        div()
+                            .text_xs()
+                            .text_color(fg.opacity(0.5))
+                            .child(t.repo.clone().unwrap_or_else(|| "\u{2014}".into())),
+                    )
+                    .into_any_element()
+            })
+            .collect();
         div()
             .id("sidebar")
             .flex()
@@ -373,6 +422,19 @@ impl Render for SidebarView {
                             .child("+ repo"),
                     ),
             )
+            .when(!active.is_empty(), |d| {
+                d.child(
+                    div()
+                        .px_2()
+                        .pt_2()
+                        .pb_1()
+                        .text_xs()
+                        .text_color(fg.opacity(0.6))
+                        .child("ACTIVE"),
+                )
+                .children(active)
+                .child(div().h(gpui::px(6.0)))
+            })
             .children(repos)
             .when(empty, |d| {
                 d.child(

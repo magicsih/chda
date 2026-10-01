@@ -9,6 +9,17 @@ use serde::{Deserialize, Serialize};
 /// Default worktree path template (ADR-0003).
 pub const DEFAULT_WORKTREE_TEMPLATE: &str = "{repo_parent}/{repo_name}.worktrees/{branch}";
 
+/// What a tab is called when the user has not renamed it.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum TabTitle {
+    /// The worktree's branch; falls back to the directory name.
+    #[default]
+    Branch,
+    /// The last component of the working directory.
+    Path,
+}
+
 /// What to run in the terminal opened for a new worktree.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "kebab-case")]
@@ -28,6 +39,7 @@ pub struct ChdaConfig {
     /// Template with `{repo_parent}`, `{repo_name}` and `{branch}`.
     pub worktree_path_template: String,
     pub default_action: DefaultAction,
+    pub tab_title: TabTitle,
     /// Agents shown in the sidebar, by id (`claude`, `codex`).
     pub agents: Vec<String>,
     pub sidebar_width: u32,
@@ -41,6 +53,7 @@ impl Default for ChdaConfig {
             repos: Vec::new(),
             worktree_path_template: DEFAULT_WORKTREE_TEMPLATE.into(),
             default_action: DefaultAction::Terminal,
+            tab_title: TabTitle::Branch,
             agents: vec!["claude".into(), "codex".into()],
             sidebar_width: 280,
             sidebar_visible: true,

@@ -1,6 +1,6 @@
 //! Tabs, split trees and focus. Pure data; the UI maps pane ids to views.
 
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 /// Identifies a terminal pane across the workspace.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord)]
@@ -248,8 +248,24 @@ pub struct PaneInfo {
     pub title: String,
     /// Working directory from OSC 7 or the process fallback.
     pub cwd: Option<PathBuf>,
+    /// Branch of the worktree containing `cwd`, when known.
+    pub branch: Option<String>,
+    /// Main worktree path of the repository containing `cwd`, when known.
+    pub repo: Option<PathBuf>,
     /// The shell rang the bell since the pane was last focused.
     pub bell: bool,
+    /// Milliseconds since the epoch of the last output or input.
+    pub last_activity: u64,
+}
+
+/// How automatic tab titles are chosen.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum TitleMode {
+    /// Branch name, else directory name.
+    #[default]
+    Branch,
+    /// Directory name.
+    Path,
 }
 
 /// The whole window: tabs with split panes.
@@ -259,6 +275,7 @@ pub struct Workspace {
     active: Option<TabId>,
     panes: std::collections::BTreeMap<PaneId, PaneInfo>,
     next_id: u64,
+    pub title_mode: TitleMode,
 }
 
 impl Workspace {
@@ -305,21 +322,93 @@ impl Workspace {
         self.tabs.is_empty()
     }
 
-    /// Title shown on a tab: the focused pane's title, else its cwd's last
-    /// component, else a placeholder.
+    /// Title shown on a tab: the user's name, else (by mode) the branch or
+    /// directory name, else the OSC title, else a placeholder.
     pub fn tab_title(&self, tab: &Tab) -> String {
         if let Some(t) = &tab.custom_title {
             return t.clone();
         }
-        let info = self.panes.get(&tab.focused);
-        info.filter(|i| !i.title.is_empty())
-            .map(|i| i.title.clone())
-            .or_else(|| {
-                info.and_then(|i| i.cwd.as_ref())
-                    .and_then(|p| p.file_name())
-                    .map(|n| n.to_string_lossy().into_owned())
-            })
+        let Some(info) = self.panes.get(&tab.focused) else {
+            return "shell".into();
+        };
+        let dir = info
+            .cwd
+            .as_ref()
+            .and_then(|p| p.file_name())
+            .map(|n| n.to_string_lossy().into_owned());
+        let auto = match self.title_mode {
+            TitleMode::Branch => info.branch.clone().or(dir),
+            TitleMode::Path => dir,
+        };
+        auto.or_else(|| (!info.title.is_empty()).then(|| info.title.clone()))
             .unwrap_or_else(|| "shell".into())
+    }
+
+    /// Repository (main worktree path) a tab belongs to, from its focused pane.
+    pub fn tab_repo(&self, tab: &Tab) -> Option<PathBuf> {
+        self.panes.get(&tab.focused).and_then(|i| i.repo.clone())
+    }
+
+    /// Tabs whose focused pane is in `repo` (`None`: outside any repository).
+    pub fn tabs_in(&self, repo: Option<&Path>) -> Vec<&Tab> {
+        self.tabs
+            .iter()
+            .filter(|t| self.tab_repo(t).as_deref() == repo)
+            .collect()
+    }
+
+    /// Index of the active tab within its repository group.
+    pub fn active_index_in(&self, repo: Option<&Path>) -> Option<usize> {
+        self.tabs_in(repo)
+            .iter()
+            .position(|t| Some(t.id) == self.active)
+    }
+
+    /// Activate the `index`-th tab of a repository group.
+    pub fn activate_tab_in(&mut self, repo: Option<&Path>, index: usize) -> bool {
+        match self.tabs_in(repo).get(index).map(|t| t.id) {
+            Some(id) => self.activate_tab_id(id),
+            None => false,
+        }
+    }
+
+    /// Move to the next or previous tab within the active tab's group.
+    pub fn cycle_tab_in_group(&mut self, forward: bool) {
+        let Some(active) = self.active_tab() else {
+            return;
+        };
+        let repo = self.tab_repo(active);
+        let ids: Vec<TabId> = self.tabs_in(repo.as_deref()).iter().map(|t| t.id).collect();
+        let Some(i) = ids.iter().position(|id| Some(*id) == self.active) else {
+            return;
+        };
+        let n = ids.len();
+        let j = if forward {
+            (i + 1) % n
+        } else {
+            (i + n - 1) % n
+        };
+        self.activate_tab_id(ids[j]);
+    }
+
+    /// Every tab with its title, repository and last activity, newest first.
+    pub fn tabs_by_activity(&self) -> Vec<(TabId, String, Option<PathBuf>, u64)> {
+        let mut out: Vec<_> = self
+            .tabs
+            .iter()
+            .map(|t| {
+                let activity = t
+                    .panes()
+                    .iter()
+                    .filter_map(|p| self.panes.get(p))
+                    .map(|i| i.last_activity)
+                    .max()
+                    .unwrap_or(0);
+                (t.id, self.tab_title(t), self.tab_repo(t), activity)
+            })
+            .collect();
+        out.sort_by_key(|(_, _, _, a)| std::cmp::Reverse(*a));
+        out
     }
 
     /// Open a tab with one pane after the active tab and focus it.
@@ -631,11 +720,22 @@ mod tests {
         ws.pane_mut(p1).unwrap().title.clear();
         ws.pane_mut(p1).unwrap().cwd = Some("/tmp/project".into());
         assert_eq!(ws.tab_title(&tab), "project");
+        ws.pane_mut(p1).unwrap().branch = Some("feat/x".into());
+        ws.pane_mut(p1).unwrap().repo = Some("/tmp/project".into());
+        assert_eq!(ws.tab_title(&tab), "feat/x");
+        ws.title_mode = TitleMode::Path;
+        assert_eq!(ws.tab_title(&tab), "project");
+        ws.title_mode = TitleMode::Branch;
+        assert_eq!(ws.tabs_in(Some(Path::new("/tmp/project"))).len(), 1);
+        assert_eq!(ws.tabs_in(None).len(), 1);
+        assert_eq!(ws.active_index_in(Some(Path::new("/tmp/project"))), Some(0));
+        ws.pane_mut(p1).unwrap().last_activity = 5;
+        assert_eq!(ws.tabs_by_activity()[0].1, "feat/x");
         assert!(ws.rename_tab(tab.id, "  build  "));
         let tab = ws.active_tab().unwrap().clone();
         assert_eq!(ws.tab_title(&tab), "build");
         ws.rename_tab(tab.id, "");
         let tab = ws.active_tab().unwrap().clone();
-        assert_eq!(ws.tab_title(&tab), "project");
+        assert_eq!(ws.tab_title(&tab), "feat/x");
     }
 }

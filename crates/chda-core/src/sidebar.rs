@@ -75,6 +75,8 @@ pub struct WorktreeEntry {
     pub is_main: bool,
     pub badges: GitBadges,
     pub pr: Option<PrInfo>,
+    /// The branch is fully contained in the default branch.
+    pub merged: bool,
     /// Agent status per agent id.
     pub agents: BTreeMap<String, AgentStatus>,
     /// Newest first.
@@ -86,6 +88,14 @@ pub struct WorktreeEntry {
 }
 
 impl WorktreeEntry {
+    /// Merged, clean and not the main worktree: safe to remove.
+    pub fn safe_to_delete(&self) -> bool {
+        !self.is_main
+            && self.merged
+            && self.badges.dirty_count() == 0
+            && self.badges.ahead.unwrap_or(0) == 0
+    }
+
     /// The most urgent agent status across agents.
     pub fn status(&self) -> AgentStatus {
         self.agents
@@ -121,11 +131,23 @@ pub enum SortOrder {
     Name,
 }
 
+/// A tab as the sidebar's activity list shows it.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct ActiveTab {
+    pub tab: crate::TabId,
+    pub title: String,
+    /// Repository name, or `None` outside any repository.
+    pub repo: Option<String>,
+    pub last_activity: u64,
+}
+
 #[derive(Clone, Debug, Default)]
 pub struct Sidebar {
     pub repos: Vec<RepoEntry>,
     pub sort: SortOrder,
     pub visible: bool,
+    /// Open tabs, most recently active first.
+    pub active_tabs: Vec<ActiveTab>,
 }
 
 impl Sidebar {

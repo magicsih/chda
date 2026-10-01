@@ -158,6 +158,21 @@ pub fn branches_merged_into(repo: &Path, base: &str) -> io::Result<Vec<String>> 
         .collect())
 }
 
+/// All local branch names.
+pub fn local_branches(repo: &Path) -> io::Result<Vec<String>> {
+    let out = run(repo, &["branch", "--format=%(refname:short)"])?;
+    if !out.status.success() {
+        return Err(io::Error::other(
+            String::from_utf8_lossy(&out.stderr).trim().to_owned(),
+        ));
+    }
+    Ok(String::from_utf8_lossy(&out.stdout)
+        .lines()
+        .map(|l| l.trim().to_owned())
+        .filter(|l| !l.is_empty())
+        .collect())
+}
+
 /// The branch checked out in `worktree`, if not detached.
 pub fn current_branch(worktree: &Path) -> io::Result<Option<String>> {
     let out = run(worktree, &["symbolic-ref", "--short", "-q", "HEAD"])?;
@@ -265,6 +280,11 @@ mod tests {
         let wt2 = repo.root.join("repo.worktrees").join("ahead");
         add_worktree(&repo.path, "ahead", &wt2, None).unwrap();
         repo.commit_file(&wt2, "z.txt", "z\n");
+        assert!(
+            local_branches(&repo.path)
+                .unwrap()
+                .contains(&"done".to_string())
+        );
         let merged = branches_merged_into(&repo.path, "main").unwrap();
         assert!(merged.contains(&"done".to_string()));
         assert!(!merged.contains(&"ahead".to_string()));

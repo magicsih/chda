@@ -40,6 +40,15 @@ pub enum TerminalEvent {
     Focused,
     /// A command finished and the shell shows its prompt again.
     Prompt,
+    /// Output or input happened (at most once per second).
+    Activity(u64),
+}
+
+fn now_ms() -> u64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_millis() as u64)
+        .unwrap_or(0)
 }
 
 const CWD_POLL: Duration = Duration::from_secs(1);
@@ -81,6 +90,7 @@ pub struct TerminalView {
     /// Once the shell reports OSC 7 the process fallback is not needed.
     osc7_seen: bool,
     cwd: Option<PathBuf>,
+    last_activity_sent: u64,
 }
 
 impl EventEmitter<TerminalEvent> for TerminalView {}
@@ -151,6 +161,7 @@ impl TerminalView {
             window_active: window.is_window_active(),
             osc7_seen: false,
             cwd,
+            last_activity_sent: 0,
         }
     }
 
@@ -236,11 +247,20 @@ impl TerminalView {
         .detach();
     }
 
+    fn note_activity(&mut self, cx: &mut Context<Self>) {
+        let now = now_ms();
+        if now.saturating_sub(self.last_activity_sent) >= 1000 {
+            self.last_activity_sent = now;
+            cx.emit(TerminalEvent::Activity(now));
+        }
+    }
+
     fn drain_events(&mut self, _: &mut Window, cx: &mut Context<Self>) {
         while let Ok(event) = self.events.try_recv() {
             match event {
                 Event::Frame => {
                     self.frame = self.session.frame();
+                    self.note_activity(cx);
                     cx.notify();
                 }
                 Event::TitleChanged(title) => cx.emit(TerminalEvent::Title(title)),
@@ -299,6 +319,7 @@ impl TerminalView {
             return;
         };
         self.touch();
+        self.note_activity(cx);
         let text = ks
             .key_char
             .as_deref()

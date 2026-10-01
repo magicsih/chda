@@ -19,20 +19,32 @@ fn badges(status: chda_git::GitStatus) -> GitBadges {
     }
 }
 
-/// Worktrees of `repo` with fresh git badges.
+/// Worktrees of `repo` with fresh git badges and merged flags.
 pub fn worktrees_of(repo: &Path) -> io::Result<Vec<WorktreeEntry>> {
+    let merged: Vec<String> = chda_git::default_branch(repo)
+        .and_then(|base| chda_git::branches_merged_into(repo, &base))
+        .unwrap_or_default();
     let mut out = Vec::new();
     for info in chda_git::list_worktrees(repo)? {
         let badges = chda_git::status(&info.path).map(badges).unwrap_or_default();
+        let merged = info.branch.as_ref().is_some_and(|b| merged.contains(b));
         out.push(WorktreeEntry {
             path: info.path,
             branch: info.branch,
             is_main: info.is_main,
             badges,
+            merged,
             ..Default::default()
         });
     }
     Ok(out)
+}
+
+/// Local branches of `repo` that no worktree has checked out.
+pub fn unchecked_branches(repo: &Path, worktrees: &[WorktreeEntry]) -> io::Result<Vec<String>> {
+    let mut branches = chda_git::local_branches(repo)?;
+    branches.retain(|b| !worktrees.iter().any(|w| w.branch.as_deref() == Some(b)));
+    Ok(branches)
 }
 
 /// The main worktree of the repository containing `path`.
@@ -48,6 +60,11 @@ pub fn create_worktree(repo: &Path, branch: &str, path: &Path) -> io::Result<()>
 /// Remove a worktree and prune.
 pub fn delete_worktree(repo: &Path, path: &Path, force: bool) -> io::Result<()> {
     chda_git::remove_worktree(repo, path, force)
+}
+
+/// Delete a local branch; `force` deletes unmerged branches too.
+pub fn delete_branch(repo: &Path, branch: &str, force: bool) -> io::Result<()> {
+    chda_git::delete_branch(repo, branch, force)
 }
 
 /// Fresh badges for one worktree.
