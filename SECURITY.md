@@ -23,7 +23,10 @@ Please do not open a public issue for them. You will get a reply within a week.
 - **Network.** chda itself makes no network requests. `git` and `gh` do, with
   their own credentials.
 - **Shell integration.** chda points `ZDOTDIR` at its own zsh scripts, which
-  restore your `ZDOTDIR` and source your `.zshenv`. The scripts live in
+  restore your `ZDOTDIR` and source your `.zshenv`. bash starts with
+  `--rcfile` set to chda's script, which sources your login files; fish finds
+  chda's script through `XDG_DATA_DIRS`, which the script restores. The
+  scripts live in
   `~/Library/Application Support/chda/shell-integration` and are embedded in
   the binary.
 

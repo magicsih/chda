@@ -579,6 +579,7 @@ fn handle_command(
 mod tests {
     use super::*;
     use crate::input::{KeyAction, KeyCode, Modifiers};
+    use crate::shell_integration::test_shells::{bashes, fish, hostname, temp_home};
 
     /// Drives a session in tests and remembers every event it consumed.
     struct Probe {
@@ -676,51 +677,95 @@ mod tests {
         );
     }
 
-    #[test]
-    fn zsh_integration_reports_cwd_and_prompt_marks() {
-        if !std::path::Path::new("/bin/zsh").exists() {
-            return;
-        }
-        let home = std::env::temp_dir().join(format!("chda-zsh-{}", std::process::id()));
-        std::fs::create_dir_all(&home).unwrap();
+    /// Start `shell` the way chda does, with the integration loaded, `home`
+    /// as HOME and /private/tmp as the working directory. `args` go before
+    /// the integration's own arguments.
+    fn integrated_shell(shell: &std::path::Path, args: &[&str], home: &std::path::Path) -> Probe {
+        let launch = crate::launch_for(crate::ShellIntegration::Detect, shell, home).unwrap();
+        let mut command = vec![shell.to_string_lossy().into_owned()];
+        command.extend(args.iter().map(|a| a.to_string()));
+        command.extend(launch.args);
         let mut env = SessionOptions::default().env;
         env.push(("HOME".into(), home.to_string_lossy().into_owned()));
-        env.extend(
-            crate::env_for(
-                crate::ShellIntegration::Detect,
-                std::path::Path::new("/bin/zsh"),
-                &home,
-            )
-            .unwrap(),
-        );
-        let mut p = Probe::spawn_with(SessionOptions {
-            command: Some(vec!["/bin/zsh".into(), "-i".into()]),
+        env.push(("BASH_SILENCE_DEPRECATION_WARNING".into(), "1".into()));
+        env.extend(launch.env);
+        Probe::spawn_with(SessionOptions {
+            command: Some(command),
             cwd: Some(std::path::PathBuf::from("/private/tmp")),
             env,
             ..Default::default()
-        });
+        })
+    }
+
+    /// The shell reported /private/tmp, and the row showing `prompt` is
+    /// marked as a prompt.
+    fn assert_integrated(p: &mut Probe, prompt: &str) {
         let ev = p.wait_for(|e| matches!(e, Event::PwdChanged(_)));
         assert_eq!(
             ev,
             Event::PwdChanged(format!("file://{}/private/tmp", hostname()))
         );
-        let frame = p.wait_for_text("%");
-        assert_eq!(frame.rows[0].semantic_prompt, crate::SemanticPrompt::Prompt);
+        let frame = p.wait_for_text(prompt);
+        let row = (0..frame.size.rows)
+            .find(|&y| frame.row_text(y).contains(prompt))
+            .unwrap();
+        assert_eq!(
+            frame.rows[row as usize].semantic_prompt,
+            crate::SemanticPrompt::Prompt
+        );
+        p.wait_for(|e| matches!(e, Event::PromptShown));
+    }
+
+    #[test]
+    fn zsh_integration_reports_cwd_and_prompt_marks() {
+        if !std::path::Path::new("/bin/zsh").exists() {
+            return;
+        }
+        let home = temp_home("zsh");
+        let mut p = integrated_shell(std::path::Path::new("/bin/zsh"), &["-i"], &home);
+        assert_integrated(&mut p, "%");
         p.session.text("exit\n".into());
         p.wait_for(|e| matches!(e, Event::Exited(_)));
         std::fs::remove_dir_all(&home).unwrap();
     }
 
-    fn hostname() -> String {
-        String::from_utf8(
-            std::process::Command::new("hostname")
-                .output()
-                .unwrap()
-                .stdout,
+    #[test]
+    fn bash_integration_reports_cwd_title_and_prompt_marks() {
+        for bash in bashes() {
+            let home = temp_home("bash");
+            std::fs::write(home.join(".bash_profile"), "PS1='chda$ '\n").unwrap();
+            let mut p = integrated_shell(&bash, &[], &home);
+            assert_integrated(&mut p, "chda$");
+            let ev = p.wait_for(|e| matches!(e, Event::TitleChanged(_)));
+            assert_eq!(ev, Event::TitleChanged("/private/tmp".into()));
+            p.session.text("exit\n".into());
+            p.wait_for(|e| matches!(e, Event::Exited(_)));
+            std::fs::remove_dir_all(&home).unwrap();
+        }
+    }
+
+    #[test]
+    fn fish_integration_reports_cwd_title_and_prompt_marks() {
+        let Some(fish) = fish() else {
+            return;
+        };
+        let home = temp_home("fish");
+        let config = home.join(".config/fish");
+        std::fs::create_dir_all(&config).unwrap();
+        std::fs::write(
+            config.join("config.fish"),
+            "set -g fish_greeting\nfunction fish_prompt; echo -n 'chda> '; end\n",
         )
-        .unwrap()
-        .trim()
-        .to_owned()
+        .unwrap();
+        let mut p = integrated_shell(&fish, &["-l"], &home);
+        assert_integrated(&mut p, "chda>");
+        p.wait_for(|e| matches!(e, Event::TitleChanged(_)));
+        // fish 4 turns on the kitty keyboard protocol, so Enter must be a
+        // key press rather than a typed newline.
+        p.session.text("exit".into());
+        p.key(KeyCode::Enter, None);
+        p.wait_for(|e| matches!(e, Event::Exited(_)));
+        std::fs::remove_dir_all(&home).unwrap();
     }
 
     #[test]

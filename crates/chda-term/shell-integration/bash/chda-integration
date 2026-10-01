@@ -1,0 +1,116 @@
+# chda shell integration for bash: semantic prompt marks (OSC 133), working
+# directory reports (OSC 7) and a title (OSC 2). Works with bash 3.2 (the
+# macOS /bin/bash) and later. Safe to source by hand from ~/.bashrc:
+#
+#   source /path/to/chda-integration
+#
+# Written for chda and MIT licensed like the rest of it.
+#
+# chda loads it without touching the user's dotfiles by starting
+# `bash --rcfile <this file>` with CHDA_BASH_INJECT set. chda otherwise runs
+# the shell as a login shell, like macOS Terminal, but bash ignores --rcfile
+# for login shells. The alternative, ENV with --posix, is not honored by the
+# macOS bash 3.2. So bash starts as a plain interactive shell and this block
+# reads the startup files a login bash would have read: /etc/profile, then
+# the first of ~/.bash_profile, ~/.bash_login and ~/.profile (which usually
+# sources ~/.bashrc). What remains different from a real login shell:
+# `shopt login_shell` is off, `logout` refuses, ~/.bash_logout is not read.
+
+if [[ -n "${CHDA_BASH_INJECT-}" ]]; then
+    builtin unset CHDA_BASH_INJECT
+    if [[ -r /etc/profile ]]; then
+        builtin source /etc/profile
+    fi
+    for _chda_file in "$HOME/.bash_profile" "$HOME/.bash_login" "$HOME/.profile"; do
+        if [[ -r "$_chda_file" ]]; then
+            builtin source "$_chda_file"
+            break
+        fi
+    done
+    builtin unset _chda_file
+fi
+
+if [[ $- == *i* && -z "${_chda_installed-}" ]]; then
+    _chda_installed=1
+    _chda_in_command=0
+    _chda_at_prompt=0
+    _chda_status=0
+
+    # First in PROMPT_COMMAND: close the previous command's output (D) and
+    # report the directory and title. Keeps $? for the user's own hooks.
+    _chda_precmd() {
+        builtin local status=$?
+        if [[ $_chda_in_command == 1 ]]; then
+            builtin printf '\033]133;D;%s\007' "$status"
+            _chda_in_command=0
+        fi
+        builtin printf '\033]7;file://%s%s\007' "$HOSTNAME" "$PWD"
+        builtin local title=$PWD
+        if [[ -n $HOME && ($title == "$HOME" || $title == "$HOME"/*) ]]; then
+            title=${title#"$HOME"}
+            title="~$title"
+        fi
+        builtin printf '\033]2;%s\007' "$title"
+        builtin return "$status"
+    }
+
+    # Last in PROMPT_COMMAND, after the user's hooks have settled PS1: mark
+    # the prompt start (A), add the prompt end (B) to PS1 so bash emits it
+    # right where input begins, and arm the preexec hook.
+    _chda_prompt_start() {
+        builtin local status=$?
+        builtin printf '\033]133;A\007'
+        case $PS1 in
+            *'\[\033]133;B\007\]'*) ;;
+            *) PS1=$PS1'\[\033]133;B\007\]' ;;
+        esac
+        _chda_at_prompt=1
+        builtin return "$status"
+    }
+
+    # DEBUG trap: bash 3.2 has no PS0, so the first command run after a
+    # prompt marks where command output starts (C). Commands from
+    # PROMPT_COMMAND and completion functions are not user commands; an
+    # empty command line reaches _chda_precmd directly.
+    _chda_preexec() {
+        _chda_status=$?
+        if [[ $_chda_at_prompt == 1 && -z "${COMP_LINE-}" ]]; then
+            _chda_at_prompt=0
+            if [[ $BASH_COMMAND != _chda_* ]]; then
+                builtin printf '\033]133;C\007'
+                _chda_in_command=1
+            fi
+        fi
+    }
+
+    # Hands the status saved by _chda_preexec to the user's own DEBUG trap.
+    _chda_restore_status() {
+        builtin return "$_chda_status"
+    }
+
+    # PROMPT_COMMAND may be an array since bash 5.1.
+    if [[ "$(builtin declare -p PROMPT_COMMAND 2>/dev/null)" == "declare -a"* ]]; then
+        PROMPT_COMMAND=(_chda_precmd "${PROMPT_COMMAND[@]}" _chda_prompt_start)
+    else
+        PROMPT_COMMAND="_chda_precmd${PROMPT_COMMAND:+
+$PROMPT_COMMAND}
+_chda_prompt_start"
+    fi
+
+    # Keep an existing DEBUG trap running after ours. `trap -p` prints
+    # `trap -- '<command>' DEBUG`; the quoted part evaluates back to the
+    # command. Without one, the trap ends with _chda_preexec's zero status so
+    # `shopt -s extdebug` never skips a command because of it.
+    _chda_debug_trap=$(builtin trap -p DEBUG)
+    if [[ -n $_chda_debug_trap ]]; then
+        _chda_debug_trap=${_chda_debug_trap#trap -- }
+        _chda_debug_trap=${_chda_debug_trap% DEBUG}
+        builtin eval "_chda_debug_trap=$_chda_debug_trap"
+        builtin trap "_chda_preexec
+_chda_restore_status
+$_chda_debug_trap" DEBUG
+    else
+        builtin trap _chda_preexec DEBUG
+    fi
+    builtin unset _chda_debug_trap
+fi

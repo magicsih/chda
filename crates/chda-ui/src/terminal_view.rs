@@ -10,7 +10,7 @@ use std::time::Duration;
 use chda_term::{
     Event, Frame, KeyAction, KeyCode, KeyInput, LinkTarget, Modifiers, MouseAction,
     MouseButton as TermButton, MouseInput, SearchQuery, SearchStatus, Session, SessionOptions,
-    Size, default_data_dir, env_for, login_shell, parse_pwd_report,
+    Size, default_data_dir, launch_for, login_shell, parse_pwd_report,
 };
 use futures::StreamExt;
 use futures::channel::mpsc::{UnboundedReceiver, unbounded};
@@ -168,9 +168,19 @@ impl TerminalView {
             ..Default::default()
         };
         if let (Some(shell), Some(data_dir)) = (login_shell(), default_data_dir())
-            && let Ok(env) = env_for(settings.shell_integration, &shell, &data_dir)
+            && let Ok(launch) = launch_for(settings.shell_integration, &shell, &data_dir)
         {
-            options.env.extend(env);
+            // A launch with arguments replaces the default login shell
+            // command; its environment is useless without them, so another
+            // program (an agent) gets neither.
+            if launch.args.is_empty() {
+                options.env.extend(launch.env);
+            } else if options.command.is_none() {
+                let mut command = vec![shell.to_string_lossy().into_owned()];
+                command.extend(launch.args);
+                options.command = Some(command);
+                options.env.extend(launch.env);
+            }
         }
         let session = Session::spawn(options, events_tx, move || {
             let _ = wake_tx.unbounded_send(());

@@ -149,9 +149,9 @@ build from somewhere else; download the zip from the releases page.
 
 **Do I need `gh`?** No. Without it you lose only the pull request badges.
 
-**Other shells?** Status, directory tracking and prompt jumping come from zsh
-integration today. bash and fish fall back to polling the shell's working
-directory; prompt marks are missing there.
+**Other shells?** Status, directory tracking and prompt jumping come from shell
+integration for zsh, bash and fish. Other shells fall back to polling the
+shell's working directory; prompt marks are missing there.
 
 ## Contributing
 

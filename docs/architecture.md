@@ -49,12 +49,30 @@ terminal events (exit, title, cwd, bell, focus) into model updates.
 
 ## Shell integration
 
-`chda-term` ships its own zsh scripts (`shell-integration/zsh`) that emit
-OSC 133 prompt marks, OSC 7 working-directory reports and an OSC 2 title.
-They are written to the per-user data directory on first use and loaded by
-pointing `ZDOTDIR` at them, which then restores the user's own `ZDOTDIR`.
-Shells without integration fall back to asking the OS for the foreground
-process's directory (`chda-pty`, macOS only so far).
+`chda-term` ships its own scripts for zsh, bash and fish
+(`shell-integration/`) that emit OSC 133 prompt marks, OSC 7
+working-directory reports and an OSC 2 title. They are written to the
+per-user data directory on first use, and `launch_for` returns the arguments
+and environment that make the shell load them without touching the user's
+dotfiles:
+
+- zsh: `ZDOTDIR` points at chda's `.zshenv`, which restores the user's
+  `ZDOTDIR` and sources their files.
+- bash: `bash --rcfile <script>`. bash ignores `--rcfile` in login shells,
+  and the macOS bash 3.2 does not honor `ENV` with `--posix`, so the script
+  reads the files a login bash would (`/etc/profile`, then the first of
+  `~/.bash_profile`, `~/.bash_login`, `~/.profile`) before installing its
+  `PROMPT_COMMAND` and `DEBUG` trap hooks, keeping the user's own.
+- fish: chda's data directory goes first on `XDG_DATA_DIRS`, so fish sources
+  `fish/vendor_conf.d/chda-integration.fish`, which restores the variable.
+  fish 4 writes OSC 133 and OSC 7 itself, so the script only adds them for
+  fish 3 (or with the `mark-prompt` feature off); the title stays with
+  `fish_title`.
+
+Because the bash launch changes the command line, it applies only when chda
+starts the login shell itself, not to agent commands. Shells without
+integration fall back to asking the OS for the foreground process's
+directory (`chda-pty`, macOS only so far).
 
 ## Sidebar and agents
 
