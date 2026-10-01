@@ -6,7 +6,7 @@ A terminal with a git worktree side panel and a live status board for LLM coding
 Terminal core by [libghostty-vt](https://github.com/ghostty-org/ghostty), app in Rust, UI on [GPUI](https://github.com/zed-industries/zed/tree/main/crates/gpui).
 macOS first; Linux and Windows build in CI.
 
-Status: M0, workspace skeleton. The app opens an empty window.
+Status: M1 in progress. The app runs your shell in one window: output, colors, wide glyphs, keyboard input, paste and scrollback work; selection, mouse reporting and IME input do not yet.
 
 See [CONTRIBUTING.md](CONTRIBUTING.md) for build prerequisites and [docs/architecture.md](docs/architecture.md) for the crate layout.
 

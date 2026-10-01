@@ -8,6 +8,8 @@ repository.workspace = true
 publish.workspace = true
 
 [dependencies]
+chda-term.workspace = true
+futures.workspace = true
 gpui.workspace = true
 gpui_platform.workspace = true
 

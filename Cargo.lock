@@ -853,6 +853,8 @@ dependencies = [
 name = "chda-ui"
 version = "0.0.1"
 dependencies = [
+ "chda-term",
+ "futures",
  "gpui",
  "gpui_platform",
 ]
