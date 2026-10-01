@@ -67,11 +67,18 @@ actions!(
         TogglePalette,
         Dismiss,
         Quit,
+        IncreaseFontSize,
+        DecreaseFontSize,
+        ResetFontSize,
     ]
 );
 
 /// Fraction of the tab a keyboard resize moves the divider by.
 const RESIZE_STEP: f32 = 0.05;
+/// Font size bounds and step for the runtime font size actions (Ghostty's).
+const FONT_SIZE_STEP: f32 = 1.0;
+const FONT_SIZE_MIN: f32 = 4.0;
+const FONT_SIZE_MAX: f32 = 255.0;
 /// Safety-net refresh while the window is active; the real triggers are
 /// shell prompts, `.git` changes and agent events.
 const STATUS_REFRESH: Duration = Duration::from_secs(60);
@@ -125,7 +132,10 @@ struct NewWorktreeSheet {
 }
 
 pub struct WorkspaceView {
+    /// Settings new panes start with; `font_size` follows the font size
+    /// actions, while `configured_font_size` is what `cmd-0` returns to.
     settings: Settings,
+    configured_font_size: Pixels,
     config: ChdaConfig,
     ws: Workspace,
     panes: HashMap<PaneId, (Entity<TerminalView>, Subscription)>,
@@ -180,6 +190,7 @@ impl WorkspaceView {
         };
         let mut this = Self {
             sidebar_visible: config.sidebar_visible,
+            configured_font_size: settings.font_size,
             settings,
             config,
             ws,
@@ -754,6 +765,37 @@ impl WorkspaceView {
 
     pub fn focus(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         self.focus_active(window, cx);
+    }
+
+    /// Change the font size of every pane in the window. Each terminal
+    /// re-measures its cells on the next layout and resizes its PTY.
+    fn set_font_size(&mut self, size: f32, cx: &mut Context<Self>) {
+        let size = px(size.clamp(FONT_SIZE_MIN, FONT_SIZE_MAX));
+        if size == self.settings.font_size {
+            return;
+        }
+        self.settings.font_size = size;
+        for (view, _) in self.panes.values() {
+            view.update(cx, |view, cx| {
+                view.settings.font_size = size;
+                cx.notify();
+            });
+        }
+        cx.notify();
+    }
+
+    fn increase_font_size(&mut self, _: &IncreaseFontSize, _: &mut Window, cx: &mut Context<Self>) {
+        let size = f32::from(self.settings.font_size) + FONT_SIZE_STEP;
+        self.set_font_size(size, cx);
+    }
+
+    fn decrease_font_size(&mut self, _: &DecreaseFontSize, _: &mut Window, cx: &mut Context<Self>) {
+        let size = f32::from(self.settings.font_size) - FONT_SIZE_STEP;
+        self.set_font_size(size, cx);
+    }
+
+    fn reset_font_size(&mut self, _: &ResetFontSize, _: &mut Window, cx: &mut Context<Self>) {
+        self.set_font_size(f32::from(self.configured_font_size), cx);
     }
 
     fn new_tab(&mut self, _: &NewTab, window: &mut Window, cx: &mut Context<Self>) {
@@ -1380,6 +1422,9 @@ impl WorkspaceView {
             ("Toggle sidebar", "cmd-b", "sidebar"),
             ("Add repository...", "cmd-shift-o", "add_repo"),
             ("Rename tab", "double-click the tab", "rename_tab"),
+            ("Increase font size", "cmd-=", "font_bigger"),
+            ("Decrease font size", "cmd--", "font_smaller"),
+            ("Reset font size", "cmd-0", "font_reset"),
         ]
         .into_iter()
         .map(|(label, detail, action)| PaletteItem {
@@ -1479,6 +1524,9 @@ impl WorkspaceView {
                 }
                 "sidebar" => self.toggle_sidebar(&ToggleSidebar, window, cx),
                 "add_repo" => self.add_repo(&AddRepo, window, cx),
+                "font_bigger" => self.increase_font_size(&IncreaseFontSize, window, cx),
+                "font_smaller" => self.decrease_font_size(&DecreaseFontSize, window, cx),
+                "font_reset" => self.reset_font_size(&ResetFontSize, window, cx),
                 "rename_tab" => {
                     if let Some(tab) = self.ws.active_tab().map(|t| t.id) {
                         self.start_rename(tab, window, cx);
@@ -1928,6 +1976,9 @@ impl Render for WorkspaceView {
             .on_action(cx.listener(Self::new_worktree_action))
             .on_action(cx.listener(Self::toggle_palette))
             .on_action(cx.listener(Self::dismiss))
+            .on_action(cx.listener(Self::increase_font_size))
+            .on_action(cx.listener(Self::decrease_font_size))
+            .on_action(cx.listener(Self::reset_font_size))
             .on_action(cx.listener(|this, _: &NextTab, w, cx| {
                 this.ws.cycle_tab_in_group(true);
                 this.focus_active(w, cx);

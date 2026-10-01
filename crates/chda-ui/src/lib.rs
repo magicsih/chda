@@ -60,6 +60,10 @@ fn key_bindings() -> Vec<KeyBinding> {
         KeyBinding::new("cmd-n", NewWorktree, None),
         KeyBinding::new("cmd-shift-p", TogglePalette, None),
         KeyBinding::new("escape", Dismiss, None),
+        KeyBinding::new("cmd-=", IncreaseFontSize, None),
+        KeyBinding::new("cmd-+", IncreaseFontSize, None),
+        KeyBinding::new("cmd--", DecreaseFontSize, None),
+        KeyBinding::new("cmd-0", ResetFontSize, None),
     ]
 }
 

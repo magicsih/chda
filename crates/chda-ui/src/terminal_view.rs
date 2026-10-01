@@ -70,8 +70,8 @@ pub struct TerminalView {
     frame: Arc<Frame>,
     focus_handle: FocusHandle,
     pub settings: Settings,
-    /// Grid size last sent to the session.
-    grid: Size,
+    /// Grid size and cell size in pixels last sent to the session.
+    grid: (Size, u32, u32),
     scroll_px: f32,
     /// In-progress IME composition shown at the cursor.
     pub marked_text: Option<String>,
@@ -149,7 +149,7 @@ impl TerminalView {
             frame,
             focus_handle,
             settings,
-            grid: Size { cols: 80, rows: 24 },
+            grid: (Size { cols: 80, rows: 24 }, 0, 0),
             scroll_px: 0.0,
             marked_text: None,
             cursor_bounds: None,
@@ -291,17 +291,19 @@ impl TerminalView {
         Arc::clone(&self.frame)
     }
 
-    /// Called by the element when the grid that fits the bounds changes.
+    /// Called by the element on every layout; tells the session when the
+    /// grid or the cell size (font size changes) differs from the last one.
     pub fn set_grid(&mut self, grid: Size, cell_width: Pixels, line_height: Pixels) {
-        if grid == self.grid {
-            return;
-        }
-        self.grid = grid;
-        self.session.resize(
+        let next = (
             grid,
             f32::from(cell_width).round() as u32,
             f32::from(line_height).round() as u32,
         );
+        if next == self.grid {
+            return;
+        }
+        self.grid = next;
+        self.session.resize(next.0, next.1, next.2);
     }
 
     fn key_down(&mut self, event: &KeyDownEvent, _: &mut Window, cx: &mut Context<Self>) {
