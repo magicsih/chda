@@ -31,24 +31,6 @@ resize, `cmd-ctrl-=` equalize, `cmd-shift-enter` zoom a split, `cmd-up` / `cmd-d
 jump between shell prompts, `cmd-b` toggle the sidebar, `cmd-shift-o` add a repository,
 `cmd-n` new worktree, `cmd-shift-p` command palette. Double-click a tab to rename it.
 
-## Configuration
-
-`~/.config/chda/config.toml` (all keys optional):
-
-```toml
-repos = ["/path/to/repo"]                 # registered repositories
-worktree-path-template = "{repo_parent}/{repo_name}.worktrees/{branch}"
-default-action = "terminal"               # terminal | claude | codex
-tab-title = "branch"                      # branch | path (last folder)
-agents = ["claude", "codex"]
-sidebar-width = 280
-sidebar-visible = true
-notifications = true
-```
-
-The tab bar shows the tabs of the repository you are working in; the
-sidebar's ACTIVE list shows every tab, most recently active first.
-
 ## Packaging (macOS)
 
 ```sh

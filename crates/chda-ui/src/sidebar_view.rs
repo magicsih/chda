@@ -443,7 +443,13 @@ impl Render for SidebarView {
                         .py_2()
                         .text_xs()
                         .text_color(fg.opacity(0.5))
-                        .child("No repositories. Press cmd-shift-o or \"+ repo\"."),
+                        .flex()
+                        .flex_col()
+                        .gap_1()
+                        .child("Get started")
+                        .child("1. Add a repository: \"+ repo\" or cmd-shift-o.")
+                        .child("2. Click \"+\" next to it and name a branch to create a worktree.")
+                        .child("3. Right-click the worktree to open a terminal or run Claude Code / Codex."),
                 )
             })
     }

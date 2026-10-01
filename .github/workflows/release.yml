@@ -55,7 +55,13 @@ jobs:
         run: scripts/bundle-macos.sh "${GITHUB_REF_NAME#v}"
       - name: Publish release
         run: |
-          gh release create "$GITHUB_REF_NAME" target/bundle/chda-*.zip \
-            --title "chda $GITHUB_REF_NAME" --generate-notes
+          scripts/release-notes.sh "$GITHUB_REF_NAME" > notes.md
+          if [ -s notes.md ]; then
+            gh release create "$GITHUB_REF_NAME" target/bundle/chda-*.zip \
+              --title "chda $GITHUB_REF_NAME" --notes-file notes.md
+          else
+            gh release create "$GITHUB_REF_NAME" target/bundle/chda-*.zip \
+              --title "chda $GITHUB_REF_NAME" --generate-notes
+          fi
         env:
           GH_TOKEN: ${{ github.token }}

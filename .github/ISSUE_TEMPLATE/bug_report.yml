@@ -1,0 +1,59 @@
+name: Bug report
+description: Something in chda does not work as described.
+labels: ["bug"]
+body:
+  - type: input
+    id: version
+    attributes:
+      label: chda version
+      description: Output of `chda --version`.
+      placeholder: chda 0.1.2
+    validations:
+      required: true
+  - type: input
+    id: macos
+    attributes:
+      label: macOS version and chip
+      placeholder: macOS 15.1, Apple M2
+    validations:
+      required: true
+  - type: textarea
+    id: steps
+    attributes:
+      label: Steps to reproduce
+      placeholder: |
+        1. Add a repository with cmd-shift-o
+        2. Click "+" and type a branch name
+        3. ...
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: What you expected
+    validations:
+      required: true
+  - type: textarea
+    id: actual
+    attributes:
+      label: What happened instead
+      description: Screenshots help. Paste terminal output as text, not images.
+    validations:
+      required: true
+  - type: dropdown
+    id: area
+    attributes:
+      label: Area
+      options:
+        - Terminal (rendering, input, scrollback)
+        - Tabs and splits
+        - Sidebar and worktrees
+        - Agent status (Claude Code, Codex hooks)
+        - Install, update, packaging
+        - Other
+  - type: textarea
+    id: config
+    attributes:
+      label: Relevant config
+      description: Lines from `~/.config/chda/config.toml` or `~/.config/ghostty/config` that matter. Leave out anything private.
+      render: toml
