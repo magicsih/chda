@@ -743,8 +743,11 @@ mod tests {
             return;
         }
         let home = temp_home("zsh");
+        // A distinctive prompt: a bare "%" also matches zsh's partial-line
+        // marker (PROMPT_SP), which is not a prompt row.
+        std::fs::write(home.join(".zshrc"), "PROMPT_EOL_MARK=''\nPS1='chda%% '\n").unwrap();
         let mut p = integrated_shell(std::path::Path::new("/bin/zsh"), &["-i"], &home);
-        assert_integrated(&mut p, "%");
+        assert_integrated(&mut p, "chda%");
         p.session.text("exit\n".into());
         p.wait_for(|e| matches!(e, Event::Exited(_)));
         std::fs::remove_dir_all(&home).unwrap();
