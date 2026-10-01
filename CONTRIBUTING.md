@@ -30,3 +30,16 @@ split right / down, `cmd-alt-arrows` move between splits, `cmd-ctrl-arrows`
 resize, `cmd-ctrl-=` equalize, `cmd-shift-enter` zoom a split, `cmd-up` / `cmd-down`
 jump between shell prompts, `cmd-b` toggle the sidebar, `cmd-shift-o` add a repository,
 `cmd-n` new worktree, `cmd-shift-p` command palette.
+
+## Packaging (macOS)
+
+```sh
+scripts/bundle-macos.sh 0.1.0
+```
+
+builds `target/bundle/chda.app` and a zip. Without `CHDA_SIGN_IDENTITY` the
+app is ad-hoc signed; with it plus `APPLE_ID`, `APPLE_TEAM_ID` and
+`APPLE_APP_PASSWORD` it is signed with hardened runtime and notarized. The
+`Release` workflow does the same for `v*` tags using repository secrets and
+attaches the zip to a GitHub release. `packaging/homebrew/chda.rb` is the cask
+template for the tap.
