@@ -11,7 +11,7 @@ use chda_config::{ChdaConfig, DefaultAction};
 use chda_core::agents::{
     AgentAdapter, AgentId, HookEvent, HookKind, SessionCache, SessionId, adapters, data_dir, ipc,
 };
-use chda_core::{AgentEvent, AgentStatus, Axis, Direction, Node, PaneId, Workspace};
+use chda_core::{AgentEvent, AgentStatus, Axis, Direction, Node, PaneId, RepoWatcher, Workspace};
 use futures::StreamExt;
 use futures::channel::mpsc::unbounded;
 use gpui::{
@@ -110,6 +110,8 @@ pub struct WorkspaceView {
     hook_events: Option<mpsc::Receiver<HookEvent>>,
     refreshing: HashSet<PathBuf>,
     refresh_again: HashSet<PathBuf>,
+    watcher: Option<RepoWatcher>,
+    watch_events: Option<mpsc::Receiver<PathBuf>>,
     context_menu: Option<ContextMenu>,
     sheet: Option<NewWorktreeSheet>,
     /// Message shown briefly at the bottom of the sidebar.
@@ -129,6 +131,7 @@ impl WorkspaceView {
         });
         let adapters: Arc<Vec<Box<dyn AgentAdapter>>> = Arc::new(adapters());
         let hook_events = Self::start_hook_receiver(window, cx);
+        let (watcher, watch_events) = Self::start_watcher(window, cx);
 
         let mut this = Self {
             sidebar_visible: config.sidebar_visible,
@@ -144,14 +147,17 @@ impl WorkspaceView {
             hook_events,
             refreshing: HashSet::new(),
             refresh_again: HashSet::new(),
+            watcher,
+            watch_events,
             context_menu: None,
             sheet: None,
             status_line: None,
         };
         for repo in this.config.repos.clone() {
             this.sidebar.update(cx, |s, _| {
-                s.model.add_repo(repo);
+                s.model.add_repo(repo.clone());
             });
+            this.watch_repo(&repo);
         }
         this.install_hooks();
         this.new_tab(&NewTab, window, cx);
@@ -209,6 +215,48 @@ impl WorkspaceView {
         })
         .detach();
         Some(rx)
+    }
+
+    /// Watch `.git` directories so ref and worktree changes refresh at once.
+    fn start_watcher(
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> (Option<RepoWatcher>, Option<mpsc::Receiver<PathBuf>>) {
+        let (tx, rx) = mpsc::channel();
+        let (wake_tx, mut wake_rx) = unbounded::<()>();
+        let watcher = RepoWatcher::new(move |repo| {
+            let _ = tx.send(repo);
+            let _ = wake_tx.unbounded_send(());
+        })
+        .ok();
+        if watcher.is_none() {
+            return (None, None);
+        }
+        cx.spawn_in(window, async move |this, cx| {
+            while wake_rx.next().await.is_some() {
+                let alive = this.update(cx, |view, cx| {
+                    let repos: Vec<PathBuf> = view
+                        .watch_events
+                        .as_ref()
+                        .map(|rx| rx.try_iter().collect())
+                        .unwrap_or_default();
+                    for repo in repos {
+                        view.refresh_repo(repo, cx);
+                    }
+                });
+                if alive.is_err() {
+                    break;
+                }
+            }
+        })
+        .detach();
+        (watcher, Some(rx))
+    }
+
+    fn watch_repo(&mut self, repo: &Path) {
+        if let Some(w) = &mut self.watcher {
+            let _ = w.watch(repo);
+        }
     }
 
     fn drain_hook_events(&mut self, window: &mut Window, cx: &mut Context<Self>) {
@@ -610,6 +658,7 @@ impl WorkspaceView {
         if added {
             self.config.repos.push(repo.clone());
             self.save_config();
+            self.watch_repo(&repo);
             self.refresh_repo(repo, cx);
             self.refresh_sessions(cx);
         }
@@ -772,6 +821,9 @@ impl WorkspaceView {
                 self.refresh_repo(repo, cx);
             }
             MenuAction::RemoveRepo(repo) => {
+                if let Some(w) = &mut self.watcher {
+                    w.unwatch(&repo);
+                }
                 self.sidebar.update(cx, |s, cx| {
                     s.model.remove_repo(&repo);
                     cx.notify();

@@ -4,6 +4,7 @@
 
 mod refresh;
 mod sidebar;
+mod watch;
 mod workspace;
 
 pub use refresh::*;
@@ -16,4 +17,5 @@ pub mod agents {
     };
 }
 pub use sidebar::*;
+pub use watch::RepoWatcher;
 pub use workspace::*;
