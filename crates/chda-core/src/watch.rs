@@ -1,5 +1,6 @@
-//! File-system watching for repositories: changes under `.git` (HEAD, refs,
-//! index, worktrees) trigger a refresh of that repository.
+//! File-system watching: changes under a repository's `.git` (HEAD, refs,
+//! index, worktrees) trigger a refresh of that repository, and changes to
+//! config files trigger a reload.
 
 use std::collections::HashSet;
 use std::path::{Path, PathBuf};
@@ -59,6 +60,90 @@ impl RepoWatcher {
     }
 }
 
+/// How long config edits settle before a reload; editors often write a file
+/// in several steps.
+const FILE_DEBOUNCE: Duration = Duration::from_millis(200);
+
+/// Watches a set of files and reports, debounced, that one of them changed.
+/// It watches their directories, so files that editors replace (write to a
+/// temporary file, then rename) and files created later are seen too.
+pub struct FileWatcher {
+    watcher: notify::RecommendedWatcher,
+    files: Arc<Mutex<HashSet<PathBuf>>>,
+    dirs: HashSet<PathBuf>,
+}
+
+impl FileWatcher {
+    /// `changed` runs on a background thread after a burst of changes.
+    pub fn new(changed: impl Fn() + Send + 'static) -> notify::Result<Self> {
+        let (tx, rx) = mpsc::channel::<PathBuf>();
+        let watcher = notify::recommended_watcher(move |event: notify::Result<notify::Event>| {
+            if let Ok(event) = event {
+                for path in event.paths {
+                    let _ = tx.send(path);
+                }
+            }
+        })?;
+        let files: Arc<Mutex<HashSet<PathBuf>>> = Arc::default();
+        let shared = Arc::clone(&files);
+        std::thread::Builder::new()
+            .name("chda-file-watch".into())
+            .spawn(move || {
+                let mut deadline: Option<Instant> = None;
+                loop {
+                    let timeout = deadline
+                        .map(|d| d.saturating_duration_since(Instant::now()))
+                        .unwrap_or(Duration::from_secs(3600));
+                    match rx.recv_timeout(timeout) {
+                        Ok(path) => {
+                            let files = shared.lock().unwrap_or_else(|e| e.into_inner());
+                            if files.contains(&path) {
+                                deadline.get_or_insert_with(|| Instant::now() + FILE_DEBOUNCE);
+                            }
+                        }
+                        Err(mpsc::RecvTimeoutError::Timeout) => {
+                            if deadline.take().is_some() {
+                                changed();
+                            }
+                        }
+                        Err(mpsc::RecvTimeoutError::Disconnected) => return,
+                    }
+                }
+            })
+            .map_err(|e| notify::Error::generic(&e.to_string()))?;
+        Ok(Self {
+            watcher,
+            files,
+            dirs: HashSet::new(),
+        })
+    }
+
+    /// Replace the watched files. Files whose directory does not exist are
+    /// skipped.
+    pub fn set_files(&mut self, files: impl IntoIterator<Item = PathBuf>) {
+        let files: HashSet<PathBuf> = files.into_iter().collect();
+        let dirs: HashSet<PathBuf> = files
+            .iter()
+            .filter_map(|f| f.parent().map(Path::to_path_buf))
+            .filter(|d| d.is_dir())
+            .collect();
+        for gone in self.dirs.difference(&dirs) {
+            let _ = self.watcher.unwatch(gone);
+        }
+        for new in dirs.difference(&self.dirs) {
+            let _ = self.watcher.watch(new, RecursiveMode::NonRecursive);
+        }
+        self.dirs = dirs;
+        // Events report canonical paths on macOS (/private/tmp for /tmp).
+        let mut all = files.clone();
+        all.extend(files.iter().filter_map(|f| {
+            let dir = f.parent()?.canonicalize().ok()?;
+            Some(dir.join(f.file_name()?))
+        }));
+        *self.files.lock().unwrap_or_else(|e| e.into_inner()) = all;
+    }
+}
+
 /// Object and log writes happen constantly during git operations and never
 /// change what the sidebar shows; refs, HEAD, index and worktrees do.
 fn interesting(path: &Path, git_dir: &Path) -> bool {
@@ -110,6 +195,30 @@ fn debounce_loop(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn file_changes_are_reported_once_per_burst() {
+        let dir = std::env::temp_dir().join(format!("chda-filewatch-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let file = dir.join("config");
+        let (tx, rx) = mpsc::channel();
+        let mut w = FileWatcher::new(move || {
+            let _ = tx.send(());
+        })
+        .unwrap();
+        w.set_files([file.clone(), dir.join("missing/other")]);
+        std::thread::sleep(Duration::from_millis(100));
+        std::fs::write(dir.join("unrelated"), "x").unwrap();
+        std::fs::write(&file, "a = 1").unwrap();
+        std::fs::write(&file, "a = 2").unwrap();
+        rx.recv_timeout(Duration::from_secs(5))
+            .expect("change reported");
+        assert!(rx.recv_timeout(Duration::from_millis(500)).is_err());
+        std::fs::write(dir.join("unrelated"), "y").unwrap();
+        assert!(rx.recv_timeout(Duration::from_millis(600)).is_err());
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
 
     #[test]
     fn ref_changes_report_the_repository_once() {

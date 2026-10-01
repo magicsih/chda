@@ -82,8 +82,9 @@ fn key_bindings() -> Vec<KeyBinding> {
     ]
 }
 
-/// Start the application and open the main window.
-pub fn run(settings: Settings) {
+/// Start the application and open the main window with the user's Ghostty
+/// config.
+pub fn run(ghostty: chda_config::GhosttyConfig) {
     gpui_platform::application().run(|cx: &mut App| {
         cx.bind_keys(key_bindings());
         cx.on_action(|_: &Quit, cx| cx.quit());
@@ -99,7 +100,7 @@ pub fn run(settings: Settings) {
                     }),
                     ..Default::default()
                 },
-                |window, cx| cx.new(|cx| WorkspaceView::new(settings, window, cx)),
+                |window, cx| cx.new(|cx| WorkspaceView::new(ghostty, window, cx)),
             )
             .expect("failed to open main window");
         window

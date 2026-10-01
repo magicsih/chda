@@ -61,6 +61,13 @@ impl SidebarView {
         }
     }
 
+    /// New colors after a config reload.
+    pub fn set_colors(&mut self, fg: Hsla, bg: Hsla, cx: &mut Context<Self>) {
+        self.fg = fg;
+        self.bg = bg;
+        cx.notify();
+    }
+
     fn toggle_expanded(&mut self, path: &PathBuf, cx: &mut Context<Self>) {
         if let Some(i) = self.expanded.iter().position(|p| p == path) {
             self.expanded.remove(i);

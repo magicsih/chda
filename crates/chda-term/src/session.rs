@@ -114,6 +114,7 @@ enum Command {
     SearchStep {
         older: bool,
     },
+    SetColors(ColorConfig),
 }
 
 enum Msg {
@@ -254,6 +255,11 @@ impl Session {
     /// highlights in the frames. The search re-runs as output arrives.
     pub fn search(&self, query: Option<SearchQuery>) {
         self.send(Command::Search(query));
+    }
+
+    /// Replace the default colors and cursor style (config reload).
+    pub fn set_colors(&self, colors: ColorConfig) {
+        self.send(Command::SetColors(colors));
     }
 
     /// Move to the next older (or newer) match and scroll it into view.
@@ -570,6 +576,10 @@ fn handle_command(
         }
         Command::SearchStep { older } => {
             replies.push(Event::Search(term.search_step(older)));
+            true
+        }
+        Command::SetColors(colors) => {
+            let _ = term.set_colors(&colors);
             true
         }
     }

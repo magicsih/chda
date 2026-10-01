@@ -7,13 +7,13 @@ use std::sync::mpsc;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
-use chda_config::{ChdaConfig, DefaultAction, TabTitle};
+use chda_config::{ChdaConfig, DefaultAction, GhosttyConfig, Paths, TabTitle};
 use chda_core::agents::{
     AgentAdapter, AgentId, HookEvent, HookKind, SessionCache, SessionId, adapters, data_dir, ipc,
 };
 use chda_core::{
-    ActiveTab, AgentEvent, AgentStatus, Axis, Direction, Node, PaneId, RepoWatcher, TabId,
-    TitleMode, Workspace,
+    ActiveTab, AgentEvent, AgentStatus, Axis, Direction, FileWatcher, Node, PaneId, RepoWatcher,
+    TabId, TitleMode, Workspace,
 };
 use futures::StreamExt;
 use futures::channel::mpsc::unbounded;
@@ -166,10 +166,18 @@ pub struct WorkspaceView {
     base_fetched: HashMap<PathBuf, std::time::Instant>,
     /// Message shown briefly at the bottom of the sidebar.
     status_line: Option<String>,
+    /// Where the Ghostty config lives, and the files the last load read.
+    ghostty_paths: Paths,
+    ghostty_sources: Vec<PathBuf>,
+    /// Watches the Ghostty config files and `config.toml`.
+    config_watcher: Option<FileWatcher>,
+    /// The last reload found a broken config; its message is on the status line.
+    config_problem: Option<String>,
 }
 
 impl WorkspaceView {
-    pub fn new(settings: Settings, window: &mut Window, cx: &mut Context<Self>) -> Self {
+    pub fn new(ghostty: GhosttyConfig, window: &mut Window, cx: &mut Context<Self>) -> Self {
+        let settings = Settings::from_ghostty(&ghostty);
         let config = ChdaConfig::default_path()
             .and_then(|p| ChdaConfig::load(&p).ok())
             .unwrap_or_default();
@@ -215,7 +223,13 @@ impl WorkspaceView {
             pr_fetched: HashMap::new(),
             base_fetched: HashMap::new(),
             status_line: None,
+            ghostty_paths: Paths::default_for_user(),
+            ghostty_sources: ghostty.sources,
+            config_watcher: None,
+            config_problem: None,
         };
+        this.config_watcher = Self::start_config_watcher(window, cx);
+        this.watch_config_files();
         let gh = cx.background_spawn(async { chda_core::gh_available() });
         cx.spawn(async move |this, cx| {
             let ok = gh.await;
@@ -325,6 +339,145 @@ impl WorkspaceView {
         })
         .detach();
         (watcher, Some(rx))
+    }
+
+    /// Reload the configuration whenever one of its files changes.
+    fn start_config_watcher(window: &mut Window, cx: &mut Context<Self>) -> Option<FileWatcher> {
+        let (wake_tx, mut wake_rx) = unbounded::<()>();
+        let watcher = FileWatcher::new(move || {
+            let _ = wake_tx.unbounded_send(());
+        })
+        .ok()?;
+        cx.spawn_in(window, async move |this, cx| {
+            while wake_rx.next().await.is_some() {
+                if this
+                    .update_in(cx, |view, window, cx| view.reload_config(window, cx))
+                    .is_err()
+                {
+                    break;
+                }
+            }
+        })
+        .detach();
+        Some(watcher)
+    }
+
+    fn watch_config_files(&mut self) {
+        let files: Vec<PathBuf> = self
+            .ghostty_paths
+            .config_files
+            .iter()
+            .chain(&self.ghostty_sources)
+            .cloned()
+            .chain(ChdaConfig::default_path())
+            .collect();
+        if let Some(w) = &mut self.config_watcher {
+            w.set_files(files);
+        }
+    }
+
+    /// Re-read the Ghostty config and `config.toml` and apply what changed.
+    /// A config with errors keeps the previous values and says why.
+    fn reload_config(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let mut problems = Vec::new();
+        let ghostty = chda_config::load(&self.ghostty_paths);
+        if ghostty.problems.is_empty() {
+            let mut settings = Settings::from_ghostty(&ghostty);
+            // Keep a size picked with cmd-= / cmd-- relative to the config.
+            let offset = f32::from(self.settings.font_size) - f32::from(self.configured_font_size);
+            self.configured_font_size = settings.font_size;
+            settings.font_size =
+                px((f32::from(settings.font_size) + offset).clamp(FONT_SIZE_MIN, FONT_SIZE_MAX));
+            if settings != self.settings {
+                self.apply_settings(settings, cx);
+            }
+        } else {
+            problems.push(format!(
+                "Ghostty config: invalid {}. Kept the previous settings.",
+                ghostty.problems.join(", ")
+            ));
+        }
+        self.ghostty_sources = ghostty.sources;
+        if let Some(path) = ChdaConfig::default_path() {
+            match ChdaConfig::load(&path) {
+                Ok(config) => {
+                    if config != self.config {
+                        self.apply_config(config, window, cx);
+                    }
+                }
+                Err(e) => problems.push(format!(
+                    "{}: {e}. Kept the previous values.",
+                    path.display()
+                )),
+            }
+        }
+        self.watch_config_files();
+        let problem = (!problems.is_empty()).then(|| problems.join(" "));
+        if problem.is_some() {
+            self.status_line = problem.clone();
+        } else if self.config_problem.is_some() && self.status_line == self.config_problem {
+            self.status_line = None;
+        }
+        self.config_problem = problem;
+        cx.notify();
+    }
+
+    fn apply_settings(&mut self, settings: Settings, cx: &mut Context<Self>) {
+        let bg = hsla(settings.colors.background.unwrap_or_default());
+        let fg = hsla(settings.colors.foreground.unwrap_or_default());
+        self.sidebar
+            .update(cx, |s, cx| s.set_colors(fg, blend(bg, fg, 0.04), cx));
+        for (view, _) in self.panes.values() {
+            let settings = settings.clone();
+            view.update(cx, |view, cx| view.apply_settings(settings, cx));
+        }
+        self.settings = settings;
+    }
+
+    /// Apply a changed `config.toml`: repositories, sidebar, tab titles and
+    /// everything read on use (agents, notifications, editor, templates).
+    fn apply_config(&mut self, config: ChdaConfig, window: &mut Window, cx: &mut Context<Self>) {
+        self.ws.title_mode = match config.tab_title {
+            TabTitle::Branch => TitleMode::Branch,
+            TabTitle::Path => TitleMode::Path,
+        };
+        let added: Vec<PathBuf> = config
+            .repos
+            .iter()
+            .filter(|r| !self.config.repos.contains(r))
+            .cloned()
+            .collect();
+        let removed: Vec<PathBuf> = self
+            .config
+            .repos
+            .iter()
+            .filter(|r| !config.repos.contains(r))
+            .cloned()
+            .collect();
+        for repo in &removed {
+            if let Some(w) = &mut self.watcher {
+                w.unwatch(repo);
+            }
+            self.sidebar.update(cx, |s, _| {
+                s.model.remove_repo(repo);
+            });
+        }
+        let sidebar_was_visible = self.sidebar_visible;
+        self.sidebar_visible = config.sidebar_visible;
+        self.config = config;
+        for repo in added {
+            self.sidebar.update(cx, |s, _| {
+                s.model.add_repo(repo.clone());
+            });
+            self.watch_repo(&repo);
+            self.refresh_repo(repo, cx);
+        }
+        if self.sidebar_visible && !sidebar_was_visible {
+            self.refresh_all(cx);
+        }
+        self.sync_panes(cx);
+        self.sync_title(window);
+        self.sidebar.update(cx, |_, cx| cx.notify());
     }
 
     fn watch_repo(&mut self, repo: &Path) {
@@ -1952,6 +2105,41 @@ impl WorkspaceView {
     }
 }
 
+impl WorkspaceView {
+    fn render_status_line(&self, cx: &mut Context<Self>) -> Option<AnyElement> {
+        let s = self.status_line.clone()?;
+        let bg = hsla(self.settings.colors.background.unwrap_or_default());
+        let fg = hsla(self.settings.colors.foreground.unwrap_or_default());
+        Some(
+            div()
+                .flex()
+                .flex_row()
+                .items_start()
+                .gap_1()
+                .px_2()
+                .py_1()
+                .text_xs()
+                .text_color(fg.opacity(0.8))
+                .bg(blend(bg, fg, 0.1))
+                .child(div().flex_1().min_w_0().child(s))
+                .child(
+                    div()
+                        .id("status-close")
+                        .px_1()
+                        .rounded_sm()
+                        .cursor_pointer()
+                        .hover(|s| s.bg(fg.opacity(0.15)))
+                        .on_click(cx.listener(|this, _, _, cx| {
+                            this.status_line = None;
+                            cx.notify();
+                        }))
+                        .child("\u{2715}"),
+                )
+                .into_any_element(),
+        )
+    }
+}
+
 /// Mix `a` towards `b` by `t`.
 pub fn blend(a: Hsla, b: Hsla, t: f32) -> Hsla {
     let (a, b) = (a.to_rgb(), b.to_rgb());
@@ -1983,7 +2171,14 @@ impl Render for WorkspaceView {
             None => div().into_any_element(),
         };
         let sidebar_width = px(self.config.sidebar_width as f32);
-        let status_line = self.status_line.clone();
+        // The status line sits under the sidebar, or under the panes when
+        // the sidebar is hidden.
+        let mut status = self.render_status_line(cx);
+        let main_status = if self.sidebar_visible {
+            None
+        } else {
+            status.take()
+        };
         let main = div()
             .flex_1()
             .min_w_0()
@@ -1991,7 +2186,8 @@ impl Render for WorkspaceView {
             .flex()
             .flex_col()
             .children(self.render_tab_bar(cx))
-            .child(div().flex_1().min_h_0().w_full().child(content));
+            .child(div().flex_1().min_h_0().w_full().child(content))
+            .children(main_status);
         div()
             .size_full()
             .relative()
@@ -2094,32 +2290,7 @@ impl Render for WorkspaceView {
                         .border_r_1()
                         .border_color(divider)
                         .child(div().flex_1().min_h_0().child(self.sidebar.clone()))
-                        .children(status_line.map(|s| {
-                            div()
-                                .flex()
-                                .flex_row()
-                                .items_start()
-                                .gap_1()
-                                .px_2()
-                                .py_1()
-                                .text_xs()
-                                .text_color(fg.opacity(0.8))
-                                .bg(blend(bg, fg, 0.1))
-                                .child(div().flex_1().min_w_0().child(s))
-                                .child(
-                                    div()
-                                        .id("status-close")
-                                        .px_1()
-                                        .rounded_sm()
-                                        .cursor_pointer()
-                                        .hover(|s| s.bg(fg.opacity(0.15)))
-                                        .on_click(cx.listener(|this, _, _, cx| {
-                                            this.status_line = None;
-                                            cx.notify();
-                                        }))
-                                        .child("\u{2715}"),
-                                )
-                        })),
+                        .children(status),
                 )
             })
             .child(main)

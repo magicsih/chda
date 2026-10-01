@@ -11,8 +11,7 @@ fn main() {
             std::process::exit(2);
         }
         None => {
-            let config = chda_config::load(&chda_config::Paths::default_for_user());
-            chda_ui::run(chda_ui::Settings::from_ghostty(&config));
+            chda_ui::run(chda_config::load(&chda_config::Paths::default_for_user()));
         }
     }
 }

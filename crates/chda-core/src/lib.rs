@@ -21,5 +21,5 @@ pub mod agents {
     };
 }
 pub use sidebar::*;
-pub use watch::RepoWatcher;
+pub use watch::{FileWatcher, RepoWatcher};
 pub use workspace::*;

@@ -75,22 +75,47 @@ pub struct GhosttyConfig {
     pub scrollback_limit: Option<u64>,
     /// `shell-integration = none` turns prompt and cwd reporting off.
     pub shell_integration: Option<String>,
+    /// Values of supported keys that Ghostty would reject, as
+    /// `key = value` lines. Unknown keys are not problems.
+    pub problems: Vec<String>,
+    /// Files that were read: config files, includes and the theme.
+    pub sources: Vec<PathBuf>,
+}
+
+/// A color value: `#rrggbb`, or a word, which Ghostty takes as an X11 color
+/// name (chda does not resolve names and leaves the color unset).
+fn color(value: &str, problems: &mut Vec<String>, key: &str) -> Option<Color> {
+    let parsed = Color::parse(value);
+    if parsed.is_none() && !value.chars().all(|c| c.is_ascii_alphabetic() || c == ' ') {
+        problems.push(format!("{key} = {value}"));
+    }
+    parsed
 }
 
 impl GhosttyConfig {
-    /// Apply one `key = value` line. Unknown keys are ignored.
+    /// Apply one `key = value` line. Unknown keys are ignored; an empty
+    /// value resets a key.
     fn apply(&mut self, key: &str, value: &str) {
+        let problems = &mut self.problems;
+        let mut check = |ok: bool| {
+            if !ok && !value.is_empty() {
+                problems.push(format!("{key} = {value}"));
+            }
+        };
         match key {
             "font-family" => {
                 if self.font_family.is_none() && !value.is_empty() {
                     self.font_family = Some(value.to_owned());
                 }
             }
-            "font-size" => self.font_size = value.parse().ok(),
+            "font-size" => {
+                self.font_size = value.parse().ok().filter(|s: &f32| *s > 0.0);
+                check(self.font_size.is_some());
+            }
             "theme" => self.theme = (!value.is_empty()).then(|| value.to_owned()),
-            "background" => self.background = Color::parse(value),
-            "foreground" => self.foreground = Color::parse(value),
-            "cursor-color" => self.cursor_color = Color::parse(value),
+            "background" => self.background = color(value, &mut self.problems, key),
+            "foreground" => self.foreground = color(value, &mut self.problems, key),
+            "cursor-color" => self.cursor_color = color(value, &mut self.problems, key),
             "cursor-style" => {
                 self.cursor_style = match value {
                     "block" => Some(CursorStyle::Block),
@@ -98,40 +123,56 @@ impl GhosttyConfig {
                     "underline" => Some(CursorStyle::Underline),
                     "block_hollow" => Some(CursorStyle::BlockHollow),
                     _ => None,
-                }
+                };
+                check(self.cursor_style.is_some());
             }
             "cursor-style-blink" => {
                 self.cursor_blink = match value {
                     "true" => Some(true),
                     "false" => Some(false),
                     _ => None,
-                }
+                };
+                check(self.cursor_blink.is_some());
             }
-            "selection-background" => self.selection_background = Color::parse(value),
-            "selection-foreground" => self.selection_foreground = Color::parse(value),
+            "selection-background" => {
+                self.selection_background = color(value, &mut self.problems, key)
+            }
+            "selection-foreground" => {
+                self.selection_foreground = color(value, &mut self.problems, key)
+            }
             "palette" => {
                 if value.is_empty() {
                     self.palette.clear();
                 } else if let Some((index, color)) = value.split_once('=')
                     && let Ok(index) = index.trim().parse::<u8>()
-                    && let Some(color) = Color::parse(color)
                 {
-                    self.palette.push((index, color));
+                    if let Some(color) = Color::parse(color) {
+                        self.palette.push((index, color));
+                    }
+                } else {
+                    check(false);
                 }
             }
             "window-padding-x" => {
-                if let Some((l, r)) = parse_pair(value) {
+                let pair = parse_pair(value);
+                check(pair.is_some());
+                if let Some((l, r)) = pair {
                     self.padding.left = l;
                     self.padding.right = r;
                 }
             }
             "window-padding-y" => {
-                if let Some((t, b)) = parse_pair(value) {
+                let pair = parse_pair(value);
+                check(pair.is_some());
+                if let Some((t, b)) = pair {
                     self.padding.top = t;
                     self.padding.bottom = b;
                 }
             }
-            "scrollback-limit" => self.scrollback_limit = value.parse().ok(),
+            "scrollback-limit" => {
+                self.scrollback_limit = value.parse().ok();
+                check(self.scrollback_limit.is_some());
+            }
             "shell-integration" => self.shell_integration = Some(value.to_owned()),
             _ => {}
         }
@@ -157,6 +198,8 @@ impl GhosttyConfig {
             shell_integration
         );
         self.palette.extend(other.palette.iter().copied());
+        self.problems.extend(other.problems.iter().cloned());
+        self.sources.extend(other.sources.iter().cloned());
         if other.padding != Padding::default() {
             self.padding = other.padding;
         }
@@ -250,6 +293,7 @@ pub fn parse(text: &str, base_dir: Option<&Path>, out: &mut GhosttyConfig) {
             // warning, which chda does not emit anyway.
             let _ = optional;
             if let Ok(text) = fs::read_to_string(&path) {
+                out.sources.push(path.clone());
                 parse(&text, path.parent(), out);
             }
             continue;
@@ -265,6 +309,7 @@ pub fn load(paths: &Paths) -> GhosttyConfig {
     let mut user = GhosttyConfig::default();
     for file in &paths.config_files {
         if let Ok(text) = fs::read_to_string(file) {
+            user.sources.push(file.clone());
             parse(&text, file.parent(), &mut user);
         }
     }
@@ -275,15 +320,18 @@ fn resolve_theme(user: GhosttyConfig, theme_dirs: &[PathBuf]) -> GhosttyConfig {
     let Some(name) = user.theme.as_deref().map(theme_name) else {
         return user;
     };
-    let Some(theme_text) = theme_dirs
+    let Some((theme_path, theme_text)) = theme_dirs
         .iter()
         .map(|d| d.join(name))
         .chain(std::iter::once(PathBuf::from(name)))
-        .find_map(|p| fs::read_to_string(p).ok())
+        .find_map(|p| fs::read_to_string(&p).ok().map(|t| (p, t)))
     else {
         return user;
     };
-    let mut merged = GhosttyConfig::default();
+    let mut merged = GhosttyConfig {
+        sources: vec![theme_path],
+        ..Default::default()
+    };
     parse(&theme_text, None, &mut merged);
     merged.overlay(&user);
     merged
@@ -359,13 +407,38 @@ mod tests {
 
         let paths = Paths {
             config_files: vec![dir.join("config")],
-            theme_dirs: vec![themes],
+            theme_dirs: vec![themes.clone()],
         };
         let c = load(&paths);
         assert_eq!(c.background, Color::parse("#111111"));
         assert_eq!(c.foreground, Color::parse("#eeeeee"));
         assert_eq!(c.palette_colors(), vec![(0, Color::default())]);
         assert_eq!(c.font_size, Some(11.0));
+        assert_eq!(
+            c.sources,
+            vec![themes.join("Mocha"), dir.join("config"), dir.join("extra")]
+        );
+        assert!(c.problems.is_empty());
         fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn reports_values_ghostty_would_reject() {
+        let mut c = GhosttyConfig::default();
+        parse(
+            "font-size = big\nbackground = #12\nforeground = black\ncursor-style = blob\n\
+             window-padding-x = a,b\nfont-size =\nunknown-key = whatever\n",
+            None,
+            &mut c,
+        );
+        assert_eq!(
+            c.problems,
+            vec![
+                "font-size = big",
+                "background = #12",
+                "cursor-style = blob",
+                "window-padding-x = a,b"
+            ]
+        );
     }
 }

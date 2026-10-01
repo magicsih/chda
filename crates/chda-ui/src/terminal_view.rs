@@ -359,6 +359,17 @@ impl TerminalView {
         }
     }
 
+    /// Apply reloaded settings. Font, colors and padding change at once;
+    /// scrollback size and shell integration apply to new panes.
+    pub fn apply_settings(&mut self, settings: Settings, cx: &mut Context<Self>) {
+        if settings.colors != self.settings.colors {
+            self.session.set_colors(settings.colors.clone());
+        }
+        self.settings = settings;
+        self.layout_cache = None;
+        cx.notify();
+    }
+
     pub fn focus(&self, window: &mut Window, cx: &mut App) {
         window.focus(&self.focus_handle, cx);
     }

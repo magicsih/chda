@@ -6,7 +6,7 @@ use chda_term::{ColorConfig, CursorShape, DEFAULT_SCROLLBACK, Rgb, ShellIntegrat
 use crate::platform;
 use gpui::{Font, FontFeatures, FontStyle, FontWeight, Pixels, px};
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, PartialEq)]
 pub struct Settings {
     pub font_family: String,
     pub font_size: Pixels,
