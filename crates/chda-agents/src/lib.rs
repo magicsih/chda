@@ -115,9 +115,15 @@ mod real_sessions {
         let sessions = super::index_sessions(&adapters, &mut cache);
         eprintln!("{} sessions in {:?}", sessions.len(), start.elapsed());
         for s in sessions.iter().take(5) {
-            eprintln!("{:?} {} {} {:?} {}", s.agent, s.started_at, s.message_count, s.cwd, s.snippet);
+            eprintln!(
+                "{:?} {} {} {:?} {}",
+                s.agent, s.started_at, s.message_count, s.cwd, s.snippet
+            );
         }
-        let chda: Vec<_> = sessions.iter().filter(|s| s.cwd.ends_with("magicsih/chda")).collect();
+        let chda: Vec<_> = sessions
+            .iter()
+            .filter(|s| s.cwd.ends_with("magicsih/chda"))
+            .collect();
         eprintln!("chda sessions: {}", chda.len());
     }
 }

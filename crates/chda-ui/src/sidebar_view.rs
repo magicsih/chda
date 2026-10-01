@@ -236,7 +236,15 @@ impl SidebarView {
                     .bg(status_color(status))
                     .flex_shrink_0(),
             )
-            .child(div().flex_1().min_w_0().overflow_hidden().whitespace_nowrap().text_ellipsis().child(name))
+            .child(
+                div()
+                    .flex_1()
+                    .min_w_0()
+                    .overflow_hidden()
+                    .whitespace_nowrap()
+                    .text_ellipsis()
+                    .child(name),
+            )
             .children(badges.into_iter().map(|b| div().text_xs().child(b)));
         let mut col = div().flex().flex_col().child(row);
         if expanded {
