@@ -39,12 +39,19 @@ jobs:
           security import cert.p12 -k build.keychain -P "$APPLE_CERTIFICATE_PASSWORD" -T /usr/bin/codesign
           security set-key-partition-list -S apple-tool:,apple: -s -k ci build.keychain
           rm cert.p12
+      - name: Write notarization API key
+        if: ${{ env.APPLE_API_KEY_P8 != '' }}
+        env:
+          APPLE_API_KEY_P8: ${{ secrets.APPLE_API_KEY_P8 }}
+        run: |
+          mkdir -p "$RUNNER_TEMP/keys"
+          printf '%s' "$APPLE_API_KEY_P8" > "$RUNNER_TEMP/keys/AuthKey.p8"
       - name: Bundle, sign and notarize
         env:
           CHDA_SIGN_IDENTITY: ${{ secrets.CHDA_SIGN_IDENTITY }}
-          APPLE_ID: ${{ secrets.APPLE_ID }}
-          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
-          APPLE_APP_PASSWORD: ${{ secrets.APPLE_APP_PASSWORD }}
+          APPLE_API_KEY_P8: ${{ secrets.APPLE_API_KEY_P8 != '' && format('{0}/keys/AuthKey.p8', runner.temp) || '' }}
+          APPLE_API_KEY_ID: ${{ secrets.APPLE_API_KEY_ID }}
+          APPLE_API_ISSUER_ID: ${{ secrets.APPLE_API_ISSUER_ID }}
         run: scripts/bundle-macos.sh "${GITHUB_REF_NAME#v}"
       - name: Publish release
         run: |

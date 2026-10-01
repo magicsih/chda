@@ -7,7 +7,10 @@
 #
 # Environment (all optional):
 #   CHDA_SIGN_IDENTITY   "Developer ID Application: Name (TEAMID)"
-#   APPLE_ID, APPLE_TEAM_ID, APPLE_APP_PASSWORD   for notarytool
+#   Notarization, either an App Store Connect API key:
+#     APPLE_API_KEY_P8 (path), APPLE_API_KEY_ID, APPLE_API_ISSUER_ID
+#   or an Apple ID:
+#     APPLE_ID, APPLE_TEAM_ID, APPLE_APP_PASSWORD
 set -euo pipefail
 
 cd "$(dirname "$0")/.."
@@ -36,9 +39,14 @@ fi
 zip_path="$out/chda-$version-macos-$(uname -m).zip"
 ditto -c -k --keepParent "$app" "$zip_path"
 
-if [[ -n "${CHDA_SIGN_IDENTITY:-}" && -n "${APPLE_ID:-}" && -n "${APPLE_TEAM_ID:-}" && -n "${APPLE_APP_PASSWORD:-}" ]]; then
-  xcrun notarytool submit "$zip_path" --apple-id "$APPLE_ID" --team-id "$APPLE_TEAM_ID" \
-    --password "$APPLE_APP_PASSWORD" --wait
+notarize=()
+if [[ -n "${APPLE_API_KEY_P8:-}" && -n "${APPLE_API_KEY_ID:-}" && -n "${APPLE_API_ISSUER_ID:-}" ]]; then
+  notarize=(--key "$APPLE_API_KEY_P8" --key-id "$APPLE_API_KEY_ID" --issuer "$APPLE_API_ISSUER_ID")
+elif [[ -n "${APPLE_ID:-}" && -n "${APPLE_TEAM_ID:-}" && -n "${APPLE_APP_PASSWORD:-}" ]]; then
+  notarize=(--apple-id "$APPLE_ID" --team-id "$APPLE_TEAM_ID" --password "$APPLE_APP_PASSWORD")
+fi
+if [[ -n "${CHDA_SIGN_IDENTITY:-}" && ${#notarize[@]} -gt 0 ]]; then
+  xcrun notarytool submit "$zip_path" "${notarize[@]}" --wait
   xcrun stapler staple "$app"
   rm -f "$zip_path"
   ditto -c -k --keepParent "$app" "$zip_path"
