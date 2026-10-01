@@ -24,4 +24,18 @@ Rules:
 - GPUI is a git dependency pinned to a Zed commit in the workspace
   `Cargo.toml`. It is bumped once per milestone in its own pull request.
 
+## Terminal data flow
+
+`libghostty-vt` handles are `!Send`, so each session runs two threads:
+
+- a reader thread that blocks on the PTY and forwards byte chunks;
+- a terminal thread that owns the VT state, parses output, encodes input
+  (keys, paste, focus, resize, scroll) and writes to the PTY.
+
+The terminal thread publishes `Arc<Frame>` snapshots (plain structs: cells,
+rows, cursor, colors, scrollbar, title, pwd) at most every 8 ms while output
+streams, and sends `Event`s (frame, title, pwd, bell, clipboard, exit) over a
+channel plus a wake callback. The UI never touches the VT state; it reads the
+latest frame when it paints.
+
 Decisions that are hard to reverse are recorded under `docs/decisions/`.
