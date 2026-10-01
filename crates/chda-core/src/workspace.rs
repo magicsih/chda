@@ -213,6 +213,8 @@ pub struct Tab {
     pub focused: PaneId,
     /// A pane that is temporarily shown alone.
     pub zoomed: Option<PaneId>,
+    /// Title the user typed; overrides the automatic one.
+    pub custom_title: Option<String>,
 }
 
 impl Tab {
@@ -306,6 +308,9 @@ impl Workspace {
     /// Title shown on a tab: the focused pane's title, else its cwd's last
     /// component, else a placeholder.
     pub fn tab_title(&self, tab: &Tab) -> String {
+        if let Some(t) = &tab.custom_title {
+            return t.clone();
+        }
         let info = self.panes.get(&tab.focused);
         info.filter(|i| !i.title.is_empty())
             .map(|i| i.title.clone())
@@ -333,10 +338,21 @@ impl Workspace {
                 root: Node::Leaf(pane),
                 focused: pane,
                 zoomed: None,
+                custom_title: None,
             },
         );
         self.active = Some(tab);
         (tab, pane)
+    }
+
+    /// Set or clear (empty string) a tab's custom title.
+    pub fn rename_tab(&mut self, id: TabId, title: &str) -> bool {
+        let Some(tab) = self.tabs.iter_mut().find(|t| t.id == id) else {
+            return false;
+        };
+        let title = title.trim();
+        tab.custom_title = (!title.is_empty()).then(|| title.to_owned());
+        true
     }
 
     pub fn activate_tab(&mut self, index: usize) -> bool {
@@ -614,6 +630,12 @@ mod tests {
         assert_eq!(ws.tab_title(&tab), "vim");
         ws.pane_mut(p1).unwrap().title.clear();
         ws.pane_mut(p1).unwrap().cwd = Some("/tmp/project".into());
+        assert_eq!(ws.tab_title(&tab), "project");
+        assert!(ws.rename_tab(tab.id, "  build  "));
+        let tab = ws.active_tab().unwrap().clone();
+        assert_eq!(ws.tab_title(&tab), "build");
+        ws.rename_tab(tab.id, "");
+        let tab = ws.active_tab().unwrap().clone();
         assert_eq!(ws.tab_title(&tab), "project");
     }
 }

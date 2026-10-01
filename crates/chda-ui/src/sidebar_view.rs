@@ -256,10 +256,9 @@ impl SidebarView {
             )
             .child(
                 div()
-                    .size_2()
-                    .rounded_full()
-                    .bg(status_color(status))
-                    .flex_shrink_0(),
+                    .flex_shrink_0()
+                    .text_color(status_color(status))
+                    .child("\u{25cf}"),
             )
             .child(
                 div()

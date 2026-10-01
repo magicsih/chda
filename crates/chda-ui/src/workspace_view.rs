@@ -11,7 +11,9 @@ use chda_config::{ChdaConfig, DefaultAction};
 use chda_core::agents::{
     AgentAdapter, AgentId, HookEvent, HookKind, SessionCache, SessionId, adapters, data_dir, ipc,
 };
-use chda_core::{AgentEvent, AgentStatus, Axis, Direction, Node, PaneId, RepoWatcher, Workspace};
+use chda_core::{
+    AgentEvent, AgentStatus, Axis, Direction, Node, PaneId, RepoWatcher, TabId, Workspace,
+};
 use futures::StreamExt;
 use futures::channel::mpsc::unbounded;
 use gpui::{
@@ -134,6 +136,8 @@ pub struct WorkspaceView {
     sheet: Option<NewWorktreeSheet>,
     confirm: Option<ConfirmSheet>,
     palette: Option<(Entity<Palette>, Subscription)>,
+    /// Inline editor for a tab title.
+    renaming: Option<(TabId, Entity<TextInput>, Subscription)>,
     /// `gh` is installed and authenticated; checked once.
     gh_ok: bool,
     /// Last time pull requests were fetched per repository.
@@ -177,6 +181,7 @@ impl WorkspaceView {
             sheet: None,
             confirm: None,
             palette: None,
+            renaming: None,
             gh_ok: false,
             pr_fetched: HashMap::new(),
             status_line: None,
@@ -1171,6 +1176,28 @@ impl WorkspaceView {
         cx.notify();
     }
 
+    /// Start editing a tab's title in place.
+    fn start_rename(&mut self, tab: TabId, window: &mut Window, cx: &mut Context<Self>) {
+        let bg = hsla(self.settings.colors.background.unwrap_or_default());
+        let fg = hsla(self.settings.colors.foreground.unwrap_or_default());
+        let input = cx.new(|cx| TextInput::new("tab name", fg, blend(bg, fg, 0.12), cx));
+        let sub = cx.subscribe_in(&input, window, move |this, input, event, window, cx| {
+            match event {
+                TextInputEvent::Submit(title) => {
+                    this.ws.rename_tab(tab, title);
+                }
+                TextInputEvent::Cancel => {}
+            }
+            let _ = input;
+            this.renaming = None;
+            this.focus_active(window, cx);
+        });
+        let handle = input.read(cx).focus_handle(cx);
+        window.focus(&handle, cx);
+        self.renaming = Some((tab, input, sub));
+        cx.notify();
+    }
+
     fn palette_items(&self, cx: &App) -> Vec<PaletteItem> {
         let mut items: Vec<PaletteItem> = [
             ("New tab", "cmd-t", "new_tab"),
@@ -1181,6 +1208,7 @@ impl WorkspaceView {
             ("Equalize splits", "cmd-ctrl-=", "equalize"),
             ("Toggle sidebar", "cmd-b", "sidebar"),
             ("Add repository...", "cmd-shift-o", "add_repo"),
+            ("Rename tab", "double-click the tab", "rename_tab"),
         ]
         .into_iter()
         .map(|(label, detail, action)| PaletteItem {
@@ -1271,6 +1299,11 @@ impl WorkspaceView {
                 }
                 "sidebar" => self.toggle_sidebar(&ToggleSidebar, window, cx),
                 "add_repo" => self.add_repo(&AddRepo, window, cx),
+                "rename_tab" => {
+                    if let Some(tab) = self.ws.active_tab().map(|t| t.id) {
+                        self.start_rename(tab, window, cx);
+                    }
+                }
                 _ => {}
             },
             PaletteCommand::GoToWorktree(path) => self.open_worktree(&path, window, cx),
@@ -1359,6 +1392,18 @@ impl WorkspaceView {
                 let title = self.ws.tab_title(tab);
                 let bell = self.ws.pane(tab.focused).is_some_and(|p| p.bell);
                 let is_active = active == Some(i);
+                if let Some((id, input, _)) = &self.renaming
+                    && *id == tab.id
+                {
+                    return div()
+                        .id(("tab", i))
+                        .px_2()
+                        .min_w_0()
+                        .flex_1()
+                        .bg(bg)
+                        .child(input.clone());
+                }
+                let tab_id = tab.id;
                 div()
                     .id(("tab", i))
                     .px_3()
@@ -1371,7 +1416,13 @@ impl WorkspaceView {
                     .cursor_pointer()
                     .when(is_active, |d| d.bg(bg))
                     .when(!is_active, |d| d.text_color(fg.opacity(0.6)))
-                    .on_click(cx.listener(move |this, _, window, cx| this.goto_tab(i, window, cx)))
+                    .on_click(cx.listener(move |this, e: &gpui::ClickEvent, window, cx| {
+                        if e.click_count() >= 2 {
+                            this.start_rename(tab_id, window, cx);
+                        } else {
+                            this.goto_tab(i, window, cx);
+                        }
+                    }))
                     .child(format!(
                         "{}{}  {}",
                         if bell { "\u{25cf} " } else { "" },
@@ -1769,12 +1820,29 @@ impl Render for WorkspaceView {
                         .child(div().flex_1().min_h_0().child(self.sidebar.clone()))
                         .children(status_line.map(|s| {
                             div()
+                                .flex()
+                                .flex_row()
+                                .items_start()
+                                .gap_1()
                                 .px_2()
                                 .py_1()
                                 .text_xs()
                                 .text_color(fg.opacity(0.8))
                                 .bg(blend(bg, fg, 0.1))
-                                .child(s)
+                                .child(div().flex_1().min_w_0().child(s))
+                                .child(
+                                    div()
+                                        .id("status-close")
+                                        .px_1()
+                                        .rounded_sm()
+                                        .cursor_pointer()
+                                        .hover(|s| s.bg(fg.opacity(0.15)))
+                                        .on_click(cx.listener(|this, _, _, cx| {
+                                            this.status_line = None;
+                                            cx.notify();
+                                        }))
+                                        .child("\u{2715}"),
+                                )
                         })),
                 )
             })

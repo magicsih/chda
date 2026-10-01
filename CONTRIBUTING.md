@@ -29,7 +29,7 @@ Shortcuts follow Ghostty's macOS defaults: `cmd-t` new tab, `cmd-w` close,
 split right / down, `cmd-alt-arrows` move between splits, `cmd-ctrl-arrows`
 resize, `cmd-ctrl-=` equalize, `cmd-shift-enter` zoom a split, `cmd-up` / `cmd-down`
 jump between shell prompts, `cmd-b` toggle the sidebar, `cmd-shift-o` add a repository,
-`cmd-n` new worktree, `cmd-shift-p` command palette.
+`cmd-n` new worktree, `cmd-shift-p` command palette. Double-click a tab to rename it.
 
 ## Packaging (macOS)
 
