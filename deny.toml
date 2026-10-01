@@ -1,0 +1,72 @@
+# cargo-deny configuration. Run `cargo deny check` locally; CI runs it too.
+#
+# The `bans.deny` table encodes the crate dependency direction from
+# docs/architecture.md. Each entry names a crate and the only crates
+# (`wrappers`) allowed to depend on it.
+
+[graph]
+all-features = true
+
+[advisories]
+version = 2
+yanked = "deny"
+# GPUI's dependency tree carries unmaintained crates we do not control.
+unmaintained = "workspace"
+
+[licenses]
+version = 2
+allow = [
+    "MIT",
+    "Apache-2.0",
+    "Apache-2.0 WITH LLVM-exception",
+    "BSD-2-Clause",
+    "BSD-3-Clause",
+    "ISC",
+    "Zlib",
+    "Unicode-3.0",
+    "MPL-2.0",
+    "CC0-1.0",
+    "BSL-1.0",
+    "0BSD",
+    "bzip2-1.0.6",
+]
+
+[bans]
+multiple-versions = "allow"
+wildcards = "allow"
+deny = [
+    # External framework boundaries.
+    { crate = "gpui", wrappers = [
+        "chda-ui",
+        # GPUI's own platform crates, pulled in by gpui_platform.
+        "gpui_platform",
+        "gpui_apple",
+        "gpui_linux",
+        "gpui_macos",
+        "gpui_web",
+        "gpui_wgpu",
+        "gpui_windows",
+    ] },
+    { crate = "gpui_platform", wrappers = ["chda-ui"] },
+    { crate = "libghostty-vt", wrappers = ["chda-term"] },
+    { crate = "libghostty-vt-sys", wrappers = ["libghostty-vt"] },
+    { crate = "gix", wrappers = ["chda-git"] },
+    { crate = "portable-pty", wrappers = ["chda-pty"] },
+
+    # Workspace crate edges. Arrows only point downward.
+    { crate = "chda-ui", wrappers = ["chda"] },
+    { crate = "chda-core", wrappers = ["chda", "chda-ui"] },
+    { crate = "chda-term", wrappers = ["chda-core", "chda-ui"] },
+    { crate = "chda-pty", wrappers = ["chda-term"] },
+    { crate = "chda-git", wrappers = ["chda-core"] },
+    { crate = "chda-agents", wrappers = ["chda", "chda-core"] },
+    { crate = "chda-config", wrappers = ["chda", "chda-ui", "chda-core"] },
+]
+
+[sources]
+unknown-registry = "deny"
+unknown-git = "deny"
+
+[sources.allow-org]
+# GPUI and the forks Zed maintains for it.
+github = ["zed-industries"]
