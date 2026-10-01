@@ -15,6 +15,7 @@ use chda_pty::{ExitStatus, Pty, PtySize, SpawnOptions};
 
 use crate::frame::{ColorConfig, Frame, Size};
 use crate::input::{KeyCode, KeyInput, Modifiers, MouseInput};
+use crate::search::{SearchQuery, SearchStatus};
 use crate::vt::Terminal;
 
 /// Default scrollback kept per session, in bytes (Ghostty's default).
@@ -26,6 +27,9 @@ pub const DEFAULT_SCROLLBACK: usize = 50_000_000;
 
 /// Shortest interval between two frame rebuilds while output is streaming.
 const FRAME_INTERVAL: Duration = Duration::from_millis(8);
+/// Shortest interval between two re-runs of an active search while output
+/// is streaming; each run scans the whole scrollback.
+const SEARCH_INTERVAL: Duration = Duration::from_millis(250);
 
 /// Something the UI should react to.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -44,6 +48,8 @@ pub enum Event {
     Cwd(Option<std::path::PathBuf>),
     /// A shell prompt appeared, so the previous command finished.
     PromptShown,
+    /// The active search ran: after [`Session::search`], a step, or new output.
+    Search(SearchStatus),
     /// The child exited; the session is finished.
     Exited(ExitStatus),
 }
@@ -104,6 +110,10 @@ enum Command {
     Mouse(MouseInput),
     CopySelection,
     QueryCwd,
+    Search(Option<SearchQuery>),
+    SearchStep {
+        older: bool,
+    },
 }
 
 enum Msg {
@@ -239,6 +249,18 @@ impl Session {
         self.send(Command::QueryCwd);
     }
 
+    /// Start, change or (with `None`) end a scrollback search. The newest
+    /// match is scrolled into view; results arrive as [`Event::Search`] and
+    /// highlights in the frames. The search re-runs as output arrives.
+    pub fn search(&self, query: Option<SearchQuery>) {
+        self.send(Command::Search(query));
+    }
+
+    /// Move to the next older (or newer) match and scroll it into view.
+    pub fn search_step(&self, older: bool) {
+        self.send(Command::SearchStep { older });
+    }
+
     pub fn scroll_to_bottom(&self) {
         self.send(Command::ScrollToBottom);
     }
@@ -309,15 +331,21 @@ fn run(
     let mut dirty = true;
     let mut closed = false;
     let mut replies: Vec<Event> = Vec::new();
+    // Output arrived since the active search last ran.
+    let mut search_stale = false;
+    let mut last_search = Instant::now();
 
     loop {
         // Block for the first message, then drain whatever else is queued so
         // a burst of output is parsed in one go before we draw.
-        let timeout = if dirty {
+        let mut timeout = if dirty {
             FRAME_INTERVAL.saturating_sub(last_frame.elapsed())
         } else {
             Duration::from_secs(3600)
         };
+        if search_stale {
+            timeout = timeout.min(SEARCH_INTERVAL.saturating_sub(last_search.elapsed()));
+        }
         let first = match rx.recv_timeout(timeout) {
             Ok(m) => Some(m),
             Err(RecvTimeoutError::Timeout) => None,
@@ -328,15 +356,29 @@ fn run(
                 Msg::Output(bytes) => {
                     term.feed(&bytes);
                     dirty = true;
+                    search_stale = true;
                 }
                 Msg::OutputClosed => {
                     closed = true;
                 }
                 Msg::Command(cmd) => {
+                    if matches!(cmd, Command::Search(_) | Command::SearchStep { .. }) {
+                        search_stale = false;
+                        last_search = Instant::now();
+                    }
                     if handle_command(&mut term, &mut pty, cmd, &mut replies) {
                         dirty = true;
                     }
                 }
+            }
+        }
+
+        if search_stale && last_search.elapsed() >= SEARCH_INTERVAL {
+            search_stale = false;
+            last_search = Instant::now();
+            if let Some(status) = term.refresh_search() {
+                replies.push(Event::Search(status));
+                dirty = true;
             }
         }
 
@@ -521,6 +563,14 @@ fn handle_command(
         Command::QueryCwd => {
             replies.push(Event::Cwd(pty.foreground_cwd()));
             false
+        }
+        Command::Search(query) => {
+            replies.push(Event::Search(term.search(query)));
+            true
+        }
+        Command::SearchStep { older } => {
+            replies.push(Event::Search(term.search_step(older)));
+            true
         }
     }
 }

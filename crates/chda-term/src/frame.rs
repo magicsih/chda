@@ -81,6 +81,8 @@ pub struct Cell {
     pub underline_color: Option<Rgb>,
     pub style: CellStyle,
     pub selected: bool,
+    /// Highlight from an active scrollback search.
+    pub search: crate::search::SearchMark,
 }
 
 impl Cell {

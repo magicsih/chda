@@ -9,22 +9,46 @@ use std::time::Duration;
 
 use chda_term::{
     Event, Frame, KeyAction, KeyCode, KeyInput, Modifiers, MouseAction, MouseButton as TermButton,
-    MouseInput, Session, SessionOptions, Size, default_data_dir, env_for, login_shell,
-    parse_pwd_report,
+    MouseInput, SearchQuery, SearchStatus, Session, SessionOptions, Size, default_data_dir,
+    env_for, login_shell, parse_pwd_report,
 };
 use futures::StreamExt;
 use futures::channel::mpsc::{UnboundedReceiver, unbounded};
 use gpui::{
-    App, Bounds, ClipboardItem, Context, EntityInputHandler, EventEmitter, FocusHandle, Focusable,
-    KeyDownEvent, Keystroke, Modifiers as GpuiModifiers, MouseButton, MouseDownEvent,
-    MouseMoveEvent, MouseUpEvent, Pixels, Point, Render, ScrollWheelEvent, TouchPhase,
-    UTF16Selection, Window, actions, div, prelude::*, px,
+    App, Bounds, ClipboardItem, Context, Entity, EntityInputHandler, EventEmitter, FocusHandle,
+    Focusable, KeyDownEvent, Keystroke, Modifiers as GpuiModifiers, MouseButton, MouseDownEvent,
+    MouseMoveEvent, MouseUpEvent, Pixels, Point, Render, ScrollWheelEvent, Subscription,
+    TouchPhase, UTF16Selection, Window, actions, div, prelude::*, px,
 };
 
 use crate::settings::Settings;
-use crate::terminal_element::TerminalElement;
+use crate::terminal_element::{TerminalElement, hsla};
+use crate::text_input::{TextInput, TextInputEvent};
 
-actions!(terminal, [Copy, Paste, JumpToPrevPrompt, JumpToNextPrompt]);
+actions!(
+    terminal,
+    [
+        Copy,
+        Paste,
+        JumpToPrevPrompt,
+        JumpToNextPrompt,
+        Find,
+        FindNext,
+        FindPrevious,
+        CloseFind,
+        ToggleFindCase,
+        ToggleFindRegex,
+    ]
+);
+
+/// The search bar at the top of a pane (`cmd-f`).
+struct SearchBar {
+    input: Entity<TextInput>,
+    _observe: Subscription,
+    _events: Subscription,
+    query: SearchQuery,
+    status: SearchStatus,
+}
 
 /// What a terminal tells its workspace.
 #[derive(Clone, Debug, PartialEq)]
@@ -91,6 +115,7 @@ pub struct TerminalView {
     osc7_seen: bool,
     cwd: Option<PathBuf>,
     last_activity_sent: u64,
+    search: Option<SearchBar>,
 }
 
 impl EventEmitter<TerminalEvent> for TerminalView {}
@@ -162,6 +187,7 @@ impl TerminalView {
             osc7_seen: false,
             cwd,
             last_activity_sent: 0,
+            search: None,
         }
     }
 
@@ -278,6 +304,12 @@ impl TerminalView {
                     cx.write_to_clipboard(ClipboardItem::new_string(text))
                 }
                 Event::SelectionText(None) => {}
+                Event::Search(status) => {
+                    if let Some(bar) = &mut self.search {
+                        bar.status = status;
+                        cx.notify();
+                    }
+                }
                 Event::Exited(_) => cx.emit(TerminalEvent::Exited),
             }
         }
@@ -306,7 +338,11 @@ impl TerminalView {
         self.session.resize(next.0, next.1, next.2);
     }
 
-    fn key_down(&mut self, event: &KeyDownEvent, _: &mut Window, cx: &mut Context<Self>) {
+    fn key_down(&mut self, event: &KeyDownEvent, window: &mut Window, cx: &mut Context<Self>) {
+        // Keys typed into the search bar bubble up here; they are not ours.
+        if !self.focus_handle.is_focused(window) {
+            return;
+        }
         let ks = &event.keystroke;
         // Command shortcuts belong to the app, never to the shell.
         if ks.modifiers.platform {
@@ -369,6 +405,205 @@ impl TerminalView {
 
     fn jump_next_prompt(&mut self, _: &JumpToNextPrompt, _: &mut Window, _: &mut Context<Self>) {
         self.session.jump_to_prompt(1);
+    }
+
+    /// Open the search bar, or focus it again when it is already open.
+    fn find(&mut self, _: &Find, window: &mut Window, cx: &mut Context<Self>) {
+        if self.search.is_none() {
+            let fg = hsla(self.settings.colors.foreground.unwrap_or_default());
+            let bg = hsla(self.settings.colors.background.unwrap_or_default());
+            let input = cx.new(|cx| {
+                TextInput::new("Find", fg, crate::workspace_view::blend(bg, fg, 0.12), cx)
+            });
+            let observe = cx.observe(&input, |this, input, cx| {
+                let text = input.read(cx).text().to_owned();
+                if let Some(bar) = &mut this.search
+                    && bar.query.text != text
+                {
+                    bar.query.text = text;
+                    this.run_search(cx);
+                }
+            });
+            // Enter and escape can reach the field as text input instead of
+            // key bindings (macOS marks some keys as character input).
+            let events =
+                cx.subscribe_in(&input, window, |this, _, event, window, cx| match event {
+                    TextInputEvent::Submit(_) => this.find_next(&FindNext, window, cx),
+                    TextInputEvent::Cancel => this.close_find(&CloseFind, window, cx),
+                });
+            self.search = Some(SearchBar {
+                input,
+                _observe: observe,
+                _events: events,
+                query: SearchQuery::default(),
+                status: SearchStatus::default(),
+            });
+        }
+        if let Some(bar) = &self.search {
+            let handle = bar.input.read(cx).focus_handle(cx);
+            window.focus(&handle, cx);
+        }
+        cx.notify();
+    }
+
+    fn run_search(&mut self, cx: &mut Context<Self>) {
+        let Some(bar) = &mut self.search else {
+            return;
+        };
+        if bar.query.text.is_empty() {
+            bar.status = SearchStatus::default();
+            self.session.search(None);
+        } else {
+            self.session.search(Some(bar.query.clone()));
+        }
+        cx.notify();
+    }
+
+    fn find_next(&mut self, _: &FindNext, _: &mut Window, _: &mut Context<Self>) {
+        if self.search.is_some() {
+            self.session.search_step(true);
+        }
+    }
+
+    fn find_previous(&mut self, _: &FindPrevious, _: &mut Window, _: &mut Context<Self>) {
+        if self.search.is_some() {
+            self.session.search_step(false);
+        }
+    }
+
+    fn close_find(&mut self, _: &CloseFind, window: &mut Window, cx: &mut Context<Self>) {
+        if self.search.take().is_some() {
+            self.session.search(None);
+        }
+        self.focus(window, cx);
+        cx.notify();
+    }
+
+    fn toggle_find_case(&mut self, _: &ToggleFindCase, _: &mut Window, cx: &mut Context<Self>) {
+        if let Some(bar) = &mut self.search {
+            bar.query.case_sensitive = !bar.query.case_sensitive;
+            self.run_search(cx);
+        }
+    }
+
+    fn toggle_find_regex(&mut self, _: &ToggleFindRegex, _: &mut Window, cx: &mut Context<Self>) {
+        if let Some(bar) = &mut self.search {
+            bar.query.regex = !bar.query.regex;
+            self.run_search(cx);
+        }
+    }
+
+    fn render_search(&self, cx: &mut Context<Self>) -> Option<gpui::AnyElement> {
+        let bar = self.search.as_ref()?;
+        let fg = hsla(self.settings.colors.foreground.unwrap_or_default());
+        let bg = hsla(self.settings.colors.background.unwrap_or_default());
+        let toggle = |id: &'static str, label: &'static str, on: bool, tip: &'static str| {
+            div()
+                .id(id)
+                .px_1()
+                .rounded_sm()
+                .cursor_pointer()
+                .text_color(if on { fg } else { fg.opacity(0.45) })
+                .when(on, |d| d.bg(fg.opacity(0.18)))
+                .hover(|s| s.bg(fg.opacity(0.12)))
+                .tooltip(crate::tooltip::text(tip))
+                .child(label)
+        };
+        let button = |id: &'static str, label: &'static str, tip: &'static str| {
+            div()
+                .id(id)
+                .px_1()
+                .rounded_sm()
+                .cursor_pointer()
+                .hover(|s| s.bg(fg.opacity(0.12)))
+                .tooltip(crate::tooltip::text(tip))
+                .child(label)
+        };
+        let status = match (&bar.status.error, bar.status.current) {
+            (Some(_), _) => "invalid".to_owned(),
+            (None, _) if bar.query.text.is_empty() => String::new(),
+            (None, Some(i)) => format!("{i}/{}", bar.status.total),
+            (None, None) => "no matches".to_owned(),
+        };
+        let invalid =
+            bar.status.error.is_some() || (!bar.query.text.is_empty() && bar.status.total == 0);
+        Some(
+            div()
+                .absolute()
+                .top_1()
+                .right_2()
+                .flex()
+                .flex_row()
+                .items_center()
+                .gap_1()
+                .p_1()
+                .rounded_md()
+                .bg(crate::workspace_view::blend(bg, fg, 0.08))
+                .border_1()
+                .border_color(fg.opacity(0.2))
+                .shadow_md()
+                .text_sm()
+                .text_color(fg)
+                .key_context("SearchBar")
+                .on_action(cx.listener(Self::toggle_find_case))
+                .on_action(cx.listener(Self::toggle_find_regex))
+                .on_action(cx.listener(Self::close_find))
+                .child(
+                    div()
+                        .w(px(200.0))
+                        .overflow_hidden()
+                        .child(bar.input.clone()),
+                )
+                .child(
+                    toggle(
+                        "find-case",
+                        "Aa",
+                        bar.query.case_sensitive,
+                        "Match case (alt-c)",
+                    )
+                    .on_click(
+                        cx.listener(|this, _, w, cx| this.toggle_find_case(&ToggleFindCase, w, cx)),
+                    ),
+                )
+                .child(
+                    toggle(
+                        "find-regex",
+                        ".*",
+                        bar.query.regex,
+                        "Regular expression (alt-r)",
+                    )
+                    .on_click(
+                        cx.listener(|this, _, w, cx| {
+                            this.toggle_find_regex(&ToggleFindRegex, w, cx)
+                        }),
+                    ),
+                )
+                .child(
+                    div()
+                        .min_w(px(64.0))
+                        .text_xs()
+                        .text_color(if invalid {
+                            gpui::rgb(0xf38ba8).into()
+                        } else {
+                            fg.opacity(0.7)
+                        })
+                        .child(status),
+                )
+                .child(
+                    button("find-older", "\u{2191}", "Older match (enter)")
+                        .on_click(cx.listener(|this, _, w, cx| this.find_next(&FindNext, w, cx))),
+                )
+                .child(
+                    button("find-newer", "\u{2193}", "Newer match (shift-enter)").on_click(
+                        cx.listener(|this, _, w, cx| this.find_previous(&FindPrevious, w, cx)),
+                    ),
+                )
+                .child(
+                    button("find-close", "\u{2715}", "Close (esc)")
+                        .on_click(cx.listener(|this, _, w, cx| this.close_find(&CloseFind, w, cx))),
+                )
+                .into_any_element(),
+        )
     }
 
     /// Translate a window position into a grid cell and grid-relative pixels.
@@ -592,8 +827,10 @@ impl Focusable for TerminalView {
 impl Render for TerminalView {
     fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let p = self.settings.padding;
+        let search = self.render_search(cx);
         div()
             .size_full()
+            .relative()
             .bg(crate::terminal_element::hsla(
                 self.settings.colors.background.unwrap_or_default(),
             ))
@@ -607,6 +844,9 @@ impl Render for TerminalView {
             .on_action(cx.listener(Self::paste))
             .on_action(cx.listener(Self::jump_prev_prompt))
             .on_action(cx.listener(Self::jump_next_prompt))
+            .on_action(cx.listener(Self::find))
+            .on_action(cx.listener(Self::find_next))
+            .on_action(cx.listener(Self::find_previous))
             .on_key_down(cx.listener(Self::key_down))
             .on_mouse_down(MouseButton::Left, cx.listener(Self::mouse_down))
             .on_mouse_down(MouseButton::Right, cx.listener(Self::mouse_down))
@@ -617,6 +857,7 @@ impl Render for TerminalView {
             .on_mouse_move(cx.listener(Self::mouse_move))
             .on_scroll_wheel(cx.listener(Self::scroll_wheel))
             .child(TerminalElement::new(cx.entity(), self.focus_handle.clone()))
+            .children(search)
     }
 }
 

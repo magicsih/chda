@@ -1,6 +1,6 @@
 //! Paints a terminal [`Frame`] as a fixed-width cell grid.
 
-use chda_term::{Cell, CellWidth, CursorShape, Frame, Rgb, Size, Underline};
+use chda_term::{Cell, CellWidth, CursorShape, Frame, Rgb, SearchMark, Size, Underline};
 use gpui::{
     App, BorderStyle, Bounds, ContentMask, CursorStyle, Element, ElementId, ElementInputHandler,
     Entity, FocusHandle, Font, FontStyle, FontWeight, GlobalElementId, Hitbox, HitboxBehavior,
@@ -340,6 +340,20 @@ struct RunStyle {
 /// Selection colors from the config; `None` inverts the cell.
 type SelectionColors = (Option<Hsla>, Option<Hsla>);
 
+/// Search highlight colors: every match, and the current one.
+const SEARCH_MATCH: u32 = 0xf9e2af;
+const SEARCH_CURRENT: u32 = 0xfab387;
+/// Text drawn on a search highlight.
+const SEARCH_TEXT: u32 = 0x1e1e2e;
+
+fn search_background(mark: SearchMark) -> Option<Hsla> {
+    match mark {
+        SearchMark::None => None,
+        SearchMark::Match => Some(gpui::rgb(SEARCH_MATCH).into()),
+        SearchMark::Current => Some(gpui::rgb(SEARCH_CURRENT).into()),
+    }
+}
+
 impl RunStyle {
     fn of(cell: &Cell, frame: &Frame, selection: SelectionColors) -> Self {
         let mut fg = hsla(cell.fg);
@@ -350,6 +364,8 @@ impl RunStyle {
             fg = selection
                 .1
                 .unwrap_or_else(|| hsla(cell.bg.unwrap_or(frame.background)));
+        } else if cell.search != SearchMark::None {
+            fg = gpui::rgb(SEARCH_TEXT).into();
         }
         let underline = (cell.style.underline != Underline::None).then(|| UnderlineStyle {
             thickness: px(1.0),
@@ -421,7 +437,7 @@ fn layout_frame(
             let bg = if cell.selected {
                 Some(selection.0.unwrap_or_else(|| hsla(cell.fg)))
             } else {
-                cell.bg.map(hsla)
+                search_background(cell.search).or_else(|| cell.bg.map(hsla))
             };
             match (run.as_mut(), bg) {
                 (Some((_, end, color)), Some(bg)) if *color == bg && *end + 1 == x => *end = x,

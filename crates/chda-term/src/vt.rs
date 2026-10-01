@@ -3,6 +3,7 @@
 use std::cell::{Cell as StdCell, RefCell};
 use std::rc::Rc;
 
+use libghostty_vt::fmt::{Format, Formatter, FormatterOptions};
 use libghostty_vt::key::{self, Encoder as KeyEncoder};
 use libghostty_vt::mouse::{self, Encoder as MouseEncoder};
 use libghostty_vt::render::{
@@ -12,8 +13,8 @@ use libghostty_vt::screen::{CellWide, RowSemanticPrompt, Screen, TrackedGridRef}
 use libghostty_vt::selection::{FormatOptions, SelectLineOptions, SelectWordOptions, Selection};
 use libghostty_vt::style::{Palette, PaletteIndex, RgbColor, StyleColor, Underline as VtUnderline};
 use libghostty_vt::terminal::{
-    CursorStyle as VtCursorStyle, Mode, Options, Point, PointCoordinate, ScrollViewport,
-    Terminal as VtTerminal,
+    CursorStyle as VtCursorStyle, Mode, Options, Point, PointCoordinate, PointSpace,
+    ScrollViewport, Terminal as VtTerminal,
 };
 use libghostty_vt::{focus, paste};
 
@@ -22,6 +23,7 @@ use crate::frame::{
     SemanticPrompt, Size, Underline,
 };
 use crate::input::{KeyAction, KeyCode, KeyInput, Modifiers, MouseAction, MouseButton, MouseInput};
+use crate::search::{self, Match, SearchMark, SearchQuery, SearchStatus};
 
 /// Error raised by the terminal core.
 #[derive(Clone, Copy, Debug)]
@@ -67,6 +69,19 @@ struct Hooks {
     prompt_shown: StdCell<bool>,
 }
 
+/// An active scrollback search.
+struct Search {
+    /// `None` when the query does not compile.
+    regex: Option<regex::Regex>,
+    error: Option<String>,
+    /// Sorted by position, oldest first.
+    matches: Vec<Match>,
+    current: Option<usize>,
+    /// Follows the current match's first cell through scrolling, pruning
+    /// and reflow, so a re-run keeps the same match current.
+    anchor: Option<TrackedGridRef>,
+}
+
 /// A terminal: VT parser plus screen state, driven from a single thread.
 pub struct Terminal {
     vt: VtTerminal<'static, 'static>,
@@ -82,6 +97,7 @@ pub struct Terminal {
     generation: u64,
     /// Absolute row of the prompt the cursor last sat on.
     last_prompt_row: Option<u64>,
+    search: Option<Search>,
 }
 
 impl Terminal {
@@ -134,6 +150,7 @@ impl Terminal {
             hooks,
             generation: 0,
             last_prompt_row: None,
+            search: None,
         })
     }
 
@@ -382,6 +399,142 @@ impl Terminal {
         true
     }
 
+    /// Start, change or (with `None`) end a scrollback search. The newest
+    /// match becomes current and is scrolled into view.
+    pub fn search(&mut self, query: Option<SearchQuery>) -> SearchStatus {
+        let Some(query) = query.filter(|q| !q.text.is_empty()) else {
+            self.search = None;
+            return SearchStatus::default();
+        };
+        let (regex, error) = match query.compile() {
+            Ok(re) => (Some(re), None),
+            Err(e) => (None, Some(e.to_string())),
+        };
+        self.search = Some(Search {
+            regex,
+            error,
+            matches: Vec::new(),
+            current: None,
+            anchor: None,
+        });
+        self.run_search();
+        if let Some(s) = &mut self.search {
+            s.current = s.matches.len().checked_sub(1);
+        }
+        self.anchor_current();
+        self.reveal_current();
+        self.search_status()
+    }
+
+    /// Make the next older (or newer) match current, wrapping around, and
+    /// scroll it into view.
+    pub fn search_step(&mut self, older: bool) -> SearchStatus {
+        if let Some(s) = &mut self.search {
+            let n = s.matches.len();
+            if n > 0 {
+                s.current = Some(match (s.current, older) {
+                    (None, _) => n - 1,
+                    (Some(0), true) => n - 1,
+                    (Some(i), true) => i - 1,
+                    (Some(i), false) => (i + 1) % n,
+                });
+            }
+        }
+        self.anchor_current();
+        self.reveal_current();
+        self.search_status()
+    }
+
+    /// Re-run the active search after new output, keeping the current match.
+    /// Does not scroll. Returns `None` when no search is active.
+    pub fn refresh_search(&mut self) -> Option<SearchStatus> {
+        self.search.as_ref()?;
+        self.run_search();
+        let s = self.search.as_mut()?;
+        let anchor = s
+            .anchor
+            .as_ref()
+            .and_then(|a| a.point(PointSpace::Screen).ok().flatten())
+            .map(|p| (u64::from(p.y), p.x));
+        s.current = match anchor {
+            // The match that starts at the anchor, else the last one before it.
+            Some(at) => s
+                .matches
+                .partition_point(|m| (m.row, m.start) <= at)
+                .checked_sub(1)
+                .or_else(|| (!s.matches.is_empty()).then_some(0)),
+            None => s.matches.len().checked_sub(1),
+        };
+        self.anchor_current();
+        Some(self.search_status())
+    }
+
+    pub fn search_status(&self) -> SearchStatus {
+        match &self.search {
+            Some(s) => SearchStatus {
+                total: s.matches.len(),
+                current: s.current.map(|i| s.matches.len() - i),
+                error: s.error.clone(),
+            },
+            None => SearchStatus::default(),
+        }
+    }
+
+    fn run_search(&mut self) {
+        let Some(re) = self.search.as_ref().and_then(|s| s.regex.clone()) else {
+            return;
+        };
+        let text = self.screen_text().unwrap_or_default();
+        let matches = search::find_matches(&text, libghostty_vt::unicode::codepoint_width, &re);
+        if let Some(s) = &mut self.search {
+            s.matches = matches;
+        }
+    }
+
+    /// The whole screen, scrollback included, as plain text: one line per
+    /// row with trailing blanks trimmed.
+    fn screen_text(&self) -> Result<String> {
+        let opts = FormatterOptions::new()
+            .with_format(Format::Plain)
+            .with_unwrap(false)
+            .with_trim(true);
+        let mut formatter = Formatter::new(&self.vt, opts)?;
+        let bytes = formatter.format_alloc(None)?;
+        Ok(String::from_utf8_lossy(&bytes).into_owned())
+    }
+
+    fn current_match(&self) -> Option<Match> {
+        let s = self.search.as_ref()?;
+        s.matches.get(s.current?).copied()
+    }
+
+    fn anchor_current(&mut self) {
+        let point = self.current_match().map(|m| {
+            Point::Screen(PointCoordinate {
+                x: m.start,
+                y: m.row as u32,
+            })
+        });
+        let anchor = point.and_then(|p| self.vt.track_grid_ref(p).ok());
+        if let Some(s) = &mut self.search {
+            s.anchor = anchor;
+        }
+    }
+
+    /// Scroll so the current match is visible, centered when it was not.
+    fn reveal_current(&mut self) {
+        let Some(m) = self.current_match() else {
+            return;
+        };
+        let Ok(bar) = self.vt.scrollbar() else {
+            return;
+        };
+        if m.row < bar.offset || m.row >= bar.offset + bar.len {
+            let top = m.row.saturating_sub(bar.len / 2);
+            self.vt.scroll_viewport(ScrollViewport::Row(top as usize));
+        }
+    }
+
     /// Whether the alternate screen (full-screen app) is active.
     pub fn alternate_screen(&self) -> bool {
         matches!(self.vt.active_screen(), Ok(Screen::Alternate))
@@ -580,6 +733,7 @@ impl Terminal {
             }
         }
         snapshot.set_dirty(Dirty::Clean)?;
+        self.mark_search(&mut frame);
         // A prompt on a row we have not seen a prompt on before means the
         // previous command finished, even if no frame caught the output.
         let prompt_row = frame.cursor.and_then(|c| {
@@ -594,6 +748,37 @@ impl Terminal {
             self.last_prompt_row = Some(row);
         }
         Ok(frame)
+    }
+}
+
+impl Terminal {
+    /// Highlight the search matches that fall in the viewport.
+    fn mark_search(&self, frame: &mut Frame) {
+        let Some(s) = &self.search else {
+            return;
+        };
+        let current = self.current_match();
+        let top = frame.scrollbar.offset;
+        let cols = usize::from(frame.size.cols);
+        let first = s.matches.partition_point(|m| m.row < top);
+        for m in &s.matches[first..] {
+            let Some(y) = m
+                .row
+                .checked_sub(top)
+                .filter(|y| *y < u64::from(frame.size.rows))
+            else {
+                break;
+            };
+            let mark = if Some(*m) == current {
+                SearchMark::Current
+            } else {
+                SearchMark::Match
+            };
+            let row = y as usize * cols;
+            for x in usize::from(m.start)..=usize::from(m.end).min(cols.saturating_sub(1)) {
+                frame.cells[row + x].search = mark;
+            }
+        }
     }
 }
 
@@ -982,6 +1167,62 @@ mod tests {
         term.feed(b"\x1b[?1049h");
         assert!(term.alternate_screen());
         assert!(term.frame().unwrap().alternate_screen);
+    }
+
+    #[test]
+    fn search_marks_matches_steps_and_survives_new_output() {
+        let mut t = Terminal::new(Size { cols: 20, rows: 3 }, 100_000).unwrap();
+        for i in 0..10 {
+            t.feed(format!("line {i} {}\r\n", if i % 3 == 0 { "hit" } else { "-" }).as_bytes());
+        }
+        // Rows 0..=9 hold the lines; hits on rows 0, 3, 6 and 9.
+        let status = t.search(Some(SearchQuery {
+            text: "HIT".into(),
+            ..Default::default()
+        }));
+        assert_eq!((status.total, status.current), (4, Some(1)));
+        let frame = t.frame().unwrap();
+        let row = (9 - frame.scrollbar.offset) as u16;
+        let marks: Vec<SearchMark> = frame.row_cells(row).iter().map(|c| c.search).collect();
+        assert_eq!(
+            &marks[6..11],
+            &[
+                SearchMark::None,
+                SearchMark::Current,
+                SearchMark::Current,
+                SearchMark::Current,
+                SearchMark::None
+            ]
+        );
+
+        // Stepping to an older match scrolls it into view.
+        let status = t.search_step(true);
+        assert_eq!(status.current, Some(2));
+        let frame = t.frame().unwrap();
+        assert!(frame.scrollbar.offset <= 6 && 6 < frame.scrollbar.offset + 3);
+        let row = (6 - frame.scrollbar.offset) as u16;
+        assert_eq!(frame.row_text(row), "line 6 hit");
+        assert_eq!(frame.row_cells(row)[7].search, SearchMark::Current);
+
+        // New output adds a match; the current one stays the same match.
+        t.feed(b"another hit\r\n");
+        let status = t.refresh_search().unwrap();
+        assert_eq!((status.total, status.current), (5, Some(3)));
+        assert_eq!(t.search_step(false).current, Some(2));
+        assert_eq!(t.search_step(false).current, Some(1));
+        assert_eq!(t.search_step(false).current, Some(5), "wraps to the oldest");
+
+        let bad = t.search(Some(SearchQuery {
+            text: "(".into(),
+            regex: true,
+            ..Default::default()
+        }));
+        assert!(bad.error.is_some());
+        assert_eq!(bad.total, 0);
+        assert_eq!(t.search(None), SearchStatus::default());
+        assert!(t.refresh_search().is_none());
+        let frame = t.frame().unwrap();
+        assert!(frame.cells.iter().all(|c| c.search == SearchMark::None));
     }
 }
 

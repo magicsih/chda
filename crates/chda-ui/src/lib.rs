@@ -7,6 +7,7 @@ mod sidebar_view;
 mod terminal_element;
 mod terminal_view;
 mod text_input;
+mod tooltip;
 mod workspace_view;
 
 use gpui::{
@@ -14,7 +15,10 @@ use gpui::{
 };
 
 pub use settings::Settings;
-use terminal_view::{Copy, JumpToNextPrompt, JumpToPrevPrompt, Paste};
+use terminal_view::{
+    CloseFind, Copy, Find, FindNext, FindPrevious, JumpToNextPrompt, JumpToPrevPrompt, Paste,
+    ToggleFindCase, ToggleFindRegex,
+};
 use workspace_view::*;
 
 /// Keybindings, following Ghostty's macOS defaults.
@@ -25,6 +29,9 @@ fn key_bindings() -> Vec<KeyBinding> {
         KeyBinding::new("cmd-v", Paste, t),
         KeyBinding::new("cmd-up", JumpToPrevPrompt, t),
         KeyBinding::new("cmd-down", JumpToNextPrompt, t),
+        KeyBinding::new("cmd-f", Find, t),
+        KeyBinding::new("cmd-g", FindNext, t),
+        KeyBinding::new("cmd-shift-g", FindPrevious, t),
         KeyBinding::new("cmd-q", Quit, None),
         KeyBinding::new("cmd-t", NewTab, None),
         KeyBinding::new("cmd-w", CloseSurface, None),
@@ -64,6 +71,14 @@ fn key_bindings() -> Vec<KeyBinding> {
         KeyBinding::new("cmd-+", IncreaseFontSize, None),
         KeyBinding::new("cmd--", DecreaseFontSize, None),
         KeyBinding::new("cmd-0", ResetFontSize, None),
+        // Global bindings count as matching at the focused element's depth,
+        // so these name the focused field and come last: on equal depth the
+        // later binding wins over the global escape (Dismiss).
+        KeyBinding::new("enter", FindNext, Some("SearchBar > TextInput")),
+        KeyBinding::new("shift-enter", FindPrevious, Some("SearchBar > TextInput")),
+        KeyBinding::new("escape", CloseFind, Some("SearchBar > TextInput")),
+        KeyBinding::new("alt-c", ToggleFindCase, Some("SearchBar > TextInput")),
+        KeyBinding::new("alt-r", ToggleFindRegex, Some("SearchBar > TextInput")),
     ]
 }
 
