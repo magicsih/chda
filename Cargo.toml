@@ -1,0 +1,47 @@
+[workspace]
+resolver = "3"
+members = [
+    "crates/chda",
+    "crates/chda-ui",
+    "crates/chda-core",
+    "crates/chda-term",
+    "crates/chda-pty",
+    "crates/chda-git",
+    "crates/chda-agents",
+    "crates/chda-config",
+]
+
+[workspace.package]
+version = "0.0.1"
+edition = "2024"
+rust-version = "1.98"
+license = "MIT"
+repository = "https://github.com/magicsih/chda"
+publish = false
+
+[workspace.dependencies]
+chda-ui = { path = "crates/chda-ui" }
+chda-core = { path = "crates/chda-core" }
+chda-term = { path = "crates/chda-term" }
+chda-pty = { path = "crates/chda-pty" }
+chda-git = { path = "crates/chda-git" }
+chda-agents = { path = "crates/chda-agents" }
+chda-config = { path = "crates/chda-config" }
+
+# GPUI is consumed as a git dependency pinned to a Zed commit (ADR-0002).
+# Bump the `rev` once per milestone, in its own pull request.
+gpui = { git = "https://github.com/zed-industries/zed.git", rev = "f8c2cc844057540ca1eac7de4f19f50d7597dead" }
+gpui_platform = { git = "https://github.com/zed-industries/zed.git", rev = "f8c2cc844057540ca1eac7de4f19f50d7597dead", features = ["font-kit", "wayland", "x11"] }
+
+# Terminal core (ADR-0001). Only chda-term may depend on it.
+libghostty-vt = "0.2.2"
+
+[workspace.lints.rust]
+unsafe_op_in_unsafe_fn = "warn"
+
+[workspace.lints.clippy]
+all = { level = "warn", priority = -1 }
+
+[profile.release]
+codegen-units = 1
+lto = "thin"
