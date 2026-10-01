@@ -5,6 +5,7 @@
 mod cleanup;
 mod github;
 mod refresh;
+mod restore;
 mod sidebar;
 mod watch;
 mod workspace;
@@ -12,6 +13,7 @@ mod workspace;
 pub use cleanup::*;
 pub use github::{gh_available, pr_for_branch};
 pub use refresh::*;
+pub use restore::*;
 
 /// Agent integration surface the UI needs (ADR: the UI talks to core only).
 pub mod agents {

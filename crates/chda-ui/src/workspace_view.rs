@@ -13,7 +13,7 @@ use chda_core::agents::{
 };
 use chda_core::{
     ActiveTab, AgentEvent, AgentStatus, Axis, Direction, FileWatcher, Node, PaneId, RepoWatcher,
-    TabId, TitleMode, Workspace,
+    SavedBounds, SavedWindow, TabId, TitleMode, Workspace,
 };
 use futures::StreamExt;
 use futures::channel::mpsc::unbounded;
@@ -182,10 +182,20 @@ pub struct WorkspaceView {
     pulsing: bool,
     /// The pane "go to waiting agent" jumped to last, to cycle onwards.
     last_jump: Option<PaneId>,
+    /// Window frame, kept for session restore.
+    bounds: Option<SavedBounds>,
+    /// The app is quitting: panes going away must not shrink the saved
+    /// session.
+    quitting: bool,
 }
 
 impl WorkspaceView {
-    pub fn new(ghostty: GhosttyConfig, window: &mut Window, cx: &mut Context<Self>) -> Self {
+    pub fn new(
+        ghostty: GhosttyConfig,
+        saved: Option<SavedWindow>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> Self {
         let settings = Settings::from_ghostty(&ghostty);
         let config = ChdaConfig::default_path()
             .and_then(|p| ChdaConfig::load(&p).ok())
@@ -239,7 +249,21 @@ impl WorkspaceView {
             pulse: 0,
             pulsing: false,
             last_jump: None,
+            bounds: None,
+            quitting: false,
         };
+        this.note_bounds(window);
+        cx.observe_window_bounds(window, |this, window, _| {
+            this.note_bounds(window);
+            this.save_session();
+        })
+        .detach();
+        cx.on_app_quit(|this, _| {
+            this.save_session();
+            this.quitting = true;
+            async {}
+        })
+        .detach();
         Self::start_notification_clicks(window, cx);
         cx.observe_window_activation(window, |this, window, cx| {
             if window.is_window_active() {
@@ -267,7 +291,10 @@ impl WorkspaceView {
             this.watch_repo(&repo);
         }
         this.install_hooks();
-        this.new_tab(&NewTab, window, cx);
+        match saved {
+            Some(saved) => this.restore_session(&saved, window, cx),
+            None => this.new_tab(&NewTab, window, cx),
+        }
         this.refresh_all(cx);
         this.refresh_sessions(cx);
         Self::schedule_refreshes(window, cx);
@@ -970,6 +997,65 @@ impl WorkspaceView {
 
     /// Tell the sidebar which panes live in which worktree, and remember each
     /// pane's branch and repository for tab titles and grouping.
+    /// Rebuild the saved window's tabs with a shell in each saved directory.
+    fn restore_session(
+        &mut self,
+        saved: &SavedWindow,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let (panes, report) = self.ws.restore(saved);
+        for p in panes {
+            self.open_pane(p.pane, p.cwd, None, window, cx);
+        }
+        if self.ws.is_empty() {
+            self.new_tab(&NewTab, window, cx);
+            return;
+        }
+        if !report.missing.is_empty() {
+            let gone: Vec<String> = report
+                .missing
+                .iter()
+                .map(|(dir, to)| match to {
+                    Some(repo) => format!("{} (opened {})", dir.display(), repo.display()),
+                    None => format!("{} (opened the home directory)", dir.display()),
+                })
+                .collect();
+            self.status_line = Some(format!(
+                "Restored the last session; missing: {}",
+                gone.join(", ")
+            ));
+        }
+        self.focus_active(window, cx);
+    }
+
+    /// The window's origin and content size: a window opens with the size
+    /// of its content, while its frame also counts the title bar.
+    fn note_bounds(&mut self, window: &Window) {
+        let origin = window.window_bounds().get_bounds().origin;
+        let size = window.viewport_size();
+        self.bounds = Some(SavedBounds {
+            x: f32::from(origin.x),
+            y: f32::from(origin.y),
+            width: f32::from(size.width),
+            height: f32::from(size.height),
+        });
+    }
+
+    /// Save tabs, splits and directories for the next launch. Cheap when
+    /// nothing changed: the file is only written when its content differs.
+    fn save_session(&self) {
+        if self.quitting || !self.config.restore_session {
+            return;
+        }
+        let Some(dir) = data_dir() else {
+            return;
+        };
+        let mut saved = self.ws.snapshot();
+        saved.bounds = self.bounds;
+        let _ = saved.save(&dir);
+    }
+
     fn sync_panes(&mut self, cx: &mut Context<Self>) {
         let panes: Vec<(PaneId, PathBuf)> = self
             .ws
@@ -1029,6 +1115,7 @@ impl WorkspaceView {
             s.model.active_tabs = active_tabs;
             cx.notify();
         });
+        self.save_session();
     }
 
     fn save_config(&self) {
@@ -1074,6 +1161,8 @@ impl WorkspaceView {
                 self.ws.close_pane(pane);
                 self.panes.remove(&pane);
                 if self.ws.is_empty() {
+                    // Nothing left to restore: this removes the saved session.
+                    self.save_session();
                     cx.quit();
                     return;
                 }
@@ -1184,6 +1273,7 @@ impl WorkspaceView {
         }
         self.reviewed_focused(cx);
         self.sync_title(window);
+        self.save_session();
         cx.notify();
     }
 
@@ -1259,6 +1349,8 @@ impl WorkspaceView {
         self.ws.close_pane(pane);
         self.panes.remove(&pane);
         if self.ws.is_empty() {
+            // Nothing left to restore: this removes the saved session.
+            self.save_session();
             cx.quit();
             return;
         }
@@ -2538,22 +2630,27 @@ impl Render for WorkspaceView {
             }))
             .on_action(cx.listener(|this, _: &ResizeLeft, _, cx| {
                 this.ws.resize(Direction::Left, RESIZE_STEP);
+                this.save_session();
                 cx.notify();
             }))
             .on_action(cx.listener(|this, _: &ResizeRight, _, cx| {
                 this.ws.resize(Direction::Right, RESIZE_STEP);
+                this.save_session();
                 cx.notify();
             }))
             .on_action(cx.listener(|this, _: &ResizeUp, _, cx| {
                 this.ws.resize(Direction::Up, RESIZE_STEP);
+                this.save_session();
                 cx.notify();
             }))
             .on_action(cx.listener(|this, _: &ResizeDown, _, cx| {
                 this.ws.resize(Direction::Down, RESIZE_STEP);
+                this.save_session();
                 cx.notify();
             }))
             .on_action(cx.listener(|this, _: &EqualizeSplits, _, cx| {
                 this.ws.equalize();
+                this.save_session();
                 cx.notify();
             }))
             .on_action(cx.listener(|this, _: &ToggleZoom, w, cx| {

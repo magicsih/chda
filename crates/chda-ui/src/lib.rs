@@ -11,7 +11,8 @@ mod tooltip;
 mod workspace_view;
 
 use gpui::{
-    App, AppContext, Bounds, KeyBinding, TitlebarOptions, WindowBounds, WindowOptions, px, size,
+    App, AppContext, Bounds, KeyBinding, TitlebarOptions, WindowBounds, WindowOptions, point, px,
+    size,
 };
 
 pub use settings::Settings;
@@ -90,7 +91,17 @@ pub fn run(ghostty: chda_config::GhosttyConfig) {
         cx.bind_keys(key_bindings());
         cx.on_action(|_: &Quit, cx| cx.quit());
 
-        let bounds = Bounds::centered(None, size(px(960.0), px(640.0)), cx);
+        let config = chda_config::ChdaConfig::default_path()
+            .and_then(|p| chda_config::ChdaConfig::load(&p).ok())
+            .unwrap_or_default();
+        let saved = config
+            .restore_session
+            .then(|| chda_core::agents::data_dir().and_then(|d| chda_core::SavedWindow::load(&d)))
+            .flatten();
+        let bounds = match saved.as_ref().and_then(|s| s.bounds) {
+            Some(b) => Bounds::new(point(px(b.x), px(b.y)), size(px(b.width), px(b.height))),
+            None => Bounds::centered(None, size(px(960.0), px(640.0)), cx),
+        };
         let window = cx
             .open_window(
                 WindowOptions {
@@ -101,7 +112,7 @@ pub fn run(ghostty: chda_config::GhosttyConfig) {
                     }),
                     ..Default::default()
                 },
-                |window, cx| cx.new(|cx| WorkspaceView::new(ghostty, window, cx)),
+                |window, cx| cx.new(|cx| WorkspaceView::new(ghostty, saved, window, cx)),
             )
             .expect("failed to open main window");
         window

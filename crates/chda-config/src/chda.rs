@@ -49,6 +49,8 @@ pub struct ChdaConfig {
     /// and `{column}` placeholders, e.g. `zed {file}:{line}:{column}`.
     /// Unset opens the file with the system's default application.
     pub editor: Option<String>,
+    /// Reopen the last window's tabs, splits and directories on launch.
+    pub restore_session: bool,
 }
 
 impl Default for ChdaConfig {
@@ -63,6 +65,7 @@ impl Default for ChdaConfig {
             sidebar_visible: true,
             notifications: true,
             editor: None,
+            restore_session: true,
         }
     }
 }
