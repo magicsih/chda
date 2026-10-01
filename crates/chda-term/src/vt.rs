@@ -865,3 +865,46 @@ mod tests {
         assert!(term.frame().unwrap().alternate_screen);
     }
 }
+
+/// Throughput check for the parse-and-snapshot path. Run with
+/// `CHDA_BENCH_FILE=<path> cargo test --release -p chda-term -- --ignored bench --nocapture`.
+#[cfg(test)]
+mod bench {
+    use super::*;
+    use std::time::{Duration, Instant};
+
+    #[test]
+    #[ignore = "throughput check; needs CHDA_BENCH_FILE"]
+    fn bench_feed_and_frame() {
+        let Some(path) = std::env::var_os("CHDA_BENCH_FILE") else {
+            return;
+        };
+        let data = std::fs::read(path).unwrap();
+        let mut term = Terminal::new(
+            Size {
+                cols: 120,
+                rows: 40,
+            },
+            10_000,
+        )
+        .unwrap();
+        let start = Instant::now();
+        let mut frames = 0;
+        let mut last_frame = start;
+        for chunk in data.chunks(64 * 1024) {
+            term.feed(chunk);
+            if last_frame.elapsed() >= Duration::from_millis(8) {
+                term.frame().unwrap();
+                frames += 1;
+                last_frame = Instant::now();
+            }
+        }
+        term.frame().unwrap();
+        let elapsed = start.elapsed();
+        eprintln!(
+            "fed {} bytes in {elapsed:?} ({:.1} MB/s), {frames} frames built",
+            data.len(),
+            data.len() as f64 / 1e6 / elapsed.as_secs_f64()
+        );
+    }
+}
