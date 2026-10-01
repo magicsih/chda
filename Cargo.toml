@@ -39,6 +39,8 @@ libghostty-vt = "0.2.2"
 # PTY (ADR-0004). Only chda-pty may depend on it.
 portable-pty = "0.9.0"
 
+futures = "0.3.31"
+
 [workspace.lints.rust]
 unsafe_op_in_unsafe_fn = "warn"
 
