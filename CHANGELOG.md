@@ -4,6 +4,18 @@ All notable changes to chda. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); entries are
 generated from conventional commit messages by release-plz.
 
+## [0.1.4](https://github.com/magicsih/chda/compare/v0.1.3...v0.1.4) - 2026-10-01
+
+### Added
+
+- *(config)* apply Ghostty and config.toml changes without a restart
+- *(ui)* restore windows, tabs, splits and directories on launch
+- *(agents)* show agent status on tabs, in the activity list and on the Dock
+- *(term)* add shell integration for bash and fish
+- *(term)* open links with cmd-click
+- *(term)* search the scrollback with cmd-f
+- *(ui)* change the font size at runtime with cmd-=, cmd-- and cmd-0
+
 ## [0.1.3](https://github.com/magicsih/chda/compare/v0.1.2...v0.1.3) - 2026-10-01
 
 ### Other
