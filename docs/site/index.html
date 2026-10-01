@@ -1,0 +1,128 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>chda — git worktree terminal for coding agents</title>
+<meta name="description" content="chda is a macOS terminal with a git worktree sidebar and a live status board for Claude Code and Codex. Ghostty terminal core, written in Rust on GPUI. Free and open source.">
+<link rel="canonical" href="https://magicsih.github.io/chda/">
+<meta property="og:type" content="website">
+<meta property="og:title" content="chda — git worktree terminal for coding agents">
+<meta property="og:description" content="One worktree, one task, one agent. See which worktree is running which agent and what it is waiting for.">
+<meta property="og:url" content="https://magicsih.github.io/chda/">
+<meta property="og:image" content="https://magicsih.github.io/chda/social-preview.png">
+<meta name="twitter:card" content="summary_large_image">
+<meta name="twitter:title" content="chda — git worktree terminal for coding agents">
+<meta name="twitter:description" content="A terminal with a git worktree sidebar and a live status board for Claude Code and Codex.">
+<meta name="twitter:image" content="https://magicsih.github.io/chda/social-preview.png">
+<link rel="icon" href="icon.png" type="image/png">
+<script type="application/ld+json">
+{
+  "@context": "https://schema.org",
+  "@type": "SoftwareApplication",
+  "name": "chda",
+  "operatingSystem": "macOS 14 or newer (Apple silicon)",
+  "applicationCategory": "DeveloperApplication",
+  "license": "https://opensource.org/licenses/MIT",
+  "url": "https://magicsih.github.io/chda/",
+  "downloadUrl": "https://github.com/magicsih/chda/releases/latest",
+  "softwareHelp": "https://github.com/magicsih/chda#readme",
+  "description": "Terminal with a git worktree sidebar and a live status board for Claude Code and Codex.",
+  "offers": { "@type": "Offer", "price": "0", "priceCurrency": "USD" }
+}
+</script>
+<style>
+  :root {
+    --bg: #ffffff; --fg: #1b1b22; --muted: #5b5f6b; --card: #f4f5f8; --line: #e1e3ea;
+    --accent: #3b6fd8; --code-bg: #1e1e2e; --code-fg: #cdd6f4;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root { --bg: #15151c; --fg: #e8e9ef; --muted: #9a9eab; --card: #1f2029; --line: #2c2d39; --accent: #89b4fa; }
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--fg); font: 16px/1.55 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif; }
+  main { max-width: 960px; margin: 0 auto; padding: 0 16px 64px; }
+  header { padding: 56px 0 24px; text-align: center; }
+  header h1 { font-size: 44px; margin: 0 0 8px; letter-spacing: -0.02em; }
+  header p.tag { font-size: 20px; color: var(--muted); margin: 0 0 20px; }
+  .install { display: inline-flex; align-items: center; gap: 8px; background: var(--code-bg); color: var(--code-fg); border-radius: 8px; padding: 10px 14px; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 14px; max-width: 100%; overflow-x: auto; }
+  .install button { background: var(--accent); color: #fff; border: 0; border-radius: 6px; padding: 6px 10px; font: inherit; cursor: pointer; }
+  .hero { margin: 28px auto 0; border: 1px solid var(--line); border-radius: 12px; overflow: hidden; background: var(--card); }
+  .hero img { display: block; width: 100%; height: auto; }
+  section { margin-top: 48px; }
+  h2 { font-size: 24px; margin: 0 0 12px; }
+  .cols { display: grid; grid-template-columns: repeat(3, 1fr); gap: 16px; }
+  .col { background: var(--card); border: 1px solid var(--line); border-radius: 10px; padding: 16px; }
+  .col h3 { margin: 0 0 6px; font-size: 17px; }
+  .col p { margin: 0; color: var(--muted); font-size: 15px; }
+  .shots { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
+  .shots img { width: 100%; height: auto; border: 1px solid var(--line); border-radius: 10px; }
+  pre { background: var(--code-bg); color: var(--code-fg); padding: 14px 16px; border-radius: 8px; overflow-x: auto; font-size: 14px; }
+  dl dt { font-weight: 600; margin-top: 14px; }
+  dl dd { margin: 4px 0 0; color: var(--muted); }
+  footer { margin-top: 56px; color: var(--muted); font-size: 14px; text-align: center; }
+  a { color: var(--accent); }
+  @media (max-width: 720px) {
+    header h1 { font-size: 34px; }
+    .cols, .shots { grid-template-columns: 1fr; }
+  }
+</style>
+</head>
+<body>
+<main>
+  <header>
+    <h1>chda</h1>
+    <p class="tag">A terminal with a git worktree sidebar and a live status board for Claude Code and Codex.</p>
+    <div class="install" id="install">
+      <code id="cmd">brew tap magicsih/tap &amp;&amp; brew trust magicsih/tap &amp;&amp; brew install --cask chda</code>
+      <button type="button" onclick="navigator.clipboard.writeText(document.getElementById('cmd').textContent).then(()=>{this.textContent='Copied'})">Copy</button>
+    </div>
+    <div class="hero"><img src="demo.gif" alt="Creating a worktree, launching Claude Code, watching its status in the sidebar and merging the branch back" width="1200" height="750"></div>
+  </header>
+
+  <section>
+    <h2>Why a worktree terminal</h2>
+    <div class="cols">
+      <div class="col"><h3>One worktree per task</h3><p>Create a worktree from the sidebar, work in it, merge it back and clean it up. Branch names are the only thing you type.</p></div>
+      <div class="col"><h3>Agents you can see</h3><p>Claude Code and Codex report through chda's hooks. A dot tells you who is working, who is waiting for you, and who is done.</p></div>
+      <div class="col"><h3>Ghostty inside</h3><p>The VT core is libghostty-vt, so escapes, Unicode and keys behave like Ghostty. Your Ghostty font and colors carry over.</p></div>
+    </div>
+  </section>
+
+  <section>
+    <h2>What it looks like</h2>
+    <div class="shots">
+      <img src="sidebar.png" alt="The sidebar: repositories, worktrees with git badges, agent status dots and pull request state" width="800" height="600">
+      <img src="palette.png" alt="The command palette listing worktrees, agent launches and sessions" width="800" height="600">
+    </div>
+  </section>
+
+  <section>
+    <h2>Install</h2>
+    <pre>brew tap magicsih/tap
+brew trust magicsih/tap
+brew install --cask chda</pre>
+    <p>macOS 14 or newer on Apple silicon. Signed and notarized. Needs <code>git</code>; <code>gh</code> adds pull request badges. Prefer a zip? Get it from the <a href="https://github.com/magicsih/chda/releases/latest">releases page</a>.</p>
+  </section>
+
+  <section>
+    <h2>Questions</h2>
+    <dl>
+      <dt>Does chda read my prompts?</dt>
+      <dd>No. Hooks pass only a session id, directory, event kind and time. Nothing is sent anywhere; the app makes no network requests of its own.</dd>
+      <dt>Do I have to change my Claude Code or Codex config?</dt>
+      <dd>No. chda passes hook settings per launch and leaves your config files alone.</dd>
+      <dt>Linux or Windows?</dt>
+      <dd>They build in CI and are the next milestone. Today it is macOS only.</dd>
+    </dl>
+  </section>
+
+  <footer>
+    <a href="https://github.com/magicsih/chda">GitHub</a> ·
+    <a href="https://github.com/magicsih/chda/releases">Releases</a> ·
+    <a href="https://github.com/magicsih/chda/blob/main/CHANGELOG.md">Changelog</a> ·
+    MIT license
+  </footer>
+</main>
+</body>
+</html>

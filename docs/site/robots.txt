@@ -1,0 +1,3 @@
+User-agent: *
+Allow: /
+Sitemap: https://magicsih.github.io/chda/sitemap.xml

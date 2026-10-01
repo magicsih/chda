@@ -1,29 +1,169 @@
-# chda
+<p align="center">
+  <img src="docs/media/hero.png" alt="chda: a terminal with a git worktree sidebar showing agent status, tabs and splits" width="880">
+</p>
 
-**Checkout · Hack · Deliver · Again.**
+<h1 align="center">chda</h1>
 
-A terminal with a git worktree side panel and a live status board for LLM coding agents.
-Terminal core by [libghostty-vt](https://github.com/ghostty-org/ghostty), app in Rust, UI on [GPUI](https://github.com/zed-industries/zed/tree/main/crates/gpui).
-macOS first; Linux and Windows build in CI.
+<p align="center"><b>Checkout · Hack · Deliver · Again.</b><br>
+A terminal with a git worktree sidebar and a live status board for Claude Code and Codex.</p>
 
-Status: v0.1.0, macOS only. Linux and Windows build in CI but are not verified. A worktree sidebar (git badges, create and delete worktrees, agent status from Claude Code and Codex hooks, session resume), tabs and splits with Ghostty's default shortcuts, zsh shell integration, and a terminal that handles colors, wide glyphs, keyboard and IME input, mouse selection, mouse reporting and scrollback. Font, colors and padding come from your Ghostty config; chda's own settings live in `~/.config/chda/config.toml`.
+<p align="center">
+  <a href="https://github.com/magicsih/chda/releases/latest"><img src="https://img.shields.io/github/v/release/magicsih/chda?label=release" alt="Latest release"></a>
+  <a href="https://github.com/magicsih/chda/actions/workflows/ci.yml"><img src="https://github.com/magicsih/chda/actions/workflows/ci.yml/badge.svg" alt="CI"></a>
+  <img src="https://img.shields.io/badge/macOS-14%2B%20Apple%20silicon-black" alt="macOS 14 or newer, Apple silicon">
+  <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-blue" alt="MIT license"></a>
+</p>
 
-See [CONTRIBUTING.md](CONTRIBUTING.md) for build prerequisites and [docs/architecture.md](docs/architecture.md) for the crate layout.
+## Why a worktree terminal
 
-## Why
+One worktree, one task, one agent. Coding agents such as Claude Code and Codex are
+most productive when each runs in its own git worktree, but a normal terminal leaves
+you mapping tabs to worktrees in your head. chda puts that map in a sidebar: which
+worktree is running which agent, which one is waiting for your answer, which one is
+finished and unread. Creating a worktree, launching the agent, merging the branch and
+cleaning up all happen from the same panel, without leaving the terminal.
 
-One worktree, one task, one agent. chda shows which worktree is running which agent and what it is waiting for, and lets you create, merge, and prune worktrees from the side panel without leaving the terminal.
+The terminal core is [libghostty-vt](https://github.com/ghostty-org/ghostty), so
+escape sequences, Unicode and key encoding behave like Ghostty. The app is Rust on
+[GPUI](https://github.com/zed-industries/zed/tree/main/crates/gpui).
 
 ## Install
 
 ```sh
 brew tap magicsih/tap
+brew trust magicsih/tap
 brew install --cask chda
 ```
 
-Or download `chda-<version>-macos-arm64.zip` from the releases page. The app is
-signed and notarized. Requirements: macOS 14 or newer, Apple silicon, `git` on
-`PATH`; `gh` is optional for pull request badges.
+Or download `chda-<version>-macos-arm64.zip` from the
+[releases page](https://github.com/magicsih/chda/releases). The app is signed and
+notarized.
+
+Requirements: macOS 14 or newer, Apple silicon, `git` on `PATH`. `gh` is optional
+and adds pull request badges. On a managed Mac where Homebrew cannot write to
+`/Applications`, add `--appdir=~/Applications`.
+
+## Sixty-second tour
+
+<p align="center">
+  <img src="docs/media/demo.gif" alt="Creating a worktree, running Claude Code, watching its status and merging back" width="880">
+</p>
+
+1. Press `cmd-shift-o` (or click "+ repo") and pick a git repository. It appears in
+   the sidebar with its worktrees.
+2. Click "+" next to the repository, type a branch name, press Enter. chda creates
+   `<repo>.worktrees/<branch>` and opens a tab there.
+3. Right-click the worktree and choose "Run Claude Code" or "Run Codex". The agent
+   starts in that worktree with chda's hooks attached.
+4. Watch the dot next to the branch:
+
+   | Dot | Meaning |
+   |---|---|
+   | grey | idle |
+   | blue | working |
+   | orange | waiting for your input (you also get a notification) |
+   | green | finished; clears when you look at the tab |
+
+5. When the branch is done, right-click it and choose "Merge into main and clean
+   up". chda merges, removes the worktree and deletes the branch, and refuses when
+   there are uncommitted changes, unpushed commits or an open pull request.
+
+## Features
+
+| Area | What you get |
+|---|---|
+| Terminal | Ghostty-accurate VT handling, true color, wide glyphs, IME input, mouse selection and reporting, scrollback, prompt jumping (`cmd-up` / `cmd-down`) |
+| Tabs and splits | Ghostty's default shortcuts; tabs grouped by repository; rename a tab with a double-click |
+| Sidebar | Repositories, worktrees, dirty / ahead / behind / conflict badges, pull request state via `gh`, open-tab counts, an ACTIVE list sorted by last activity |
+| Worktrees | Create from a new or existing branch, delete with a safety check, merge-and-clean, bulk cleanup of merged branches |
+| Agents | Claude Code and Codex status from their own hooks, desktop notifications, session list with one-click resume |
+| Palette | `cmd-shift-p`: every action, worktree, agent launch and session in one fuzzy list |
+| Config | Reads your Ghostty font, colors and padding; chda's own settings in one TOML file |
+
+## How agent status works
+
+chda is the hook. When it launches Claude Code it passes a per-session
+`--settings` file that registers `chda hook claude` for session start, prompt
+submit, permission requests, stop and session end. Codex gets `-c notify=[...]`
+pointing at `chda hook codex`; if you already use a notify program, chda runs it
+after its own. The hook forwards only the session id, working directory, event
+kind and a timestamp to the running app over a local socket. Prompt text and
+transcripts are never stored. Your `~/.claude/settings.json` and
+`~/.codex/config.toml` are not modified.
+
+## Configuration
+
+chda reads `~/.config/ghostty/config` for `font-family`, `font-size`, `theme`,
+`background`, `foreground`, `palette`, `cursor-style`, `cursor-style-blink`,
+`window-padding-x/y`, `shell-integration` and `scrollback-limit`, so a Ghostty user
+gets the same look without copying anything.
+
+chda's own settings live in `~/.config/chda/config.toml`:
+
+```toml
+repos = ["/path/to/repo"]
+worktree-path-template = "{repo_parent}/{repo_name}.worktrees/{branch}"
+default-action = "terminal"   # terminal | claude | codex, after creating a worktree
+tab-title = "branch"          # branch | path
+agents = ["claude", "codex"]
+sidebar-width = 280
+sidebar-visible = true
+notifications = true
+```
+
+## Keyboard shortcuts
+
+| Keys | Action |
+|---|---|
+| `cmd-t` / `cmd-w` | new tab / close pane |
+| `cmd-1`…`cmd-9`, `cmd-shift-[` `]` | switch tabs within the repository |
+| `cmd-d` / `cmd-shift-d` | split right / down |
+| `cmd-alt-arrows`, `cmd-[` `]` | move between splits |
+| `cmd-ctrl-arrows`, `cmd-ctrl-=` | resize / equalize splits |
+| `cmd-shift-enter` | zoom a split |
+| `cmd-up` / `cmd-down` | previous / next shell prompt |
+| `cmd-b` | toggle the sidebar |
+| `cmd-shift-o` | add a repository |
+| `cmd-n` | new worktree |
+| `cmd-shift-p` | command palette |
+| `cmd-c` / `cmd-v` | copy selection / paste |
+
+## Status and roadmap
+
+v0.1.x runs on macOS with Apple silicon. Linux and Windows compile in CI and are
+the next milestone. See [docs/roadmap.md](docs/roadmap.md) and
+[CHANGELOG.md](CHANGELOG.md).
+
+## FAQ
+
+**How is this different from Ghostty?** Ghostty is the terminal; chda borrows its
+core and adds the worktree sidebar and agent status board. If you do not run
+several worktrees at once, Ghostty is the better terminal.
+
+**Intel Mac?** Not yet. The release is arm64 only; an x86_64 build is a matter of
+adding it to the release workflow once someone can test it.
+
+**macOS says the app is damaged or from an unidentified developer.** Releases are
+signed and notarized, so this should not happen. If it does, you probably have a
+build from somewhere else; download the zip from the releases page.
+
+**Do I need `gh`?** No. Without it you lose only the pull request badges.
+
+**Other shells?** Status, directory tracking and prompt jumping come from zsh
+integration today. bash and fish fall back to polling the shell's working
+directory; prompt marks are missing there.
+
+## Contributing
+
+See [CONTRIBUTING.md](CONTRIBUTING.md) for the build setup (Rust, Zig 0.15.2,
+Xcode) and [docs/architecture.md](docs/architecture.md) for the crate layout.
+Bugs and ideas go to [issues](https://github.com/magicsih/chda/issues).
+
+## Acknowledgements
+
+[Ghostty](https://ghostty.org) for libghostty-vt, [Zed](https://zed.dev) for GPUI,
+and [Ghostree](https://github.com/sidequery/ghostree) for showing that a worktree
+sidebar belongs inside the terminal.
 
 ## License
 
