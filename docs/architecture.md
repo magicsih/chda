@@ -38,6 +38,14 @@ streams, and sends `Event`s (frame, title, pwd, bell, clipboard, exit) over a
 channel plus a wake callback. The UI never touches the VT state; it reads the
 latest frame when it paints.
 
+Scrollback search runs on the terminal thread: the whole screen is formatted
+as plain text, one line per row, and matched with the `regex` crate; frames
+carry the highlights for the visible rows. A tracked grid reference keeps the
+current match in place while new output re-runs the search (at most four
+times a second). Frames also carry OSC 8 hyperlinks; plain URLs and file
+paths are found in the visible rows, joined across soft wraps, when the user
+holds `cmd`.
+
 ## Workspace model
 
 `chda-core` holds the window model: tabs, each with a binary split tree of
@@ -89,11 +97,28 @@ refreshes badges every 5 s while the sidebar is visible, one refresh per
 repository at a time, and re-indexes sessions every 30 s with an mtime/size
 cache. The UI reaches git and agents only through `chda-core`.
 
+Every pane's shell gets `CHDA_PANE_ID`. Agents inherit it and `chda hook`
+sends it back, so status is tracked per pane as well as per worktree: tabs
+and the ACTIVE list show the most urgent status of their panes, the Dock badge
+counts waiting agents the user has not looked at, and a notification click
+(through `UNUserNotificationCenter` in the app bundle) focuses that pane.
+
 Finishing a worktree (`chda-core::cleanup`) merges its branch into the
 default branch inside the main worktree, removes the worktree and deletes
 the branch; blockers (uncommitted changes, unpushed commits, an open pull
 request, the base branch not being checked out) stop it unless the user
 forces. Pull request badges come from `gh pr list` per branch, fetched at
 most once a minute per repository.
+
+## Config reload and session restore
+
+`chda-core::FileWatcher` watches the directories of the Ghostty config files
+(with includes and the theme) and `config.toml`. A change reloads both; a
+Ghostty value Ghostty itself would reject, or a `config.toml` that does not
+parse, keeps the previous values and shows a message.
+
+`chda-core::SavedWindow` is the window's tabs, split tree, ratios, focus,
+zoom, tab names and pane directories, written to `session.json` in the data
+directory whenever they change and read on the next launch.
 
 Decisions that are hard to reverse are recorded under `docs/decisions/`.

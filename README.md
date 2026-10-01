@@ -72,13 +72,13 @@ and adds pull request badges. On a managed Mac where Homebrew cannot write to
 
 | Area | What you get |
 |---|---|
-| Terminal | Ghostty-accurate VT handling, true color, wide glyphs, IME input, mouse selection and reporting, scrollback, prompt jumping (`cmd-up` / `cmd-down`) |
-| Tabs and splits | Ghostty's default shortcuts; tabs grouped by repository; rename a tab with a double-click |
+| Terminal | Ghostty-accurate VT handling, true color, wide glyphs, IME input, mouse selection and reporting, scrollback search (`cmd-f`), cmd-click links and file paths, font size shortcuts, prompt jumping (`cmd-up` / `cmd-down`) |
+| Tabs and splits | Ghostty's default shortcuts; tabs grouped by repository; rename a tab with a double-click; tabs, splits and directories come back after a restart |
 | Sidebar | Repositories, worktrees, dirty / ahead / behind / conflict badges, pull request state via `gh`, open-tab counts, an ACTIVE list sorted by last activity |
 | Worktrees | Create from a new or existing branch, delete with a safety check, merge-and-clean, bulk cleanup of merged branches |
-| Agents | Claude Code and Codex status from their own hooks, desktop notifications, session list with one-click resume |
+| Agents | Claude Code and Codex status from their own hooks on tabs, the ACTIVE list, worktree rows and the Dock badge; notifications that open the agent's pane; jump to the agent that waits (`cmd-shift-a`); session list with one-click resume |
 | Palette | `cmd-shift-p`: every action, worktree, agent launch and session in one fuzzy list |
-| Config | Reads your Ghostty font, colors and padding; chda's own settings in one TOML file |
+| Config | Reads your Ghostty font, colors and padding; chda's own settings in one TOML file; edits apply without a restart |
 
 ## How agent status works
 
@@ -87,7 +87,8 @@ chda is the hook. When it launches Claude Code it passes a per-session
 submit, permission requests, stop and session end. Codex gets `-c notify=[...]`
 pointing at `chda hook codex`; if you already use a notify program, chda runs it
 after its own. The hook forwards only the session id, working directory, event
-kind and a timestamp to the running app over a local socket. Prompt text and
+kind, a timestamp and the chda pane it runs in (from `CHDA_PANE_ID`, which
+every chda shell sets) to the running app over a local socket. Prompt text and
 transcripts are never stored. Your `~/.claude/settings.json` and
 `~/.codex/config.toml` are not modified.
 
@@ -109,7 +110,12 @@ agents = ["claude", "codex"]
 sidebar-width = 280
 sidebar-visible = true
 notifications = true
+restore-session = true        # reopen the last tabs, splits and directories
+editor = "zed {file}:{line}:{column}"  # opens cmd-clicked paths; unset: default app
 ```
+
+Both files are watched: saving one updates open windows within a second. A
+value Ghostty would reject keeps the previous settings and shows a message.
 
 ## Keyboard shortcuts
 
@@ -122,6 +128,10 @@ notifications = true
 | `cmd-ctrl-arrows`, `cmd-ctrl-=` | resize / equalize splits |
 | `cmd-shift-enter` | zoom a split |
 | `cmd-up` / `cmd-down` | previous / next shell prompt |
+| `cmd-f` | search the scrollback; `enter` / `shift-enter` older / newer, `alt-c` case, `alt-r` regex, `esc` close |
+| `cmd-click` | open a link or file path (hold `cmd` to see it underlined) |
+| `cmd-=` / `cmd--` / `cmd-0` | bigger / smaller / configured font size |
+| `cmd-shift-a` | go to the agent that waits for input, then to finished turns |
 | `cmd-b` | toggle the sidebar |
 | `cmd-shift-o` | add a repository |
 | `cmd-n` | new worktree |

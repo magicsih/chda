@@ -11,9 +11,13 @@ Milestones are cut at "usable" boundaries. Dates are not promised.
 | M4 | Merge-and-clean, pull request badges, command palette, signed macOS release, Homebrew | done (v0.1.x) |
 | M5 | Linux (Wayland/X11) and Windows (ConPTY) as first-class platforms | next |
 
-Candidates after M5, in no order: session restore, bash and fish integration,
-an MCP server so agents can open worktrees and tabs, more agents (OpenCode,
-Gemini CLI, Copilot CLI), GitLab and Gitea pull request status, ligatures and
-Kitty graphics.
+Done since v0.1.3: scrollback search, clickable links, font size shortcuts,
+live config reload, session restore, bash and fish integration, per-pane agent
+status (tabs, ACTIVE list, Dock badge), notification click to the agent's pane
+and jumping to the waiting agent.
+
+Candidates after M5, in no order: an MCP server so agents can open worktrees
+and tabs, more agents (OpenCode, Gemini CLI, Copilot CLI), GitLab and Gitea pull
+request status, ligatures and Kitty graphics.
 
 Decisions that are hard to reverse are summarized in `docs/decisions/`.
