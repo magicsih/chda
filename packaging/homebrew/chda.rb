@@ -10,7 +10,7 @@ cask "chda" do
   homepage "https://github.com/magicsih/chda"
 
   depends_on arch: :arm64
-  depends_on macos: ">= :sonoma"
+  depends_on macos: :sonoma
 
   app "chda.app"
   binary "#{appdir}/chda.app/Contents/MacOS/chda"
