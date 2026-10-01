@@ -24,7 +24,7 @@ use gpui::{
 use crate::settings::Settings;
 use crate::terminal_element::TerminalElement;
 
-actions!(terminal, [Copy, Paste]);
+actions!(terminal, [Copy, Paste, JumpToPrevPrompt, JumpToNextPrompt]);
 
 /// What a terminal tells its workspace.
 #[derive(Clone, Debug, PartialEq)]
@@ -311,6 +311,14 @@ impl TerminalView {
         self.session.copy_selection();
     }
 
+    fn jump_prev_prompt(&mut self, _: &JumpToPrevPrompt, _: &mut Window, _: &mut Context<Self>) {
+        self.session.jump_to_prompt(-1);
+    }
+
+    fn jump_next_prompt(&mut self, _: &JumpToNextPrompt, _: &mut Window, _: &mut Context<Self>) {
+        self.session.jump_to_prompt(1);
+    }
+
     /// Translate a window position into a grid cell and grid-relative pixels.
     fn mouse_input(
         &self,
@@ -545,6 +553,8 @@ impl Render for TerminalView {
             .key_context("Terminal")
             .on_action(cx.listener(Self::copy))
             .on_action(cx.listener(Self::paste))
+            .on_action(cx.listener(Self::jump_prev_prompt))
+            .on_action(cx.listener(Self::jump_next_prompt))
             .on_key_down(cx.listener(Self::key_down))
             .on_mouse_down(MouseButton::Left, cx.listener(Self::mouse_down))
             .on_mouse_down(MouseButton::Right, cx.listener(Self::mouse_down))

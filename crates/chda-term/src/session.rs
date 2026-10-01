@@ -98,6 +98,7 @@ enum Command {
         px_y: u32,
     },
     ScrollToBottom,
+    JumpToPrompt(i32),
     Mouse(MouseInput),
     CopySelection,
     QueryCwd,
@@ -238,6 +239,11 @@ impl Session {
 
     pub fn scroll_to_bottom(&self) {
         self.send(Command::ScrollToBottom);
+    }
+
+    /// Scroll to the previous (`-1`) or next (`1`) shell prompt.
+    pub fn jump_to_prompt(&self, delta: i32) {
+        self.send(Command::JumpToPrompt(delta));
     }
 
     fn send(&self, cmd: Command) {
@@ -487,6 +493,7 @@ fn handle_command(
             term.scroll_to_bottom();
             true
         }
+        Command::JumpToPrompt(delta) => term.jump_to_prompt(delta),
         Command::Mouse(input) => {
             if term.mouse_tracking() && !input.mods.shift {
                 if let Ok(bytes) = term.encode_mouse(&input)

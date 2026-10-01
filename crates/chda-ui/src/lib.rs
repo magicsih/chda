@@ -11,7 +11,7 @@ use gpui::{
 };
 
 pub use settings::Settings;
-use terminal_view::{Copy, Paste};
+use terminal_view::{Copy, JumpToNextPrompt, JumpToPrevPrompt, Paste};
 use workspace_view::*;
 
 /// Keybindings, following Ghostty's macOS defaults.
@@ -20,6 +20,8 @@ fn key_bindings() -> Vec<KeyBinding> {
     vec![
         KeyBinding::new("cmd-c", Copy, t),
         KeyBinding::new("cmd-v", Paste, t),
+        KeyBinding::new("cmd-up", JumpToPrevPrompt, t),
+        KeyBinding::new("cmd-down", JumpToNextPrompt, t),
         KeyBinding::new("cmd-q", Quit, None),
         KeyBinding::new("cmd-t", NewTab, None),
         KeyBinding::new("cmd-w", CloseSurface, None),

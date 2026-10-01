@@ -333,6 +333,47 @@ impl Terminal {
         self.vt.scroll_viewport(ScrollViewport::Bottom);
     }
 
+    /// Scroll so that the `delta`-th prompt (OSC 133 A) before or after the
+    /// current viewport top sits at the top. Returns false when there is no
+    /// such prompt.
+    pub fn jump_to_prompt(&mut self, delta: i32) -> bool {
+        if delta == 0 {
+            return false;
+        }
+        let Ok(total) = self.vt.total_rows() else {
+            return false;
+        };
+        let Ok(scrollbar) = self.vt.scrollbar() else {
+            return false;
+        };
+        let top = scrollbar.offset as i64;
+        let is_prompt = |y: i64| {
+            let point = Point::Screen(PointCoordinate { x: 0, y: y as u32 });
+            self.vt
+                .grid_ref(point)
+                .and_then(|r| r.row())
+                .and_then(|row| row.semantic_prompt())
+                .is_ok_and(|p| p == RowSemanticPrompt::Prompt)
+        };
+        let mut remaining = delta.unsigned_abs();
+        let mut y = top;
+        loop {
+            y += if delta < 0 { -1 } else { 1 };
+            if y < 0 || y >= total as i64 {
+                return false;
+            }
+            // Only the first row of a multi-line prompt counts.
+            if is_prompt(y) && !is_prompt(y - 1) {
+                remaining -= 1;
+                if remaining == 0 {
+                    break;
+                }
+            }
+        }
+        self.vt.scroll_viewport(ScrollViewport::Row(y as usize));
+        true
+    }
+
     /// Whether the alternate screen (full-screen app) is active.
     pub fn alternate_screen(&self) -> bool {
         matches!(self.vt.active_screen(), Ok(Screen::Alternate))
@@ -868,6 +909,24 @@ mod tests {
         assert_eq!(frame.foreground, Rgb { r: 9, g: 9, b: 9 });
         assert_eq!(frame.cell(0, 0).unwrap().fg, red);
         assert_eq!(frame.cursor.unwrap().shape, CursorShape::Bar);
+    }
+
+    #[test]
+    fn jump_to_prompt_walks_osc133_marks() {
+        let mut term = term();
+        for i in 0..8 {
+            term.feed(format!("\x1b]133;A\x07$ cmd{i}\r\n\x1b]133;C\x07out{i}\r\n").as_bytes());
+        }
+        // 17 rows (a blank one after the last newline), 5 visible: the
+        // viewport top is row 12, cmd6's prompt.
+        assert_eq!(term.frame().unwrap().row_text(0), "$ cmd6");
+        assert!(term.jump_to_prompt(-1));
+        assert_eq!(term.frame().unwrap().row_text(0), "$ cmd5");
+        assert!(term.jump_to_prompt(-2));
+        assert_eq!(term.frame().unwrap().row_text(0), "$ cmd3");
+        assert!(term.jump_to_prompt(1));
+        assert_eq!(term.frame().unwrap().row_text(0), "$ cmd4");
+        assert!(!term.jump_to_prompt(-10));
     }
 
     #[test]
