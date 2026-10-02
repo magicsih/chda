@@ -76,7 +76,7 @@ and adds pull request badges. On a managed Mac where Homebrew cannot write to
 |---|---|
 | Terminal | Ghostty-accurate VT handling, true color, wide glyphs, IME input, mouse selection and reporting, scrollback search (`cmd-f`), cmd-click links and file paths, inline images (Kitty graphics protocol), Mermaid diagrams in agent output rendered offline ("View diagram"), font size shortcuts, prompt jumping (`cmd-up` / `cmd-down`) |
 | Tabs and splits | Ghostty's default shortcuts; tabs grouped by repository; rename a tab with a double-click; tabs, splits and directories come back after a restart |
-| Sidebar | Repositories, worktrees, dirty / ahead / behind / conflict badges, pull request state via `gh`, open-tab counts, an ACTIVE list sorted by last activity; every badge explains itself on hover |
+| Sidebar | Repositories, worktrees, dirty / ahead / behind / conflict badges, pull request state via `gh`, `glab` or `tea`, open-tab counts, an ACTIVE list sorted by last activity; every badge explains itself on hover |
 | Worktrees | Create from a new or existing branch, delete with a safety check, merge-and-clean, bulk cleanup of merged branches, update a branch from its upstream when it is clean and no agent works in it (fast-forward; a diverged branch asks before a rebase or merge and never rewrites pushed commits); a note per branch saying what the task is (right-click "Edit note...", or `chda note <text>` inside the worktree), shown as the row's label and searchable in the palette |
 | Agents | Claude Code and Codex status from their own hooks on tabs, the ACTIVE list, worktree rows and the Dock badge; notifications that open the agent's pane; jump to the agent that waits (`cmd-shift-a`); session list ordered by the last message, with one-click resume; cmd-click several sessions to resume them side by side in one tab |
 | Palette | `cmd-shift-p`: every action, worktree, agent launch and session in one fuzzy list |
@@ -185,10 +185,12 @@ signed and notarized, so this should not happen. If it does, you probably have a
 build from somewhere else; download the zip from the releases page.
 
 **Do I need `gh`?** No. Without it you lose only the pull request badges.
-Each repository asks the host of its remote, so GitHub Enterprise Server works
-after `gh auth login --hostname <host>`; SSH aliases from `~/.ssh/config` are
-resolved with `ssh -G`. A repository whose host is not logged in shows the
-command to run instead of badges.
+Each repository asks the host of its remote: `gh` for GitHub and GitHub
+Enterprise Server, `glab` for GitLab, `tea` for Gitea and Forgejo (Codeberg).
+github.com, gitlab.com, gitea.com and codeberg.org are recognized by name; any
+other host goes to whichever of the three is logged in to it. SSH aliases from
+`~/.ssh/config` are resolved with `ssh -G`. A repository whose host is not
+logged in shows the command to run instead of badges.
 
 **Other shells?** Status, directory tracking and prompt jumping come from shell
 integration for zsh, bash and fish. Other shells fall back to polling the

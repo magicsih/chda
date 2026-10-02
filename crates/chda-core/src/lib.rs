@@ -3,7 +3,10 @@
 //! This crate knows nothing about GPUI, libghostty, or gix.
 
 mod cleanup;
+mod forge;
+mod gitea;
 mod github;
+mod gitlab;
 mod names;
 mod refresh;
 mod restore;
@@ -13,7 +16,7 @@ mod watch;
 mod workspace;
 
 pub use cleanup::*;
-pub use github::{Gh, RemoteRepo, login_hint, repo_remote};
+pub use forge::{Forge, ForgeClis, Forges, RemoteRepo, login_hint, repo_remote};
 pub use names::random_branch_name;
 pub use refresh::*;
 pub use restore::*;
