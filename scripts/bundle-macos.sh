@@ -24,6 +24,11 @@ mkdir -p "$app/Contents/MacOS" "$app/Contents/Resources"
 cp target/release/chda "$app/Contents/MacOS/chda"
 sed "s/__VERSION__/$version/g" resources/Info.plist > "$app/Contents/Info.plist"
 python3 scripts/make-icon.py "$out/icon" >/dev/null
+# Without alpha the Dock shows the rounded tile on a black square.
+if ! sips -g hasAlpha "$out/icon/chda-1024.png" | grep -q 'hasAlpha: yes'; then
+  echo "app icon has no alpha channel" >&2
+  exit 1
+fi
 cp "$out/icon/chda.icns" "$app/Contents/Resources/chda.icns"
 # Shell integration scripts, fonts and themes are embedded in the binary;
 # their licenses travel with the app.
