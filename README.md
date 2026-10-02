@@ -74,7 +74,7 @@ and adds pull request badges. On a managed Mac where Homebrew cannot write to
 |---|---|
 | Terminal | Ghostty-accurate VT handling, true color, wide glyphs, IME input, mouse selection and reporting, scrollback search (`cmd-f`), cmd-click links and file paths, inline images (Kitty graphics protocol), Mermaid diagrams in agent output rendered offline ("View diagram"), font size shortcuts, prompt jumping (`cmd-up` / `cmd-down`) |
 | Tabs and splits | Ghostty's default shortcuts; tabs grouped by repository; rename a tab with a double-click; tabs, splits and directories come back after a restart |
-| Sidebar | Repositories, worktrees, dirty / ahead / behind / conflict badges, pull request state via `gh`, open-tab counts, an ACTIVE list sorted by last activity |
+| Sidebar | Repositories, worktrees, dirty / ahead / behind / conflict badges, pull request state via `gh`, open-tab counts, an ACTIVE list sorted by last activity; every badge explains itself on hover |
 | Worktrees | Create from a new or existing branch, delete with a safety check, merge-and-clean, bulk cleanup of merged branches |
 | Agents | Claude Code and Codex status from their own hooks on tabs, the ACTIVE list, worktree rows and the Dock badge; notifications that open the agent's pane; jump to the agent that waits (`cmd-shift-a`); session list with one-click resume |
 | Palette | `cmd-shift-p`: every action, worktree, agent launch and session in one fuzzy list |

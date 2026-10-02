@@ -218,7 +218,12 @@ impl WorkspaceView {
         let config = env.load_config();
         let bg = hsla(settings.colors.background.unwrap_or_default());
         let fg = hsla(settings.colors.foreground.unwrap_or_default());
-        let sidebar = cx.new(|cx| SidebarView::new(fg, blend(bg, fg, 0.04), cx));
+        let agent_names = env
+            .adapters
+            .iter()
+            .map(|a| (a.id().as_str().to_owned(), a.display_name().to_owned()))
+            .collect();
+        let sidebar = cx.new(|cx| SidebarView::new(fg, blend(bg, fg, 0.04), agent_names, cx));
         let sidebar_sub = cx.subscribe_in(&sidebar, window, |this, _, event, window, cx| {
             this.on_sidebar_event(event.clone(), window, cx)
         });
