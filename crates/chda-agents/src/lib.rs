@@ -76,6 +76,19 @@ pub trait AgentAdapter: Send + Sync {
     fn session_cwd(&self, file: &Path) -> Option<PathBuf> {
         session::head_cwd(file)
     }
+    /// Whether the agent still has the transcript of session `id`, so it can
+    /// be resumed. The default looks for a transcript whose file name ends
+    /// with the id, as Claude Code (`<id>.jsonl`) and Codex
+    /// (`rollout-<time>-<id>.jsonl`) name them.
+    fn has_session(&self, id: &SessionId) -> bool {
+        !id.0.is_empty()
+            && self.session_roots().iter().any(|root| {
+                session::jsonl_files(root).iter().any(|f| {
+                    f.file_stem()
+                        .is_some_and(|s| s.to_string_lossy().ends_with(id.0.as_str()))
+                })
+            })
+    }
     /// Parse one transcript file; `None` when it is not a session.
     fn parse_session(&self, file: &Path) -> Option<AgentSession>;
     /// Write hook configuration under `data_dir` so the agent reports to

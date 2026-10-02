@@ -115,6 +115,7 @@ sidebar-width = 280
 sidebar-visible = true
 notifications = true
 restore-session = true        # reopen the last tabs, splits and directories
+restore-agents = true         # ...and the agent conversations those panes had open
 editor = "zed {file}:{line}:{column}"  # opens cmd-clicked paths; unset: default app
 theme = "Catppuccin Mocha"    # replaces the Ghostty config's theme; unset: follow it
 ```

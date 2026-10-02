@@ -37,6 +37,7 @@ Three layers, all run by `cargo test --workspace` (CI: the macOS job).
 | Live config reload, broken values kept out | `config::ghostty_and_chda_config_changes_apply_live` | #9 |
 | Ghostty's `config.ghostty` file name, live | `config::config_ghostty_wins_over_the_legacy_name_live` | #47 |
 | Session restore | `restore::tabs_splits_and_directories_come_back` | #10 |
+| Session restore reopens agent conversations | `restore::agent_conversations_reopen_in_their_panes` | #31 |
 | Deleting a worktree takes one confirmation | `worktrees::create_then_delete_a_worktree_in_one_go` | #29 |
 | Missing worktree folders | `worktrees::missing_worktree_is_marked_and_pruned` | #42 |
 | IME composition with a hidden cursor | `input::ime_composition_is_placed_even_when_the_app_hides_the_cursor` | #37 |
@@ -47,8 +48,8 @@ Three layers, all run by `cargo test --workspace` (CI: the macOS job).
 | Menu actions: Settings opens config.toml, agent items explain themselves | `menus::settings_writes_a_missing_config_file`, `menus::agent_items_explain_why_nothing_ran` | |
 
 Not covered by scenarios: anything visual (colors, layout, rendering), since
-the test platform draws no pixels; launching real agents (needs their
-binaries); macOS notifications and the Dock themselves.
+the test platform draws no pixels; launching real agents (a stand-in
+`claude` script takes their place); macOS notifications and the Dock themselves.
 
 ## Measurements
 
