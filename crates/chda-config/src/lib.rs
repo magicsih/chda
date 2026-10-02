@@ -241,23 +241,32 @@ pub struct Paths {
 }
 
 impl Paths {
-    /// Ghostty's default locations for the current user.
+    /// Ghostty's default locations for the current user, in the order
+    /// Ghostty loads them: in each directory the legacy `config`, then
+    /// `config.ghostty`; the XDG directory, then (macOS) Application Support.
     pub fn default_for_user() -> Self {
         let home = std::env::var_os("HOME").map(PathBuf::from);
         let xdg = std::env::var_os("XDG_CONFIG_HOME")
             .map(PathBuf::from)
             .or_else(|| home.as_ref().map(|h| h.join(".config")));
+        Self::under(xdg, home)
+    }
+
+    /// [`Paths::default_for_user`] for an XDG config directory and a home.
+    pub fn under(xdg: Option<PathBuf>, home: Option<PathBuf>) -> Self {
         let mut config_files = Vec::new();
         let mut theme_dirs = Vec::new();
+        let names = |dir: PathBuf| [dir.join("config"), dir.join("config.ghostty")];
         if let Some(xdg) = &xdg {
-            config_files.push(xdg.join("ghostty").join("config"));
+            config_files.extend(names(xdg.join("ghostty")));
             theme_dirs.push(xdg.join("ghostty").join("themes"));
         }
         if cfg!(target_os = "macos")
             && let Some(home) = &home
         {
-            config_files
-                .push(home.join("Library/Application Support/com.mitchellh.ghostty/config"));
+            config_files.extend(names(
+                home.join("Library/Application Support/com.mitchellh.ghostty"),
+            ));
             theme_dirs.push(PathBuf::from(
                 "/Applications/Ghostty.app/Contents/Resources/ghostty/themes",
             ));
@@ -266,6 +275,18 @@ impl Paths {
             config_files,
             theme_dirs,
         }
+    }
+
+    /// The file Ghostty itself would edit: the last existing one in load
+    /// order, which also wins over the others; with none, the last listed
+    /// (`config.ghostty`, in Application Support on macOS).
+    pub fn preferred_config_file(&self) -> Option<&Path> {
+        self.config_files
+            .iter()
+            .rev()
+            .find(|p| p.is_file())
+            .or(self.config_files.last())
+            .map(PathBuf::as_path)
     }
 }
 
@@ -434,6 +455,50 @@ mod tests {
         assert_eq!(c.background, Color::parse("#1e1e2e"));
         assert_eq!(c.foreground, Color::parse("#eeeeee"));
         assert_eq!(c.sources, vec![dir.join("config"), dir.join("extra")]);
+        fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn config_ghostty_loads_after_the_legacy_name_and_is_preferred() {
+        let dir = std::env::temp_dir().join(format!("chda-names-{}", std::process::id()));
+        let paths = Paths::under(Some(dir.join("xdg")), Some(dir.join("home")));
+        let xdg = dir.join("xdg/ghostty");
+        let support = dir.join("home/Library/Application Support/com.mitchellh.ghostty");
+        let mut expected = vec![xdg.join("config"), xdg.join("config.ghostty")];
+        if cfg!(target_os = "macos") {
+            expected.extend([support.join("config"), support.join("config.ghostty")]);
+        }
+        assert_eq!(paths.config_files, expected);
+        fs::create_dir_all(&xdg).unwrap();
+        fs::create_dir_all(&support).unwrap();
+        let newest = expected.last().unwrap();
+        assert_eq!(paths.preferred_config_file(), Some(newest.as_path()));
+        assert_eq!(
+            paths.preferred_config_file(),
+            Some(support.join("config.ghostty").as_path())
+        );
+
+        fs::write(xdg.join("config"), "font-size = 11\nfont-family = A\n").unwrap();
+        assert_eq!(
+            paths.preferred_config_file(),
+            Some(xdg.join("config").as_path())
+        );
+        fs::write(xdg.join("config.ghostty"), "font-size = 12\n").unwrap();
+        let c = load(&paths, None);
+        assert_eq!(c.font_size, Some(12.0));
+        assert_eq!(c.font_family.as_deref(), Some("A"));
+        assert_eq!(
+            paths.preferred_config_file(),
+            Some(xdg.join("config.ghostty").as_path())
+        );
+        if cfg!(target_os = "macos") {
+            fs::write(support.join("config"), "font-size = 14\n").unwrap();
+            assert_eq!(load(&paths, None).font_size, Some(14.0));
+            assert_eq!(
+                paths.preferred_config_file(),
+                Some(support.join("config").as_path())
+            );
+        }
         fs::remove_dir_all(&dir).unwrap();
     }
 
