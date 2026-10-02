@@ -148,6 +148,9 @@ pub struct Home {
     pub config: PathBuf,
     pub data: PathBuf,
     pub ghostty: PathBuf,
+    /// A stand-in `gh` the setup may write; without it pull request badges
+    /// are off.
+    pub gh: PathBuf,
 }
 
 impl Home {
@@ -213,6 +216,7 @@ impl Harness {
             config: root.0.join("home/.config/chda/config.toml"),
             data: root.0.join("data"),
             ghostty: root.0.join("home/.config/ghostty/config"),
+            gh: root.0.join("gh"),
         };
         std::fs::create_dir_all(home.home.join(".config/chda")).unwrap();
         std::fs::create_dir_all(home.home.join(".config/ghostty")).unwrap();
@@ -281,7 +285,7 @@ fn open_window(
                 projects: home.claude_projects.clone(),
                 bin: home.claude_bin.clone(),
             }) as Box<dyn AgentAdapter>]),
-            use_gh: false,
+            gh: home.gh.exists().then(|| home.gh.clone()),
             system,
         });
         let ghostty: GhosttyConfig = chda_config::load(&paths, None);

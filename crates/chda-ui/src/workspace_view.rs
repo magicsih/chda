@@ -177,8 +177,8 @@ pub struct WorkspaceView {
     renaming: Option<(TabId, Entity<TextInput>, Subscription)>,
     /// Repository whose tabs the tab bar shows (`None`: tabs outside repos).
     tab_group: Option<PathBuf>,
-    /// `gh` is installed and authenticated; checked once.
-    gh_ok: bool,
+    /// `gh`, once it is known to be installed.
+    gh: Option<Arc<chda_core::Gh>>,
     /// Last time pull requests were fetched per repository.
     pr_fetched: HashMap<PathBuf, std::time::Instant>,
     /// Last `origin/<default>` fetch per repository.
@@ -268,7 +268,7 @@ impl WorkspaceView {
             palette: None,
             renaming: None,
             tab_group: None,
-            gh_ok: false,
+            gh: None,
             pr_fetched: HashMap::new(),
             base_fetched: HashMap::new(),
             status_line: None,
@@ -305,18 +305,22 @@ impl WorkspaceView {
         .detach();
         this.config_watcher = Self::start_config_watcher(window, cx);
         this.watch_config_files();
-        let use_gh = this.env.use_gh;
-        let gh = cx.background_spawn(async move { use_gh && chda_core::gh_available() });
-        cx.spawn(async move |this, cx| {
-            let ok = gh.await;
-            let _ = this.update(cx, |view, cx| {
-                view.gh_ok = ok;
-                if ok {
-                    view.refresh_prs(false, cx);
-                }
+        if let Some(bin) = this.env.gh.clone() {
+            let gh = cx.background_spawn(async move {
+                let gh = chda_core::Gh::new(bin);
+                gh.installed().then(|| Arc::new(gh))
             });
-        })
-        .detach();
+            cx.spawn(async move |this, cx| {
+                let gh = gh.await;
+                let _ = this.update(cx, |view, cx| {
+                    if gh.is_some() {
+                        view.gh = gh;
+                        view.refresh_prs(false, cx);
+                    }
+                });
+            })
+            .detach();
+        }
         for repo in this.config.repos.clone() {
             this.sidebar.update(cx, |s, _| {
                 s.model.add_repo(repo.clone());
@@ -971,11 +975,13 @@ impl WorkspaceView {
     }
 
     /// Fetch pull request state for every non-main worktree through `gh`,
-    /// at most once a minute per repository unless `force`.
+    /// at most once a minute per repository unless `force`. Each repository
+    /// asks the host of its own remote; a host `gh` is not logged in to gets
+    /// a hint on the repository row instead of badges.
     fn refresh_prs(&mut self, force: bool, cx: &mut Context<Self>) {
-        if !self.gh_ok {
+        let Some(gh) = self.gh.clone() else {
             return;
-        }
+        };
         let now = std::time::Instant::now();
         let repos: Vec<(PathBuf, Vec<(PathBuf, String)>)> = self
             .sidebar
@@ -1006,22 +1012,41 @@ impl WorkspaceView {
                 continue;
             }
             self.pr_fetched.insert(repo.clone(), now);
+            let host_override = self.config.repo_hosts.get(&repo).cloned();
+            let gh = Arc::clone(&gh);
             let task = cx.background_spawn({
                 let repo = repo.clone();
                 async move {
-                    branches
+                    let remote = chda_core::repo_remote(&repo, host_override.as_deref())?;
+                    if !gh.logged_in(&remote.host) {
+                        return Some(Err(chda_core::login_hint(&remote.host)));
+                    }
+                    Some(Ok(branches
                         .into_iter()
-                        .map(|(path, branch)| (path, chda_core::pr_for_branch(&repo, &branch)))
-                        .collect::<Vec<_>>()
+                        .map(|(path, branch)| (path, gh.pr_for_branch(&remote, &branch)))
+                        .collect::<Vec<_>>()))
                 }
             });
             cx.spawn(async move |this, cx| {
-                let results = task.await;
+                let result = task.await;
                 let _ = this.update(cx, |view, cx| {
                     view.sidebar.update(cx, |s, cx| {
                         let mut changed = false;
-                        for (path, pr) in results {
-                            changed |= s.model.set_pr(&path, pr);
+                        let hint = match result {
+                            Some(Ok(results)) => {
+                                for (path, pr) in results {
+                                    changed |= s.model.set_pr(&path, pr);
+                                }
+                                None
+                            }
+                            Some(Err(hint)) => Some(hint),
+                            None => None,
+                        };
+                        if let Some(r) = s.model.repo_mut(&repo)
+                            && r.pr_hint != hint
+                        {
+                            r.pr_hint = hint;
+                            changed = true;
                         }
                         if changed {
                             cx.notify();

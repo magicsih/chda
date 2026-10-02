@@ -123,6 +123,9 @@ restore-session = true        # reopen the last tabs, splits and directories
 restore-agents = true         # ...and the agent conversations those panes had open
 editor = "zed {file}:{line}:{column}"  # opens cmd-clicked paths; unset: default app
 theme = "Catppuccin Mocha"    # replaces the Ghostty config's theme; unset: follow it
+
+[repo-hosts]                  # pull request host when the remote does not say
+"/path/to/repo" = "github.example.com"
 ```
 
 "Select theme..." in the command palette lists the 650+ themes chda bundles
@@ -179,6 +182,10 @@ signed and notarized, so this should not happen. If it does, you probably have a
 build from somewhere else; download the zip from the releases page.
 
 **Do I need `gh`?** No. Without it you lose only the pull request badges.
+Each repository asks the host of its remote, so GitHub Enterprise Server works
+after `gh auth login --hostname <host>`; SSH aliases from `~/.ssh/config` are
+resolved with `ssh -G`. A repository whose host is not logged in shows the
+command to run instead of badges.
 
 **Other shells?** Status, directory tracking and prompt jumping come from shell
 integration for zsh, bash and fish. Other shells fall back to polling the

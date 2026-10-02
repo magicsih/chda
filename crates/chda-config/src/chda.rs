@@ -1,5 +1,6 @@
 //! chda's own configuration: `~/.config/chda/config.toml`.
 
+use std::collections::BTreeMap;
 use std::fs;
 use std::io;
 use std::path::{Path, PathBuf};
@@ -56,6 +57,9 @@ pub struct ChdaConfig {
     pub restore_agents: bool,
     /// Theme name; replaces the Ghostty config's `theme` when set.
     pub theme: Option<String>,
+    /// Pull request host per repository path, for remotes whose host chda
+    /// cannot work out, e.g. `"/src/app" = "github.example.com"`.
+    pub repo_hosts: BTreeMap<PathBuf, String>,
 }
 
 impl Default for ChdaConfig {
@@ -73,6 +77,7 @@ impl Default for ChdaConfig {
             restore_session: true,
             restore_agents: true,
             theme: None,
+            repo_hosts: BTreeMap::new(),
         }
     }
 }
@@ -165,9 +170,17 @@ mod tests {
             c.worktree_path(Path::new("/src/app"), "feat/x"),
             PathBuf::from("/src/app.worktrees/feat-x")
         );
-        fs::write(&path, "sidebar-width = 320\nunknown = 1\n").unwrap();
+        fs::write(
+            &path,
+            "sidebar-width = 320\nunknown = 1\n[repo-hosts]\n\"/src/app\" = \"github.example.com\"\n",
+        )
+        .unwrap();
         let c = ChdaConfig::load(&path).unwrap();
         assert_eq!(c.sidebar_width, 320);
+        assert_eq!(
+            c.repo_hosts.get(Path::new("/src/app")).map(String::as_str),
+            Some("github.example.com")
+        );
         assert_eq!(c.agents, vec!["claude", "codex"]);
         fs::remove_dir_all(&dir).unwrap();
     }

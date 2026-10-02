@@ -173,10 +173,81 @@ fn ahead_behind(repo: &gix::Repository) -> io::Result<Option<(usize, usize)>> {
     Ok(Some((ahead, behind)))
 }
 
+/// A configured remote, as `gh` would consider it.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct RemoteInfo {
+    pub name: String,
+    /// Fetch URL after `url.<base>.insteadOf` rewrites.
+    pub url: String,
+    /// `remote.<name>.gh-resolved`, set by `gh repo set-default`.
+    pub gh_resolved: Option<String>,
+}
+
+/// Every remote with a fetch URL of the repository containing `repo`.
+pub fn remotes(repo: &Path) -> io::Result<Vec<RemoteInfo>> {
+    let repo = gix::discover(repo).map_err(err)?;
+    let config = repo.config_snapshot();
+    let mut out = Vec::new();
+    for name in repo.remote_names() {
+        let Ok(remote) = repo.find_remote(&**name) else {
+            continue;
+        };
+        let Some(url) = remote.url(gix::remote::Direction::Fetch) else {
+            continue;
+        };
+        let name = name.to_string();
+        let gh_resolved = config
+            .string(format!("remote.{name}.gh-resolved").as_str())
+            .map(|v| v.to_string());
+        out.push(RemoteInfo {
+            url: url.to_bstring().to_string(),
+            name,
+            gh_resolved,
+        });
+    }
+    Ok(out)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::cli::testing::TempRepo;
+
+    #[test]
+    fn lists_remotes_with_rewrites_and_gh_default() {
+        let repo = TempRepo::new("remotes");
+        assert!(remotes(&repo.path).unwrap().is_empty());
+        TempRepo::git(
+            &repo.path,
+            &["remote", "add", "origin", "git@github-work:org/repo.git"],
+        );
+        TempRepo::git(&repo.path, &["remote", "add", "upstream", "gh:up/repo"]);
+        TempRepo::git(
+            &repo.path,
+            &["config", "url.https://github.com/.insteadOf", "gh:"],
+        );
+        TempRepo::git(
+            &repo.path,
+            &["config", "remote.upstream.gh-resolved", "base"],
+        );
+        let mut list = remotes(&repo.path).unwrap();
+        list.sort_by(|a, b| a.name.cmp(&b.name));
+        assert_eq!(
+            list,
+            vec![
+                RemoteInfo {
+                    name: "origin".into(),
+                    url: "git@github-work:org/repo.git".into(),
+                    gh_resolved: None,
+                },
+                RemoteInfo {
+                    name: "upstream".into(),
+                    url: "https://github.com/up/repo".into(),
+                    gh_resolved: Some("base".into()),
+                },
+            ]
+        );
+    }
 
     #[test]
     fn lists_worktrees_and_counts_status() {

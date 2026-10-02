@@ -10,6 +10,7 @@ mod harness;
 mod input;
 mod menus;
 mod palette;
+mod pull_requests;
 mod restore;
 mod search;
 mod workspace;
