@@ -7,7 +7,7 @@ use objc2::rc::Retained;
 use objc2::runtime::{Bool, NSObject, NSObjectProtocol, ProtocolObject};
 use objc2::{MainThreadMarker, MainThreadOnly, define_class, msg_send};
 use objc2_app_kit::NSApplication;
-use objc2_foundation::{NSBundle, NSError, NSString};
+use objc2_foundation::{NSBundle, NSError, NSLocale, NSString};
 use objc2_user_notifications::{
     UNAuthorizationOptions, UNMutableNotificationContent, UNNotification,
     UNNotificationPresentationOptions, UNNotificationRequest, UNNotificationResponse,
@@ -133,6 +133,11 @@ pub fn notify(title: &str, body: &str, id: &str) {
     );
     UNUserNotificationCenter::currentNotificationCenter()
         .addNotificationRequest_withCompletionHandler(&request, None);
+}
+
+/// The user's locale, e.g. `ko_KR`.
+pub fn locale_identifier() -> String {
+    NSLocale::currentLocale().localeIdentifier().to_string()
 }
 
 pub fn restore_windows() {

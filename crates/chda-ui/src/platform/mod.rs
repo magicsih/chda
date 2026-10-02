@@ -14,6 +14,42 @@ pub const DEFAULT_MONOSPACE: &str = "Consolas";
 #[cfg(not(any(target_os = "macos", target_os = "windows")))]
 pub const DEFAULT_MONOSPACE: &str = "DejaVu Sans Mono";
 
+/// `LANG` for shells when chda's own environment has no locale at all, as
+/// for apps started from the Dock (launchd passes none). Without it shells
+/// run in the C locale and show UTF-8 input as raw bytes. `None` when the
+/// user set one, which then passes through unchanged.
+pub fn default_lang() -> Option<String> {
+    let set = |k: &str| std::env::var_os(k).is_some_and(|v| !v.is_empty());
+    if set("LC_ALL") || set("LC_CTYPE") || set("LANG") {
+        return None;
+    }
+    #[cfg(target_os = "macos")]
+    {
+        Some(utf8_locale(&macos::locale_identifier(), |name| {
+            std::path::Path::new("/usr/share/locale")
+                .join(name)
+                .is_dir()
+        }))
+    }
+    #[cfg(not(target_os = "macos"))]
+    {
+        None
+    }
+}
+
+/// `ko_KR` (or `ko_KR@rg=krzzzz`) → `ko_KR.UTF-8` when the system has that
+/// locale, else `en_US.UTF-8`.
+#[cfg_attr(not(target_os = "macos"), allow(dead_code))]
+fn utf8_locale(identifier: &str, exists: impl Fn(&str) -> bool) -> String {
+    let base = identifier.split('@').next().unwrap_or("");
+    let candidate = format!("{base}.UTF-8");
+    if !base.is_empty() && exists(&candidate) {
+        candidate
+    } else {
+        "en_US.UTF-8".to_owned()
+    }
+}
+
 /// Play the system alert sound.
 pub fn beep() {
     #[cfg(target_os = "macos")]
@@ -93,6 +129,15 @@ pub fn set_badge(count: usize) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn locale_identifiers_become_utf8_locales() {
+        let exists = |n: &str| matches!(n, "ko_KR.UTF-8" | "en_US.UTF-8");
+        assert_eq!(utf8_locale("ko_KR", exists), "ko_KR.UTF-8");
+        assert_eq!(utf8_locale("ko_KR@rg=krzzzz", exists), "ko_KR.UTF-8");
+        assert_eq!(utf8_locale("en_KR", exists), "en_US.UTF-8");
+        assert_eq!(utf8_locale("", exists), "en_US.UTF-8");
+    }
 
     #[test]
     fn notification_targets_round_trip() {

@@ -168,6 +168,9 @@ impl TerminalView {
             command,
             ..Default::default()
         };
+        if let Some(lang) = crate::platform::default_lang() {
+            options.env.push(("LANG".to_owned(), lang));
+        }
         // Agents started in this pane report it back with their hook events.
         options
             .env
