@@ -70,15 +70,18 @@ impl TerminalElement {
         let font = settings.font();
         let text_system = window.text_system();
         let font_id = text_system.resolve_font(&font);
-        let cell_width = text_system
+        let advance = text_system
             .advance(font_id, font_size, 'm')
             .map(|s| s.width)
             .unwrap_or(px(8.0));
         let ascent = text_system.ascent(font_id, font_size);
         let descent = text_system.descent(font_id, font_size);
-        // Descent is negative. Ghostty sizes cells the same way: ascent to
-        // descent, no extra leading.
-        let line_height = px(f32::from(ascent - descent).ceil());
+        // As Ghostty does: the advance and ascent to descent (negative), no
+        // extra leading, each rounded to whole device pixels.
+        let scale = window.scale_factor();
+        let device_round = |v: Pixels| px((f32::from(v) * scale).round().max(1.0) / scale);
+        let cell_width = device_round(advance);
+        let line_height = device_round(ascent - descent);
         (
             font,
             Metrics {

@@ -1,6 +1,7 @@
 //! GPUI views, elements and theme. The only crate that may depend on GPUI.
 
 mod environment;
+mod fonts;
 mod palette;
 mod platform;
 #[cfg(test)]
@@ -91,6 +92,7 @@ fn key_bindings() -> Vec<KeyBinding> {
 /// config.
 pub fn run(ghostty: chda_config::GhosttyConfig) {
     gpui_platform::application().run(|cx: &mut App| {
+        fonts::register(cx);
         cx.bind_keys(key_bindings());
         cx.on_action(|_: &Quit, cx| cx.quit());
 

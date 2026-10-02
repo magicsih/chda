@@ -1,18 +1,10 @@
-//! Platform-specific UI pieces: default font, alert sound, notifications and
+//! Platform-specific UI pieces: fonts, locale, alert sound, notifications and
 //! the Dock badge.
 
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 #[cfg(target_os = "macos")]
 mod macos;
-
-/// Monospace face every install of the platform ships with.
-#[cfg(target_os = "macos")]
-pub const DEFAULT_MONOSPACE: &str = "Menlo";
-#[cfg(target_os = "windows")]
-pub const DEFAULT_MONOSPACE: &str = "Consolas";
-#[cfg(not(any(target_os = "macos", target_os = "windows")))]
-pub const DEFAULT_MONOSPACE: &str = "DejaVu Sans Mono";
 
 /// `LANG` for shells when chda's own environment has no locale at all, as
 /// for apps started from the Dock (launchd passes none). Without it shells
@@ -48,6 +40,49 @@ fn utf8_locale(identifier: &str, exists: impl Fn(&str) -> bool) -> String {
     } else {
         "en_US.UTF-8".to_owned()
     }
+}
+
+/// Make a font that is only used as a fallback available. GPUI loads a
+/// family only when it has an `m` glyph, which icon fonts lack, so on macOS
+/// the font is written to `data_dir/fonts` and registered with CoreText,
+/// where fallback lists look.
+pub fn register_fallback_font(file_name: &str, data: &'static [u8], cx: &gpui::App) {
+    #[cfg(target_os = "macos")]
+    {
+        let _ = cx;
+        let path = chda_core::agents::data_dir()
+            .ok_or_else(|| std::io::Error::other("no data directory"))
+            .and_then(|dir| write_font(&dir.join("fonts"), file_name, data));
+        match path {
+            Ok(path) => macos::register_font_file(&path),
+            Err(e) => eprintln!("chda: could not install {file_name}: {e}"),
+        }
+    }
+    #[cfg(not(target_os = "macos"))]
+    {
+        let _ = file_name;
+        if let Err(e) = cx
+            .text_system()
+            .add_fonts(vec![std::borrow::Cow::Borrowed(data)])
+        {
+            eprintln!("chda: could not load a bundled font: {e}");
+        }
+    }
+}
+
+/// Write `data` to `dir/name` unless an identical copy is there.
+#[cfg_attr(not(target_os = "macos"), allow(dead_code))]
+fn write_font(dir: &Path, name: &str, data: &[u8]) -> std::io::Result<PathBuf> {
+    let path = dir.join(name);
+    if std::fs::read(&path).ok().as_deref() == Some(data) {
+        return Ok(path);
+    }
+    std::fs::create_dir_all(dir)?;
+    // Write aside and rename, so a running instance never sees half a font.
+    let partial = dir.join(format!("{name}.partial"));
+    std::fs::write(&partial, data)?;
+    std::fs::rename(&partial, &path)?;
+    Ok(path)
 }
 
 /// Play the system alert sound.
@@ -137,6 +172,22 @@ mod tests {
         assert_eq!(utf8_locale("ko_KR@rg=krzzzz", exists), "ko_KR.UTF-8");
         assert_eq!(utf8_locale("en_KR", exists), "en_US.UTF-8");
         assert_eq!(utf8_locale("", exists), "en_US.UTF-8");
+    }
+
+    #[test]
+    fn fonts_are_written_once() {
+        let dir = std::env::temp_dir().join(format!("chda-font-test-{}", std::process::id()));
+        let path = write_font(&dir, "a.ttf", b"one").unwrap();
+        assert_eq!(std::fs::read(&path).unwrap(), b"one");
+        let modified = std::fs::metadata(&path).unwrap().modified().unwrap();
+        write_font(&dir, "a.ttf", b"one").unwrap();
+        assert_eq!(
+            std::fs::metadata(&path).unwrap().modified().unwrap(),
+            modified
+        );
+        write_font(&dir, "a.ttf", b"two").unwrap();
+        assert_eq!(std::fs::read(&path).unwrap(), b"two");
+        std::fs::remove_dir_all(&dir).unwrap();
     }
 
     #[test]

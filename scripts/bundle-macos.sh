@@ -25,7 +25,9 @@ cp target/release/chda "$app/Contents/MacOS/chda"
 sed "s/__VERSION__/$version/g" resources/Info.plist > "$app/Contents/Info.plist"
 python3 scripts/make-icon.py "$out/icon" >/dev/null
 cp "$out/icon/chda.icns" "$app/Contents/Resources/chda.icns"
-# Shell integration scripts are embedded in the binary; nothing else to copy.
+# Shell integration scripts and fonts are embedded in the binary; the font
+# licenses travel with the app.
+cp crates/chda-ui/assets/fonts/*.txt "$app/Contents/Resources/"
 
 if [[ -n "${CHDA_SIGN_IDENTITY:-}" ]]; then
   codesign --force --options runtime --timestamp \

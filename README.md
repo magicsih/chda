@@ -97,7 +97,8 @@ transcripts are never stored. Your `~/.claude/settings.json` and
 chda reads `~/.config/ghostty/config` for `font-family`, `font-size`, `theme`,
 `background`, `foreground`, `palette`, `cursor-style`, `cursor-style-blink`,
 `window-padding-x/y`, `shell-integration` and `scrollback-limit`, so a Ghostty user
-gets the same look without copying anything.
+gets the same look without copying anything. Like Ghostty, chda ships JetBrains
+Mono as the default font and Symbols Nerd Font Mono for prompt and TUI icons.
 
 chda's own settings live in `~/.config/chda/config.toml`:
 
@@ -177,4 +178,7 @@ sidebar belongs inside the terminal.
 
 ## License
 
-MIT
+MIT. The bundled fonts keep their own licenses:
+[JetBrains Mono](https://github.com/JetBrains/JetBrainsMono) under the SIL Open
+Font License 1.1 and [Symbols Nerd Font](https://github.com/ryanoasis/nerd-fonts)
+under MIT; both texts are in `crates/chda-ui/assets/fonts`.
