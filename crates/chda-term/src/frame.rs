@@ -162,6 +162,8 @@ pub struct Frame {
     pub pwd: String,
     /// The alternate screen is active (full-screen apps).
     pub alternate_screen: bool,
+    /// The application asked for mouse reports, so clicks belong to it.
+    pub mouse_tracking: bool,
     /// OSC 8 hyperlinks in the viewport.
     pub hyperlinks: Vec<crate::links::Hyperlink>,
     /// Kitty graphics placements that touch the viewport, sorted by `z`.
@@ -187,6 +189,14 @@ impl Frame {
     pub fn cell_text(&self, cell: &Cell) -> &str {
         let start = cell.text_start as usize;
         &self.text[start..start + usize::from(cell.text_len)]
+    }
+
+    /// The cursor is visible on a shell prompt row (OSC 133), so the shell
+    /// is waiting for a command rather than running one.
+    pub fn at_prompt(&self) -> bool {
+        self.cursor
+            .and_then(|c| self.rows.get(usize::from(c.y)))
+            .is_some_and(|r| r.semantic_prompt != SemanticPrompt::None)
     }
 
     /// Plain text of a row, with trailing blanks trimmed. Mostly for tests.

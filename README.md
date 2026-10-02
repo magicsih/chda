@@ -151,7 +151,8 @@ value Ghostty would reject keeps the previous settings and shows a message.
 | `cmd-shift-enter` | zoom a split |
 | `cmd-up` / `cmd-down` | previous / next shell prompt |
 | `cmd-f` | search the scrollback; `enter` / `shift-enter` older / newer, `alt-c` case, `alt-r` regex, `esc` close |
-| `cmd-click` | open a link or file path (hold `cmd` to see it underlined) |
+| `cmd-click` | open a link or file path (hold `cmd` to see it underlined: solid for files, dotted for folders) |
+| right-click a path | open, reveal in Finder, open a tab or `cd` there, copy the absolute or relative path (`cmd-shift-click` in apps that read the mouse) |
 | `cmd-=` / `cmd--` / `cmd-0` | bigger / smaller / configured font size |
 | `cmd-shift-a` | go to the agent that waits for input, then to finished turns |
 | `cmd-b` | toggle the sidebar |

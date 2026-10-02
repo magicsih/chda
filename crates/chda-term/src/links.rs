@@ -1,6 +1,11 @@
 //! Links under the mouse: OSC 8 hyperlinks, plain URLs and file paths
 //! (optionally with `:line[:column]`) in the visible rows. Soft-wrapped rows
 //! are joined, so a long URL that wraps is found as a whole.
+//!
+//! Paths may contain spaces when quoted (`"My Notes/todo.md"`) or escaped
+//! with a backslash (`My\ Notes/todo.md`); `file://` URLs are paths too.
+//! Any word can name a file (`ls` prints bare names), so paths are only
+//! candidates: the caller keeps the first that exists.
 
 use std::sync::LazyLock;
 
@@ -42,74 +47,145 @@ static URL: LazyLock<Regex> = LazyLock::new(|| {
     Regex::new(r#"(?i)\b(?:https?|file|ftp)://[^\s<>"'`]+"#).expect("valid URL pattern")
 });
 
-/// Runs of characters that can make up a path: no blanks, quotes or brackets.
+/// Runs of characters that can make up a path: no blanks, quotes or
+/// brackets, except a backslash-escaped space.
 static TOKEN: LazyLock<Regex> =
-    LazyLock::new(|| Regex::new(r#"[^\s"'`<>()\[\]{}|,;]+"#).expect("valid token pattern"));
+    LazyLock::new(|| Regex::new(r#"(?:\\ |[^\s"'`<>()\[\]{}|,;])+"#).expect("valid token pattern"));
+
+/// A single- or double-quoted string on one logical line.
+static QUOTED: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r#""([^"]+)"|'([^']+)'"#).expect("valid quote pattern"));
 
 static LINE_SUFFIX: LazyLock<Regex> =
     LazyLock::new(|| Regex::new(r"^(.+?):(\d+)(?::(\d+))?:?$").expect("valid suffix pattern"));
 
-/// The link covering cell `(x, y)` of the viewport, if any.
-pub fn link_at(frame: &Frame, x: u16, y: u16) -> Option<Link> {
+/// Links covering cell `(x, y)` of the viewport, most specific first: an
+/// OSC 8 hyperlink, a URL, a quoted path, then the plain token. Paths are
+/// only candidates; the caller keeps the first that exists.
+pub fn links_at(frame: &Frame, x: u16, y: u16) -> Vec<Link> {
     if let Some(h) = frame
         .hyperlinks
         .iter()
         .find(|h| h.row == y && (h.start..=h.end).contains(&x))
     {
-        return Some(Link {
-            target: LinkTarget::Url(h.uri.clone()),
+        return vec![Link {
+            target: url_target(&h.uri),
             cells: vec![(h.row, h.start, h.end)],
-        });
+        }];
     }
-    let line = LogicalLine::around(frame, y)?;
-    let byte = line.byte_at(y, x)?;
+    let Some(line) = LogicalLine::around(frame, y) else {
+        return Vec::new();
+    };
+    let Some(byte) = line.byte_at(y, x) else {
+        return Vec::new();
+    };
     if let Some(m) = URL
         .find_iter(&line.text)
         .find(|m| m.range().contains(&byte))
     {
         let url = trim_url(m.as_str());
         if m.start() + url.len() > byte {
-            return Some(Link {
+            return vec![Link {
                 cells: line.cells(m.start(), m.start() + url.len()),
-                target: LinkTarget::Url(url.to_owned()),
+                target: url_target(url),
+            }];
+        }
+    }
+    let mut out = Vec::new();
+    if let Some((range, inner)) = QUOTED.captures_iter(&line.text).find_map(|c| {
+        let inner = c.get(1).or_else(|| c.get(2))?;
+        c.get(0)?
+            .range()
+            .contains(&byte)
+            .then_some((inner.range(), inner.as_str()))
+    }) && inner.trim() == inner
+        && !inner.contains(['"', '\''])
+        && let Some(target) = path_target(inner)
+    {
+        out.push(Link {
+            cells: line.cells(range.start, range.end),
+            target,
+        });
+    }
+    if let Some(m) = TOKEN
+        .find_iter(&line.text)
+        .find(|m| m.range().contains(&byte))
+    {
+        let token = m.as_str().trim_end_matches(['.', ',', ':', ';', '!', '?']);
+        if m.start() + token.len() > byte
+            && let Some(target) = path_target(&token.replace("\\ ", " "))
+        {
+            out.push(Link {
+                cells: line.cells(m.start(), m.start() + token.len()),
+                target,
             });
         }
     }
-    let m = TOKEN
-        .find_iter(&line.text)
-        .find(|m| m.range().contains(&byte))?;
-    let token = m.as_str().trim_end_matches(['.', ',', ':', ';', '!', '?']);
-    let (path, line_no, column) = match LINE_SUFFIX.captures(token) {
+    out
+}
+
+/// A path with an optional `:line[:column]` suffix.
+fn path_target(text: &str) -> Option<LinkTarget> {
+    let (path, line, column) = match LINE_SUFFIX.captures(text) {
         Some(c) => (
             c.get(1)?.as_str(),
             c.get(2).and_then(|n| n.as_str().parse().ok()),
             c.get(3).and_then(|n| n.as_str().parse().ok()),
         ),
-        None => (token, None, None),
+        None => (text, None, None),
     };
-    if !looks_like_path(path, line_no.is_some()) || m.start() + token.len() <= byte {
-        return None;
-    }
-    Some(Link {
-        cells: line.cells(m.start(), m.start() + token.len()),
-        target: LinkTarget::Path {
-            path: path.to_owned(),
-            line: line_no,
-            column,
-        },
+    could_be_path(path).then(|| LinkTarget::Path {
+        path: path.to_owned(),
+        line,
+        column,
     })
 }
 
-/// A path has a separator, or is a file name with an extension followed by
-/// a line number (`main.rs:12`). Bare words are never paths.
-fn looks_like_path(s: &str, has_line: bool) -> bool {
-    if s.contains("://") || s.chars().all(|c| c == '.' || c == '/' || c == '~') {
-        return false;
+/// `file://` URLs are local paths (`file:///a%20b`, `file://host/a`);
+/// everything else stays a URL.
+fn url_target(url: &str) -> LinkTarget {
+    file_url_path(url).map_or_else(
+        || LinkTarget::Url(url.to_owned()),
+        |path| LinkTarget::Path {
+            path,
+            line: None,
+            column: None,
+        },
+    )
+}
+
+/// The decoded path of a `file://` URL. The host part (empty, `localhost`
+/// or this machine's name, as `ls --hyperlink` writes) is dropped.
+fn file_url_path(url: &str) -> Option<String> {
+    let rest = url
+        .get(..7)
+        .filter(|scheme| scheme.eq_ignore_ascii_case("file://"))
+        .map(|_| &url[7..])?;
+    let path = &rest[rest.find('/')?..];
+    let bytes = path.as_bytes();
+    let mut out = Vec::with_capacity(bytes.len());
+    let mut i = 0;
+    while i < bytes.len() {
+        let hex = |b: u8| (b as char).to_digit(16);
+        match (bytes[i], bytes.get(i + 1), bytes.get(i + 2)) {
+            (b'%', Some(&h), Some(&l)) if hex(h).is_some() && hex(l).is_some() => {
+                out.push((hex(h)? * 16 + hex(l)?) as u8);
+                i += 3;
+            }
+            (b, _, _) => {
+                out.push(b);
+                i += 1;
+            }
+        }
     }
-    let has_extension = s
-        .rsplit_once('.')
-        .is_some_and(|(stem, ext)| !stem.is_empty() && ext.chars().all(char::is_alphanumeric));
-    s.contains('/') || (has_line && has_extension)
+    String::from_utf8(out).ok()
+}
+
+/// Anything but URLs, command-line options and runs of `.`, `/` and `~`.
+fn could_be_path(s: &str) -> bool {
+    !s.contains("://")
+        && !s.starts_with('-')
+        && !s.chars().all(|c| c == '.' || c == '/' || c == '~')
 }
 
 /// Drop trailing punctuation that usually ends a sentence, and a closing
@@ -212,6 +288,20 @@ mod tests {
     use super::*;
     use crate::frame::{Cell, Row, Size};
 
+    fn link_at(frame: &Frame, x: u16, y: u16) -> Option<Link> {
+        links_at(frame, x, y).into_iter().next()
+    }
+
+    fn is_url(link: Option<Link>) -> bool {
+        matches!(
+            link,
+            Some(Link {
+                target: LinkTarget::Url(_),
+                ..
+            })
+        )
+    }
+
     /// A frame whose rows hold `lines`, `cols` wide; rows listed in `wrapped`
     /// continue on the next row.
     fn frame(cols: u16, lines: &[&str], wrapped: &[u16]) -> Frame {
@@ -250,10 +340,10 @@ mod tests {
         );
         assert_eq!(link.cells, vec![(0, 5, 29)]);
         assert!(
-            link_at(&f, 31, 0).is_none(),
+            !is_url(link_at(&f, 31, 0)),
             "the closing paren is not the link"
         );
-        assert!(link_at(&f, 0, 0).is_none());
+        assert!(!is_url(link_at(&f, 0, 0)));
     }
 
     #[test]
@@ -269,7 +359,7 @@ mod tests {
             LinkTarget::Url("https://github.com/x/y/1".into())
         );
         assert_eq!(link.cells, vec![(0, 4, 9), (1, 0, 9), (2, 0, 7)]);
-        assert!(link_at(&f, 1, 3).is_none());
+        assert!(!is_url(link_at(&f, 1, 3)));
     }
 
     #[test]
@@ -300,9 +390,90 @@ mod tests {
                 column: None
             }
         );
-        assert!(link_at(&f, 15, 1).is_none(), "bare words are not paths");
-        assert!(link_at(&f, 0, 0).is_none());
+        assert!(
+            matches!(link_at(&f, 15, 1).unwrap().target, LinkTarget::Path { path, .. } if path == "plain"),
+            "bare words are candidates; the caller checks they exist"
+        );
+        assert!(link_at(&f, 2, 1).unwrap().cells == vec![(1, 0, 7)]);
         assert_eq!(link_at(&f, 3, 2).unwrap().cells, vec![(2, 0, 9)]);
+    }
+
+    #[test]
+    fn finds_quoted_and_escaped_paths_with_spaces() {
+        let f = frame(
+            60,
+            &[
+                r#"open "/tmp/My Notes/todo.md" now"#,
+                "cp 'a b/c' x; \"My File.txt\"",
+                r"ls My\ Notes/todo.md:3",
+                "it's in src/x.rs",
+            ],
+            &[],
+        );
+        let quoted = links_at(&f, 12, 0);
+        assert_eq!(
+            quoted[0].target,
+            LinkTarget::Path {
+                path: "/tmp/My Notes/todo.md".into(),
+                line: None,
+                column: None
+            }
+        );
+        assert_eq!(quoted[0].cells, vec![(0, 6, 26)]);
+        assert_eq!(
+            quoted[1].target,
+            LinkTarget::Path {
+                path: "/tmp/My".into(),
+                line: None,
+                column: None
+            },
+            "the plain token is the fallback"
+        );
+        assert!(matches!(
+            link_at(&f, 5, 1).unwrap().target,
+            LinkTarget::Path { path, .. } if path == "a b/c"
+        ));
+        assert!(matches!(
+            link_at(&f, 18, 1).unwrap().target,
+            LinkTarget::Path { path, .. } if path == "My File.txt"
+        ));
+        assert_eq!(
+            link_at(&f, 6, 2).unwrap().target,
+            LinkTarget::Path {
+                path: "My Notes/todo.md".into(),
+                line: Some(3),
+                column: None
+            }
+        );
+        assert_eq!(link_at(&f, 6, 2).unwrap().cells, vec![(2, 3, 21)]);
+        assert!(matches!(
+            link_at(&f, 10, 3).unwrap().target,
+            LinkTarget::Path { path, .. } if path == "src/x.rs"
+        ));
+    }
+
+    #[test]
+    fn file_urls_are_paths() {
+        let f = frame(60, &["see file:///tmp/My%20Notes/a.md."], &[]);
+        assert_eq!(
+            link_at(&f, 8, 0).unwrap().target,
+            LinkTarget::Path {
+                path: "/tmp/My Notes/a.md".into(),
+                line: None,
+                column: None
+            }
+        );
+        let mut f = frame(20, &["build"], &[]);
+        f.hyperlinks.push(Hyperlink {
+            row: 0,
+            start: 0,
+            end: 4,
+            uri: "file://mac.local/Users/me/build".into(),
+        });
+        assert!(matches!(
+            link_at(&f, 2, 0).unwrap().target,
+            LinkTarget::Path { path, .. } if path == "/Users/me/build"
+        ));
     }
 
     #[test]

@@ -85,6 +85,17 @@ fn write_font(dir: &Path, name: &str, data: &[u8]) -> std::io::Result<PathBuf> {
     Ok(path)
 }
 
+/// What the system's file manager is called in menu items.
+pub fn file_manager_name() -> &'static str {
+    if cfg!(target_os = "macos") {
+        "Finder"
+    } else if cfg!(target_os = "windows") {
+        "File Explorer"
+    } else {
+        "File Manager"
+    }
+}
+
 /// Play the system alert sound.
 pub fn beep() {
     #[cfg(target_os = "macos")]

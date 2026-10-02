@@ -11,6 +11,7 @@ mod harness;
 mod input;
 mod menus;
 mod palette;
+mod paths;
 mod pull_requests;
 mod restore;
 mod search;
