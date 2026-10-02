@@ -139,7 +139,14 @@ hooks per launch, never in the user's own config:
 | OpenCode | `OPENCODE_CONFIG_DIR` with a JavaScript plugin that maps bus events to hook kinds | none (SQLite) |
 
 A pane runs a program and its arguments only, so environment variables an
-adapter sets go in front through `env`. Agents report through
+adapter sets go in front through `env`.
+
+`chda mcp` (ADR 0006) is a stdio MCP server for agents. It keeps no state:
+`create_worktree`, `open_tab` and `list_worktrees` become requests on the
+hook socket (`{"request": ...}`, one per connection, answered with one reply
+line) that the window carries out with its own config; `report_status` sends
+an ordinary hook event. It serves revision 2026-07-28 and the
+`initialize`-based revisions before it. Agents report through
 `chda hook <agent>`, which forwards the event over a Unix socket in the data
 directory, or appends to `events.jsonl` when no app is running. The UI
 refreshes badges every 5 s while the sidebar is visible, one refresh per

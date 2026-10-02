@@ -16,9 +16,8 @@ live config reload, session restore, bash and fish integration, per-pane agent
 status (tabs, ACTIVE list, Dock badge), notification click to the agent's pane
 and jumping to the waiting agent.
 
-Candidates after M5, in no order: an MCP server so agents can open worktrees
-and tabs, GitLab and Gitea pull request status, ligatures and Kitty graphics.
-
-Done since v0.1.6: Gemini CLI, GitHub Copilot CLI and OpenCode adapters.
+Done since v0.1.6: Gemini CLI, GitHub Copilot CLI and OpenCode adapters, an
+MCP server (`chda mcp`) so agents can create worktrees, open tabs and report
+status, GitLab and Gitea pull request status, ligatures and Kitty graphics.
 
 Decisions that are hard to reverse are summarized in `docs/decisions/`.

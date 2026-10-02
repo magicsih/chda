@@ -104,6 +104,26 @@ transcripts are never stored. None of the agents' own settings files
 Past sessions are listed under each worktree for Claude Code, Codex, Gemini CLI
 and Copilot CLI. OpenCode keeps its sessions in a database chda does not read.
 
+## Agents can drive chda (MCP)
+
+`chda mcp` is an MCP server that lets an agent work with the chda window it
+runs in: `create_worktree` (new branch and folder, optional base, note and
+agent to start in a new tab), `open_tab`, `list_worktrees`, and
+`report_status` (working, waiting for input, done) for agents without hooks.
+It acts through the running app, so new worktrees follow your
+`worktree-path-template` and show up in the sidebar at once. Add it once per
+agent:
+
+```sh
+claude mcp add --scope user chda -- chda mcp
+codex mcp add chda -- chda mcp
+gemini mcp add --scope user chda chda mcp
+copilot mcp add chda -- chda mcp
+```
+
+For OpenCode, add `"mcp": {"chda": {"type": "local", "command": ["chda", "mcp"]}}`
+to `~/.config/opencode/opencode.json`.
+
 ## Configuration
 
 chda reads Ghostty's config files in Ghostty's order:

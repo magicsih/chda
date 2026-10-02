@@ -9,6 +9,7 @@ mod diagrams;
 mod diff;
 mod harness;
 mod input;
+mod mcp;
 mod menus;
 mod palette;
 mod paths;
