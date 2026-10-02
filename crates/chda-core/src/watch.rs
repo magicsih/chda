@@ -145,14 +145,15 @@ impl FileWatcher {
 }
 
 /// Object and log writes happen constantly during git operations and never
-/// change what the sidebar shows; refs, HEAD, index and worktrees do.
+/// change what the sidebar shows; refs, HEAD, index and worktrees do. Nor
+/// does emptying the folder deleted worktrees are moved into.
 fn interesting(path: &Path, git_dir: &Path) -> bool {
     let Ok(rel) = path.strip_prefix(git_dir) else {
         return false;
     };
     let mut parts = rel.components();
     let first = parts.next().and_then(|c| c.as_os_str().to_str());
-    if matches!(first, Some("objects" | "logs" | "lfs")) {
+    if matches!(first, Some("objects" | "logs" | "lfs" | "chda-trash")) {
         return false;
     }
     !path.extension().is_some_and(|e| e == "lock")
@@ -275,6 +276,10 @@ mod tests {
         ));
         assert!(!interesting(
             &root.join(".git/index.lock"),
+            &root.join(".git")
+        ));
+        assert!(!interesting(
+            &root.join(".git/chda-trash/feat-1/node_modules/x.js"),
             &root.join(".git")
         ));
         watcher.unwatch(&root);

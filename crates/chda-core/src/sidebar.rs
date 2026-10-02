@@ -118,6 +118,10 @@ pub struct WorktreeEntry {
     pub panes: Vec<crate::PaneId>,
     /// The folder was deleted outside git; only pruning makes sense.
     pub missing: bool,
+    /// An operation is running on it, e.g. "deleting"; others are refused.
+    pub busy: Option<String>,
+    /// The last operation on it failed with this message.
+    pub error: Option<String>,
 }
 
 impl WorktreeEntry {
@@ -244,12 +248,29 @@ impl Sidebar {
                     w.last_activity = prev.last_activity;
                     w.panes = prev.panes.clone();
                     w.pr = prev.pr.clone();
+                    w.busy = prev.busy.clone();
+                    w.error = prev.error.clone();
                 }
                 w
             })
             .collect();
         entry.error = None;
         sort_worktrees(&mut entry.worktrees, sort);
+    }
+
+    /// The worktree at exactly `path`.
+    pub fn worktree_mut(&mut self, path: &Path) -> Option<&mut WorktreeEntry> {
+        self.repos
+            .iter_mut()
+            .flat_map(|r| r.worktrees.iter_mut())
+            .find(|w| w.path == path)
+    }
+
+    /// Drop a worktree from its repository's list until the next refresh.
+    pub fn remove_worktree(&mut self, path: &Path) {
+        for repo in &mut self.repos {
+            repo.worktrees.retain(|w| w.path != path);
+        }
     }
 
     /// The worktree whose path contains `cwd`, longest match wins.

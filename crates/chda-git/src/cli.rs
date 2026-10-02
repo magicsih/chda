@@ -86,6 +86,81 @@ pub fn remove_worktree(repo: &Path, path: &Path, force: bool) -> io::Result<()> 
     check(repo, &["worktree", "prune"])
 }
 
+/// Folder inside the repository's git directory that deleted worktrees are
+/// moved into before their files are removed.
+const TRASH_DIR: &str = "chda-trash";
+
+/// Remove a linked worktree without waiting for its files: unlock it, move
+/// its folder into `<git-common-dir>/chda-trash/` (a rename, instant even for
+/// a large `node_modules`), then drop git's record of it. Returns the moved
+/// folder; [`purge_trash`] deletes it later. Falls back to
+/// `git worktree remove -f -f` when the folder cannot be renamed there (for
+/// example on another file system), returning `None`.
+pub fn trash_worktree(repo: &Path, path: &Path) -> io::Result<Option<PathBuf>> {
+    let is_linked = crate::read::list_worktrees(repo)?
+        .iter()
+        .any(|w| !w.is_main && same_path(&w.path, path));
+    if !is_linked {
+        return Err(io::Error::other(format!(
+            "{} is not a linked worktree of {}",
+            path.display(),
+            repo.display()
+        )));
+    }
+    let path_str = path.to_string_lossy();
+    // Locked worktrees refuse removal and pruning; a failing unlock means it
+    // was not locked.
+    let _ = run(repo, &["worktree", "unlock", &path_str]);
+    if !path.exists() {
+        return check(repo, &["worktree", "remove", "-f", "-f", &path_str]).map(|_| None);
+    }
+    let trash = trash_root(repo)?;
+    let name = path
+        .file_name()
+        .map(|n| n.to_string_lossy().into_owned())
+        .unwrap_or_else(|| "worktree".into());
+    let stamp = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_nanos())
+        .unwrap_or_default();
+    let target = trash.join(format!("{name}-{stamp}"));
+    let moved = std::fs::create_dir_all(&trash).and_then(|_| std::fs::rename(path, &target));
+    if moved.is_err() {
+        check(repo, &["worktree", "remove", "-f", "-f", &path_str])?;
+        return Ok(None);
+    }
+    // The folder is gone from git's point of view: this drops only its record.
+    check(repo, &["worktree", "remove", "-f", "-f", &path_str])?;
+    Ok(Some(target))
+}
+
+/// Delete everything [`trash_worktree`] moved aside in `repo`. Slow for
+/// large trees; run it in the background. Leftovers from an interrupted run
+/// go too.
+pub fn purge_trash(repo: &Path) -> io::Result<()> {
+    let trash = trash_root(repo)?;
+    match std::fs::remove_dir_all(&trash) {
+        Err(e) if e.kind() != io::ErrorKind::NotFound => Err(e),
+        _ => Ok(()),
+    }
+}
+
+/// Equal paths, also when one of them goes through a symlink (`/tmp`,
+/// `/var` on macOS). Missing folders compare by their parent.
+fn same_path(a: &Path, b: &Path) -> bool {
+    fn real(p: &Path) -> Option<PathBuf> {
+        p.canonicalize()
+            .ok()
+            .or_else(|| Some(p.parent()?.canonicalize().ok()?.join(p.file_name()?)))
+    }
+    a == b || real(a).is_some_and(|ra| Some(ra) == real(b))
+}
+
+fn trash_root(repo: &Path) -> io::Result<PathBuf> {
+    let common = PathBuf::from(output(repo, &["rev-parse", "--git-common-dir"])?);
+    Ok(repo.join(common).join(TRASH_DIR))
+}
+
 /// `git branch -d` (or `-D` with `force`).
 pub fn delete_branch(repo: &Path, branch: &str, force: bool) -> io::Result<()> {
     check(repo, &["branch", if force { "-D" } else { "-d" }, branch])
@@ -424,6 +499,55 @@ mod tests {
 
         let ids = resolve(&repo.path, &["main", "feat", "nope"]).unwrap();
         assert!(ids[0].is_some() && ids[1].is_some() && ids[2].is_none());
+    }
+
+    #[test]
+    fn trash_removes_locked_and_large_worktrees_at_once() {
+        let repo = TempRepo::new("trash");
+        let wt = repo.root.join("repo.worktrees").join("big");
+        add_worktree(&repo.path, "big", &wt, None).unwrap();
+        // `git worktree remove --force` refuses a locked worktree.
+        TempRepo::git(&repo.path, &["worktree", "lock", wt.to_str().unwrap()]);
+        assert!(remove_worktree(&repo.path, &wt, true).is_err());
+        let deps = wt.join("node_modules/pkg");
+        std::fs::create_dir_all(&deps).unwrap();
+        for i in 0..2000 {
+            std::fs::write(deps.join(format!("f{i}.js")), "x").unwrap();
+        }
+
+        let moved = trash_worktree(&repo.path, &wt).unwrap().unwrap();
+        assert!(!wt.exists());
+        assert!(moved.join("node_modules/pkg/f0.js").is_file());
+        let list = TempRepo::git(&repo.path, &["worktree", "list", "--porcelain"]);
+        assert!(!list.contains("big"), "record dropped: {list}");
+        delete_branch(&repo.path, "big", true).unwrap();
+
+        purge_trash(&repo.path).unwrap();
+        assert!(!moved.exists());
+        purge_trash(&repo.path).unwrap();
+
+        // Only linked worktrees: never the main one or a stray folder.
+        assert!(trash_worktree(&repo.path, &repo.path).is_err());
+        assert!(trash_worktree(&repo.path, &repo.root.join("elsewhere")).is_err());
+        assert!(repo.path.join("a.txt").is_file());
+    }
+
+    #[test]
+    fn trash_keeps_other_missing_worktree_records() {
+        let repo = TempRepo::new("trash-missing");
+        let a = repo.root.join("repo.worktrees").join("a");
+        let b = repo.root.join("repo.worktrees").join("b");
+        add_worktree(&repo.path, "a", &a, None).unwrap();
+        add_worktree(&repo.path, "b", &b, None).unwrap();
+        std::fs::remove_dir_all(&a).unwrap();
+        std::fs::remove_dir_all(&b).unwrap();
+        assert_eq!(trash_worktree(&repo.path, &a).unwrap(), None);
+        let list = TempRepo::git(&repo.path, &["worktree", "list", "--porcelain"]);
+        assert!(!list.contains("worktrees/a\n"), "{list}");
+        assert!(
+            list.contains("worktrees/b"),
+            "the other record stays: {list}"
+        );
     }
 
     #[test]

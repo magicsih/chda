@@ -45,9 +45,26 @@ fn create_then_delete_a_worktree_in_one_go(cx: &mut TestAppContext) {
     });
     assert!(path.is_dir());
 
-    // Untracked build output makes removal slow; one confirmation must do.
+    // A terminal open in the worktree, a locked worktree (which
+    // `git worktree remove --force` refuses) and untracked build output
+    // (which makes removal slow): one confirmation must still do.
+    let p = path.clone();
+    h.cx.update(|window, cx| h.view.update(cx, |v, cx| v.open_worktree(&p, window, cx)));
+    h.wait_for("the terminal in the worktree", {
+        let path = path.clone();
+        move |v, cx| {
+            v.sidebar
+                .read(cx)
+                .model
+                .worktree_for_path(&path)
+                .is_some_and(|(_, w)| w.path == path && w.panes.len() == 1)
+        }
+    });
+    git(&repo, &["worktree", "lock", path.to_str().unwrap()]);
+    let deps = path.join("node_modules/pkg");
+    std::fs::create_dir_all(&deps).unwrap();
     for i in 0..300 {
-        std::fs::write(path.join(format!("out-{i}.o")), "x").unwrap();
+        std::fs::write(deps.join(format!("out-{i}.js")), "x").unwrap();
     }
     let action = MenuAction::DeleteWorktreeAndBranch {
         repo: repo.clone(),
@@ -58,8 +75,35 @@ fn create_then_delete_a_worktree_in_one_go(cx: &mut TestAppContext) {
         h.view
             .update(cx, |v, cx| v.run_menu_action(action, window, cx))
     });
-    assert!(h.read(|v, _| v.confirm.is_some()), "asks first");
+    assert!(
+        h.read(|v, _| v
+            .confirm
+            .as_ref()
+            .is_some_and(|c| c.lines.iter().any(|l| l.contains("Closes the terminal")))),
+        "asks first and names the open terminal"
+    );
     h.cx.update(|window, cx| h.view.update(cx, |v, cx| v.confirm_action(window, cx)));
+    assert_eq!(
+        h.read(|v, cx| v
+            .sidebar
+            .read(cx)
+            .model
+            .worktree_for_path(&path)
+            .and_then(|(_, w)| w.busy.clone())),
+        Some("deleting".to_owned()),
+        "the row says it is being deleted"
+    );
+    // A second request while it runs is ignored instead of failing.
+    let again = MenuAction::DeleteWorktreeAndBranch {
+        repo: repo.clone(),
+        worktree: path.clone(),
+        force: true,
+    };
+    h.cx.update(|window, cx| {
+        h.view
+            .update(cx, |v, cx| v.run_menu_action(again, window, cx))
+    });
+    assert!(h.read(|v, _| v.confirm.is_none()));
     h.wait_for("the worktree to be gone after one confirmation", {
         let path = path.clone();
         move |v, cx| {
@@ -69,6 +113,22 @@ fn create_then_delete_a_worktree_in_one_go(cx: &mut TestAppContext) {
                     .iter()
                     .all(|w| w.path != path)
         }
+    });
+    assert!(
+        h.read(|v, _| v.status_line.as_deref() == Some(&format!("Deleted {}", path.display()))),
+        "no error: {:?}",
+        h.read(|v, _| v.status_line.clone())
+    );
+    assert_eq!(h.read(|v, _| v.ws.tabs().len()), 1, "its terminal closed");
+    let branch = std::process::Command::new("git")
+        .args(["rev-parse", "--verify", "-q", "refs/heads/feat/x"])
+        .current_dir(&repo)
+        .status()
+        .unwrap();
+    assert!(!branch.success(), "the branch is deleted");
+    h.wait_for("the moved folder to be emptied", {
+        let trash = repo.join(".git/chda-trash");
+        move |_, _| !trash.exists()
     });
 }
 
