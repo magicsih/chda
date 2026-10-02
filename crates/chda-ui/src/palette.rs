@@ -1,4 +1,4 @@
-//! Command palette: fuzzy-filtered actions, worktrees and sessions.
+//! Command palette: fuzzy-filtered actions, worktrees, sessions and themes.
 
 use std::path::PathBuf;
 
@@ -24,6 +24,8 @@ pub enum PaletteCommand {
     NewWorktree(PathBuf),
     /// Check out an existing branch as a new worktree of the repository.
     CheckoutBranch(PathBuf, String),
+    /// chda's theme; `None` follows the Ghostty config.
+    SetTheme(Option<String>),
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -35,15 +37,24 @@ pub struct PaletteItem {
 
 #[derive(Clone, Debug, PartialEq)]
 pub enum PaletteEvent {
+    /// The selection moved to this entry.
+    Highlighted(PaletteCommand),
     Chosen(PaletteCommand),
     Dismissed,
 }
+
+/// Rows shown at once; the list scrolls to keep the selection in view.
+const VISIBLE_ROWS: usize = 12;
 
 pub struct Palette {
     items: Vec<PaletteItem>,
     input: Entity<TextInput>,
     _sub: Subscription,
     selected: usize,
+    /// First match shown.
+    offset: usize,
+    /// Text the matches were last filtered by.
+    query: String,
     fg: Hsla,
     bg: Hsla,
 }
@@ -73,51 +84,73 @@ pub fn fuzzy_score(query: &str, text: &str) -> Option<u32> {
 }
 
 impl Palette {
+    /// `selected` is the entry selected before anything is typed.
     pub fn new(
         items: Vec<PaletteItem>,
+        selected: usize,
+        placeholder: &str,
         fg: Hsla,
         bg: Hsla,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Self {
-        let input = cx.new(|cx| TextInput::new("Type a command, worktree or session", fg, bg, cx));
+        let input = cx.new(|cx| TextInput::new(placeholder, fg, bg, cx));
         let sub = cx.subscribe(&input, |this, _, event, cx| match event {
             TextInputEvent::Submit(_) => this.choose(cx),
             TextInputEvent::Cancel => cx.emit(PaletteEvent::Dismissed),
         });
-        cx.observe(&input, |this, _, cx| {
-            this.selected = 0;
-            cx.notify();
+        cx.observe(&input, |this, input, cx| {
+            let query = input.read(cx).text();
+            if query != this.query {
+                this.query = query.to_owned();
+                this.select(0, cx);
+            }
         })
         .detach();
         let handle = input.read(cx).focus_handle(cx);
         window.focus(&handle, cx);
+        let selected = selected.min(items.len().saturating_sub(1));
         Self {
             items,
             input,
             _sub: sub,
-            selected: 0,
+            selected,
+            offset: selected.saturating_sub(VISIBLE_ROWS / 2),
+            query: String::new(),
             fg,
             bg,
         }
     }
 
-    fn matches(&self, cx: &App) -> Vec<(u32, &PaletteItem)> {
-        let query = self.input.read(cx).text().to_owned();
+    fn matches(&self) -> Vec<(u32, &PaletteItem)> {
         let mut out: Vec<(u32, &PaletteItem)> = self
             .items
             .iter()
             .filter_map(|i| {
-                fuzzy_score(&query, &format!("{} {}", i.label, i.detail)).map(|s| (s, i))
+                fuzzy_score(&self.query, &format!("{} {}", i.label, i.detail)).map(|s| (s, i))
             })
             .collect();
         out.sort_by_key(|(s, _)| *s);
-        out.truncate(12);
         out
     }
 
+    /// Select the `index`th match, scroll it into view and announce it.
+    fn select(&mut self, index: usize, cx: &mut Context<Self>) {
+        self.selected = index;
+        if index < self.offset {
+            self.offset = index;
+        } else if index >= self.offset + VISIBLE_ROWS {
+            self.offset = index + 1 - VISIBLE_ROWS;
+        }
+        if let Some((_, item)) = self.matches().get(index) {
+            let command = item.command.clone();
+            cx.emit(PaletteEvent::Highlighted(command));
+        }
+        cx.notify();
+    }
+
     fn choose(&mut self, cx: &mut Context<Self>) {
-        let matches = self.matches(cx);
+        let matches = self.matches();
         if let Some((_, item)) = matches.get(self.selected) {
             let command = item.command.clone();
             cx.emit(PaletteEvent::Chosen(command));
@@ -125,12 +158,12 @@ impl Palette {
     }
 
     pub fn move_selection(&mut self, delta: i32, cx: &mut Context<Self>) {
-        let n = self.matches(cx).len();
+        let n = self.matches().len();
         if n == 0 {
             return;
         }
-        self.selected = (self.selected as i32 + delta).rem_euclid(n as i32) as usize;
-        cx.notify();
+        let index = (self.selected as i32 + delta).rem_euclid(n as i32) as usize;
+        self.select(index, cx);
     }
 
     pub fn input_focus(&self, cx: &App) -> FocusHandle {
@@ -148,9 +181,11 @@ impl Render for Palette {
     fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let fg = self.fg;
         let rows: Vec<AnyElement> = self
-            .matches(cx)
+            .matches()
             .into_iter()
             .enumerate()
+            .skip(self.offset)
+            .take(VISIBLE_ROWS)
             .map(|(i, (_, item))| {
                 let selected = i == self.selected;
                 div()

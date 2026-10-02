@@ -11,7 +11,13 @@ fn main() {
             std::process::exit(2);
         }
         None => {
-            chda_ui::run(chda_config::load(&chda_config::Paths::default_for_user()));
+            let theme = chda_config::ChdaConfig::default_path()
+                .and_then(|p| chda_config::ChdaConfig::load(&p).ok())
+                .and_then(|c| c.theme);
+            chda_ui::run(chda_config::load(
+                &chda_config::Paths::default_for_user(),
+                theme.as_deref(),
+            ));
         }
     }
 }

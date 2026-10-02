@@ -251,7 +251,7 @@ fn open_window(
             use_gh: false,
             system,
         });
-        let ghostty: GhosttyConfig = chda_config::load(&paths);
+        let ghostty: GhosttyConfig = chda_config::load(&paths, None);
         let window = cx.update(|cx| {
             cx.open_window(WindowOptions::default(), |window, cx| {
                 cx.new(|cx| WorkspaceView::new(ghostty, saved, env, window, cx))

@@ -71,6 +71,7 @@ actions!(
         DecreaseFontSize,
         ResetFontSize,
         GoToWaitingAgent,
+        SelectTheme,
     ]
 );
 
@@ -183,6 +184,8 @@ pub struct WorkspaceView {
     config_watcher: Option<FileWatcher>,
     /// The last reload found a broken config; its message is on the status line.
     config_problem: Option<String>,
+    /// The theme palette shows a theme that is not the configured one yet.
+    previewing_theme: bool,
     /// Phase of the "working" dot pulse, and whether its timer runs.
     pulse: u8,
     pulsing: bool,
@@ -259,6 +262,7 @@ impl WorkspaceView {
             ghostty_sources: ghostty.sources,
             config_watcher: None,
             config_problem: None,
+            previewing_theme: false,
             pulse: 0,
             pulsing: false,
             last_jump: None,
@@ -441,7 +445,20 @@ impl WorkspaceView {
     /// A config with errors keeps the previous values and says why.
     fn reload_config(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let mut problems = Vec::new();
-        let ghostty = chda_config::load(&self.ghostty_paths);
+        if let Some(path) = self.env.config_path.clone() {
+            match ChdaConfig::load(&path) {
+                Ok(config) => {
+                    if config != self.config {
+                        self.apply_config(config, window, cx);
+                    }
+                }
+                Err(e) => problems.push(format!(
+                    "{}: {e}. Kept the previous values.",
+                    path.display()
+                )),
+            }
+        }
+        let ghostty = chda_config::load(&self.ghostty_paths, self.config.theme.as_deref());
         if ghostty.problems.is_empty() {
             let mut settings = Settings::from_ghostty(&ghostty);
             // Keep a size picked with cmd-= / cmd-- relative to the config.
@@ -459,19 +476,6 @@ impl WorkspaceView {
             ));
         }
         self.ghostty_sources = ghostty.sources;
-        if let Some(path) = self.env.config_path.clone() {
-            match ChdaConfig::load(&path) {
-                Ok(config) => {
-                    if config != self.config {
-                        self.apply_config(config, window, cx);
-                    }
-                }
-                Err(e) => problems.push(format!(
-                    "{}: {e}. Kept the previous values.",
-                    path.display()
-                )),
-            }
-        }
         self.watch_config_files();
         let problem = (!problems.is_empty()).then(|| problems.join(" "));
         if problem.is_some() {
@@ -1911,7 +1915,7 @@ impl WorkspaceView {
                         command: PaletteCommand::CheckoutBranch(repo.clone(), b),
                     })
                     .collect();
-                self.open_palette(items, window, cx);
+                self.open_palette(items, 0, "Check out a branch", window, cx);
             }
             MenuAction::PruneMissing { repo, worktree } => {
                 let task =
@@ -2077,6 +2081,7 @@ impl WorkspaceView {
             ("Increase font size", "cmd-=", "font_bigger"),
             ("Decrease font size", "cmd--", "font_smaller"),
             ("Reset font size", "cmd-0", "font_reset"),
+            ("Select theme...", "preview with the arrow keys", "theme"),
             ("Go to waiting agent", "cmd-shift-a", "waiting_agent"),
         ]
         .into_iter()
@@ -2125,34 +2130,102 @@ impl WorkspaceView {
 
     fn toggle_palette(&mut self, _: &TogglePalette, window: &mut Window, cx: &mut Context<Self>) {
         if self.palette.take().is_some() {
+            self.restore_theme(cx);
             self.focus_active(window, cx);
             return;
         }
         let items = self.palette_items(cx);
-        self.open_palette(items, window, cx);
+        self.open_palette(items, 0, "Type a command, worktree or session", window, cx);
+    }
+
+    /// Pick a theme from the bundled ones and the Ghostty theme directories,
+    /// showing each as the selection moves.
+    fn select_theme(&mut self, _: &SelectTheme, window: &mut Window, cx: &mut Context<Self>) {
+        let ghostty_theme = chda_config::load(&self.ghostty_paths, None).theme;
+        let mut items = vec![PaletteItem {
+            label: "Follow Ghostty config".into(),
+            detail: ghostty_theme.unwrap_or_else(|| "default colors".into()),
+            command: PaletteCommand::SetTheme(None),
+        }];
+        items.extend(
+            chda_config::theme_names(&self.ghostty_paths)
+                .into_iter()
+                .map(|name| PaletteItem {
+                    label: name.clone(),
+                    detail: String::new(),
+                    command: PaletteCommand::SetTheme(Some(name)),
+                }),
+        );
+        let current = PaletteCommand::SetTheme(self.config.theme.clone());
+        let selected = items.iter().position(|i| i.command == current).unwrap_or(0);
+        self.open_palette(items, selected, "Select a theme", window, cx);
+    }
+
+    /// Show `theme` (`None`: the Ghostty config's) without saving it.
+    fn show_theme(&mut self, theme: Option<&str>, cx: &mut Context<Self>) {
+        let ghostty = chda_config::load(&self.ghostty_paths, theme);
+        if !ghostty.problems.is_empty() {
+            return;
+        }
+        let mut settings = Settings::from_ghostty(&ghostty);
+        settings.font_size = self.settings.font_size;
+        if settings != self.settings {
+            self.apply_settings(settings, cx);
+        }
+        cx.notify();
     }
 
     fn open_palette(
         &mut self,
         items: Vec<PaletteItem>,
+        selected: usize,
+        placeholder: &str,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
         let bg = hsla(self.settings.colors.background.unwrap_or_default());
         let fg = hsla(self.settings.colors.foreground.unwrap_or_default());
-        let palette = cx.new(|cx| Palette::new(items, fg, blend(bg, fg, 0.08), window, cx));
+        let palette = cx.new(|cx| {
+            Palette::new(
+                items,
+                selected,
+                placeholder,
+                fg,
+                blend(bg, fg, 0.08),
+                window,
+                cx,
+            )
+        });
         let sub = cx.subscribe_in(&palette, window, |this, _, event, window, cx| {
-            this.palette = None;
             match event {
+                PaletteEvent::Highlighted(PaletteCommand::SetTheme(theme)) => {
+                    this.previewing_theme = true;
+                    this.show_theme(theme.as_deref(), cx);
+                    return;
+                }
+                PaletteEvent::Highlighted(_) => return,
                 PaletteEvent::Chosen(command) => {
+                    this.palette = None;
                     this.run_palette_command(command.clone(), window, cx)
                 }
-                PaletteEvent::Dismissed => this.focus_active(window, cx),
+                PaletteEvent::Dismissed => {
+                    this.palette = None;
+                    this.restore_theme(cx);
+                    this.focus_active(window, cx);
+                }
             }
             cx.notify();
         });
         self.palette = Some((palette, sub));
         cx.notify();
+    }
+
+    /// Undo a theme preview the palette was closed on.
+    fn restore_theme(&mut self, cx: &mut Context<Self>) {
+        if std::mem::take(&mut self.previewing_theme) {
+            let theme = self.config.theme.clone();
+            self.show_theme(theme.as_deref(), cx);
+        }
     }
 
     fn run_palette_command(
@@ -2181,6 +2254,7 @@ impl WorkspaceView {
                 "font_smaller" => self.decrease_font_size(&DecreaseFontSize, window, cx),
                 "font_reset" => self.reset_font_size(&ResetFontSize, window, cx),
                 "waiting_agent" => self.go_to_waiting_agent(&GoToWaitingAgent, window, cx),
+                "theme" => self.select_theme(&SelectTheme, window, cx),
                 "rename_tab" => {
                     if let Some(tab) = self.ws.active_tab().map(|t| t.id) {
                         self.start_rename(tab, window, cx);
@@ -2204,6 +2278,13 @@ impl WorkspaceView {
                 }
             }
             PaletteCommand::NewWorktree(repo) => self.open_sheet(repo, window, cx),
+            PaletteCommand::SetTheme(theme) => {
+                self.previewing_theme = false;
+                self.show_theme(theme.as_deref(), cx);
+                self.config.theme = theme;
+                self.save_config();
+                self.focus_active(window, cx);
+            }
             PaletteCommand::CheckoutBranch(repo, branch) => {
                 let path = self.config.worktree_path(&repo, &branch);
                 match chda_core::create_worktree(&repo, &branch, &path) {
@@ -2262,6 +2343,7 @@ impl WorkspaceView {
             || self.context_menu.take().is_some()
             || self.status_line.take().is_some()
         {
+            self.restore_theme(cx);
             self.focus_active(window, cx);
             cx.notify();
         }
@@ -2720,6 +2802,7 @@ impl Render for WorkspaceView {
             .on_action(cx.listener(Self::decrease_font_size))
             .on_action(cx.listener(Self::reset_font_size))
             .on_action(cx.listener(Self::go_to_waiting_agent))
+            .on_action(cx.listener(Self::select_theme))
             .on_action(cx.listener(|this, _: &NextTab, w, cx| {
                 this.ws.cycle_tab_in_group(true);
                 this.focus_active(w, cx);
