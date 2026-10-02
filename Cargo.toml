@@ -14,7 +14,7 @@ members = [
 [workspace.package]
 version = "0.1.6"
 edition = "2024"
-description = "Terminal with a git worktree sidebar and a live status board for Claude Code and Codex"
+description = "Terminal with a git worktree sidebar and a live status board for coding agents"
 keywords = ["terminal", "git-worktree", "claude-code", "codex", "ghostty"]
 categories = ["command-line-utilities", "development-tools"]
 rust-version = "1.98"

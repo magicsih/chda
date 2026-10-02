@@ -18,6 +18,12 @@ and jumping to the waiting agent.
 
 Done since v0.1.6: Gemini CLI, GitHub Copilot CLI and OpenCode adapters, an
 MCP server (`chda mcp`) so agents can create worktrees, open tabs and report
-status, GitLab and Gitea pull request status, ligatures and Kitty graphics.
+status, GitLab and Gitea pull request status, pull request badges per GitHub
+host (Enterprise, SSH aliases), badge tooltips, ligatures, Kitty graphics, a
+Mermaid diagram viewer, right-click actions on paths, drag and drop, a diff
+summary and diff tab per worktree, worktrees from any branch with random
+names, branch notes, updating a branch from its upstream, one-step worktree
+deletion, a session list ordered by last message with multi-session resume,
+reopening agent conversations on restore and agent launch presets.
 
 Decisions that are hard to reverse are summarized in `docs/decisions/`.
