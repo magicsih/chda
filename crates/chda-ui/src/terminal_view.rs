@@ -172,6 +172,12 @@ impl TerminalView {
         if let Some(lang) = env.system.pane_locale() {
             options.env.push(("LANG".to_owned(), lang));
         }
+        // The login shell a plain pane runs (chda-pty starts $SHELL as one).
+        if let Some(shell) = &env.shell {
+            options
+                .env
+                .push(("SHELL".to_owned(), shell.to_string_lossy().into_owned()));
+        }
         options.env.extend(env.pane_env.iter().cloned());
         // Agents started in this pane report it back with their hook events.
         options

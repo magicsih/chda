@@ -67,6 +67,9 @@ deny = [
 unknown-registry = "deny"
 unknown-git = "deny"
 
+# GPUI's test support (dev-dependency of chda-ui) pins proptest to a commit.
+allow-git = ["https://github.com/proptest-rs/proptest"]
+
 [sources.allow-org]
 # GPUI and the forks Zed maintains for it.
 github = ["zed-industries"]
