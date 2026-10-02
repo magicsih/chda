@@ -117,7 +117,9 @@ its transcripts live and how to parse them. Agents report through
 directory, or appends to `events.jsonl` when no app is running. The UI
 refreshes badges every 5 s while the sidebar is visible, one refresh per
 repository at a time, and re-indexes sessions every 30 s with an mtime/size
-cache. The UI reaches git and agents only through `chda-core`.
+cache. Sessions are ordered by their transcript's last write (the last
+message). Resuming several at once opens one tab and gives each next session
+the largest pane, split along its longer side (`Workspace::split_largest`). The UI reaches git and agents only through `chda-core`.
 
 Every pane's shell gets `CHDA_PANE_ID`. Agents inherit it and `chda hook`
 sends it back, so status is tracked per pane as well as per worktree: tabs

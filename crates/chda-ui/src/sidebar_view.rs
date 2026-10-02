@@ -3,11 +3,12 @@
 use std::path::PathBuf;
 
 use chda_core::{
-    AgentStatus, CheckState, GitBadges, PrInfo, PrState, RepoEntry, Sidebar, WorktreeEntry,
+    AgentStatus, CheckState, GitBadges, PrInfo, PrState, RepoEntry, SessionEntry, Sidebar,
+    WorktreeEntry, relative_age,
 };
 use gpui::{
-    AnyElement, App, Context, ElementId, EventEmitter, FocusHandle, Focusable, Hsla, MouseButton,
-    MouseDownEvent, Pixels, Point, Render, Window, div, prelude::*,
+    AnyElement, App, ClickEvent, Context, ElementId, EventEmitter, FocusHandle, Focusable, Hsla,
+    MouseButton, MouseDownEvent, Pixels, Point, Render, Window, div, prelude::*,
 };
 
 /// What the user asked for in the sidebar.
@@ -20,12 +21,9 @@ pub enum SidebarEvent {
     RepoMenu(PathBuf, Point<Pixels>),
     /// Ask for a branch name for a new worktree of this repo.
     NewWorktree(PathBuf),
-    /// Resume an agent session in its worktree.
-    ResumeSession {
-        worktree: PathBuf,
-        agent: String,
-        session: String,
-    },
+    /// Resume agent sessions: one opens a tab, several open one tab with a
+    /// pane each.
+    ResumeSessions(Vec<SessionPick>),
     AddRepo,
     /// Open a URL (a pull request badge was clicked).
     OpenUrl(String),
@@ -35,18 +33,54 @@ pub enum SidebarEvent {
     JumpToAgent(PathBuf),
 }
 
+/// A past agent session to resume, and the worktree it belongs to.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct SessionPick {
+    pub worktree: PathBuf,
+    pub agent: String,
+    pub session: String,
+}
+
+/// How an agent is labeled in session lists.
+#[derive(Clone, Debug)]
+pub struct AgentLabel {
+    /// Agent id, e.g. `claude`.
+    pub id: String,
+    /// e.g. `CC`.
+    pub short: String,
+    /// e.g. `Claude Code`.
+    pub name: String,
+    pub color: Hsla,
+}
+
+/// Label colors, by adapter order.
+const AGENT_COLORS: [u32; 5] = [0xcba6f7, 0x94e2d5, 0xf9e2af, 0xf5c2e7, 0x74c7ec];
+
+impl AgentLabel {
+    pub fn new(index: usize, id: &str, short: String, name: &str) -> Self {
+        Self {
+            id: id.to_owned(),
+            short,
+            name: name.to_owned(),
+            color: gpui::rgb(AGENT_COLORS[index % AGENT_COLORS.len()]).into(),
+        }
+    }
+}
+
 pub struct SidebarView {
     pub model: Sidebar,
     /// The first session index has finished.
     pub sessions_loaded: bool,
+    /// Labels and names of the agents chda knows.
+    pub agents: Vec<AgentLabel>,
+    /// Sessions cmd-clicked to resume together, in click order.
+    pub picked: Vec<SessionPick>,
     expanded: Vec<PathBuf>,
     /// Highlighted worktree (e.g. after a notification for a closed pane).
     selected: Option<PathBuf>,
     focus_handle: FocusHandle,
     fg: Hsla,
     bg: Hsla,
-    /// Agent id to display name ("claude" to "Claude Code"), for tooltips.
-    agent_names: Vec<(String, String)>,
 }
 
 impl EventEmitter<SidebarEvent> for SidebarView {}
@@ -61,21 +95,17 @@ pub fn status_color(status: AgentStatus) -> Hsla {
 }
 
 impl SidebarView {
-    pub fn new(
-        fg: Hsla,
-        bg: Hsla,
-        agent_names: Vec<(String, String)>,
-        cx: &mut Context<Self>,
-    ) -> Self {
+    pub fn new(fg: Hsla, bg: Hsla, agents: Vec<AgentLabel>, cx: &mut Context<Self>) -> Self {
         Self {
             model: Sidebar::new(),
             sessions_loaded: false,
+            agents,
+            picked: Vec::new(),
             expanded: Vec::new(),
             selected: None,
             focus_handle: cx.focus_handle(),
             fg,
             bg,
-            agent_names,
         }
     }
 
@@ -368,7 +398,7 @@ impl SidebarView {
                     ))
                     .flex_shrink_0()
                     .text_color(status_color(status))
-                    .tooltip(crate::tooltip::text(status_tooltip(wt, &self.agent_names)))
+                    .tooltip(crate::tooltip::text(status_tooltip(wt, &self.agents)))
                     .on_click({
                         let path = path.clone();
                         cx.listener(move |_, _, _, cx| {
@@ -390,47 +420,12 @@ impl SidebarView {
             .children(badges.into_iter().map(|b| div().text_xs().child(b)));
         let mut col = div().flex().flex_col().child(row);
         if expanded {
-            for s in wt.sessions.iter().take(8) {
-                let (agent, id) = (s.agent.clone(), s.id.clone());
-                let path = path.clone();
-                col = col.child(
-                    div()
-                        .id(ElementId::Name(format!("sess:{id}").into()))
-                        .flex()
-                        .flex_row()
-                        .gap_1()
-                        .pl_8()
-                        .pr_2()
-                        .py_0p5()
-                        .text_xs()
-                        .text_color(fg.opacity(0.75))
-                        .cursor_pointer()
-                        .hover(|s| s.bg(fg.opacity(0.08)))
-                        .on_click(cx.listener(move |_, _, _, cx| {
-                            cx.emit(SidebarEvent::ResumeSession {
-                                worktree: path.clone(),
-                                agent: agent.clone(),
-                                session: id.clone(),
-                            })
-                        }))
-                        .child(
-                            div()
-                                .text_color(fg.opacity(0.5))
-                                .child(short_agent(&s.agent)),
-                        )
-                        .child(
-                            div()
-                                .flex_1()
-                                .min_w_0()
-                                .overflow_hidden()
-                                .child(s.snippet.clone()),
-                        )
-                        .child(
-                            div()
-                                .text_color(fg.opacity(0.5))
-                                .child(format!("{}", s.message_count)),
-                        ),
-                );
+            let now = std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map(|d| d.as_millis() as u64)
+                .unwrap_or(0);
+            for session in wt.sessions.iter().take(8) {
+                col = col.child(self.render_session(&path, session, now, cx));
             }
         }
         col.into_any_element()
@@ -498,7 +493,7 @@ fn pr_tooltip(pr: &PrInfo) -> String {
 }
 
 /// The status dot's tooltip: each busy agent, most urgent first.
-fn status_tooltip(wt: &WorktreeEntry, names: &[(String, String)]) -> String {
+fn status_tooltip(wt: &WorktreeEntry, labels: &[AgentLabel]) -> String {
     let mut agents: Vec<(&String, AgentStatus)> = wt
         .agents
         .iter()
@@ -512,10 +507,10 @@ fn status_tooltip(wt: &WorktreeEntry, names: &[(String, String)]) -> String {
     let lines: Vec<String> = agents
         .into_iter()
         .map(|(id, status)| {
-            let name = names
+            let name = labels
                 .iter()
-                .find(|(i, _)| i == id)
-                .map_or(id.as_str(), |(_, n)| n.as_str());
+                .find(|a| a.id == *id)
+                .map_or(id.as_str(), |a| a.name.as_str());
             match status {
                 AgentStatus::Working => format!("{name} is working."),
                 AgentStatus::WaitingInput => format!("{name} is waiting for input."),
@@ -527,11 +522,120 @@ fn status_tooltip(wt: &WorktreeEntry, names: &[(String, String)]) -> String {
     format!("{}\nClick to go there.", lines.join("\n"))
 }
 
-fn short_agent(agent: &str) -> &'static str {
-    match agent {
-        "claude" => "CC",
-        "codex" => "CX",
-        _ => "??",
+impl SidebarView {
+    /// One past session: agent label, first prompt, message count and time
+    /// since the last message; "Resume" on hover.
+    fn render_session(
+        &self,
+        worktree: &std::path::Path,
+        session: &SessionEntry,
+        now: u64,
+        cx: &mut Context<Self>,
+    ) -> AnyElement {
+        let fg = self.fg;
+        let pick = SessionPick {
+            worktree: worktree.to_path_buf(),
+            agent: session.agent.clone(),
+            session: session.id.clone(),
+        };
+        let picked = self.picked.contains(&pick);
+        let label = self.agents.iter().find(|a| a.id == session.agent);
+        let (short, name, color) = match label {
+            Some(l) => (l.short.clone(), l.name.clone(), l.color),
+            None => (
+                session.agent.clone(),
+                session.agent.clone(),
+                fg.opacity(0.5),
+            ),
+        };
+        let group: gpui::SharedString = format!("sess:{}", session.id).into();
+        let messages = match session.message_count {
+            1 => "1 message".to_owned(),
+            n => format!("{n} messages"),
+        };
+        div()
+            .id(ElementId::Name(group.clone()))
+            .group(group.clone())
+            .flex()
+            .flex_row()
+            .gap_1()
+            .pl_8()
+            .pr_2()
+            .py_0p5()
+            .text_xs()
+            .text_color(fg.opacity(0.75))
+            .cursor_pointer()
+            .when(picked, |d| d.bg(fg.opacity(0.14)))
+            .hover(|s| s.bg(fg.opacity(0.08)))
+            .tooltip(crate::tooltip::text(format!(
+                "{name}, {messages}. Click to resume in a new tab; \
+                 cmd-click to pick several and resume them side by side."
+            )))
+            .on_click(cx.listener(move |this, e: &ClickEvent, _, cx| {
+                if e.modifiers().platform {
+                    this.toggle_pick(pick.clone(), cx);
+                } else {
+                    this.picked.clear();
+                    cx.emit(SidebarEvent::ResumeSessions(vec![pick.clone()]));
+                    cx.notify();
+                }
+            }))
+            .child(
+                div()
+                    .id(ElementId::Name(format!("sess-agent:{}", session.id).into()))
+                    .flex_shrink_0()
+                    .text_color(color)
+                    .tooltip(crate::tooltip::text(name.clone()))
+                    .child(short),
+            )
+            .child(
+                div()
+                    .flex_1()
+                    .min_w_0()
+                    .overflow_hidden()
+                    .whitespace_nowrap()
+                    .text_ellipsis()
+                    .child(session.snippet.clone()),
+            )
+            .child(
+                div()
+                    .flex()
+                    .flex_row()
+                    .gap_1()
+                    .flex_shrink_0()
+                    .text_color(fg.opacity(0.5))
+                    .group_hover(group.clone(), |s| s.hidden())
+                    .child(format!("{}", session.message_count))
+                    .child(relative_age(now, session.last_active_at)),
+            )
+            .child(
+                div()
+                    .hidden()
+                    .flex_shrink_0()
+                    .text_color(fg)
+                    .group_hover(group, |s| s.block())
+                    .child("Resume"),
+            )
+            .into_any_element()
+    }
+
+    /// Add a session to the ones to resume together, or take it out.
+    pub fn toggle_pick(&mut self, pick: SessionPick, cx: &mut Context<Self>) {
+        if let Some(i) = self.picked.iter().position(|p| *p == pick) {
+            self.picked.remove(i);
+        } else {
+            self.picked.push(pick);
+        }
+        cx.notify();
+    }
+
+    /// Resume the picked sessions together.
+    pub fn resume_picked(&mut self, cx: &mut Context<Self>) {
+        let picked = std::mem::take(&mut self.picked);
+        if !picked.is_empty() {
+            cx.emit(SidebarEvent::ResumeSessions(picked));
+        }
+        cx.notify();
     }
 }
 
@@ -637,6 +741,47 @@ impl Render for SidebarView {
                 )
                 .children(active)
                 .child(div().h(gpui::px(6.0)))
+            })
+            .when(!self.picked.is_empty(), |d| {
+                let count = self.picked.len();
+                d.child(
+                    div()
+                        .flex()
+                        .flex_row()
+                        .gap_2()
+                        .items_center()
+                        .mx_2()
+                        .mb_1()
+                        .px_2()
+                        .py_1()
+                        .rounded_sm()
+                        .bg(fg.opacity(0.1))
+                        .text_xs()
+                        .child(
+                            div()
+                                .id("resume-picked")
+                                .flex_1()
+                                .cursor_pointer()
+                                .hover(|s| s.text_color(status_color(AgentStatus::Working)))
+                                .on_click(cx.listener(|this, _, _, cx| this.resume_picked(cx)))
+                                .child(match count {
+                                    1 => "Resume 1 session".to_owned(),
+                                    n => format!("Resume {n} sessions side by side"),
+                                }),
+                        )
+                        .child(
+                            div()
+                                .id("clear-picked")
+                                .cursor_pointer()
+                                .text_color(fg.opacity(0.6))
+                                .hover(|s| s.text_color(fg))
+                                .on_click(cx.listener(|this, _, _, cx| {
+                                    this.picked.clear();
+                                    cx.notify();
+                                }))
+                                .child("Clear"),
+                        ),
+                )
             })
             .when(!self.sessions_loaded && !empty, |d| {
                 d.child(
@@ -765,8 +910,8 @@ mod tests {
     #[test]
     fn status_tooltip_names_busy_agents_most_urgent_first() {
         let names = vec![
-            ("claude".to_owned(), "Claude Code".to_owned()),
-            ("codex".to_owned(), "Codex".to_owned()),
+            AgentLabel::new(0, "claude", "CC".into(), "Claude Code"),
+            AgentLabel::new(1, "codex", "CX".into(), "Codex"),
         ];
         let mut wt = WorktreeEntry::default();
         assert_eq!(status_tooltip(&wt, &names), "No agent is active here.");

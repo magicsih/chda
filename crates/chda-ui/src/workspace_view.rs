@@ -26,7 +26,7 @@ use gpui::{
 use crate::palette::{Palette, PaletteCommand, PaletteEvent, PaletteItem};
 use crate::platform;
 use crate::settings::Settings;
-use crate::sidebar_view::{SidebarEvent, SidebarView};
+use crate::sidebar_view::{AgentLabel, SessionPick, SidebarEvent, SidebarView};
 use crate::terminal_element::hsla;
 use crate::terminal_view::{TerminalEvent, TerminalView};
 use crate::text_input::{TextInput, TextInputEvent};
@@ -218,12 +218,13 @@ impl WorkspaceView {
         let config = env.load_config();
         let bg = hsla(settings.colors.background.unwrap_or_default());
         let fg = hsla(settings.colors.foreground.unwrap_or_default());
-        let agent_names = env
+        let agents = env
             .adapters
             .iter()
-            .map(|a| (a.id().as_str().to_owned(), a.display_name().to_owned()))
+            .enumerate()
+            .map(|(i, a)| AgentLabel::new(i, a.id().as_str(), a.short_label(), a.display_name()))
             .collect();
-        let sidebar = cx.new(|cx| SidebarView::new(fg, blend(bg, fg, 0.04), agent_names, cx));
+        let sidebar = cx.new(|cx| SidebarView::new(fg, blend(bg, fg, 0.04), agents, cx));
         let sidebar_sub = cx.subscribe_in(&sidebar, window, |this, _, event, window, cx| {
             this.on_sidebar_event(event.clone(), window, cx)
         });
@@ -1678,15 +1679,7 @@ impl WorkspaceView {
                 });
             }
             SidebarEvent::NewWorktree(repo) => self.open_sheet(repo, window, cx),
-            SidebarEvent::ResumeSession {
-                worktree,
-                agent,
-                session,
-            } => {
-                if let Some(agent) = AgentId::parse(&agent) {
-                    self.run_agent(&worktree, agent, Some(SessionId(session)), window, cx);
-                }
-            }
+            SidebarEvent::ResumeSessions(picks) => self.resume_sessions(picks, window, cx),
             SidebarEvent::AddRepo => self.add_repo(&AddRepo, window, cx),
             SidebarEvent::OpenUrl(url) => cx.open_url(&url),
             SidebarEvent::JumpToAgent(path) => self.jump_to_worktree_agent(&path, window, cx),
@@ -1771,6 +1764,65 @@ impl WorkspaceView {
         }
         let argv = self.agent_argv(cwd, agent, resume.as_ref());
         self.open_tab_at(Some(cwd.to_path_buf()), argv, window, cx);
+    }
+
+    /// Resume past sessions in one new tab: the first fills it, each next
+    /// one splits the largest pane along its longer side.
+    pub(crate) fn resume_sessions(
+        &mut self,
+        picks: Vec<SessionPick>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let mut launches = Vec::new();
+        let mut missing = Vec::new();
+        for pick in picks {
+            let adapter = AgentId::parse(&pick.agent)
+                .and_then(|id| self.adapters.iter().find(|a| a.id() == id));
+            let Some(adapter) = adapter else {
+                continue;
+            };
+            if !adapter.is_installed() {
+                missing.push(adapter.display_name().to_owned());
+                continue;
+            }
+            let session = SessionId(pick.session);
+            if let Some(argv) = self.agent_argv(&pick.worktree, adapter.id(), Some(&session)) {
+                launches.push((pick.worktree, argv));
+            }
+        }
+        missing.dedup();
+        if !missing.is_empty() {
+            self.status_line = Some(format!("{} is not on PATH", missing.join(", ")));
+        }
+        if launches.is_empty() {
+            cx.notify();
+            return;
+        }
+        let aspect = self.tab_aspect(window);
+        for (i, (cwd, argv)) in launches.into_iter().enumerate() {
+            let pane = if i == 0 {
+                Some(self.ws.new_tab().1)
+            } else {
+                self.ws.split_largest(aspect)
+            };
+            if let Some(pane) = pane {
+                self.open_pane(pane, Some(cwd), Some(argv), window, cx);
+            }
+        }
+        self.focus_active(window, cx);
+    }
+
+    /// Width over height of the area tabs are drawn in.
+    fn tab_aspect(&self, window: &Window) -> f32 {
+        let size = window.viewport_size();
+        let sidebar = if self.sidebar_visible {
+            self.config.sidebar_width as f32
+        } else {
+            0.0
+        };
+        let width = (f32::from(size.width) - sidebar).max(1.0);
+        width / f32::from(size.height).max(1.0)
     }
 
     pub(crate) fn run_menu_action(
@@ -2192,6 +2244,10 @@ impl WorkspaceView {
             command: PaletteCommand::Action(action),
         })
         .collect();
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_millis() as u64)
+            .unwrap_or(0);
         let sidebar = &self.sidebar.read(cx).model;
         for repo in &sidebar.repos {
             items.push(PaletteItem {
@@ -2215,7 +2271,12 @@ impl WorkspaceView {
                 }
                 for s in wt.sessions.iter().take(5) {
                     items.push(PaletteItem {
-                        label: format!("Resume {} in {}/{branch}", s.agent, repo.name),
+                        label: format!(
+                            "Resume {} in {}/{branch} ({})",
+                            self.agent_name(&s.agent),
+                            repo.name,
+                            chda_core::relative_age(now, s.last_active_at)
+                        ),
                         detail: s.snippet.clone(),
                         command: PaletteCommand::ResumeSession {
                             worktree: wt.path.clone(),

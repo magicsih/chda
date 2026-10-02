@@ -647,6 +647,30 @@ impl Workspace {
         Some(new)
     }
 
+    /// Split the active tab's largest pane along its longer side, for
+    /// opening several panes at once: in a landscape tab two panes sit side
+    /// by side and four form a 2x2 grid. `aspect` is the tab's width over
+    /// its height. The new pane takes focus.
+    pub fn split_largest(&mut self, aspect: f32) -> Option<PaneId> {
+        let tab = self.active_tab()?;
+        let mut largest: Option<(PaneId, Rect)> = None;
+        for (pane, rect) in tab.layout() {
+            let area = rect.w * rect.h;
+            // Strictly larger, so ties go to the first pane in tree order.
+            if largest.is_none_or(|(_, r)| area > r.w * r.h + f32::EPSILON) {
+                largest = Some((pane, rect));
+            }
+        }
+        let (pane, rect) = largest?;
+        let axis = if rect.w * aspect >= rect.h {
+            Axis::Horizontal
+        } else {
+            Axis::Vertical
+        };
+        self.active_tab_mut()?.focused = pane;
+        self.split(axis)
+    }
+
     /// Remove a pane wherever it is. Empty tabs are removed too. Returns the
     /// tab that was closed, if any.
     pub fn close_pane(&mut self, pane: PaneId) -> Option<TabId> {
@@ -895,6 +919,31 @@ mod tests {
         ws.rename_tab(tab.id, "");
         let tab = ws.active_tab().unwrap().clone();
         assert_eq!(ws.tab_title(&tab), "feat/x");
+    }
+
+    #[test]
+    fn split_largest_tiles_a_landscape_tab_into_a_grid() {
+        let mut ws = Workspace::new();
+        let (_, a) = ws.new_tab();
+        let b = ws.split_largest(1.6).unwrap();
+        let c = ws.split_largest(1.6).unwrap();
+        let d = ws.split_largest(1.6).unwrap();
+        let rects: std::collections::HashMap<PaneId, Rect> =
+            ws.active_tab().unwrap().layout().into_iter().collect();
+        let at = |p: PaneId| (rects[&p].x, rects[&p].y, rects[&p].w, rects[&p].h);
+        assert_eq!(at(a), (0.0, 0.0, 0.5, 0.5));
+        assert_eq!(at(c), (0.0, 0.5, 0.5, 0.5));
+        assert_eq!(at(b), (0.5, 0.0, 0.5, 0.5));
+        assert_eq!(at(d), (0.5, 0.5, 0.5, 0.5));
+        assert_eq!(ws.focused_pane(), Some(d));
+
+        // A portrait tab stacks the first two.
+        let mut ws = Workspace::new();
+        let (_, a) = ws.new_tab();
+        let b = ws.split_largest(0.5).unwrap();
+        let rects: std::collections::HashMap<PaneId, Rect> =
+            ws.active_tab().unwrap().layout().into_iter().collect();
+        assert_eq!((rects[&a].h, rects[&b].y), (0.5, 0.5));
     }
 
     #[test]

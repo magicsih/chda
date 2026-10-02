@@ -8,8 +8,7 @@ use std::process::Command;
 
 use serde_json::Value;
 
-use crate::claude::file_mtime_ms;
-use crate::session::{parse_rfc3339_ms, snippet};
+use crate::session::{file_mtime_ms, parse_rfc3339_ms, snippet};
 use crate::{AgentAdapter, AgentId, AgentSession, HookInstallReport, SessionId, which};
 
 pub struct CodexAdapter;
@@ -62,6 +61,10 @@ impl AgentAdapter for CodexAdapter {
 
     fn display_name(&self) -> &str {
         "Codex"
+    }
+
+    fn short_label(&self) -> String {
+        "CX".into()
     }
 
     fn is_installed(&self) -> bool {
@@ -165,11 +168,13 @@ pub fn parse_rollout(file: &Path) -> Option<AgentSession> {
         }
     }
     let first = first?;
+    let last_active_at = file_mtime_ms(file)?;
     Some(AgentSession {
         id: SessionId(id?),
         agent: AgentId::Codex,
         cwd: cwd?,
-        started_at: started_at.or_else(|| file_mtime_ms(file))?,
+        started_at: started_at.unwrap_or(last_active_at),
+        last_active_at,
         snippet: snippet(&first, 120),
         message_count: count,
         file: file.to_path_buf(),

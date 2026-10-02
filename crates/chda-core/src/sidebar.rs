@@ -76,8 +76,26 @@ pub struct SessionEntry {
     pub agent: String,
     pub id: String,
     pub started_at: u64,
+    /// When the session's last message was written.
+    pub last_active_at: u64,
     pub snippet: String,
     pub message_count: usize,
+}
+
+/// How long ago `then` was, for compact lists: `now`, `3m`, `2h`,
+/// `yesterday`, `5d`. Both in milliseconds since the epoch.
+pub fn relative_age(now: u64, then: u64) -> String {
+    const MINUTE: u64 = 60_000;
+    const HOUR: u64 = 60 * MINUTE;
+    const DAY: u64 = 24 * HOUR;
+    let ago = now.saturating_sub(then);
+    match ago {
+        _ if ago < MINUTE => "now".into(),
+        _ if ago < HOUR => format!("{}m", ago / MINUTE),
+        _ if ago < DAY => format!("{}h", ago / HOUR),
+        _ if ago < 2 * DAY => "yesterday".into(),
+        _ => format!("{}d", ago / DAY),
+    }
 }
 
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
@@ -92,7 +110,7 @@ pub struct WorktreeEntry {
     pub merged: bool,
     /// Agent status per agent id.
     pub agents: BTreeMap<String, AgentStatus>,
-    /// Newest first.
+    /// Most recently active first.
     pub sessions: Vec<SessionEntry>,
     /// Milliseconds since the epoch of the last agent event or session.
     pub last_activity: u64,
@@ -307,13 +325,14 @@ impl Sidebar {
         }
         for (cwd, session) in sessions {
             if let Some(w) = self.worktree_mut_for_path(cwd) {
-                w.last_activity = w.last_activity.max(session.started_at);
+                w.last_activity = w.last_activity.max(session.last_active_at);
                 w.sessions.push(session.clone());
             }
         }
         for repo in &mut self.repos {
             for w in &mut repo.worktrees {
-                w.sessions.sort_by_key(|s| std::cmp::Reverse(s.started_at));
+                w.sessions
+                    .sort_by_key(|s| std::cmp::Reverse(s.last_active_at));
             }
         }
         self.resort();
@@ -491,6 +510,7 @@ mod tests {
                 agent: "codex".into(),
                 id: "s".into(),
                 started_at: 50,
+                last_active_at: 60,
                 snippet: "hi".into(),
                 message_count: 1,
             },
@@ -508,5 +528,48 @@ mod tests {
         assert_eq!(branches(&sb), vec!["main", "a"]);
         assert!(sb.remove_repo(Path::new("/src/app")));
         assert!(sb.repos.is_empty());
+    }
+
+    #[test]
+    fn sessions_sort_by_last_message_and_show_their_age() {
+        let mut sb = Sidebar::new();
+        sb.add_repo(PathBuf::from("/src/app"));
+        sb.set_worktrees(Path::new("/src/app"), vec![wt("/src/app", "main", true)]);
+        let session = |id: &str, started_at, last_active_at| {
+            (
+                PathBuf::from("/src/app"),
+                SessionEntry {
+                    agent: "claude".into(),
+                    id: id.into(),
+                    started_at,
+                    last_active_at,
+                    snippet: String::new(),
+                    message_count: 1,
+                },
+            )
+        };
+        // Started first but talked to last: listed first.
+        sb.set_sessions(&[session("new", 20, 30), session("old", 10, 40)]);
+        let ids: Vec<&str> = sb.repos[0].worktrees[0]
+            .sessions
+            .iter()
+            .map(|s| s.id.as_str())
+            .collect();
+        assert_eq!(ids, vec!["old", "new"]);
+        assert_eq!(sb.repos[0].worktrees[0].last_activity, 40);
+
+        let now = 10 * 24 * 3_600_000;
+        let ages: Vec<String> = [
+            0,
+            30_000,
+            3 * 60_000,
+            2 * 3_600_000,
+            30 * 3_600_000,
+            5 * 86_400_000,
+        ]
+        .iter()
+        .map(|ago| relative_age(now, now - ago))
+        .collect();
+        assert_eq!(ages, vec!["now", "now", "3m", "2h", "yesterday", "5d"]);
     }
 }

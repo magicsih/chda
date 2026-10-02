@@ -8,7 +8,7 @@ use std::process::Command;
 
 use serde_json::{Value, json};
 
-use crate::session::{parse_rfc3339_ms, snippet};
+use crate::session::{file_mtime_ms, parse_rfc3339_ms, snippet};
 use crate::{AgentAdapter, AgentId, AgentSession, HookInstallReport, SessionId, which};
 
 pub struct ClaudeAdapter;
@@ -58,6 +58,10 @@ impl AgentAdapter for ClaudeAdapter {
 
     fn display_name(&self) -> &str {
         "Claude Code"
+    }
+
+    fn short_label(&self) -> String {
+        "CC".into()
     }
 
     fn is_installed(&self) -> bool {
@@ -194,25 +198,17 @@ pub fn parse_transcript(file: &Path) -> Option<AgentSession> {
     }
     let first = first?;
     let id = id.or_else(|| file.file_stem().map(|s| s.to_string_lossy().into_owned()))?;
+    let last_active_at = file_mtime_ms(file)?;
     Some(AgentSession {
         id: SessionId(id),
         agent: AgentId::Claude,
         cwd: cwd?,
-        started_at: started_at.or_else(|| file_mtime_ms(file))?,
+        started_at: started_at.unwrap_or(last_active_at),
+        last_active_at,
         snippet: snippet(&first, 120),
         message_count: count,
         file: file.to_path_buf(),
     })
-}
-
-pub(crate) fn file_mtime_ms(file: &Path) -> Option<u64> {
-    fs::metadata(file)
-        .ok()?
-        .modified()
-        .ok()?
-        .duration_since(std::time::UNIX_EPOCH)
-        .ok()
-        .map(|d| d.as_millis() as u64)
 }
 
 #[cfg(test)]

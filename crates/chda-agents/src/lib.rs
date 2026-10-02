@@ -57,6 +57,16 @@ pub struct HookInstallReport {
 pub trait AgentAdapter: Send + Sync {
     fn id(&self) -> AgentId;
     fn display_name(&self) -> &str;
+    /// Two-letter label for compact lists, e.g. `CC` for Claude Code. The
+    /// default is the display name's first two letters.
+    fn short_label(&self) -> String {
+        self.display_name()
+            .chars()
+            .filter(|c| c.is_alphanumeric())
+            .take(2)
+            .collect::<String>()
+            .to_uppercase()
+    }
     /// Whether the agent's binary is on `PATH`.
     fn is_installed(&self) -> bool;
     /// Command that runs the agent in `cwd`, optionally resuming a session.
@@ -110,7 +120,8 @@ pub fn which(name: &str) -> Option<PathBuf> {
         .find(|p| p.is_file())
 }
 
-/// Index the sessions that ran inside `worktrees`, newest first.
+/// Index the sessions that ran inside `worktrees`, most recently active
+/// first.
 pub fn index_sessions(
     adapters: &[Box<dyn AgentAdapter>],
     cache: &mut SessionCache,
@@ -133,7 +144,7 @@ pub fn index_sessions(
             }
         }
     }
-    out.sort_by_key(|s| std::cmp::Reverse(s.started_at));
+    out.sort_by_key(|s| std::cmp::Reverse(s.last_active_at));
     out
 }
 
