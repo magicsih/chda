@@ -350,6 +350,102 @@ pub fn local_branches(repo: &Path) -> io::Result<Vec<String>> {
         .collect())
 }
 
+/// How `worktree`'s branch relates to its upstream right after a fetch.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct UpstreamState {
+    pub ahead: usize,
+    pub behind: usize,
+    /// Local commits (not on the upstream) that no remote-tracking branch
+    /// has either: never pushed anywhere.
+    pub local_only: usize,
+}
+
+/// Fetch the upstream of `worktree`'s branch and compare. `None` when the
+/// branch has no upstream.
+pub fn fetch_upstream(worktree: &Path) -> io::Result<Option<UpstreamState>> {
+    let Some(branch) = current_branch(worktree)? else {
+        return Ok(None);
+    };
+    let remote = run(worktree, &["config", &format!("branch.{branch}.remote")])?;
+    let merge = run(worktree, &["config", &format!("branch.{branch}.merge")])?;
+    if !remote.status.success() || !merge.status.success() {
+        return Ok(None);
+    }
+    let remote = String::from_utf8_lossy(&remote.stdout).trim().to_owned();
+    let merge = String::from_utf8_lossy(&merge.stdout).trim().to_owned();
+    // "." is a local branch as upstream: nothing to fetch.
+    if remote != "." {
+        check(
+            worktree,
+            &["fetch", "--quiet", "--no-tags", &remote, &merge],
+        )?;
+    }
+    let counts = output(
+        worktree,
+        &["rev-list", "--left-right", "--count", "HEAD...@{upstream}"],
+    )?;
+    let mut counts = counts.split_whitespace().map(|n| n.parse::<usize>());
+    let (Some(Ok(ahead)), Some(Ok(behind))) = (counts.next(), counts.next()) else {
+        return Err(io::Error::other(format!(
+            "unexpected rev-list output for {branch}"
+        )));
+    };
+    let local_only = output(
+        worktree,
+        &[
+            "rev-list",
+            "--count",
+            "@{upstream}..HEAD",
+            "--not",
+            "--remotes",
+        ],
+    )?
+    .parse()
+    .map_err(io::Error::other)?;
+    Ok(Some(UpstreamState {
+        ahead,
+        behind,
+        local_only,
+    }))
+}
+
+/// How [`pull_upstream`] brings the upstream's commits in.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum PullMode {
+    FastForward,
+    /// Replay local commits on top of the upstream.
+    Rebase,
+    /// Merge commit.
+    Merge,
+}
+
+/// Bring the (already fetched) upstream into `worktree`. A rebase or merge
+/// that stops on conflicts is aborted, leaving the branch as it was, and
+/// reported as [`MergeOutcome::Conflicted`].
+pub fn pull_upstream(worktree: &Path, mode: PullMode) -> io::Result<MergeOutcome> {
+    let (args, abort): (&[&str], &[&str]) = match mode {
+        PullMode::FastForward => (&["merge", "--ff-only", "@{upstream}"], &[]),
+        PullMode::Rebase => (&["rebase", "@{upstream}"], &["rebase", "--abort"]),
+        PullMode::Merge => (
+            &["merge", "--no-edit", "@{upstream}"],
+            &["merge", "--abort"],
+        ),
+    };
+    let out = run(worktree, args)?;
+    if out.status.success() {
+        return Ok(MergeOutcome::Merged);
+    }
+    if abort.is_empty() {
+        return Err(io::Error::other(format!(
+            "git {} failed: {}",
+            args.join(" "),
+            String::from_utf8_lossy(&out.stderr).trim()
+        )));
+    }
+    let _ = run(worktree, abort);
+    Ok(MergeOutcome::Conflicted)
+}
+
 /// The branch checked out in `worktree`, if not detached.
 pub fn current_branch(worktree: &Path) -> io::Result<Option<String>> {
     let out = run(worktree, &["symbolic-ref", "--short", "-q", "HEAD"])?;
@@ -499,6 +595,81 @@ mod tests {
 
         let ids = resolve(&repo.path, &["main", "feat", "nope"]).unwrap();
         assert!(ids[0].is_some() && ids[1].is_some() && ids[2].is_none());
+    }
+
+    /// A clone of `repo` with `branch` tracking its origin.
+    fn clone_tracking(repo: &TempRepo, name: &str) -> PathBuf {
+        let clone = repo.root.join(name);
+        TempRepo::git(&repo.root, &["clone", "-q", "repo", name]);
+        TempRepo::git(&clone, &["config", "user.email", "t@example.com"]);
+        TempRepo::git(&clone, &["config", "user.name", "t"]);
+        TempRepo::git(&clone, &["config", "commit.gpgsign", "false"]);
+        clone
+    }
+
+    #[test]
+    fn upstream_fast_forward_rebase_and_merge() {
+        let repo = TempRepo::new("pull");
+        let clone = clone_tracking(&repo, "clone");
+        assert_eq!(fetch_upstream(&repo.path).unwrap(), None, "no upstream");
+
+        // Behind only: fast-forward.
+        repo.commit_file(&repo.path, "b.txt", "b\n");
+        let st = fetch_upstream(&clone).unwrap().unwrap();
+        assert_eq!((st.ahead, st.behind, st.local_only), (0, 1, 0));
+        assert_eq!(
+            pull_upstream(&clone, PullMode::FastForward).unwrap(),
+            MergeOutcome::Merged
+        );
+        assert!(clone.join("b.txt").is_file());
+
+        // Diverged with a local, never pushed commit: ff refuses, rebase works.
+        repo.commit_file(&repo.path, "c.txt", "c\n");
+        repo.commit_file(&clone, "local.txt", "l\n");
+        let st = fetch_upstream(&clone).unwrap().unwrap();
+        assert_eq!((st.ahead, st.behind, st.local_only), (1, 1, 1));
+        assert!(pull_upstream(&clone, PullMode::FastForward).is_err());
+        assert_eq!(
+            pull_upstream(&clone, PullMode::Rebase).unwrap(),
+            MergeOutcome::Merged
+        );
+        let st = fetch_upstream(&clone).unwrap().unwrap();
+        assert_eq!((st.ahead, st.behind), (1, 0));
+
+        // A local commit that is on another remote branch counts as pushed.
+        TempRepo::git(&clone, &["push", "-q", "origin", "HEAD:refs/heads/shared"]);
+        TempRepo::git(&clone, &["fetch", "-q", "origin"]);
+        repo.commit_file(&repo.path, "d.txt", "d\n");
+        let st = fetch_upstream(&clone).unwrap().unwrap();
+        assert_eq!((st.ahead, st.behind, st.local_only), (1, 1, 0));
+        assert_eq!(
+            pull_upstream(&clone, PullMode::Merge).unwrap(),
+            MergeOutcome::Merged
+        );
+        assert!(clone.join("d.txt").is_file());
+
+        // Conflicts are aborted and leave the branch as it was.
+        repo.commit_file(&repo.path, "a.txt", "upstream\n");
+        repo.commit_file(&clone, "a.txt", "local\n");
+        fetch_upstream(&clone).unwrap();
+        let head = output(&clone, &["rev-parse", "HEAD"]).unwrap();
+        for mode in [PullMode::Rebase, PullMode::Merge] {
+            assert_eq!(
+                pull_upstream(&clone, mode).unwrap(),
+                MergeOutcome::Conflicted
+            );
+            assert_eq!(output(&clone, &["rev-parse", "HEAD"]).unwrap(), head);
+            assert!(crate::status(&clone).unwrap().operation.is_none());
+        }
+        // A merge left half way is reported.
+        assert!(
+            !run(&clone, &["merge", "@{upstream}"])
+                .unwrap()
+                .status
+                .success()
+        );
+        assert_eq!(crate::status(&clone).unwrap().operation, Some("merge"));
+        TempRepo::git(&clone, &["merge", "--abort"]);
     }
 
     #[test]

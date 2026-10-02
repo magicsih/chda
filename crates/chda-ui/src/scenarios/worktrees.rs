@@ -327,3 +327,163 @@ fn merge_into_main_and_clean_up(cx: &mut TestAppContext) {
         .unwrap();
     assert!(!branch.success(), "the branch is deleted");
 }
+
+fn rev(dir: &std::path::Path, rev: &str) -> String {
+    let out = std::process::Command::new("git")
+        .args(["rev-parse", rev])
+        .current_dir(dir)
+        .output()
+        .unwrap();
+    assert!(out.status.success(), "rev-parse {rev}");
+    String::from_utf8_lossy(&out.stdout).trim().to_owned()
+}
+
+/// The "Update branch" item of a worktree's context menu.
+fn update_item(h: &mut Harness, worktree: &std::path::Path) -> (String, MenuAction) {
+    let event = crate::sidebar_view::SidebarEvent::WorktreeMenu(
+        worktree.to_path_buf(),
+        gpui::Point::default(),
+    );
+    h.cx.update(|window, cx| {
+        h.view
+            .update(cx, |v, cx| v.on_sidebar_event(event, window, cx))
+    });
+    h.read(|v, _| {
+        v.context_menu
+            .as_ref()
+            .unwrap()
+            .items
+            .iter()
+            .find(|(label, _)| label.starts_with("Update branch"))
+            .cloned()
+            .unwrap()
+    })
+}
+
+/// Update a worktree's branch from its upstream only when that is safe, and
+/// never rewrite pushed commits on divergence (#28).
+#[gpui::test]
+fn update_branch_from_upstream_when_safe(cx: &mut TestAppContext) {
+    let mut repo = std::path::PathBuf::new();
+    let mut other = std::path::PathBuf::new();
+    let mut h = Harness::open(cx, "pull", |home| {
+        repo = home.repo("app");
+        let src = repo.parent().unwrap();
+        git(src, &["clone", "-q", "--bare", "app", "origin.git"]);
+        git(&repo, &["remote", "add", "origin", "../origin.git"]);
+        git(&repo, &["fetch", "-q", "origin"]);
+        git(&repo, &["branch", "-q", "-u", "origin/main", "main"]);
+        git(src, &["clone", "-q", "origin.git", "other"]);
+        other = src.join("other");
+        git(
+            &other,
+            &["commit", "-q", "--allow-empty", "-m", "upstream 1"],
+        );
+        git(&other, &["push", "-q", "origin", "main"]);
+        config_with_repo(home, &repo);
+    });
+    // The first refresh fetches the default branch: main is one behind.
+    h.wait_for("main to be behind", {
+        let repo = repo.clone();
+        move |v, cx| {
+            v.sidebar
+                .read(cx)
+                .model
+                .worktree_for_path(&repo)
+                .is_some_and(|(_, w)| w.badges.behind == Some(1))
+        }
+    });
+    let head = |dir: &std::path::Path| rev(dir, "HEAD");
+
+    // Dirty: offered but disabled with the reason.
+    std::fs::write(repo.join("scratch.txt"), "x").unwrap();
+    h.wait_for("the change badge", {
+        let repo = repo.clone();
+        move |v, cx| {
+            v.sidebar
+                .read(cx)
+                .model
+                .worktree_for_path(&repo)
+                .is_some_and(|(_, w)| w.badges.dirty_count() == 1)
+        }
+    });
+    let (_, action) = update_item(&mut h, &repo);
+    assert!(
+        matches!(&action, MenuAction::Unavailable(r) if r == "1 uncommitted change(s)"),
+        "{action:?}"
+    );
+    std::fs::remove_file(repo.join("scratch.txt")).unwrap();
+    let refresh = MenuAction::RefreshRepo(repo.clone());
+    h.cx.update(|window, cx| {
+        h.view
+            .update(cx, |v, cx| v.run_menu_action(refresh, window, cx))
+    });
+
+    // An agent working here: disabled too.
+    h.hook(None, &repo, chda_core::agents::HookKind::PromptSubmitted);
+    h.wait_for("the agent to work", {
+        let repo = repo.clone();
+        move |v, cx| {
+            v.sidebar
+                .read(cx)
+                .model
+                .worktree_for_path(&repo)
+                .is_some_and(|(_, w)| w.badges.dirty_count() == 0 && !w.agents.is_empty())
+        }
+    });
+    let (_, action) = update_item(&mut h, &repo);
+    assert!(
+        matches!(&action, MenuAction::Unavailable(r) if r == "Claude Code is working here"),
+        "{action:?}"
+    );
+    h.hook(None, &repo, chda_core::agents::HookKind::SessionEnd);
+    h.wait_for("the agent to end", {
+        let repo = repo.clone();
+        move |v, cx| {
+            v.sidebar
+                .read(cx)
+                .model
+                .worktree_for_path(&repo)
+                .is_some_and(|(_, w)| w.status() == chda_core::AgentStatus::Idle)
+        }
+    });
+
+    // Behind only and clean: one click fast-forwards.
+    let (label, action) = update_item(&mut h, &repo);
+    assert_eq!(label, "Update branch (\u{2193}1)");
+    h.cx.update(|window, cx| {
+        h.view
+            .update(cx, |v, cx| v.run_menu_action(action, window, cx))
+    });
+    h.wait_for("the fast-forward", |v, _| {
+        v.status_line.as_deref() == Some("Fast-forwarded main by 1 commit(s)")
+    });
+    assert_eq!(head(&repo), head(&other));
+
+    // Diverged with a local commit nobody has: no silent rewrite; the sheet
+    // offers a rebase.
+    git(&repo, &["commit", "-q", "--allow-empty", "-m", "local"]);
+    git(
+        &other,
+        &["commit", "-q", "--allow-empty", "-m", "upstream 2"],
+    );
+    git(&other, &["push", "-q", "origin", "main"]);
+    let local = head(&repo);
+    let action = MenuAction::UpdateBranch {
+        repo: repo.clone(),
+        worktree: repo.clone(),
+        strategy: None,
+    };
+    h.cx.update(|window, cx| {
+        h.view
+            .update(cx, |v, cx| v.run_menu_action(action, window, cx))
+    });
+    h.wait_for("the choice", |v, _| v.confirm.is_some());
+    assert_eq!(head(&repo), local, "nothing rewritten yet");
+    assert!(h.read(|v, _| v.confirm.as_ref().unwrap().lines[1].contains("rebase")));
+    h.cx.update(|window, cx| h.view.update(cx, |v, cx| v.confirm_action(window, cx)));
+    h.wait_for("the rebase", |v, _| {
+        v.status_line.as_deref() == Some("Rebased main on 1 new upstream commit(s)")
+    });
+    assert_eq!(rev(&repo, "HEAD~1"), head(&other), "local commit on top");
+}

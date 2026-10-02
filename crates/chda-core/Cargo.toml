@@ -9,6 +9,7 @@ publish.workspace = true
 
 [dependencies]
 chda-agents.workspace = true
+chda-config.workspace = true
 chda-git.workspace = true
 notify.workspace = true
 serde.workspace = true

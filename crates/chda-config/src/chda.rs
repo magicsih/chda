@@ -32,6 +32,20 @@ pub enum DefaultAction {
     Codex,
 }
 
+/// How "Update branch" brings a worktree's upstream in.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum PullStrategy {
+    /// Fast-forward only; a diverged branch stops and offers a choice.
+    #[default]
+    FfOnly,
+    /// Replay local commits on the upstream, unless any of them is already
+    /// pushed (then it stops and offers a merge).
+    Rebase,
+    /// Merge commit when the branch has diverged.
+    Merge,
+}
+
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(default, rename_all = "kebab-case")]
 pub struct ChdaConfig {
@@ -60,6 +74,8 @@ pub struct ChdaConfig {
     /// Pull request host per repository path, for remotes whose host chda
     /// cannot work out, e.g. `"/src/app" = "github.example.com"`.
     pub repo_hosts: BTreeMap<PathBuf, String>,
+    /// What "Update branch" does when the branch has diverged.
+    pub pull: PullStrategy,
 }
 
 impl Default for ChdaConfig {
@@ -78,6 +94,7 @@ impl Default for ChdaConfig {
             restore_agents: true,
             theme: None,
             repo_hosts: BTreeMap::new(),
+            pull: PullStrategy::FfOnly,
         }
     }
 }
@@ -182,6 +199,11 @@ mod tests {
             Some("github.example.com")
         );
         assert_eq!(c.agents, vec!["claude", "codex"]);
+        assert_eq!(c.pull, PullStrategy::FfOnly);
+        fs::write(&path, "pull = \"rebase\"\n").unwrap();
+        assert_eq!(ChdaConfig::load(&path).unwrap().pull, PullStrategy::Rebase);
+        fs::write(&path, "pull = \"ff-only\"\n").unwrap();
+        assert_eq!(ChdaConfig::load(&path).unwrap().pull, PullStrategy::FfOnly);
         fs::remove_dir_all(&dir).unwrap();
     }
 

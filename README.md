@@ -75,7 +75,7 @@ and adds pull request badges. On a managed Mac where Homebrew cannot write to
 | Terminal | Ghostty-accurate VT handling, true color, wide glyphs, IME input, mouse selection and reporting, scrollback search (`cmd-f`), cmd-click links and file paths, inline images (Kitty graphics protocol), Mermaid diagrams in agent output rendered offline ("View diagram"), font size shortcuts, prompt jumping (`cmd-up` / `cmd-down`) |
 | Tabs and splits | Ghostty's default shortcuts; tabs grouped by repository; rename a tab with a double-click; tabs, splits and directories come back after a restart |
 | Sidebar | Repositories, worktrees, dirty / ahead / behind / conflict badges, pull request state via `gh`, open-tab counts, an ACTIVE list sorted by last activity; every badge explains itself on hover |
-| Worktrees | Create from a new or existing branch, delete with a safety check, merge-and-clean, bulk cleanup of merged branches |
+| Worktrees | Create from a new or existing branch, delete with a safety check, merge-and-clean, bulk cleanup of merged branches, update a branch from its upstream when it is clean and no agent works in it (fast-forward; a diverged branch asks before a rebase or merge and never rewrites pushed commits) |
 | Agents | Claude Code and Codex status from their own hooks on tabs, the ACTIVE list, worktree rows and the Dock badge; notifications that open the agent's pane; jump to the agent that waits (`cmd-shift-a`); session list ordered by the last message, with one-click resume; cmd-click several sessions to resume them side by side in one tab |
 | Palette | `cmd-shift-p`: every action, worktree, agent launch and session in one fuzzy list |
 | Config | Reads your Ghostty font, colors and padding; chda's own settings in one TOML file; edits apply without a restart |
@@ -123,6 +123,7 @@ restore-session = true        # reopen the last tabs, splits and directories
 restore-agents = true         # ...and the agent conversations those panes had open
 editor = "zed {file}:{line}:{column}"  # opens cmd-clicked paths; unset: default app
 theme = "Catppuccin Mocha"    # replaces the Ghostty config's theme; unset: follow it
+pull = "ff-only"              # ff-only | rebase | merge: "Update branch" on a diverged branch
 
 [repo-hosts]                  # pull request host when the remote does not say
 "/path/to/repo" = "github.example.com"

@@ -37,6 +37,8 @@ pub struct GitBadges {
     pub conflicted: usize,
     pub ahead: Option<usize>,
     pub behind: Option<usize>,
+    /// A merge, rebase, ... stopped half way.
+    pub operation: Option<&'static str>,
 }
 
 impl GitBadges {

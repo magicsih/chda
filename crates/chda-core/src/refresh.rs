@@ -17,6 +17,7 @@ fn badges(status: chda_git::GitStatus) -> GitBadges {
         conflicted: status.conflicted,
         ahead: status.ahead,
         behind: status.behind,
+        operation: status.operation,
     }
 }
 

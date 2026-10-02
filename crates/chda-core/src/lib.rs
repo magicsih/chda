@@ -7,6 +7,7 @@ mod github;
 mod refresh;
 mod restore;
 mod sidebar;
+mod update;
 mod watch;
 mod workspace;
 
@@ -23,6 +24,8 @@ pub mod agents {
         SessionCache, SessionId, adapters, ipc,
     };
 }
+pub use chda_git::PullMode;
 pub use sidebar::*;
+pub use update::*;
 pub use watch::{FileWatcher, RepoWatcher};
 pub use workspace::*;
