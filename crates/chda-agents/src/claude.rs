@@ -84,6 +84,29 @@ impl AgentAdapter for ClaudeAdapter {
             .collect()
     }
 
+    /// Claude Code files transcripts under `projects/<directory with every
+    /// non-alphanumeric character replaced by '-'>`, so only folders that
+    /// match a worktree (or a directory inside one) need reading.
+    fn session_dirs(&self, worktrees: &[PathBuf]) -> Vec<PathBuf> {
+        let prefixes: Vec<String> = worktrees.iter().map(|w| project_dir_name(w)).collect();
+        self.session_roots()
+            .into_iter()
+            .flat_map(|root| fs::read_dir(root).into_iter().flatten().flatten())
+            .map(|entry| entry.path())
+            .filter(|dir| {
+                let name = dir.file_name().map(|n| n.to_string_lossy().into_owned());
+                name.is_some_and(|name| {
+                    prefixes.iter().any(|p| {
+                        name == *p
+                            || name
+                                .strip_prefix(p.as_str())
+                                .is_some_and(|r| r.starts_with('-'))
+                    })
+                })
+            })
+            .collect()
+    }
+
     fn parse_session(&self, file: &Path) -> Option<AgentSession> {
         parse_transcript(file)
     }
@@ -102,6 +125,14 @@ impl AgentAdapter for ClaudeAdapter {
             note: None,
         })
     }
+}
+
+/// The folder name Claude Code uses for a directory's transcripts.
+fn project_dir_name(dir: &Path) -> String {
+    dir.to_string_lossy()
+        .chars()
+        .map(|c| if c.is_ascii_alphanumeric() { c } else { '-' })
+        .collect()
 }
 
 /// Text of a user message, if it is a real prompt rather than a tool result.
@@ -220,5 +251,17 @@ mod tests {
         let written = fs::read_to_string(report.file.unwrap()).unwrap();
         assert!(written.contains("/usr/local/bin/chda hook claude"));
         fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn project_folders_follow_claude_code_naming() {
+        assert_eq!(
+            project_dir_name(Path::new("/Users/me/.agent")),
+            "-Users-me--agent"
+        );
+        assert_eq!(
+            project_dir_name(Path::new("/src/app.worktrees/feat_x")),
+            "-src-app-worktrees-feat-x"
+        );
     }
 }

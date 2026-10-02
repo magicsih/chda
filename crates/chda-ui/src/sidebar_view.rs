@@ -35,6 +35,8 @@ pub enum SidebarEvent {
 
 pub struct SidebarView {
     pub model: Sidebar,
+    /// The first session index has finished.
+    pub sessions_loaded: bool,
     expanded: Vec<PathBuf>,
     /// Highlighted worktree (e.g. after a notification for a closed pane).
     selected: Option<PathBuf>,
@@ -58,6 +60,7 @@ impl SidebarView {
     pub fn new(fg: Hsla, bg: Hsla, cx: &mut Context<Self>) -> Self {
         Self {
             model: Sidebar::new(),
+            sessions_loaded: false,
             expanded: Vec::new(),
             selected: None,
             focus_handle: cx.focus_handle(),
@@ -487,6 +490,16 @@ impl Render for SidebarView {
                 )
                 .children(active)
                 .child(div().h(gpui::px(6.0)))
+            })
+            .when(!self.sessions_loaded && !empty, |d| {
+                d.child(
+                    div()
+                        .px_2()
+                        .pb_1()
+                        .text_xs()
+                        .text_color(fg.opacity(0.5))
+                        .child("Loading agent sessions\u{2026}"),
+                )
             })
             .children(repos)
             .when(empty, |d| {

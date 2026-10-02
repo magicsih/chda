@@ -226,7 +226,11 @@ impl WorkspaceView {
             sidebar,
             _sidebar_sub: sidebar_sub,
             adapters,
-            session_cache: Arc::new(Mutex::new(SessionCache::new())),
+            session_cache: Arc::new(Mutex::new(
+                data_dir()
+                    .map(|d| SessionCache::load(&d))
+                    .unwrap_or_default(),
+            )),
             hook_events,
             refreshing: HashSet::new(),
             refresh_again: HashSet::new(),
@@ -894,6 +898,7 @@ impl WorkspaceView {
             let result = task.await;
             let _ = this.update(cx, |view, cx| {
                 view.refreshing.remove(&repo);
+                let before = view.worktree_paths(cx);
                 view.sidebar.update(cx, |s, cx| {
                     match result {
                         Ok(worktrees) => s.model.set_worktrees(&repo, worktrees),
@@ -906,6 +911,10 @@ impl WorkspaceView {
                     cx.notify();
                 });
                 view.sync_panes(cx);
+                // New worktrees can have sessions the last index skipped.
+                if view.worktree_paths(cx) != before {
+                    view.refresh_sessions(cx);
+                }
                 if view.refresh_again.remove(&repo) {
                     view.refresh_repo(repo, cx);
                 } else {
@@ -979,20 +988,41 @@ impl WorkspaceView {
         }
     }
 
+    /// Re-index agent sessions for the registered repositories' worktrees.
     fn refresh_sessions(&mut self, cx: &mut Context<Self>) {
         let adapters = Arc::clone(&self.adapters);
         let cache = Arc::clone(&self.session_cache);
-        let task = cx.background_spawn(async move { chda_core::index_sessions(&adapters, &cache) });
+        let worktrees = self.worktree_paths(cx);
+        let task =
+            cx.background_spawn(
+                async move { chda_core::index_sessions(&adapters, &cache, &worktrees) },
+            );
         cx.spawn(async move |this, cx| {
             let sessions = task.await;
             let _ = this.update(cx, |view, cx| {
                 view.sidebar.update(cx, |s, cx| {
                     s.model.set_sessions(&sessions);
+                    s.sessions_loaded = true;
                     cx.notify();
                 });
             });
         })
         .detach();
+    }
+
+    /// Every registered repository and its worktrees.
+    fn worktree_paths(&self, cx: &App) -> Vec<PathBuf> {
+        let model = &self.sidebar.read(cx).model;
+        let mut paths: Vec<PathBuf> = model
+            .repos
+            .iter()
+            .flat_map(|r| {
+                std::iter::once(r.path.clone()).chain(r.worktrees.iter().map(|w| w.path.clone()))
+            })
+            .collect();
+        paths.sort();
+        paths.dedup();
+        paths
     }
 
     /// Tell the sidebar which panes live in which worktree, and remember each

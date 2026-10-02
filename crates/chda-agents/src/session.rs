@@ -1,17 +1,19 @@
-//! Session transcripts: shared types and the mtime/size cache.
+//! Session transcripts: shared types and the index cache.
 
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
-use std::time::SystemTime;
+use std::time::UNIX_EPOCH;
+
+use serde::{Deserialize, Serialize};
 
 use crate::AgentId;
 
 /// Session identifier as the agent names it (a UUID for both agents).
-#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+#[derive(Clone, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub struct SessionId(pub String);
 
 /// One past or current agent session, enough for a list entry.
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct AgentSession {
     pub id: SessionId,
     pub agent: AgentId,
@@ -24,11 +26,37 @@ pub struct AgentSession {
     pub file: PathBuf,
 }
 
-/// Caches parse results by file mtime and size so re-indexing only reads
-/// files that changed.
+/// File name of the persisted cache inside the data directory.
+const CACHE_FILE: &str = "session-index.json";
+
+/// Bumped when the cached data changes shape or meaning.
+const CACHE_VERSION: u32 = 1;
+
+/// What is known about one transcript file at a given mtime and size.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+struct Entry {
+    mtime_ms: u64,
+    len: u64,
+    /// Directory the session ran in, from the head of the file.
+    cwd: Option<PathBuf>,
+    /// Full parse, done only once the session's directory was wanted.
+    /// `Some(None)`: parsed, not a session.
+    parsed: Option<Option<AgentSession>>,
+}
+
+#[derive(Serialize, Deserialize)]
+struct CacheFile {
+    version: u32,
+    entries: HashMap<PathBuf, Entry>,
+}
+
+/// Index cache keyed by file, mtime and size. Re-indexing reads only files
+/// that changed, and fully parses only sessions whose directory is wanted.
+/// It is saved to the data directory so a restart starts warm.
 #[derive(Debug, Default)]
 pub struct SessionCache {
-    entries: HashMap<PathBuf, (SystemTime, u64, Option<AgentSession>)>,
+    entries: HashMap<PathBuf, Entry>,
+    dirty: bool,
 }
 
 impl SessionCache {
@@ -36,23 +64,112 @@ impl SessionCache {
         Self::default()
     }
 
-    pub fn get_or_parse(
+    /// The cache saved in `data_dir`, or an empty one.
+    pub fn load(data_dir: &Path) -> Self {
+        let entries = std::fs::read(data_dir.join(CACHE_FILE))
+            .ok()
+            .and_then(|b| serde_json::from_slice::<CacheFile>(&b).ok())
+            .filter(|c| c.version == CACHE_VERSION)
+            .map(|c| c.entries)
+            .unwrap_or_default();
+        Self {
+            entries,
+            dirty: false,
+        }
+    }
+
+    /// Write the cache to `data_dir` if it changed since it was loaded or
+    /// last saved. Entries of files that no longer exist are dropped.
+    pub fn save(&mut self, data_dir: &Path) -> std::io::Result<()> {
+        let before = self.entries.len();
+        self.entries.retain(|path, _| path.exists());
+        if !self.dirty && self.entries.len() == before {
+            return Ok(());
+        }
+        std::fs::create_dir_all(data_dir)?;
+        let file = CacheFile {
+            version: CACHE_VERSION,
+            entries: std::mem::take(&mut self.entries),
+        };
+        let json = serde_json::to_vec(&file);
+        self.entries = file.entries;
+        let path = data_dir.join(CACHE_FILE);
+        let tmp = path.with_extension("json.tmp");
+        std::fs::write(&tmp, json?)?;
+        std::fs::rename(tmp, path)?;
+        self.dirty = false;
+        Ok(())
+    }
+
+    /// The session in `file` when its directory passes `wanted`. `cwd` reads
+    /// the directory from the head of the file and `parse` reads the whole
+    /// file; each runs only when the file changed since it last ran.
+    pub fn session(
         &mut self,
         file: &Path,
+        wanted: impl Fn(&Path) -> bool,
+        cwd: impl FnOnce() -> Option<PathBuf>,
         parse: impl FnOnce() -> Option<AgentSession>,
     ) -> Option<AgentSession> {
         let meta = std::fs::metadata(file).ok()?;
-        let key = (meta.modified().ok()?, meta.len());
-        if let Some((m, len, cached)) = self.entries.get(file)
-            && (*m, *len) == key
-        {
-            return cached.clone();
+        let mtime_ms = meta
+            .modified()
+            .ok()?
+            .duration_since(UNIX_EPOCH)
+            .ok()?
+            .as_millis() as u64;
+        let len = meta.len();
+        let fresh = self
+            .entries
+            .get(file)
+            .is_some_and(|e| e.mtime_ms == mtime_ms && e.len == len);
+        if !fresh {
+            self.entries.insert(
+                file.to_path_buf(),
+                Entry {
+                    mtime_ms,
+                    len,
+                    cwd: cwd(),
+                    parsed: None,
+                },
+            );
+            self.dirty = true;
         }
-        let parsed = parse();
-        self.entries
-            .insert(file.to_path_buf(), (key.0, key.1, parsed.clone()));
-        parsed
+        let entry = self.entries.get_mut(file)?;
+        if !entry.cwd.as_deref().is_some_and(&wanted) {
+            return None;
+        }
+        if entry.parsed.is_none() {
+            entry.parsed = Some(parse());
+            self.dirty = true;
+        }
+        entry.parsed.clone().flatten()
     }
+}
+
+/// The working directory recorded near the top of a transcript: the first
+/// JSON line with a `cwd` field, at the top level or under `payload`.
+pub(crate) fn head_cwd(file: &Path) -> Option<PathBuf> {
+    use std::io::BufRead;
+    const MAX_LINES: usize = 50;
+    let reader = std::io::BufReader::new(std::fs::File::open(file).ok()?);
+    let finder = memchr::memmem::Finder::new(b"\"cwd\"");
+    for line in reader.split(b'\n').take(MAX_LINES).filter_map(Result::ok) {
+        if finder.find(&line).is_none() {
+            continue;
+        }
+        let Ok(v) = serde_json::from_slice::<serde_json::Value>(&line) else {
+            continue;
+        };
+        let cwd = v
+            .get("cwd")
+            .or_else(|| v.get("payload").and_then(|p| p.get("cwd")))
+            .and_then(serde_json::Value::as_str);
+        if let Some(cwd) = cwd {
+            return Some(PathBuf::from(cwd));
+        }
+    }
+    None
 }
 
 /// Iterate the lines of a transcript that contain any of `needles`, without
@@ -137,6 +254,60 @@ pub(crate) fn parse_rfc3339_ms(s: &str) -> Option<u64> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn cache_parses_only_wanted_sessions_and_survives_a_restart() {
+        let dir = std::env::temp_dir().join(format!("chda-sesscache-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let mine = dir.join("mine.jsonl");
+        let other = dir.join("other.jsonl");
+        std::fs::write(&mine, "{\"type\":\"user\",\"cwd\":\"/src/app/sub\"}\n").unwrap();
+        std::fs::write(&other, "{\"payload\":{\"cwd\":\"/elsewhere\"}}\n").unwrap();
+        assert_eq!(head_cwd(&other), Some(PathBuf::from("/elsewhere")));
+        let wanted = |p: &Path| p.starts_with("/src/app");
+        let session = |file: &Path| AgentSession {
+            id: SessionId("s".into()),
+            agent: AgentId::Claude,
+            cwd: head_cwd(file).unwrap(),
+            started_at: 1,
+            snippet: "hi".into(),
+            message_count: 1,
+            file: file.to_path_buf(),
+        };
+        let parses = std::cell::Cell::new(0);
+        let index = |cache: &mut SessionCache, file: &Path| {
+            cache.session(
+                file,
+                wanted,
+                || head_cwd(file),
+                || {
+                    parses.set(parses.get() + 1);
+                    Some(session(file))
+                },
+            )
+        };
+
+        let mut cache = SessionCache::new();
+        assert!(index(&mut cache, &mine).is_some());
+        assert!(index(&mut cache, &other).is_none());
+        assert_eq!(parses.get(), 1, "the unwanted session is never parsed");
+        cache.save(&dir).unwrap();
+
+        let mut warm = SessionCache::load(&dir);
+        assert_eq!(
+            index(&mut warm, &mine).map(|s| s.cwd),
+            Some("/src/app/sub".into())
+        );
+        assert!(index(&mut warm, &other).is_none());
+        assert_eq!(parses.get(), 1, "a warm cache parses nothing");
+        assert!(!warm.dirty);
+
+        std::fs::remove_file(&other).unwrap();
+        warm.save(&dir).unwrap();
+        assert_eq!(SessionCache::load(&dir).entries.len(), 1);
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
 
     #[test]
     fn rfc3339_to_epoch_ms() {

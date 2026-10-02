@@ -18,7 +18,10 @@ pub use hook::{HookEvent, HookKind, PANE_ENV, hook_main};
 pub use session::{AgentSession, SessionCache, SessionId};
 
 /// Which agent a thing belongs to.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord)]
+#[derive(
+    Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord, serde::Serialize, serde::Deserialize,
+)]
+#[serde(rename_all = "lowercase")]
 pub enum AgentId {
     Claude,
     Codex,
@@ -61,6 +64,18 @@ pub trait AgentAdapter: Send + Sync {
     fn launch_command(&self, cwd: &Path, resume: Option<&SessionId>, hook_bin: &Path) -> Command;
     /// Directories holding session transcripts.
     fn session_roots(&self) -> Vec<PathBuf>;
+    /// Directories to scan for sessions that ran inside `worktrees`. The
+    /// default is every root; adapters that file transcripts by directory
+    /// can skip the rest.
+    fn session_dirs(&self, worktrees: &[PathBuf]) -> Vec<PathBuf> {
+        let _ = worktrees;
+        self.session_roots()
+    }
+    /// The directory a transcript's session ran in, read cheaply from the
+    /// top of the file.
+    fn session_cwd(&self, file: &Path) -> Option<PathBuf> {
+        session::head_cwd(file)
+    }
     /// Parse one transcript file; `None` when it is not a session.
     fn parse_session(&self, file: &Path) -> Option<AgentSession>;
     /// Write hook configuration under `data_dir` so the agent reports to
@@ -82,16 +97,24 @@ pub fn which(name: &str) -> Option<PathBuf> {
         .find(|p| p.is_file())
 }
 
-/// Index every session of every adapter, newest first.
+/// Index the sessions that ran inside `worktrees`, newest first.
 pub fn index_sessions(
     adapters: &[Box<dyn AgentAdapter>],
     cache: &mut SessionCache,
+    worktrees: &[PathBuf],
 ) -> Vec<AgentSession> {
+    let wanted = |cwd: &Path| worktrees.iter().any(|w| cwd.starts_with(w));
     let mut out = Vec::new();
     for adapter in adapters {
-        for root in adapter.session_roots() {
+        for root in adapter.session_dirs(worktrees) {
             for file in session::jsonl_files(&root) {
-                if let Some(s) = cache.get_or_parse(&file, || adapter.parse_session(&file)) {
+                let session = cache.session(
+                    &file,
+                    wanted,
+                    || adapter.session_cwd(&file),
+                    || adapter.parse_session(&file),
+                );
+                if let Some(s) = session {
                     out.push(s);
                 }
             }
@@ -110,10 +133,25 @@ mod real_sessions {
             return;
         }
         let adapters = super::adapters();
+        // Directories from CHDA_REAL_WORKTREES (colon separated), else HOME.
+        let worktrees: Vec<std::path::PathBuf> = std::env::var("CHDA_REAL_WORKTREES")
+            .map(|v| v.split(':').map(std::path::PathBuf::from).collect())
+            .unwrap_or_else(|_| vec![std::env::var("HOME").unwrap().into()]);
+        let dir = std::env::temp_dir().join(format!("chda-real-index-{}", std::process::id()));
         let mut cache = super::SessionCache::new();
         let start = std::time::Instant::now();
-        let sessions = super::index_sessions(&adapters, &mut cache);
-        eprintln!("{} sessions in {:?}", sessions.len(), start.elapsed());
+        let sessions = super::index_sessions(&adapters, &mut cache, &worktrees);
+        eprintln!("cold: {} sessions in {:?}", sessions.len(), start.elapsed());
+        cache.save(&dir).unwrap();
+        let mut warm = super::SessionCache::load(&dir);
+        let start = std::time::Instant::now();
+        let again = super::index_sessions(&adapters, &mut warm, &worktrees);
+        eprintln!(
+            "warm (after restart): {} sessions in {:?}",
+            again.len(),
+            start.elapsed()
+        );
+        let _ = std::fs::remove_dir_all(&dir);
         for s in sessions.iter().take(5) {
             eprintln!(
                 "{:?} {} {} {:?} {}",
