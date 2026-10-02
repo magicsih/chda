@@ -13,6 +13,9 @@ pub struct WorktreeInfo {
     /// Abbreviated HEAD commit; `None` on an unborn branch.
     pub head: Option<String>,
     pub locked: bool,
+    /// The worktree's folder is gone (deleted outside git); git calls such
+    /// worktrees prunable.
+    pub missing: bool,
 }
 
 /// Counts shown as badges.
@@ -67,6 +70,7 @@ pub fn list_worktrees(repo: &Path) -> io::Result<Vec<WorktreeInfo>> {
             branch,
             head,
             locked: wt.is_locked(),
+            missing: false,
         });
     }
     for proxy in main.worktrees()? {
@@ -78,12 +82,14 @@ pub fn list_worktrees(repo: &Path) -> io::Result<Vec<WorktreeInfo>> {
             continue;
         };
         let (branch, head) = head_info(&linked)?;
+        let missing = !path.exists();
         out.push(WorktreeInfo {
             path,
             is_main: false,
             branch,
             head,
             locked,
+            missing,
         });
     }
     Ok(out)

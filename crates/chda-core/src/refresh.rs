@@ -84,7 +84,11 @@ pub fn worktrees_of(repo: &Path, fetch: bool) -> io::Result<Vec<WorktreeEntry>> 
         .unwrap_or_default();
     let mut out = Vec::new();
     for info in infos {
-        let badges = chda_git::status(&info.path).map(badges).unwrap_or_default();
+        let badges = if info.missing {
+            GitBadges::default()
+        } else {
+            chda_git::status(&info.path).map(badges).unwrap_or_default()
+        };
         let merged = info.branch.as_ref().is_some_and(|b| merged.contains(b));
         out.push(WorktreeEntry {
             path: info.path,
@@ -92,6 +96,7 @@ pub fn worktrees_of(repo: &Path, fetch: bool) -> io::Result<Vec<WorktreeEntry>> 
             is_main: info.is_main,
             badges,
             merged,
+            missing: info.missing,
             ..Default::default()
         });
     }

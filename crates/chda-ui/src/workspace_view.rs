@@ -114,6 +114,11 @@ enum MenuAction {
         worktree: PathBuf,
         force: bool,
     },
+    /// Drop git's record of a worktree whose folder is gone; keep its branch.
+    PruneMissing {
+        repo: PathBuf,
+        worktree: PathBuf,
+    },
     /// Pick an existing branch to check out as a new worktree.
     PickBranch(PathBuf),
     RemoveRepo(PathBuf),
@@ -1471,10 +1476,34 @@ impl WorkspaceView {
                     .read(cx)
                     .model
                     .worktree_for_path(&path)
-                    .map(|(r, w)| (r.path.clone(), w.is_main));
-                let Some((repo, is_main)) = repo else {
+                    .map(|(r, w)| (r.path.clone(), w.is_main, w.missing));
+                let Some((repo, is_main, missing)) = repo else {
                     return;
                 };
+                if missing {
+                    self.context_menu = Some(ContextMenu {
+                        position,
+                        items: vec![
+                            (
+                                "Remove missing worktree (keep branch)".into(),
+                                MenuAction::PruneMissing {
+                                    repo: repo.clone(),
+                                    worktree: path.clone(),
+                                },
+                            ),
+                            (
+                                "Remove missing worktree and branch...".into(),
+                                MenuAction::DeleteWorktreeAndBranch {
+                                    repo,
+                                    worktree: path,
+                                    force: false,
+                                },
+                            ),
+                        ],
+                    });
+                    cx.notify();
+                    return;
+                }
                 let mut items = vec![(
                     "Open terminal".to_owned(),
                     MenuAction::OpenTerminal(path.clone()),
@@ -1558,6 +1587,20 @@ impl WorkspaceView {
 
     /// Focus a pane already in the worktree, else open a tab there.
     fn open_worktree(&mut self, path: &Path, window: &mut Window, cx: &mut Context<Self>) {
+        let missing = self
+            .sidebar
+            .read(cx)
+            .model
+            .worktree_for_path(path)
+            .is_some_and(|(_, w)| w.missing && w.path == path);
+        if missing {
+            self.status_line = Some(format!(
+                "{} no longer exists. Right-click the worktree to remove it.",
+                path.display()
+            ));
+            cx.notify();
+            return;
+        }
         let existing = self
             .sidebar
             .read(cx)
@@ -1759,7 +1802,7 @@ impl WorkspaceView {
                 };
                 if !force {
                     let name = entry.branch.clone().unwrap_or_default();
-                    let (title, lines) = if entry.safe_to_delete() {
+                    let (title, mut lines) = if entry.safe_to_delete() {
                         (
                             format!("Delete {name}?"),
                             vec![
@@ -1778,6 +1821,9 @@ impl WorkspaceView {
                         lines.push("Force delete discards uncommitted changes and deletes the branch anyway.".into());
                         (format!("Force delete {name}?"), lines)
                     };
+                    if entry.missing {
+                        lines.insert(0, "The worktree folder is already gone.".into());
+                    }
                     self.confirm = Some(ConfirmSheet {
                         title,
                         lines,
@@ -1842,6 +1888,27 @@ impl WorkspaceView {
                     })
                     .collect();
                 self.open_palette(items, window, cx);
+            }
+            MenuAction::PruneMissing { repo, worktree } => {
+                let task =
+                    cx.background_spawn({
+                        let repo = repo.clone();
+                        async move {
+                            chda_core::delete_worktree(&repo, &worktree, false).map(|_| worktree)
+                        }
+                    });
+                cx.spawn(async move |this, cx| {
+                    let result = task.await;
+                    let _ = this.update(cx, |view, cx| {
+                        view.status_line = Some(match result {
+                            Ok(p) => format!("Removed the record of {}", p.display()),
+                            Err(e) => e.to_string(),
+                        });
+                        view.refresh_repo(repo, cx);
+                        cx.notify();
+                    });
+                })
+                .detach();
             }
             MenuAction::RemoveRepo(repo) => {
                 if let Some(w) = &mut self.watcher {

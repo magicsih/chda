@@ -235,6 +235,14 @@ impl SidebarView {
                     .into_any_element(),
             );
         }
+        if wt.missing {
+            badges.push(
+                div()
+                    .text_color(gpui::rgb(0xf38ba8))
+                    .child("folder missing")
+                    .into_any_element(),
+            );
+        }
         if wt.is_merged() && !wt.is_main {
             badges.push(
                 div()
@@ -266,6 +274,7 @@ impl SidebarView {
             .pr_2()
             .py_0p5()
             .cursor_pointer()
+            .when(wt.missing, |d| d.opacity(0.55))
             .when(self.selected.as_ref() == Some(&wt.path), |d| {
                 d.bg(fg.opacity(0.14))
             })

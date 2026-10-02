@@ -71,6 +71,11 @@ pub fn add_worktree(repo: &Path, branch: &str, path: &Path, base: Option<&str>) 
 
 /// `git worktree remove`, then `git worktree prune`.
 pub fn remove_worktree(repo: &Path, path: &Path, force: bool) -> io::Result<()> {
+    // A worktree whose folder is already gone cannot be "removed"; pruning
+    // drops git's record of it.
+    if !path.exists() {
+        return check(repo, &["worktree", "prune"]);
+    }
     let path = path.to_string_lossy();
     let mut args = vec!["worktree", "remove"];
     if force {

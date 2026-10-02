@@ -98,6 +98,8 @@ pub struct WorktreeEntry {
     pub last_activity: u64,
     /// Panes whose cwd is inside this worktree.
     pub panes: Vec<crate::PaneId>,
+    /// The folder was deleted outside git; only pruning makes sense.
+    pub missing: bool,
 }
 
 impl WorktreeEntry {

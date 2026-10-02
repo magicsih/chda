@@ -107,18 +107,102 @@ pub fn merge_and_clean(
     })
 }
 
-/// Worktrees whose branch is already merged into the default branch and
-/// that have nothing uncommitted or unpushed: safe to remove in bulk.
+/// Worktrees safe to remove in bulk: merged with nothing uncommitted or
+/// unpushed, or whose folder is already gone.
 pub fn stale_worktrees(worktrees: &[WorktreeEntry]) -> Vec<&WorktreeEntry> {
-    worktrees.iter().filter(|w| w.safe_to_delete()).collect()
+    worktrees
+        .iter()
+        .filter(|w| w.safe_to_delete() || (w.missing && !w.is_main))
+        .collect()
 }
 
-/// Remove a stale worktree and its branch without merging.
+/// Remove a stale worktree without merging. Its branch is deleted when it
+/// is merged; a missing worktree's unmerged branch is kept, so nothing is
+/// lost.
 pub fn remove_stale(repo: &Path, worktree: &WorktreeEntry) -> io::Result<()> {
+    chda_git::remove_worktree(repo, &worktree.path, false)?;
+    if worktree.missing && !worktree.is_merged() {
+        return Ok(());
+    }
     let branch = worktree
         .branch
         .clone()
         .ok_or_else(|| io::Error::other(Blocker::Detached.to_string()))?;
-    chda_git::remove_worktree(repo, &worktree.path, false)?;
     chda_git::delete_branch(repo, &branch, false)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn git(dir: &Path, args: &[&str]) {
+        let out = std::process::Command::new("git")
+            .args(args)
+            .current_dir(dir)
+            .output()
+            .unwrap();
+        assert!(
+            out.status.success(),
+            "git {args:?}: {}",
+            String::from_utf8_lossy(&out.stderr)
+        );
+    }
+
+    #[test]
+    fn missing_worktrees_are_listed_and_pruned_keeping_unmerged_branches() {
+        let root = std::env::temp_dir().join(format!("chda-missing-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        let repo = root.join("app");
+        std::fs::create_dir_all(&repo).unwrap();
+        git(&repo, &["init", "-q", "-b", "main"]);
+        git(
+            &repo,
+            &[
+                "-c",
+                "user.name=t",
+                "-c",
+                "user.email=t@t",
+                "commit",
+                "-q",
+                "--allow-empty",
+                "-m",
+                "init",
+            ],
+        );
+        let wt = root.join("app.worktrees/feat");
+        git(
+            &repo,
+            &["worktree", "add", "-q", "-b", "feat", wt.to_str().unwrap()],
+        );
+        git(
+            &wt,
+            &[
+                "-c",
+                "user.name=t",
+                "-c",
+                "user.email=t@t",
+                "commit",
+                "-q",
+                "--allow-empty",
+                "-m",
+                "work",
+            ],
+        );
+        std::fs::remove_dir_all(&wt).unwrap();
+
+        let entries = crate::worktrees_of(&repo, false).unwrap();
+        let feat = entries
+            .iter()
+            .find(|e| e.branch.as_deref() == Some("feat"))
+            .unwrap();
+        assert!(feat.missing);
+        assert!(!feat.is_merged());
+        assert_eq!(stale_worktrees(&entries).len(), 1);
+
+        remove_stale(&repo, feat).unwrap();
+        let entries = crate::worktrees_of(&repo, false).unwrap();
+        assert_eq!(entries.len(), 1, "the record is pruned");
+        git(&repo, &["rev-parse", "--verify", "-q", "refs/heads/feat"]);
+        std::fs::remove_dir_all(&root).unwrap();
+    }
 }
