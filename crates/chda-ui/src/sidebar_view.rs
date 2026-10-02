@@ -308,6 +308,14 @@ impl SidebarView {
                     .into_any_element(),
             );
         }
+        if let Some(busy) = &wt.busy {
+            badges.push(
+                div()
+                    .text_color(fg.opacity(0.6))
+                    .child(format!("{busy}\u{2026}"))
+                    .into_any_element(),
+            );
+        }
         if wt.missing {
             badges.push(
                 div()
@@ -360,7 +368,7 @@ impl SidebarView {
             .pr_2()
             .py_0p5()
             .cursor_pointer()
-            .when(wt.missing, |d| d.opacity(0.55))
+            .when(wt.missing || wt.busy.is_some(), |d| d.opacity(0.55))
             .when(self.selected.as_ref() == Some(&wt.path), |d| {
                 d.bg(fg.opacity(0.14))
             })
@@ -428,6 +436,29 @@ impl SidebarView {
             )
             .children(badges.into_iter().map(|b| div().text_xs().child(b)));
         let mut col = div().flex().flex_col().child(row);
+        if let Some(err) = &wt.error {
+            col = col.child(
+                div()
+                    .id(ElementId::Name(
+                        format!("wt-err:{}", wt.path.display()).into(),
+                    ))
+                    .pl_8()
+                    .pr_2()
+                    .text_xs()
+                    .text_color(gpui::rgb(0xf38ba8))
+                    .cursor_pointer()
+                    .on_click({
+                        let path = path.clone();
+                        cx.listener(move |this, _, _, cx| {
+                            if let Some(w) = this.model.worktree_mut(&path) {
+                                w.error = None;
+                            }
+                            cx.notify();
+                        })
+                    })
+                    .child(err.clone()),
+            );
+        }
         if expanded {
             let now = std::time::SystemTime::now()
                 .duration_since(std::time::UNIX_EPOCH)

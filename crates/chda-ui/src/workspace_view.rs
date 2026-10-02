@@ -137,7 +137,7 @@ pub(crate) enum MenuAction {
 /// A yes/no sheet before a destructive action.
 pub(crate) struct ConfirmSheet {
     title: String,
-    lines: Vec<String>,
+    pub(crate) lines: Vec<String>,
     action: MenuAction,
 }
 
@@ -1533,6 +1533,23 @@ impl WorkspaceView {
         self.sync_panes(cx);
     }
 
+    /// Close `panes`; an emptied window gets a fresh tab instead of quitting.
+    fn close_panes(&mut self, panes: &[PaneId], window: &mut Window, cx: &mut Context<Self>) {
+        if panes.is_empty() {
+            return;
+        }
+        for pane in panes {
+            self.ws.close_pane(*pane);
+            self.panes.remove(pane);
+        }
+        if self.ws.is_empty() {
+            self.open_tab_at(None, None, window, cx);
+        } else {
+            self.focus_active(window, cx);
+        }
+        self.sync_panes(cx);
+    }
+
     fn split(&mut self, axis: Axis, window: &mut Window, cx: &mut Context<Self>) {
         let cwd = self.inherited_cwd();
         if let Some(pane) = self.ws.split(axis) {
@@ -1876,6 +1893,11 @@ impl WorkspaceView {
                 let Some(entry) = entry else {
                     return;
                 };
+                if let Some(busy) = &entry.busy {
+                    self.status_line = Some(format!("{}: already {busy}", entry.path.display()));
+                    cx.notify();
+                    return;
+                }
                 let blockers = chda_core::blockers(&entry);
                 if !force && !blockers.is_empty() {
                     let name = entry.branch.clone().unwrap_or_default();
@@ -2001,6 +2023,11 @@ impl WorkspaceView {
                 let Some(entry) = entry else {
                     return;
                 };
+                if let Some(busy) = &entry.busy {
+                    self.status_line = Some(format!("{}: already {busy}", entry.path.display()));
+                    cx.notify();
+                    return;
+                }
                 if !force {
                     let name = entry.branch.clone().unwrap_or_default();
                     let (title, mut lines) = if entry.safe_to_delete() {
@@ -2025,6 +2052,11 @@ impl WorkspaceView {
                     if entry.missing {
                         lines.insert(0, "The worktree folder is already gone.".into());
                     }
+                    match entry.panes.len() {
+                        0 => {}
+                        1 => lines.push("Closes the terminal open in it.".into()),
+                        n => lines.push(format!("Closes the {n} terminals open in it.")),
+                    }
                     self.confirm = Some(ConfirmSheet {
                         title,
                         lines,
@@ -2037,23 +2069,62 @@ impl WorkspaceView {
                     cx.notify();
                     return;
                 }
+                // A shell left in the folder would keep working in a deleted
+                // directory (and can recreate files while it goes).
+                self.close_panes(&entry.panes, window, cx);
+                self.sidebar.update(cx, |s, cx| {
+                    if let Some(w) = s.model.worktree_mut(&worktree) {
+                        w.busy = Some("deleting".into());
+                        w.error = None;
+                    }
+                    cx.notify();
+                });
                 let task = cx.background_spawn({
                     let repo = repo.clone();
                     async move {
-                        chda_core::delete_worktree(&repo, &entry.path, true)?;
-                        if let Some(branch) = &entry.branch {
-                            chda_core::delete_branch(&repo, branch, true)?;
+                        let start = std::time::Instant::now();
+                        let result = chda_core::delete_worktree_and_branch(&repo, &entry);
+                        if let Err(e) = &result {
+                            eprintln!(
+                                "chda: deleting {} failed after {:?}: {e}",
+                                entry.path.display(),
+                                start.elapsed()
+                            );
                         }
-                        Ok::<_, std::io::Error>(entry.path.clone())
+                        result
                     }
                 });
                 cx.spawn(async move |this, cx| {
                     let result = task.await;
                     let _ = this.update(cx, |view, cx| {
-                        view.status_line = Some(match result {
-                            Ok(p) => format!("Deleted {}", p.display()),
+                        view.sidebar.update(cx, |s, cx| {
+                            match &result {
+                                Ok(()) => s.model.remove_worktree(&worktree),
+                                Err(e) => {
+                                    if let Some(w) = s.model.worktree_mut(&worktree) {
+                                        w.busy = None;
+                                        w.error = Some(e.to_string());
+                                    }
+                                }
+                            }
+                            cx.notify();
+                        });
+                        view.status_line = Some(match &result {
+                            Ok(()) => format!("Deleted {}", worktree.display()),
                             Err(e) => e.to_string(),
                         });
+                        if result.is_ok() {
+                            let repo = repo.clone();
+                            cx.background_spawn(async move {
+                                if let Err(e) = chda_core::purge_trash(&repo) {
+                                    eprintln!(
+                                        "chda: emptying {}'s chda-trash: {e}",
+                                        repo.display()
+                                    );
+                                }
+                            })
+                            .detach();
+                        }
                         view.refresh_repo(repo, cx);
                         cx.notify();
                     });

@@ -131,6 +131,30 @@ pub fn remove_stale(repo: &Path, worktree: &WorktreeEntry) -> io::Result<()> {
     chda_git::delete_branch(repo, &branch, false)
 }
 
+/// Delete a worktree and its branch whatever their state, after the user
+/// confirmed. The folder is moved aside instead of deleted file by file, so
+/// this returns in well under a second even for a large `node_modules`;
+/// call [`purge_trash`] afterwards, in the background, to free the space.
+pub fn delete_worktree_and_branch(repo: &Path, worktree: &WorktreeEntry) -> io::Result<()> {
+    if worktree.is_main {
+        return Err(io::Error::other(Blocker::MainWorktree.to_string()));
+    }
+    chda_git::trash_worktree(repo, &worktree.path)?;
+    if let Some(branch) = &worktree.branch {
+        chda_git::delete_branch(repo, branch, true).map_err(|e| {
+            io::Error::other(format!(
+                "removed the worktree, but deleting branch {branch} failed: {e}"
+            ))
+        })?;
+    }
+    Ok(())
+}
+
+/// Free the disk space of worktrees [`delete_worktree_and_branch`] removed.
+pub fn purge_trash(repo: &Path) -> io::Result<()> {
+    chda_git::purge_trash(repo)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
