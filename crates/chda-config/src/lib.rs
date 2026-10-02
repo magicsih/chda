@@ -4,11 +4,13 @@
 //! silently, as Ghostty itself does for unknown keys.
 
 mod chda;
+mod themes;
 
 use std::fs;
 use std::path::{Path, PathBuf};
 
 pub use chda::*;
+pub use themes::theme_names;
 
 /// RGB color.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -302,10 +304,11 @@ pub fn parse(text: &str, base_dir: Option<&Path>, out: &mut GhosttyConfig) {
     }
 }
 
-/// Load the user's Ghostty config, resolving `theme` through `paths`.
+/// Load the user's Ghostty config, resolving `theme` through `paths` and
+/// the bundled themes. `theme`, chda's own setting, replaces the config's.
 ///
 /// Theme colors come first; anything the user set explicitly wins.
-pub fn load(paths: &Paths) -> GhosttyConfig {
+pub fn load(paths: &Paths, theme: Option<&str>) -> GhosttyConfig {
     let mut user = GhosttyConfig::default();
     for file in &paths.config_files {
         if let Ok(text) = fs::read_to_string(file) {
@@ -313,23 +316,29 @@ pub fn load(paths: &Paths) -> GhosttyConfig {
             parse(&text, file.parent(), &mut user);
         }
     }
+    if let Some(theme) = theme {
+        user.theme = Some(theme.to_owned());
+    }
     resolve_theme(user, &paths.theme_dirs)
 }
 
+/// Theme directories first, as in Ghostty, then the bundled themes, then
+/// `name` as a path.
 fn resolve_theme(user: GhosttyConfig, theme_dirs: &[PathBuf]) -> GhosttyConfig {
     let Some(name) = user.theme.as_deref().map(theme_name) else {
         return user;
     };
+    let read = |p: PathBuf| fs::read_to_string(&p).ok().map(|t| (Some(p), t));
     let Some((theme_path, theme_text)) = theme_dirs
         .iter()
-        .map(|d| d.join(name))
-        .chain(std::iter::once(PathBuf::from(name)))
-        .find_map(|p| fs::read_to_string(&p).ok().map(|t| (p, t)))
+        .find_map(|d| read(d.join(name)))
+        .or_else(|| themes::bundled(name).map(|t| (None, t.to_owned())))
+        .or_else(|| read(PathBuf::from(name)))
     else {
         return user;
     };
     let mut merged = GhosttyConfig {
-        sources: vec![theme_path],
+        sources: theme_path.into_iter().collect(),
         ..Default::default()
     };
     parse(&theme_text, None, &mut merged);
@@ -409,7 +418,7 @@ mod tests {
             config_files: vec![dir.join("config")],
             theme_dirs: vec![themes.clone()],
         };
-        let c = load(&paths);
+        let c = load(&paths, None);
         assert_eq!(c.background, Color::parse("#111111"));
         assert_eq!(c.foreground, Color::parse("#eeeeee"));
         assert_eq!(c.palette_colors(), vec![(0, Color::default())]);
@@ -419,6 +428,12 @@ mod tests {
             vec![themes.join("Mocha"), dir.join("config"), dir.join("extra")]
         );
         assert!(c.problems.is_empty());
+
+        // chda's theme replaces the config's; a bundled one has no file.
+        let c = load(&paths, Some("Catppuccin Mocha"));
+        assert_eq!(c.background, Color::parse("#1e1e2e"));
+        assert_eq!(c.foreground, Color::parse("#eeeeee"));
+        assert_eq!(c.sources, vec![dir.join("config"), dir.join("extra")]);
         fs::remove_dir_all(&dir).unwrap();
     }
 

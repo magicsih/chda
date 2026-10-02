@@ -3,7 +3,7 @@
 use chda_config::{Color, CursorStyle, GhosttyConfig, Padding};
 use chda_term::{ColorConfig, CursorShape, DEFAULT_SCROLLBACK, Rgb, ShellIntegration};
 
-use crate::platform;
+use crate::fonts;
 use gpui::{Font, FontFeatures, FontStyle, FontWeight, Pixels, px};
 
 #[derive(Clone, Debug, PartialEq)]
@@ -40,7 +40,7 @@ impl Settings {
             font_family: c
                 .font_family
                 .clone()
-                .unwrap_or_else(|| platform::DEFAULT_MONOSPACE.into()),
+                .unwrap_or_else(|| fonts::DEFAULT_FAMILY.into()),
             font_size: px(c.font_size.unwrap_or(13.0)),
             padding: c.padding,
             colors: ColorConfig {
@@ -85,7 +85,7 @@ impl Settings {
         Font {
             family: self.font_family.clone().into(),
             features: FontFeatures::disable_ligatures(),
-            fallbacks: None,
+            fallbacks: Some(fonts::fallbacks()),
             weight: FontWeight::NORMAL,
             style: FontStyle::Normal,
         }

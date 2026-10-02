@@ -51,6 +51,8 @@ pub struct ChdaConfig {
     pub editor: Option<String>,
     /// Reopen the last window's tabs, splits and directories on launch.
     pub restore_session: bool,
+    /// Theme name; replaces the Ghostty config's `theme` when set.
+    pub theme: Option<String>,
 }
 
 impl Default for ChdaConfig {
@@ -66,6 +68,7 @@ impl Default for ChdaConfig {
             notifications: true,
             editor: None,
             restore_session: true,
+            theme: None,
         }
     }
 }

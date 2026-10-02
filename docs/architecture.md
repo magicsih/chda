@@ -117,6 +117,11 @@ most once a minute per repository.
 Ghostty value Ghostty itself would reject, or a `config.toml` that does not
 parse, keeps the previous values and shows a message.
 
+Themes resolve like Ghostty's: the theme directories first, then the
+iTerm2-Color-Schemes set `chda-config` embeds (`assets/themes.txt`, packed by
+`scripts/update-themes.sh`). `theme` in `config.toml` replaces the Ghostty
+config's, so picking a theme in chda never edits Ghostty's files.
+
 `chda-core::SavedWindow` is the window's tabs, split tree, ratios, focus,
 zoom, tab names and pane directories, written to `session.json` in the data
 directory whenever they change and read on the next launch.

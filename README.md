@@ -97,7 +97,8 @@ transcripts are never stored. Your `~/.claude/settings.json` and
 chda reads `~/.config/ghostty/config` for `font-family`, `font-size`, `theme`,
 `background`, `foreground`, `palette`, `cursor-style`, `cursor-style-blink`,
 `window-padding-x/y`, `shell-integration` and `scrollback-limit`, so a Ghostty user
-gets the same look without copying anything.
+gets the same look without copying anything. Like Ghostty, chda ships JetBrains
+Mono as the default font and Symbols Nerd Font Mono for prompt and TUI icons.
 
 chda's own settings live in `~/.config/chda/config.toml`:
 
@@ -112,7 +113,13 @@ sidebar-visible = true
 notifications = true
 restore-session = true        # reopen the last tabs, splits and directories
 editor = "zed {file}:{line}:{column}"  # opens cmd-clicked paths; unset: default app
+theme = "Catppuccin Mocha"    # replaces the Ghostty config's theme; unset: follow it
 ```
+
+"Select theme..." in the command palette lists the 650+ themes chda bundles
+(the iTerm2-Color-Schemes set Ghostty ships) plus any in
+`~/.config/ghostty/themes`. The arrow keys preview each one; `enter` saves it as
+`theme` in `config.toml`, `esc` puts the previous one back.
 
 Both files are watched: saving one updates open windows within a second. A
 value Ghostty would reject keeps the previous settings and shows a message.
@@ -137,6 +144,11 @@ value Ghostty would reject keeps the previous settings and shows a message.
 | `cmd-n` | new worktree |
 | `cmd-shift-p` | command palette |
 | `cmd-c` / `cmd-v` | copy selection / paste |
+| `cmd-,` / `cmd-shift-,` | open `config.toml` / reload both configs |
+| `cmd-m`, `cmd-h`, `cmd-alt-h` | minimize, hide chda, hide others |
+
+Every action is also in the menu bar, with agent launches and session resume
+under Agents.
 
 ## Status and roadmap
 
@@ -177,4 +189,9 @@ sidebar belongs inside the terminal.
 
 ## License
 
-MIT
+MIT. The bundled fonts keep their own licenses:
+[JetBrains Mono](https://github.com/JetBrains/JetBrainsMono) under the SIL Open
+Font License 1.1 and [Symbols Nerd Font](https://github.com/ryanoasis/nerd-fonts)
+under MIT; both texts are in `crates/chda-ui/assets/fonts`. The bundled themes
+come from [iTerm2-Color-Schemes](https://github.com/mbadolato/iTerm2-Color-Schemes)
+under MIT (`crates/chda-config/assets/themes-LICENSE.txt`).

@@ -2,7 +2,7 @@
 //! The app builds one from the user's real locations; tests build one over
 //! temporary directories with a [`System`] that records instead of acting.
 
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::rc::Rc;
 use std::sync::Arc;
 
@@ -23,6 +23,8 @@ pub trait System {
     fn pane_locale(&self) -> Option<String>;
     /// Report clicks on notifications sent through [`System::notify`].
     fn on_notification_click(&self, handler: Box<dyn Fn(NotificationTarget)>);
+    /// Open a file with the system's default application.
+    fn open_file(&self, path: &Path, cx: &gpui::App);
 }
 
 /// The real OS.
@@ -51,6 +53,10 @@ impl System for NativeSystem {
 
     fn on_notification_click(&self, handler: Box<dyn Fn(NotificationTarget)>) {
         platform::init_notifications(handler);
+    }
+
+    fn open_file(&self, path: &Path, cx: &gpui::App) {
+        cx.open_with_system(path);
     }
 }
 

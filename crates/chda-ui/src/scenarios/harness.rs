@@ -23,6 +23,7 @@ pub struct Recorded {
     pub badge: usize,
     pub beeps: usize,
     pub click: Option<Box<dyn Fn(NotificationTarget)>>,
+    pub opened_files: Vec<PathBuf>,
 }
 
 #[derive(Default)]
@@ -52,6 +53,10 @@ impl System for RecordingSystem {
 
     fn on_notification_click(&self, handler: Box<dyn Fn(NotificationTarget)>) {
         self.0.borrow_mut().click = Some(handler);
+    }
+
+    fn open_file(&self, path: &Path, _: &App) {
+        self.0.borrow_mut().opened_files.push(path.to_path_buf());
     }
 }
 
@@ -251,7 +256,7 @@ fn open_window(
             use_gh: false,
             system,
         });
-        let ghostty: GhosttyConfig = chda_config::load(&paths);
+        let ghostty: GhosttyConfig = chda_config::load(&paths, None);
         let window = cx.update(|cx| {
             cx.open_window(WindowOptions::default(), |window, cx| {
                 cx.new(|cx| WorkspaceView::new(ghostty, saved, env, window, cx))

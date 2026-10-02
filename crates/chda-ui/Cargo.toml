@@ -23,7 +23,7 @@ gpui = { workspace = true, features = ["test-support"] }
 block2.workspace = true
 objc2.workspace = true
 objc2-app-kit = { workspace = true, features = ["NSApplication", "NSDockTile", "NSResponder", "NSWindow"] }
-objc2-foundation = { workspace = true, features = ["NSBundle", "NSError", "NSLocale", "NSString"] }
+objc2-foundation = { workspace = true, features = ["NSBundle", "NSError", "NSLocale", "NSString", "NSURL"] }
 objc2-user-notifications = { workspace = true, features = [
     "block2",
     "UNNotification",
