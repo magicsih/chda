@@ -7,6 +7,7 @@ mod agents;
 mod config;
 mod harness;
 mod input;
+mod palette;
 mod restore;
 mod search;
 mod workspace;

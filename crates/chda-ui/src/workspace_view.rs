@@ -163,7 +163,7 @@ pub struct WorkspaceView {
     context_menu: Option<ContextMenu>,
     sheet: Option<NewWorktreeSheet>,
     pub(crate) confirm: Option<ConfirmSheet>,
-    palette: Option<(Entity<Palette>, Subscription)>,
+    pub(crate) palette: Option<(Entity<Palette>, Subscription)>,
     /// Inline editor for a tab title.
     renaming: Option<(TabId, Entity<TextInput>, Subscription)>,
     /// Repository whose tabs the tab bar shows (`None`: tabs outside repos).

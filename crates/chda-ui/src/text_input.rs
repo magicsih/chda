@@ -95,14 +95,17 @@ impl TextInput {
                 if ks.modifiers.control || ks.modifiers.platform || ks.modifiers.alt {
                     return;
                 }
-                if let Some(c) = ks
+                // Keys that type nothing (up, down, tab, ...) go on to the
+                // field's container, such as the palette's list.
+                let Some(c) = ks
                     .key_char
                     .as_deref()
                     .filter(|c| !c.chars().any(char::is_control))
-                {
-                    let c = c.to_owned();
-                    self.insert(&c, cx);
-                }
+                else {
+                    return;
+                };
+                let c = c.to_owned();
+                self.insert(&c, cx);
             }
         }
         cx.stop_propagation();

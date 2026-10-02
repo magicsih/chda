@@ -41,6 +41,7 @@ Three layers, all run by `cargo test --workspace` (CI: the macOS job).
 | IME composition with a hidden cursor | `input::ime_composition_is_placed_even_when_the_app_hides_the_cursor` | #37 |
 | Shells get a UTF-8 locale | `input::shells_get_the_locale` | #38 |
 | cmd-hover and cmd-click on a URL | `input::cmd_hover_underlines_a_url_and_cmd_click_opens_it` | #7 |
+| Palette arrow keys choose a later entry | `palette::arrow_keys_choose_a_later_entry` | |
 
 Not covered by scenarios: anything visual (colors, layout, rendering), since
 the test platform draws no pixels; launching real agents (needs their
