@@ -107,6 +107,8 @@ pub(crate) struct ContextMenu {
 #[derive(Clone, Debug)]
 pub(crate) enum MenuAction {
     OpenTerminal(PathBuf),
+    /// A read-only tab with the worktree's diff against its base.
+    ViewDiff(PathBuf),
     RunAgent(PathBuf, AgentId),
     NewWorktree(PathBuf),
     /// New worktree on a new branch starting at `base`'s HEAD.
@@ -1696,6 +1698,19 @@ impl WorkspaceView {
                     "Open terminal".to_owned(),
                     MenuAction::OpenTerminal(path.clone()),
                 )];
+                if let Some(base) = self
+                    .sidebar
+                    .read(cx)
+                    .model
+                    .worktree_for_path(&path)
+                    .and_then(|(_, w)| w.diff.as_ref())
+                    .map(|d| d.base.clone())
+                {
+                    items.push((
+                        format!("View diff against {base}"),
+                        MenuAction::ViewDiff(path.clone()),
+                    ));
+                }
                 for a in self
                     .adapters
                     .iter()
@@ -1789,6 +1804,7 @@ impl WorkspaceView {
             SidebarEvent::AddRepo => self.add_repo(&AddRepo, window, cx),
             SidebarEvent::OpenUrl(url) => cx.open_url(&url),
             SidebarEvent::JumpToAgent(path) => self.jump_to_worktree_agent(&path, window, cx),
+            SidebarEvent::OpenDiff(path) => self.open_diff(&path, window, cx),
             SidebarEvent::FocusTab(tab) => {
                 if self.ws.activate_tab_id(tab) {
                     self.focus_active(window, cx);
@@ -2019,6 +2035,29 @@ impl WorkspaceView {
         width / f32::from(size.height).max(1.0)
     }
 
+    /// Open a tab that pages the worktree's diff against the commit it
+    /// branched from, uncommitted edits included. Quitting the pager closes
+    /// the tab.
+    pub(crate) fn open_diff(
+        &mut self,
+        worktree: &Path,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(diff) = self
+            .sidebar
+            .read(cx)
+            .model
+            .worktree_for_path(worktree)
+            .filter(|(_, w)| w.path == worktree)
+            .and_then(|(_, w)| w.diff.clone())
+        else {
+            return;
+        };
+        let command = chda_core::diff_command(&diff.merge_base);
+        self.open_tab_at(Some(worktree.to_path_buf()), Some(command), window, cx);
+    }
+
     pub(crate) fn run_menu_action(
         &mut self,
         action: MenuAction,
@@ -2028,6 +2067,7 @@ impl WorkspaceView {
         self.context_menu = None;
         match action {
             MenuAction::OpenTerminal(path) => self.open_tab_at(Some(path), None, window, cx),
+            MenuAction::ViewDiff(path) => self.open_diff(&path, window, cx),
             MenuAction::RunAgent(path, agent) => self.run_agent(&path, agent, None, window, cx),
             MenuAction::NewWorktree(repo) => self.open_sheet(repo, window, cx),
             MenuAction::NewWorktreeFrom { repo, base } => {

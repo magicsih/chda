@@ -7,7 +7,7 @@ use std::sync::{Arc, Mutex};
 
 use chda_agents::{AgentAdapter, SessionCache};
 
-use crate::sidebar::{GitBadges, SessionEntry, WorktreeEntry};
+use crate::sidebar::{DiffSummary, GitBadges, SessionEntry, WorktreeEntry};
 
 fn badges(status: chda_git::GitStatus) -> GitBadges {
     GitBadges {
@@ -80,8 +80,10 @@ pub fn worktrees_of(repo: &Path, fetch: bool) -> io::Result<Vec<WorktreeEntry>> 
         .filter(|i| !i.is_main)
         .filter_map(|i| i.branch.clone())
         .collect();
-    let merged = chda_git::merge_target(repo)
-        .map(|base| merged_branches(repo, &base, &branches))
+    let base = chda_git::merge_target(repo).ok();
+    let merged = base
+        .as_deref()
+        .map(|base| merged_branches(repo, base, &branches))
         .unwrap_or_default();
     let mut notes = chda_git::branch_descriptions(repo).unwrap_or_default();
     let mut out = Vec::new();
@@ -93,11 +95,25 @@ pub fn worktrees_of(repo: &Path, fetch: bool) -> io::Result<Vec<WorktreeEntry>> 
         };
         let merged = info.branch.as_ref().is_some_and(|b| merged.contains(b));
         let note = info.branch.as_ref().and_then(|b| notes.remove(b));
+        let diff = base
+            .as_deref()
+            .filter(|_| !info.is_main && !info.missing)
+            .and_then(|base| {
+                let stat = chda_git::diff_stat(&info.path, base).ok()?;
+                Some(DiffSummary {
+                    base: base.to_owned(),
+                    merge_base: stat.merge_base,
+                    files: stat.files,
+                    added: stat.added,
+                    removed: stat.removed,
+                })
+            });
         out.push(WorktreeEntry {
             path: info.path,
             branch: info.branch,
             is_main: info.is_main,
             badges,
+            diff,
             merged,
             missing: info.missing,
             note,
@@ -105,6 +121,23 @@ pub fn worktrees_of(repo: &Path, fetch: bool) -> io::Result<Vec<WorktreeEntry>> 
         });
     }
     Ok(out)
+}
+
+/// The command a diff tab runs: the change summary and the patch against
+/// `merge_base`, paged by `less` that stays open even when the diff fits
+/// on one screen (`-+F` undoes an `F` in the user's `LESS`).
+pub fn diff_command(merge_base: &str) -> Vec<String> {
+    [
+        "git",
+        "-c",
+        "core.pager=less -+F -R",
+        "diff",
+        "--stat",
+        "--patch",
+        merge_base,
+    ]
+    .map(str::to_owned)
+    .to_vec()
 }
 
 /// Local branches of `repo` that no worktree has checked out.

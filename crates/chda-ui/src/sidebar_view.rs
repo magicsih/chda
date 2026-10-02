@@ -3,8 +3,8 @@
 use std::path::PathBuf;
 
 use chda_core::{
-    AgentStatus, CheckState, GitBadges, PrInfo, PrState, RepoEntry, SessionEntry, Sidebar,
-    WorktreeEntry, relative_age,
+    AgentStatus, CheckState, DiffSummary, GitBadges, PrInfo, PrState, RepoEntry, SessionEntry,
+    Sidebar, WorktreeEntry, relative_age,
 };
 use gpui::{
     AnyElement, App, ClickEvent, Context, ElementId, EventEmitter, FocusHandle, Focusable, Hsla,
@@ -31,6 +31,8 @@ pub enum SidebarEvent {
     FocusTab(chda_core::TabId),
     /// The status dot of a worktree was clicked: go to its agent's pane.
     JumpToAgent(PathBuf),
+    /// Open a read-only tab with the worktree's diff against its base.
+    OpenDiff(PathBuf),
 }
 
 /// A past agent session to resume, and the worktree it belongs to.
@@ -284,6 +286,33 @@ impl SidebarView {
                 );
             }
         }
+        if let Some(diff) = wt.diff.as_ref().filter(|d| d.files > 0) {
+            let path = wt.path.clone();
+            badges.push(
+                div()
+                    .id(badge_id("diff"))
+                    .flex()
+                    .flex_row()
+                    .gap_0p5()
+                    .cursor_pointer()
+                    .tooltip(crate::tooltip::text(diff_tooltip(diff)))
+                    .on_click(cx.listener(move |_, _, _, cx| {
+                        cx.stop_propagation();
+                        cx.emit(SidebarEvent::OpenDiff(path.clone()));
+                    }))
+                    .child(
+                        div()
+                            .text_color(gpui::rgb(0xa6e3a1))
+                            .child(format!("+{}", diff.added)),
+                    )
+                    .child(
+                        div()
+                            .text_color(gpui::rgb(0xf38ba8))
+                            .child(format!("\u{2212}{}", diff.removed)),
+                    )
+                    .into_any_element(),
+            );
+        }
         if let Some(pr) = &wt.pr {
             let (icon, color): (&str, Hsla) = match (pr.state, pr.checks) {
                 (PrState::Merged, _) => ("\u{2713}", gpui::rgb(0xcba6f7).into()),
@@ -505,6 +534,16 @@ fn plural(n: usize, one: &str, many: &str) -> String {
     } else {
         format!("{n} {many}")
     }
+}
+
+fn diff_tooltip(d: &DiffSummary) -> String {
+    format!(
+        "{} against {}: {} added, {} removed.\nClick to view the diff.",
+        plural(d.files, "file changed", "files changed"),
+        d.base,
+        plural(d.added, "line", "lines"),
+        d.removed
+    )
 }
 
 fn conflicts_tooltip(n: usize) -> String {
@@ -990,6 +1029,17 @@ mod tests {
         assert_eq!(conflicts_tooltip(2), "2 files with merge conflicts.");
         assert_eq!(conflicts_tooltip(1), "1 file with merge conflicts.");
         assert_eq!(plural(1, "commit", "commits"), "1 commit");
+        let diff = DiffSummary {
+            base: "origin/main".into(),
+            merge_base: "abc".into(),
+            files: 3,
+            added: 120,
+            removed: 1,
+        };
+        assert_eq!(
+            diff_tooltip(&diff),
+            "3 files changed against origin/main: 120 lines added, 1 removed.\nClick to view the diff."
+        );
     }
 
     #[test]

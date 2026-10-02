@@ -72,6 +72,18 @@ pub enum CheckState {
     Failure,
 }
 
+/// How much a worktree changed against the branch it started from.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct DiffSummary {
+    /// The base branch, e.g. `origin/main`.
+    pub base: String,
+    /// The commit the worktree's branch started from on `base`.
+    pub merge_base: String,
+    pub files: usize,
+    pub added: usize,
+    pub removed: usize,
+}
+
 /// A past agent session that can be resumed in this worktree.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct SessionEntry {
@@ -106,6 +118,8 @@ pub struct WorktreeEntry {
     pub branch: Option<String>,
     pub is_main: bool,
     pub badges: GitBadges,
+    /// Changes against the default branch; `None` for the main worktree.
+    pub diff: Option<DiffSummary>,
     pub pr: Option<PrInfo>,
     /// The branch's commits are in the default branch, by ancestry or by
     /// patch content (squash or rebase merge).

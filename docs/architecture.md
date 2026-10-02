@@ -128,6 +128,12 @@ and the ACTIVE list show the most urgent status of their panes, the Dock badge
 counts waiting agents the user has not looked at, and a notification click
 (through `UNUserNotificationCenter` in the app bundle) focuses that pane.
 
+Each non-main worktree also gets its change size against the default branch
+(`origin/<default>` when it exists): `git diff --numstat` from its merge base,
+so commits and uncommitted edits to tracked files count and later commits on
+the default branch do not. Clicking it opens a tab that runs `git diff --stat
+--patch <merge base>` through `less`; quitting the pager closes the tab.
+
 Finishing a worktree (`chda-core::cleanup`) merges its branch into the
 default branch inside the main worktree, removes the worktree and deletes
 the branch; blockers (uncommitted changes, unpushed commits, an open pull
