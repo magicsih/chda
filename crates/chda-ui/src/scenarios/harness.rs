@@ -233,8 +233,11 @@ fn open_window(
     saved: Option<SavedWindow>,
 ) -> (VisualTestContext, Entity<WorkspaceView>) {
     {
+        // Ghostty's file names and order under the temporary home; no theme
+        // directories, so only bundled themes resolve.
         let paths = Paths {
-            config_files: vec![home.ghostty.clone()],
+            config_files: Paths::under(Some(home.home.join(".config")), Some(home.home.clone()))
+                .config_files,
             theme_dirs: Vec::new(),
         };
         let env = Rc::new(Environment {

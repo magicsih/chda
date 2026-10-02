@@ -2181,16 +2181,19 @@ impl WorkspaceView {
         self.open_path(&path, None, None, cx);
     }
 
-    /// Open the Ghostty config chda reads, creating an empty one if there is
-    /// none.
+    /// Open the Ghostty config file Ghostty itself would edit, creating an
+    /// empty `config.ghostty` if there is none.
     fn open_ghostty_config(
         &mut self,
         _: &OpenGhosttyConfig,
         _: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        let files = &self.ghostty_paths.config_files;
-        let Some(path) = files.iter().find(|p| p.exists()).or(files.first()).cloned() else {
+        let Some(path) = self
+            .ghostty_paths
+            .preferred_config_file()
+            .map(Path::to_path_buf)
+        else {
             return;
         };
         if !path.exists()

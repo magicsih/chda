@@ -34,3 +34,22 @@ fn ghostty_and_chda_config_changes_apply_live(cx: &mut TestAppContext) {
     h.wait_for("config.toml applied", |v, _| v.config.sidebar_width == 200);
     assert_eq!(h.read(|v, _| v.ws.title_mode), chda_core::TitleMode::Path);
 }
+
+#[gpui::test]
+fn config_ghostty_wins_over_the_legacy_name_live(cx: &mut TestAppContext) {
+    let mut h = Harness::open(cx, "cfgname", |home| {
+        std::fs::write(&home.ghostty, "font-size = 13\n").unwrap();
+    });
+    h.wait_prompt();
+    let named = h.home.ghostty.with_file_name("config.ghostty");
+    std::fs::write(&named, "font-size = 16\n").unwrap();
+    h.wait_for("config.ghostty applied", |v, cx| {
+        v.settings.font_size == px(16.0)
+            && v.panes
+                .values()
+                .all(|(p, _)| p.read(cx).settings.font_size == px(16.0))
+    });
+    h.cx.dispatch_action(crate::workspace_view::OpenGhosttyConfig);
+    h.cx.run_until_parked();
+    assert_eq!(h.system.0.borrow().opened_files, vec![named]);
+}
