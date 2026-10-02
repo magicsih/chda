@@ -8,9 +8,9 @@ use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use chda_config::{ChdaConfig, DefaultAction, GhosttyConfig, Paths, TabTitle};
-use chda_core::agents::{
-    AgentAdapter, AgentId, HookEvent, HookKind, SessionCache, SessionId, adapters, data_dir, ipc,
-};
+
+use crate::environment::Environment;
+use chda_core::agents::{AgentAdapter, AgentId, HookEvent, HookKind, SessionCache, SessionId, ipc};
 use chda_core::{
     ActiveTab, AgentEvent, AgentStatus, Axis, Direction, FileWatcher, Node, PaneId, RepoWatcher,
     SavedBounds, SavedWindow, TabId, TitleMode, Workspace,
@@ -96,7 +96,7 @@ struct ContextMenu {
 }
 
 #[derive(Clone, Debug)]
-enum MenuAction {
+pub(crate) enum MenuAction {
     OpenTerminal(PathBuf),
     RunAgent(PathBuf, AgentId),
     NewWorktree(PathBuf),
@@ -126,7 +126,7 @@ enum MenuAction {
 }
 
 /// A yes/no sheet before a destructive action.
-struct ConfirmSheet {
+pub(crate) struct ConfirmSheet {
     title: String,
     lines: Vec<String>,
     action: MenuAction,
@@ -141,15 +141,16 @@ struct NewWorktreeSheet {
 }
 
 pub struct WorkspaceView {
+    pub(crate) env: std::rc::Rc<Environment>,
     /// Settings new panes start with; `font_size` follows the font size
     /// actions, while `configured_font_size` is what `cmd-0` returns to.
-    settings: Settings,
+    pub(crate) settings: Settings,
     configured_font_size: Pixels,
-    config: ChdaConfig,
-    ws: Workspace,
-    panes: HashMap<PaneId, (Entity<TerminalView>, Subscription)>,
+    pub(crate) config: ChdaConfig,
+    pub(crate) ws: Workspace,
+    pub(crate) panes: HashMap<PaneId, (Entity<TerminalView>, Subscription)>,
     focus_handle: FocusHandle,
-    sidebar: Entity<SidebarView>,
+    pub(crate) sidebar: Entity<SidebarView>,
     _sidebar_sub: Subscription,
     sidebar_visible: bool,
     adapters: Arc<Vec<Box<dyn AgentAdapter>>>,
@@ -161,7 +162,7 @@ pub struct WorkspaceView {
     watch_events: Option<mpsc::Receiver<PathBuf>>,
     context_menu: Option<ContextMenu>,
     sheet: Option<NewWorktreeSheet>,
-    confirm: Option<ConfirmSheet>,
+    pub(crate) confirm: Option<ConfirmSheet>,
     palette: Option<(Entity<Palette>, Subscription)>,
     /// Inline editor for a tab title.
     renaming: Option<(TabId, Entity<TextInput>, Subscription)>,
@@ -174,7 +175,7 @@ pub struct WorkspaceView {
     /// Last `origin/<default>` fetch per repository.
     base_fetched: HashMap<PathBuf, std::time::Instant>,
     /// Message shown briefly at the bottom of the sidebar.
-    status_line: Option<String>,
+    pub(crate) status_line: Option<String>,
     /// Where the Ghostty config lives, and the files the last load read.
     ghostty_paths: Paths,
     ghostty_sources: Vec<PathBuf>,
@@ -198,21 +199,23 @@ impl WorkspaceView {
     pub fn new(
         ghostty: GhosttyConfig,
         saved: Option<SavedWindow>,
+        env: std::rc::Rc<Environment>,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Self {
         let settings = Settings::from_ghostty(&ghostty);
-        let config = ChdaConfig::default_path()
-            .and_then(|p| ChdaConfig::load(&p).ok())
-            .unwrap_or_default();
+        let config = env.load_config();
         let bg = hsla(settings.colors.background.unwrap_or_default());
         let fg = hsla(settings.colors.foreground.unwrap_or_default());
         let sidebar = cx.new(|cx| SidebarView::new(fg, blend(bg, fg, 0.04), cx));
         let sidebar_sub = cx.subscribe_in(&sidebar, window, |this, _, event, window, cx| {
             this.on_sidebar_event(event.clone(), window, cx)
         });
-        let adapters: Arc<Vec<Box<dyn AgentAdapter>>> = Arc::new(adapters());
-        let hook_events = Self::start_hook_receiver(window, cx);
+        let adapters = Arc::clone(&env.adapters);
+        let hook_events = env
+            .data_dir
+            .clone()
+            .and_then(|d| Self::start_hook_receiver(d, window, cx));
         let (watcher, watch_events) = Self::start_watcher(window, cx);
 
         let mut ws = Workspace::new();
@@ -232,8 +235,9 @@ impl WorkspaceView {
             _sidebar_sub: sidebar_sub,
             adapters,
             session_cache: Arc::new(Mutex::new(
-                data_dir()
-                    .map(|d| SessionCache::load(&d))
+                env.data_dir
+                    .as_deref()
+                    .map(SessionCache::load)
                     .unwrap_or_default(),
             )),
             hook_events,
@@ -251,7 +255,7 @@ impl WorkspaceView {
             pr_fetched: HashMap::new(),
             base_fetched: HashMap::new(),
             status_line: None,
-            ghostty_paths: Paths::default_for_user(),
+            ghostty_paths: env.ghostty.clone(),
             ghostty_sources: ghostty.sources,
             config_watcher: None,
             config_problem: None,
@@ -260,6 +264,7 @@ impl WorkspaceView {
             last_jump: None,
             bounds: None,
             quitting: false,
+            env,
         };
         this.note_bounds(window);
         cx.observe_window_bounds(window, |this, window, _| {
@@ -273,7 +278,7 @@ impl WorkspaceView {
             async {}
         })
         .detach();
-        Self::start_notification_clicks(window, cx);
+        this.start_notification_clicks(window, cx);
         cx.observe_window_activation(window, |this, window, cx| {
             if window.is_window_active() {
                 this.reviewed_focused(cx);
@@ -282,7 +287,8 @@ impl WorkspaceView {
         .detach();
         this.config_watcher = Self::start_config_watcher(window, cx);
         this.watch_config_files();
-        let gh = cx.background_spawn(async { chda_core::gh_available() });
+        let use_gh = this.env.use_gh;
+        let gh = cx.background_spawn(async move { use_gh && chda_core::gh_available() });
         cx.spawn(async move |this, cx| {
             let ok = gh.await;
             let _ = this.update(cx, |view, cx| {
@@ -315,20 +321,20 @@ impl WorkspaceView {
     }
 
     fn install_hooks(&self) {
-        let Some(data_dir) = data_dir() else {
+        let Some(data_dir) = self.env.data_dir.as_deref() else {
             return;
         };
         for adapter in self.adapters.iter() {
-            let _ = adapter.install_hooks(&data_dir, &Self::hook_bin());
+            let _ = adapter.install_hooks(data_dir, &Self::hook_bin());
         }
     }
 
     /// Listen for `chda hook` on the local socket and drain the fallback log.
     fn start_hook_receiver(
+        data_dir: PathBuf,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Option<mpsc::Receiver<HookEvent>> {
-        let data_dir = data_dir()?;
         let (tx, rx) = mpsc::channel();
         let (wake_tx, mut wake_rx) = unbounded::<()>();
         let socket = ipc::socket_path(&data_dir);
@@ -424,7 +430,7 @@ impl WorkspaceView {
             .iter()
             .chain(&self.ghostty_sources)
             .cloned()
-            .chain(ChdaConfig::default_path())
+            .chain(self.env.config_path.clone())
             .collect();
         if let Some(w) = &mut self.config_watcher {
             w.set_files(files);
@@ -453,7 +459,7 @@ impl WorkspaceView {
             ));
         }
         self.ghostty_sources = ghostty.sources;
-        if let Some(path) = ChdaConfig::default_path() {
+        if let Some(path) = self.env.config_path.clone() {
             match ChdaConfig::load(&path) {
                 Ok(config) => {
                     if config != self.config {
@@ -610,14 +616,18 @@ impl WorkspaceView {
         };
         match status {
             AgentStatus::WaitingInput if self.config.notifications => {
-                platform::notify(
+                self.env.system.notify(
                     &format!("{agent} is waiting"),
                     &format!("in {name}"),
                     &target,
                 );
             }
             AgentStatus::Review if self.config.notifications && !looking => {
-                platform::notify(&format!("{agent} finished"), &format!("in {name}"), &target);
+                self.env.system.notify(
+                    &format!("{agent} finished"),
+                    &format!("in {name}"),
+                    &target,
+                );
             }
             _ => {}
         }
@@ -670,7 +680,7 @@ impl WorkspaceView {
     /// Dock badge and the pulse timer.
     fn sync_attention(&mut self, cx: &mut Context<Self>) {
         self.sync_panes(cx);
-        platform::set_badge(self.ws.unseen_waiting());
+        self.env.system.set_badge(self.ws.unseen_waiting());
         self.ensure_pulse(cx);
         cx.notify();
     }
@@ -779,11 +789,13 @@ impl WorkspaceView {
     /// Bring the window forward when the user clicks one of our
     /// notifications, and show the agent's pane, or its worktree when the
     /// pane is gone.
-    fn start_notification_clicks(window: &mut Window, cx: &mut Context<Self>) {
+    fn start_notification_clicks(&self, window: &mut Window, cx: &mut Context<Self>) {
         let (tx, mut rx) = unbounded::<platform::NotificationTarget>();
-        platform::init_notifications(move |target| {
-            let _ = tx.unbounded_send(target);
-        });
+        self.env
+            .system
+            .on_notification_click(Box::new(move |target| {
+                let _ = tx.unbounded_send(target);
+            }));
         cx.spawn_in(window, async move |this, cx| {
             while let Some(target) = rx.next().await {
                 if this
@@ -799,14 +811,14 @@ impl WorkspaceView {
         .detach();
     }
 
-    fn on_notification_click(
+    pub(crate) fn on_notification_click(
         &mut self,
         target: platform::NotificationTarget,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
         cx.activate(true);
-        platform::restore_windows();
+        self.env.system.restore_windows();
         window.activate_window();
         match target.pane.and_then(|raw| self.ws.pane_by_raw(raw)) {
             Some(pane) => self.jump_to_pane(pane, window, cx),
@@ -998,10 +1010,10 @@ impl WorkspaceView {
         let adapters = Arc::clone(&self.adapters);
         let cache = Arc::clone(&self.session_cache);
         let worktrees = self.worktree_paths(cx);
-        let task =
-            cx.background_spawn(
-                async move { chda_core::index_sessions(&adapters, &cache, &worktrees) },
-            );
+        let data_dir = self.env.data_dir.clone();
+        let task = cx.background_spawn(async move {
+            chda_core::index_sessions(&adapters, &cache, &worktrees, data_dir.as_deref())
+        });
         cx.spawn(async move |this, cx| {
             let sessions = task.await;
             let _ = this.update(cx, |view, cx| {
@@ -1083,12 +1095,12 @@ impl WorkspaceView {
         if self.quitting || !self.config.restore_session {
             return;
         }
-        let Some(dir) = data_dir() else {
+        let Some(dir) = self.env.data_dir.as_deref() else {
             return;
         };
         let mut saved = self.ws.snapshot();
         saved.bounds = self.bounds;
-        let _ = saved.save(&dir);
+        let _ = saved.save(dir);
     }
 
     fn sync_panes(&mut self, cx: &mut Context<Self>) {
@@ -1154,8 +1166,8 @@ impl WorkspaceView {
     }
 
     fn save_config(&self) {
-        if let Some(path) = ChdaConfig::default_path() {
-            let _ = self.config.save(&path);
+        if let Some(path) = &self.env.config_path {
+            let _ = self.config.save(path);
         }
     }
 
@@ -1176,7 +1188,9 @@ impl WorkspaceView {
             info.cwd = cwd.clone();
         }
         let settings = self.settings.clone();
-        let view = cx.new(|cx| TerminalView::new(settings, pane.raw(), cwd, command, window, cx));
+        let env = std::rc::Rc::clone(&self.env);
+        let view =
+            cx.new(|cx| TerminalView::new(settings, &env, pane.raw(), cwd, command, window, cx));
         let sub = cx.subscribe_in(&view, window, move |this, _, event, window, cx| {
             this.on_pane_event(pane, event, window, cx)
         });
@@ -1222,7 +1236,7 @@ impl WorkspaceView {
                 {
                     info.bell = true;
                 }
-                platform::beep();
+                self.env.system.beep();
             }
             TerminalEvent::Focused => {
                 self.ws.focus_pane(pane);
@@ -1586,7 +1600,12 @@ impl WorkspaceView {
     }
 
     /// Focus a pane already in the worktree, else open a tab there.
-    fn open_worktree(&mut self, path: &Path, window: &mut Window, cx: &mut Context<Self>) {
+    pub(crate) fn open_worktree(
+        &mut self,
+        path: &Path,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
         let missing = self
             .sidebar
             .read(cx)
@@ -1654,7 +1673,12 @@ impl WorkspaceView {
         self.open_tab_at(Some(cwd.to_path_buf()), argv, window, cx);
     }
 
-    fn run_menu_action(&mut self, action: MenuAction, window: &mut Window, cx: &mut Context<Self>) {
+    pub(crate) fn run_menu_action(
+        &mut self,
+        action: MenuAction,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
         self.context_menu = None;
         match action {
             MenuAction::OpenTerminal(path) => self.open_tab_at(Some(path), None, window, cx),
@@ -1930,7 +1954,12 @@ impl WorkspaceView {
         cx.notify();
     }
 
-    fn open_sheet(&mut self, repo: PathBuf, window: &mut Window, cx: &mut Context<Self>) {
+    pub(crate) fn open_sheet(
+        &mut self,
+        repo: PathBuf,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
         let bg = hsla(self.settings.colors.background.unwrap_or_default());
         let fg = hsla(self.settings.colors.foreground.unwrap_or_default());
         let input = cx.new(|cx| TextInput::new("branch name", fg, blend(bg, fg, 0.12), cx));
@@ -2211,7 +2240,7 @@ impl WorkspaceView {
         )
     }
 
-    fn confirm_action(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+    pub(crate) fn confirm_action(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         if let Some(confirm) = self.confirm.take() {
             // CleanStale runs when the confirm sheet is still set; re-arm it
             // so the action sees the confirmation.
@@ -2619,6 +2648,21 @@ pub fn blend(a: Hsla, b: Hsla, t: f32) -> Hsla {
         a: 1.0,
     }
     .into()
+}
+
+#[cfg(test)]
+impl WorkspaceView {
+    /// The focused pane's visible text, rows joined with newlines.
+    pub(crate) fn focused_text(&self, cx: &App) -> String {
+        let Some((view, _)) = self.ws.focused_pane().and_then(|p| self.panes.get(&p)) else {
+            return String::new();
+        };
+        let frame = view.read(cx).frame();
+        (0..frame.size.rows)
+            .map(|y| frame.row_text(y))
+            .collect::<Vec<_>>()
+            .join("\n")
+    }
 }
 
 impl Focusable for WorkspaceView {

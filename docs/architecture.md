@@ -121,4 +121,13 @@ parse, keeps the previous values and shows a message.
 zoom, tab names and pane directories, written to `session.json` in the data
 directory whenever they change and read on the next launch.
 
+## Environment
+
+`WorkspaceView` gets an `Environment`: the config and data directories,
+Ghostty paths, the shell, extra pane environment, the agent adapters and a
+`System` for side effects outside the window (notifications, Dock badge,
+beep, window restore, the shells' locale). `run()` builds it from the user's
+real locations; the scenario tests build it over a temporary home with a
+recording `System` (see `docs/testing.md`).
+
 Decisions that are hard to reverse are recorded under `docs/decisions/`.

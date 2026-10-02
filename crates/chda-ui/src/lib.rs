@@ -1,7 +1,10 @@
 //! GPUI views, elements and theme. The only crate that may depend on GPUI.
 
+mod environment;
 mod palette;
 mod platform;
+#[cfg(test)]
+mod scenarios;
 mod settings;
 mod sidebar_view;
 mod terminal_element;
@@ -91,12 +94,15 @@ pub fn run(ghostty: chda_config::GhosttyConfig) {
         cx.bind_keys(key_bindings());
         cx.on_action(|_: &Quit, cx| cx.quit());
 
-        let config = chda_config::ChdaConfig::default_path()
-            .and_then(|p| chda_config::ChdaConfig::load(&p).ok())
-            .unwrap_or_default();
+        let env = std::rc::Rc::new(environment::Environment::for_user());
+        let config = env.load_config();
         let saved = config
             .restore_session
-            .then(|| chda_core::agents::data_dir().and_then(|d| chda_core::SavedWindow::load(&d)))
+            .then(|| {
+                env.data_dir
+                    .as_deref()
+                    .and_then(chda_core::SavedWindow::load)
+            })
             .flatten();
         let bounds = match saved.as_ref().and_then(|s| s.bounds) {
             Some(b) => Bounds::new(point(px(b.x), px(b.y)), size(px(b.width), px(b.height))),
@@ -112,7 +118,7 @@ pub fn run(ghostty: chda_config::GhosttyConfig) {
                     }),
                     ..Default::default()
                 },
-                |window, cx| cx.new(|cx| WorkspaceView::new(ghostty, saved, window, cx)),
+                |window, cx| cx.new(|cx| WorkspaceView::new(ghostty, saved, env, window, cx)),
             )
             .expect("failed to open main window");
         window

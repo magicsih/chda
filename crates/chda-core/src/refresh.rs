@@ -136,16 +136,18 @@ pub fn badges_of(worktree: &Path) -> io::Result<GitBadges> {
 }
 
 /// Index the agent sessions that ran inside `worktrees`, newest first,
-/// keyed by their cwd, and save the index cache for the next launch.
+/// keyed by their cwd, and save the index cache in `data_dir` for the next
+/// launch.
 pub fn index_sessions(
     adapters: &[Box<dyn AgentAdapter>],
     cache: &Arc<Mutex<SessionCache>>,
     worktrees: &[PathBuf],
+    data_dir: Option<&Path>,
 ) -> Vec<(PathBuf, SessionEntry)> {
     let mut cache = cache.lock().unwrap_or_else(|e| e.into_inner());
     let sessions = chda_agents::index_sessions(adapters, &mut cache, worktrees);
-    if let Some(dir) = chda_agents::hook::data_dir() {
-        let _ = cache.save(&dir);
+    if let Some(dir) = data_dir {
+        let _ = cache.save(dir);
     }
     sessions
         .into_iter()

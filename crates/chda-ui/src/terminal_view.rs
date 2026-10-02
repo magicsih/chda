@@ -10,7 +10,7 @@ use std::time::Duration;
 use chda_term::{
     Event, Frame, KeyAction, KeyCode, KeyInput, LinkTarget, Modifiers, MouseAction,
     MouseButton as TermButton, MouseInput, SearchQuery, SearchStatus, Session, SessionOptions,
-    Size, default_data_dir, launch_for, login_shell, parse_pwd_report,
+    Size, launch_for, parse_pwd_report,
 };
 use futures::StreamExt;
 use futures::channel::mpsc::{UnboundedReceiver, unbounded};
@@ -153,6 +153,7 @@ impl EventEmitter<TerminalEvent> for TerminalView {}
 impl TerminalView {
     pub fn new(
         settings: Settings,
+        env: &crate::environment::Environment,
         pane_id: u64,
         cwd: Option<PathBuf>,
         command: Option<Vec<String>>,
@@ -168,14 +169,15 @@ impl TerminalView {
             command,
             ..Default::default()
         };
-        if let Some(lang) = crate::platform::default_lang() {
+        if let Some(lang) = env.system.pane_locale() {
             options.env.push(("LANG".to_owned(), lang));
         }
+        options.env.extend(env.pane_env.iter().cloned());
         // Agents started in this pane report it back with their hook events.
         options
             .env
             .push((chda_core::agents::PANE_ENV.to_owned(), pane_id.to_string()));
-        if let (Some(shell), Some(data_dir)) = (login_shell(), default_data_dir())
+        if let (Some(shell), Some(data_dir)) = (env.shell.clone(), env.data_dir.clone())
             && let Ok(launch) = launch_for(settings.shell_integration, &shell, &data_dir)
         {
             // A launch with arguments replaces the default login shell
@@ -376,6 +378,12 @@ impl TerminalView {
         self.settings = settings;
         self.layout_cache = None;
         cx.notify();
+    }
+
+    /// The search bar's latest result, when the bar is open.
+    #[cfg(test)]
+    pub(crate) fn search_status(&self) -> Option<SearchStatus> {
+        self.search.as_ref().map(|b| b.status.clone())
     }
 
     /// Scroll to the last shell prompt (where an agent was started).

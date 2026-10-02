@@ -26,6 +26,7 @@ Workspace crates: `chda` (binary), `chda-ui`, `chda-core`, `chda-term`, `chda-pt
 - Do not add AI attribution, signatures, or marketing lines to code, commits, or PRs.
 - No secrets, tokens, or user-specific paths in the repository.
 - Remove dead code and compatibility shims when you replace them.
+- A bug fix comes with a test that fails without the fix; user-facing flows get a scenario test. See `docs/testing.md`.
 
 ## Local overrides
 
