@@ -536,6 +536,17 @@ impl Terminal {
 
     /// The whole screen, scrollback included, as plain text: one line per
     /// row with trailing blanks trimmed.
+    /// The last Mermaid diagram in the scrollback and screen.
+    pub fn last_diagram(&self) -> Option<String> {
+        let opts = FormatterOptions::new()
+            .with_format(Format::Plain)
+            .with_unwrap(true)
+            .with_trim(true);
+        let mut formatter = Formatter::new(&self.vt, opts).ok()?;
+        let bytes = formatter.format_alloc(None).ok()?;
+        crate::mermaid::last_diagram(&String::from_utf8_lossy(&bytes))
+    }
+
     fn screen_text(&self) -> Result<String> {
         let opts = FormatterOptions::new()
             .with_format(Format::Plain)
@@ -705,6 +716,7 @@ impl Terminal {
             alternate_screen,
             hyperlinks: Vec::new(),
             images: Vec::new(),
+            diagrams: Vec::new(),
             generation: self.generation,
         };
         // Cells carrying an OSC 8 link; their URIs are looked up afterwards.
@@ -793,6 +805,7 @@ impl Terminal {
         self.mark_search(&mut frame);
         frame.hyperlinks = self.hyperlinks(&linked);
         frame.images = self.image_placements()?;
+        frame.diagrams = crate::mermaid::diagrams(&frame);
         // A prompt on a row we have not seen a prompt on before means the
         // previous command finished, even if no frame caught the output.
         let prompt_row = frame.cursor.and_then(|c| {

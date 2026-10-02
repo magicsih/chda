@@ -5,6 +5,7 @@
 
 mod agents;
 mod config;
+mod diagrams;
 mod harness;
 mod input;
 mod menus;

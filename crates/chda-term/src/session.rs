@@ -50,6 +50,9 @@ pub enum Event {
     PromptShown,
     /// The active search ran: after [`Session::search`], a step, or new output.
     Search(SearchStatus),
+    /// Reply to [`Session::find_last_diagram`]: the last Mermaid source in
+    /// the scrollback, if any.
+    LastDiagram(Option<String>),
     /// The child exited; the session is finished.
     Exited(ExitStatus),
 }
@@ -110,6 +113,7 @@ enum Command {
     JumpToLastPrompt,
     Mouse(MouseInput),
     CopySelection,
+    FindLastDiagram,
     QueryCwd,
     Search(Option<SearchQuery>),
     SearchStep {
@@ -243,6 +247,12 @@ impl Session {
     /// Ask for the selected text; it arrives as [`Event::SelectionText`].
     pub fn copy_selection(&self) {
         self.send(Command::CopySelection);
+    }
+
+    /// Look for the last Mermaid diagram in the scrollback; the answer
+    /// arrives as [`Event::LastDiagram`].
+    pub fn find_last_diagram(&self) {
+        self.send(Command::FindLastDiagram);
     }
 
     /// Ask the OS for the foreground process's working directory; it
@@ -583,6 +593,10 @@ fn handle_command(
         }
         Command::CopySelection => {
             replies.push(Event::SelectionText(term.selection_text().unwrap_or(None)));
+            false
+        }
+        Command::FindLastDiagram => {
+            replies.push(Event::LastDiagram(term.last_diagram()));
             false
         }
         Command::QueryCwd => {

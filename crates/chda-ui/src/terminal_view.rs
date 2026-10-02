@@ -67,6 +67,9 @@ pub enum TerminalEvent {
     Prompt,
     /// Output or input happened (at most once per second).
     Activity(u64),
+    /// Show a Mermaid diagram from this pane; `None` when the user asked
+    /// for the last one and the scrollback has none.
+    ViewDiagram(Option<String>),
     /// The user cmd-clicked an existing file path.
     OpenPath {
         path: PathBuf,
@@ -369,6 +372,7 @@ impl TerminalView {
                     cx.write_to_clipboard(ClipboardItem::new_string(text))
                 }
                 Event::SelectionText(None) => {}
+                Event::LastDiagram(source) => cx.emit(TerminalEvent::ViewDiagram(source)),
                 Event::Search(status) => {
                     if let Some(bar) = &mut self.search {
                         bar.status = status;
@@ -395,6 +399,56 @@ impl TerminalView {
     #[cfg(test)]
     pub(crate) fn search_status(&self) -> Option<SearchStatus> {
         self.search.as_ref().map(|b| b.status.clone())
+    }
+
+    /// Show the last Mermaid diagram in the scrollback; the answer comes
+    /// back as [`TerminalEvent::ViewDiagram`].
+    pub fn view_last_diagram(&self) {
+        self.session.find_last_diagram();
+    }
+
+    /// "View diagram" chips at the first row of each diagram in view.
+    fn render_diagram_chips(&self, cx: &mut Context<Self>) -> Vec<gpui::AnyElement> {
+        let Some(g) = self.geometry else {
+            return Vec::new();
+        };
+        let fg = hsla(self.settings.colors.foreground.unwrap_or_default());
+        let bg = hsla(self.settings.colors.background.unwrap_or_default());
+        let p = self.settings.padding;
+        self.frame
+            .diagrams
+            .iter()
+            .enumerate()
+            .map(|(i, d)| {
+                let source = d.source.clone();
+                div()
+                    .id(("diagram", i))
+                    .absolute()
+                    .top(px(p.top as f32) + g.line_height * f32::from(d.first_row))
+                    .right(px(p.right as f32 + 8.0))
+                    .h(g.line_height)
+                    .px_2()
+                    .flex()
+                    .items_center()
+                    .rounded_md()
+                    .text_xs()
+                    .text_color(fg)
+                    .bg(crate::workspace_view::blend(bg, fg, 0.12))
+                    .border_1()
+                    .border_color(fg.opacity(0.25))
+                    .cursor_pointer()
+                    .hover(|s| s.bg(crate::workspace_view::blend(bg, fg, 0.22)))
+                    .tooltip(crate::tooltip::text(
+                        "Render this Mermaid diagram in the browser, offline (or cmd-click the block)",
+                    ))
+                    .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
+                    .on_click(cx.listener(move |_, _, _, cx| {
+                        cx.emit(TerminalEvent::ViewDiagram(Some(source.clone())));
+                    }))
+                    .child("View diagram")
+                    .into_any_element()
+            })
+            .collect()
     }
 
     /// Scroll to the last shell prompt (where an agent was started).
@@ -810,6 +864,19 @@ impl TerminalView {
             }
             return;
         }
+        // cmd-click on a Mermaid block shows the diagram.
+        if event.button == MouseButton::Left
+            && event.modifiers.platform
+            && let Some((_, y)) = self.hover_cell
+            && let Some(d) = self
+                .frame
+                .diagrams
+                .iter()
+                .find(|d| (d.first_row..=d.last_row).contains(&y))
+        {
+            cx.emit(TerminalEvent::ViewDiagram(Some(d.source.clone())));
+            return;
+        }
         let click_count = event.click_count.clamp(1, 3) as u8;
         if let Some(input) = self.mouse_input(
             MouseAction::Down { click_count },
@@ -1000,6 +1067,7 @@ impl Render for TerminalView {
     fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let p = self.settings.padding;
         let search = self.render_search(cx);
+        let chips = self.render_diagram_chips(cx);
         div()
             .size_full()
             .relative()
@@ -1030,6 +1098,7 @@ impl Render for TerminalView {
             .on_modifiers_changed(cx.listener(Self::modifiers_changed))
             .on_scroll_wheel(cx.listener(Self::scroll_wheel))
             .child(TerminalElement::new(cx.entity(), self.focus_handle.clone()))
+            .children(chips)
             .children(search)
     }
 }

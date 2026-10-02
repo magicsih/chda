@@ -72,7 +72,7 @@ and adds pull request badges. On a managed Mac where Homebrew cannot write to
 
 | Area | What you get |
 |---|---|
-| Terminal | Ghostty-accurate VT handling, true color, wide glyphs, IME input, mouse selection and reporting, scrollback search (`cmd-f`), cmd-click links and file paths, inline images (Kitty graphics protocol), font size shortcuts, prompt jumping (`cmd-up` / `cmd-down`) |
+| Terminal | Ghostty-accurate VT handling, true color, wide glyphs, IME input, mouse selection and reporting, scrollback search (`cmd-f`), cmd-click links and file paths, inline images (Kitty graphics protocol), Mermaid diagrams in agent output rendered offline ("View diagram"), font size shortcuts, prompt jumping (`cmd-up` / `cmd-down`) |
 | Tabs and splits | Ghostty's default shortcuts; tabs grouped by repository; rename a tab with a double-click; tabs, splits and directories come back after a restart |
 | Sidebar | Repositories, worktrees, dirty / ahead / behind / conflict badges, pull request state via `gh`, open-tab counts, an ACTIVE list sorted by last activity |
 | Worktrees | Create from a new or existing branch, delete with a safety check, merge-and-clean, bulk cleanup of merged branches |
@@ -204,3 +204,5 @@ Font License 1.1 and [Symbols Nerd Font](https://github.com/ryanoasis/nerd-fonts
 under MIT; both texts are in `crates/chda-ui/assets/fonts`. The bundled themes
 come from [iTerm2-Color-Schemes](https://github.com/mbadolato/iTerm2-Color-Schemes)
 under MIT (`crates/chda-config/assets/themes-LICENSE.txt`).
+The diagram viewer bundles [Mermaid](https://github.com/mermaid-js/mermaid)
+12.1.0 under MIT (`crates/chda-ui/assets/mermaid/LICENSE`).

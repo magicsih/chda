@@ -1,5 +1,6 @@
 //! GPUI views, elements and theme. The only crate that may depend on GPUI.
 
+mod diagram;
 mod environment;
 mod fonts;
 mod menus;
