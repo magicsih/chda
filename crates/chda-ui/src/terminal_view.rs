@@ -110,6 +110,9 @@ pub struct GridGeometry {
     pub cell_width: Pixels,
     pub line_height: Pixels,
     pub size: Size,
+    /// Device pixels per logical pixel. Applications see device pixels, as
+    /// in Ghostty, so images and pixel mouse reports match the display.
+    pub scale: f32,
 }
 
 const BLINK_INTERVAL: Duration = Duration::from_millis(600);
@@ -130,6 +133,7 @@ pub struct TerminalView {
     pub geometry: Option<GridGeometry>,
     /// Shaped text reused across cursor blinks.
     pub layout_cache: Option<std::rc::Rc<crate::terminal_element::CachedLayout>>,
+    pub image_textures: crate::terminal_images::ImageTextures,
     /// Blink phase; the cursor is drawn when true.
     pub blink_on: bool,
     /// Bumped on input so the blink restarts in the visible phase.
@@ -236,6 +240,7 @@ impl TerminalView {
             cursor_bounds: None,
             geometry: None,
             layout_cache: None,
+            image_textures: Default::default(),
             blink_on: true,
             blink_epoch: 0,
             focused: false,
@@ -406,12 +411,13 @@ impl TerminalView {
     }
 
     /// Called by the element on every layout; tells the session when the
-    /// grid or the cell size (font size changes) differs from the last one.
-    pub fn set_grid(&mut self, grid: Size, cell_width: Pixels, line_height: Pixels) {
+    /// grid or the cell size (font size or display scale changes) differs
+    /// from the last one. Cell sizes go to the terminal in device pixels.
+    pub fn set_grid(&mut self, grid: Size, cell_width: Pixels, line_height: Pixels, scale: f32) {
         let next = (
             grid,
-            f32::from(cell_width).round() as u32,
-            f32::from(line_height).round() as u32,
+            (f32::from(cell_width) * scale).round() as u32,
+            (f32::from(line_height) * scale).round() as u32,
         );
         if next == self.grid {
             return;
@@ -713,8 +719,8 @@ impl TerminalView {
             mods: modifiers(mods),
             cell_x,
             cell_y,
-            px_x: px_x as u32,
-            px_y: px_y as u32,
+            px_x: (px_x * g.scale) as u32,
+            px_y: (px_y * g.scale) as u32,
         })
     }
 
@@ -852,8 +858,8 @@ impl TerminalView {
         let after = (self.scroll_px / f32::from(line_height)) as i32;
         let lines = after - before;
         if lines != 0 {
-            let px_x = f32::from(event.position.x - g.origin.x).max(0.0) as u32;
-            let px_y = f32::from(event.position.y - g.origin.y).max(0.0) as u32;
+            let px_x = (f32::from(event.position.x - g.origin.x).max(0.0) * g.scale) as u32;
+            let px_y = (f32::from(event.position.y - g.origin.y).max(0.0) * g.scale) as u32;
             // Wheel up (positive delta) moves the viewport towards history.
             self.session
                 .scroll(-(lines as isize), modifiers(event.modifiers), px_x, px_y);

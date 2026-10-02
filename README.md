@@ -72,7 +72,7 @@ and adds pull request badges. On a managed Mac where Homebrew cannot write to
 
 | Area | What you get |
 |---|---|
-| Terminal | Ghostty-accurate VT handling, true color, wide glyphs, IME input, mouse selection and reporting, scrollback search (`cmd-f`), cmd-click links and file paths, font size shortcuts, prompt jumping (`cmd-up` / `cmd-down`) |
+| Terminal | Ghostty-accurate VT handling, true color, wide glyphs, IME input, mouse selection and reporting, scrollback search (`cmd-f`), cmd-click links and file paths, inline images (Kitty graphics protocol), font size shortcuts, prompt jumping (`cmd-up` / `cmd-down`) |
 | Tabs and splits | Ghostty's default shortcuts; tabs grouped by repository; rename a tab with a double-click; tabs, splits and directories come back after a restart |
 | Sidebar | Repositories, worktrees, dirty / ahead / behind / conflict badges, pull request state via `gh`, open-tab counts, an ACTIVE list sorted by last activity |
 | Worktrees | Create from a new or existing branch, delete with a safety check, merge-and-clean, bulk cleanup of merged branches |

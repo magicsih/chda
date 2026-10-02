@@ -1,10 +1,15 @@
 //! Paints a terminal [`Frame`] as a fixed-width cell grid.
 
-use chda_term::{Cell, CellWidth, CursorShape, Frame, Rgb, SearchMark, Size, Underline};
+use std::collections::HashSet;
+use std::sync::Arc;
+
+use chda_term::{
+    Cell, CellWidth, CursorShape, Frame, ImageLayer, Rgb, SearchMark, Size, Underline,
+};
 use gpui::{
     App, BorderStyle, Bounds, ContentMask, CursorStyle, Element, ElementId, ElementInputHandler,
     Entity, FocusHandle, Font, FontStyle, FontWeight, GlobalElementId, Hitbox, HitboxBehavior,
-    Hsla, InspectorElementId, IntoElement, LayoutId, Pixels, Point, Rgba, ShapedLine,
+    Hsla, InspectorElementId, IntoElement, LayoutId, Pixels, Point, RenderImage, Rgba, ShapedLine,
     StrikethroughStyle, Style, TextAlign, TextRun, UnderlineStyle, Window, fill, outline, point,
     px, relative, size,
 };
@@ -51,6 +56,10 @@ pub struct Layout {
     marked: Option<(Bounds<Pixels>, ShapedLine)>,
     /// Underlines for the link under the mouse while cmd is held.
     link: Vec<(Bounds<Pixels>, Hsla)>,
+    /// Kitty graphics, in `z` order.
+    images: Vec<(ImageLayer, Bounds<Pixels>, Arc<RenderImage>)>,
+    /// Textures no longer shown, to free from the atlas.
+    dropped_images: Vec<Arc<RenderImage>>,
     metrics: Metrics,
 }
 
@@ -145,13 +154,15 @@ impl Element for TerminalElement {
             cols: cols.max(2),
             rows: rows.max(2),
         };
+        let scale = window.scale_factor();
         self.view.update(cx, |view, _| {
-            view.set_grid(grid, metrics.cell_width, metrics.line_height);
+            view.set_grid(grid, metrics.cell_width, metrics.line_height, scale);
             view.geometry = Some(GridGeometry {
                 origin: bounds.origin,
                 cell_width: metrics.cell_width,
                 line_height: metrics.line_height,
                 size: grid,
+                scale,
             });
         });
 
@@ -177,8 +188,32 @@ impl Element for TerminalElement {
             cursor: None,
             marked: None,
             link: Vec::new(),
+            images: Vec::new(),
+            dropped_images: Vec::new(),
             metrics,
         };
+        self.view.update(cx, |view, _| {
+            let mut used = HashSet::new();
+            for p in &frame.images {
+                let Some(texture) = view.image_textures.get(p) else {
+                    continue;
+                };
+                used.insert(crate::terminal_images::key(p));
+                let origin = point(
+                    bounds.origin.x
+                        + metrics.cell_width * p.col as f32
+                        + px(p.x_offset as f32 / scale),
+                    bounds.origin.y
+                        + metrics.line_height * p.row as f32
+                        + px(p.y_offset as f32 / scale),
+                );
+                let extent = size(px(p.width as f32 / scale), px(p.height as f32 / scale));
+                layout
+                    .images
+                    .push((p.layer, Bounds::new(origin, extent), texture));
+            }
+            layout.dropped_images = view.image_textures.retain(&used);
+        });
         if let Some(link) = self.view.read(cx).hovered_link.as_ref() {
             let color = hsla(frame.foreground);
             for &(row, from, to) in &link.cells {
@@ -290,10 +325,15 @@ impl Element for TerminalElement {
                 CursorStyle::PointingHand
             };
             window.set_cursor_style(cursor, &layout.hitbox);
+            for texture in layout.dropped_images.drain(..) {
+                let _ = window.drop_image(texture);
+            }
             window.paint_quad(fill(bounds, layout.background));
+            paint_images(&layout.images, ImageLayer::BelowBackground, bounds, window);
             for (rect, color) in &layout.rects {
                 window.paint_quad(fill(*rect, *color));
             }
+            paint_images(&layout.images, ImageLayer::BelowText, bounds, window);
             for batch in &layout.text {
                 let _ = batch.line.paint(
                     batch.origin,
@@ -304,6 +344,7 @@ impl Element for TerminalElement {
                     cx,
                 );
             }
+            paint_images(&layout.images, ImageLayer::AboveText, bounds, window);
             for (rect, color) in &layout.link {
                 window.paint_quad(fill(*rect, *color));
             }
@@ -606,6 +647,25 @@ fn cursor_layout(
         });
     }
     None
+}
+
+/// Paint one layer's images, clipped to the terminal.
+fn paint_images(
+    images: &[(ImageLayer, Bounds<Pixels>, Arc<RenderImage>)],
+    layer: ImageLayer,
+    clip: Bounds<Pixels>,
+    window: &mut Window,
+) {
+    for (_, image_bounds, texture) in images.iter().filter(|(l, _, _)| *l == layer) {
+        let _ = window.paint_image(
+            clip,
+            *image_bounds,
+            Default::default(),
+            Arc::clone(texture),
+            0,
+            false,
+        );
+    }
 }
 
 fn rect(origin: Point<Pixels>, cells: u16, m: Metrics) -> Bounds<Pixels> {

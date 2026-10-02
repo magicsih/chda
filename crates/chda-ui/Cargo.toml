@@ -15,6 +15,7 @@ serde_json.workspace = true
 futures.workspace = true
 gpui.workspace = true
 gpui_platform.workspace = true
+image.workspace = true
 
 [dev-dependencies]
 gpui = { workspace = true, features = ["test-support"] }
