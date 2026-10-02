@@ -16,11 +16,17 @@ impl Render for TextTooltip {
             .border_color(gpui::rgb(0x45475a))
             .text_xs()
             .text_color(gpui::rgb(0xcdd6f4))
-            .child(self.0.clone())
+            .flex()
+            .flex_col()
+            .children(
+                self.0
+                    .split('\n')
+                    .map(|line| div().child(SharedString::from(line.to_owned()))),
+            )
     }
 }
 
-/// A tooltip builder for `.tooltip(...)` showing `text`.
+/// A tooltip builder for `.tooltip(...)` showing `text`, one line per `\n`.
 pub fn text(text: impl Into<SharedString>) -> impl Fn(&mut Window, &mut App) -> AnyView + 'static {
     let text = text.into();
     move |_, cx| cx.new(|_| TextTooltip(text.clone())).into()
