@@ -340,7 +340,10 @@ fn run(
         wake();
     };
 
-    let mut last_frame = Instant::now() - FRAME_INTERVAL;
+    // Only frames that carried new output count against the frame interval:
+    // a keystroke's own frame must not hold back the echo that follows it.
+    let mut last_output_frame = Instant::now() - FRAME_INTERVAL;
+    let mut output_pending = false;
     let mut dirty = true;
     let mut closed = false;
     let mut replies: Vec<Event> = Vec::new();
@@ -352,7 +355,7 @@ fn run(
         // Block for the first message, then drain whatever else is queued so
         // a burst of output is parsed in one go before we draw.
         let mut timeout = if dirty {
-            FRAME_INTERVAL.saturating_sub(last_frame.elapsed())
+            FRAME_INTERVAL.saturating_sub(last_output_frame.elapsed())
         } else {
             Duration::from_secs(3600)
         };
@@ -369,6 +372,7 @@ fn run(
                 Msg::Output(bytes) => {
                     term.feed(&bytes);
                     dirty = true;
+                    output_pending = true;
                     search_stale = true;
                 }
                 Msg::OutputClosed => {
@@ -401,12 +405,16 @@ fn run(
         }
         // Publish the frame before the events so handlers see current state.
         let force_frame = fx.title_changed || fx.pwd_changed || closed;
-        if dirty && (force_frame || last_frame.elapsed() >= FRAME_INTERVAL) {
+        let throttled = output_pending && last_output_frame.elapsed() < FRAME_INTERVAL;
+        if dirty && (force_frame || !throttled) {
             if let Ok(frame) = term.frame() {
                 *frame_slot.lock().unwrap_or_else(|e| e.into_inner()) = Arc::new(frame);
                 emit(Event::Frame);
             }
-            last_frame = Instant::now();
+            if output_pending {
+                last_output_frame = Instant::now();
+                output_pending = false;
+            }
             dirty = false;
         }
         if fx.bell {
@@ -809,5 +817,58 @@ mod tests {
         let frame = p.wait_for_text("8 50");
         assert_eq!(frame.size, Size { cols: 50, rows: 8 });
         p.wait_for(|e| matches!(e, Event::Exited(_)));
+    }
+
+    /// Keystroke-to-echo latency through a real zsh: time from sending text
+    /// to the first frame that shows it. Run with
+    /// `cargo test --release -p chda-term echo_latency -- --ignored --nocapture`.
+    #[test]
+    #[ignore = "latency measurement, not a check"]
+    fn echo_latency() {
+        for size in [
+            Size { cols: 80, rows: 24 },
+            Size {
+                cols: 220,
+                rows: 60,
+            },
+        ] {
+            let (tx, rx) = mpsc::channel();
+            let mut env = SessionOptions::default().env;
+            env.push(("LANG".into(), "en_US.UTF-8".into()));
+            let session = Session::spawn(
+                SessionOptions {
+                    size,
+                    command: Some(vec!["/bin/zsh".into(), "-f".into(), "-i".into()]),
+                    env,
+                    ..Default::default()
+                },
+                tx,
+                || {},
+            )
+            .unwrap();
+            thread::sleep(Duration::from_millis(800));
+            while rx.try_recv().is_ok() {}
+            let mut ms = Vec::new();
+            for ch in ["한", "글", "입", "력"].iter().cycle().take(20) {
+                let start = Instant::now();
+                session.text((*ch).to_owned());
+                loop {
+                    if let Event::Frame = rx.recv_timeout(Duration::from_secs(2)).unwrap() {
+                        let f = session.frame();
+                        let y = f.cursor.map_or(0, |c| c.y);
+                        if f.row_text(y).ends_with(ch) {
+                            break;
+                        }
+                    }
+                }
+                ms.push(start.elapsed().as_secs_f64() * 1000.0);
+                thread::sleep(Duration::from_millis(120));
+            }
+            ms.sort_by(f64::total_cmp);
+            eprintln!(
+                "{}x{}: echo median {:.2} ms, p90 {:.2} ms",
+                size.cols, size.rows, ms[10], ms[18]
+            );
+        }
     }
 }
