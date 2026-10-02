@@ -7,7 +7,7 @@ use std::sync::mpsc;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
-use chda_config::{ChdaConfig, DefaultAction, GhosttyConfig, Paths, TabTitle};
+use chda_config::{ChdaConfig, DefaultAction, GhosttyConfig, Paths, PullStrategy, TabTitle};
 
 use crate::environment::Environment;
 use chda_core::agents::{AgentAdapter, AgentId, HookEvent, HookKind, SessionCache, SessionId, ipc};
@@ -99,9 +99,9 @@ const PULSE_STEP: Duration = Duration::from_millis(250);
 const PULSE_STEPS: u8 = 8;
 
 /// A popup menu anchored at a window position.
-struct ContextMenu {
+pub(crate) struct ContextMenu {
     position: Point<Pixels>,
-    items: Vec<(String, MenuAction)>,
+    pub(crate) items: Vec<(String, MenuAction)>,
 }
 
 #[derive(Clone, Debug)]
@@ -132,6 +132,14 @@ pub(crate) enum MenuAction {
     PickBranch(PathBuf),
     RemoveRepo(PathBuf),
     RefreshRepo(PathBuf),
+    /// Bring the worktree's upstream in; `None`: the configured strategy.
+    UpdateBranch {
+        repo: PathBuf,
+        worktree: PathBuf,
+        strategy: Option<PullStrategy>,
+    },
+    /// A menu item that cannot be used now, with the reason.
+    Unavailable(String),
 }
 
 /// A yes/no sheet before a destructive action.
@@ -169,7 +177,7 @@ pub struct WorkspaceView {
     refresh_again: HashSet<PathBuf>,
     watcher: Option<RepoWatcher>,
     watch_events: Option<mpsc::Receiver<PathBuf>>,
-    context_menu: Option<ContextMenu>,
+    pub(crate) context_menu: Option<ContextMenu>,
     sheet: Option<NewWorktreeSheet>,
     pub(crate) confirm: Option<ConfirmSheet>,
     pub(crate) palette: Option<(Entity<Palette>, Subscription)>,
@@ -1618,7 +1626,7 @@ impl WorkspaceView {
         }
     }
 
-    fn on_sidebar_event(
+    pub(crate) fn on_sidebar_event(
         &mut self,
         event: SidebarEvent,
         window: &mut Window,
@@ -1633,8 +1641,8 @@ impl WorkspaceView {
                     .read(cx)
                     .model
                     .worktree_for_path(&path)
-                    .map(|(r, w)| (r.path.clone(), w.is_main, w.missing));
-                let Some((repo, is_main, missing)) = repo else {
+                    .map(|(r, w)| (r.path.clone(), w.is_main, w.missing, w.clone()));
+                let Some((repo, is_main, missing, entry)) = repo else {
                     return;
                 };
                 if missing {
@@ -1679,6 +1687,23 @@ impl WorkspaceView {
                     "New worktree...".into(),
                     MenuAction::NewWorktree(repo.clone()),
                 ));
+                items.push(match chda_core::update_blocker(&entry) {
+                    None => (
+                        match entry.badges.behind.filter(|b| *b > 0) {
+                            Some(n) => format!("Update branch (\u{2193}{n})"),
+                            None => "Update branch".into(),
+                        },
+                        MenuAction::UpdateBranch {
+                            repo: repo.clone(),
+                            worktree: path.clone(),
+                            strategy: None,
+                        },
+                    ),
+                    Some(blocker) => (
+                        "Update branch".into(),
+                        MenuAction::Unavailable(blocker.describe(|id| self.agent_name(id))),
+                    ),
+                });
                 if !is_main {
                     items.push((
                         "Merge into main and clean up".into(),
@@ -1773,6 +1798,94 @@ impl WorkspaceView {
             DefaultAction::Codex => self.agent_argv(path, AgentId::Codex, None),
         };
         self.open_tab_at(Some(path.to_path_buf()), command, window, cx);
+    }
+
+    /// Fetch and bring in the worktree's upstream. A diverged branch is not
+    /// touched: the sheet offers a rebase when no local commit was pushed,
+    /// a merge otherwise.
+    fn update_branch(
+        &mut self,
+        repo: PathBuf,
+        worktree: PathBuf,
+        strategy: Option<PullStrategy>,
+        cx: &mut Context<Self>,
+    ) {
+        let strategy = strategy.unwrap_or(self.config.pull);
+        let branch = self
+            .sidebar
+            .read(cx)
+            .model
+            .worktree_for_path(&worktree)
+            .and_then(|(_, w)| w.branch.clone())
+            .unwrap_or_else(|| "the branch".into());
+        self.status_line = Some(format!("Updating {branch}\u{2026}"));
+        cx.notify();
+        let task = cx.background_spawn({
+            let worktree = worktree.clone();
+            async move { chda_core::update_branch(&worktree, strategy) }
+        });
+        cx.spawn(async move |this, cx| {
+            let result = task.await;
+            let _ = this.update(cx, |view, cx| {
+                use chda_core::{PullMode, UpdateOutcome};
+                view.status_line = Some(match result {
+                    Ok(UpdateOutcome::UpToDate) => format!("{branch} is up to date with its upstream"),
+                    Ok(UpdateOutcome::Updated { mode, commits }) => match mode {
+                        PullMode::FastForward => {
+                            format!("Fast-forwarded {branch} by {commits} commit(s)")
+                        }
+                        PullMode::Rebase => {
+                            format!("Rebased {branch} on {commits} new upstream commit(s)")
+                        }
+                        PullMode::Merge => {
+                            format!("Merged {commits} upstream commit(s) into {branch}")
+                        }
+                    },
+                    Ok(UpdateOutcome::Conflicted(mode)) => format!(
+                        "{} conflicts; {branch} was left as it was",
+                        if mode == PullMode::Rebase {
+                            "Rebasing"
+                        } else {
+                            "Merging"
+                        }
+                    ),
+                    Ok(UpdateOutcome::Diverged {
+                        ahead,
+                        behind,
+                        pushed,
+                    }) => {
+                        let (line, strategy) = if pushed {
+                            (
+                                "Some local commits are already on a remote, so they are not rewritten: merge the upstream into the branch.",
+                                PullStrategy::Merge,
+                            )
+                        } else {
+                            (
+                                "None of the local commits are on a remote: replay them on top of the upstream (rebase).",
+                                PullStrategy::Rebase,
+                            )
+                        };
+                        view.confirm = Some(ConfirmSheet {
+                            title: format!("{branch} has diverged from its upstream"),
+                            lines: vec![
+                                format!("{ahead} local commit(s), {behind} new upstream commit(s)."),
+                                line.into(),
+                            ],
+                            action: MenuAction::UpdateBranch {
+                                repo: repo.clone(),
+                                worktree: worktree.clone(),
+                                strategy: Some(strategy),
+                            },
+                        });
+                        format!("{branch} has diverged from its upstream")
+                    }
+                    Err(e) => format!("Updating {branch}: {e}"),
+                });
+                view.refresh_repo(repo, cx);
+                cx.notify();
+            });
+        })
+        .detach();
     }
 
     fn agent_argv(
@@ -2193,6 +2306,12 @@ impl WorkspaceView {
                 self.config.repos.retain(|r| *r != repo);
                 self.save_config();
             }
+            MenuAction::Unavailable(_) => {}
+            MenuAction::UpdateBranch {
+                repo,
+                worktree,
+                strategy,
+            } => self.update_branch(repo, worktree, strategy, cx),
             MenuAction::RefreshRepo(repo) => {
                 self.refresh_repo(repo, cx);
                 self.refresh_sessions(cx);
@@ -2837,16 +2956,20 @@ impl WorkspaceView {
             .shadow_md()
             .occlude()
             .children(items.into_iter().enumerate().map(|(i, (label, action))| {
-                div()
-                    .id(("menu", i))
-                    .px_3()
-                    .py_1()
-                    .cursor_pointer()
-                    .hover(|s| s.bg(fg.opacity(0.12)))
-                    .on_click(cx.listener(move |this, _, window, cx| {
-                        this.run_menu_action(action.clone(), window, cx)
-                    }))
-                    .child(label)
+                let item = div().id(("menu", i)).px_3().py_1();
+                match action {
+                    MenuAction::Unavailable(reason) => item
+                        .text_color(fg.opacity(0.45))
+                        .child(label)
+                        .child(div().text_xs().child(reason)),
+                    action => item
+                        .cursor_pointer()
+                        .hover(|s| s.bg(fg.opacity(0.12)))
+                        .on_click(cx.listener(move |this, _, window, cx| {
+                            this.run_menu_action(action.clone(), window, cx)
+                        }))
+                        .child(label),
+                }
             }));
         Some(
             deferred(

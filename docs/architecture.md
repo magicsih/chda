@@ -136,7 +136,12 @@ forces. Deleting a worktree moves its folder into the repository's
 unlocks it and drops git's record of only that worktree, deletes the branch,
 then empties the trash in the background; the row shows "deleting" and
 refuses a second request meanwhile, terminals open in it are closed, and a
-failure is shown under the row. Pull request badges come from `gh pr list --repo <host>/<owner>/<name>`
+failure is shown under the row. "Update branch" (`chda-core::update`) is offered when a worktree is
+clean, has no merge or rebase stopped half way, has an upstream and no agent
+works in it; it fetches the upstream, fast-forwards, and on divergence
+stops and offers a rebase only when none of the local commits is on any
+remote (`git rev-list @{u}..HEAD --not --remotes`), a merge otherwise; the
+`pull` key changes that default. Pull request badges come from `gh pr list --repo <host>/<owner>/<name>`
 per branch, fetched at most once a minute per repository. The host and path
 come from the remote `gh` would pick (`gh repo set-default`, then
 `upstream`, `github`, `origin`), with SSH aliases resolved through

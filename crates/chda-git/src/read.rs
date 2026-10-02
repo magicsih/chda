@@ -29,6 +29,9 @@ pub struct GitStatus {
     /// Commits ahead of / behind the upstream, when there is one.
     pub ahead: Option<usize>,
     pub behind: Option<usize>,
+    /// A merge, rebase, cherry-pick, revert, bisect or `git am` stopped
+    /// half way in this worktree.
+    pub operation: Option<&'static str>,
 }
 
 impl GitStatus {
@@ -136,6 +139,17 @@ pub fn status(worktree: &Path) -> io::Result<GitStatus> {
         s.ahead = Some(ahead);
         s.behind = Some(behind);
     }
+    s.operation = repo.state().map(|state| {
+        use gix::state::InProgress::*;
+        match state {
+            Merge => "merge",
+            Rebase | RebaseInteractive | ApplyMailboxRebase => "rebase",
+            CherryPick | CherryPickSequence => "cherry-pick",
+            Revert | RevertSequence => "revert",
+            Bisect => "bisect",
+            ApplyMailbox => "am",
+        }
+    });
     Ok(s)
 }
 

@@ -877,6 +877,7 @@ name = "chda-core"
 version = "0.1.6"
 dependencies = [
  "chda-agents",
+ "chda-config",
  "chda-git",
  "notify",
  "serde",
