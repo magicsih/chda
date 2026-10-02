@@ -1,12 +1,15 @@
-//! `AgentAdapter` trait, Claude Code and Codex adapters, the hook receiver
-//! and the session indexer.
+//! `AgentAdapter` trait, the adapters for Claude Code, Codex, Gemini CLI,
+//! GitHub Copilot CLI and OpenCode, the hook receiver and the session indexer.
 //!
 //! Platform-specific IPC code lives under `ipc`.
 
 mod claude;
 mod codex;
+mod copilot;
+mod gemini;
 pub mod hook;
 pub mod ipc;
+mod opencode;
 mod session;
 
 use std::path::{Path, PathBuf};
@@ -14,7 +17,10 @@ use std::process::Command;
 
 pub use claude::ClaudeAdapter;
 pub use codex::CodexAdapter;
+pub use copilot::CopilotAdapter;
+pub use gemini::GeminiAdapter;
 pub use hook::{HookEvent, HookKind, PANE_ENV, hook_main};
+pub use opencode::OpenCodeAdapter;
 pub use session::{AgentSession, SessionCache, SessionId};
 
 /// Which agent a thing belongs to.
@@ -25,22 +31,33 @@ pub use session::{AgentSession, SessionCache, SessionId};
 pub enum AgentId {
     Claude,
     Codex,
+    Gemini,
+    Copilot,
+    #[serde(rename = "opencode")]
+    OpenCode,
 }
 
 impl AgentId {
+    pub const ALL: [AgentId; 5] = [
+        AgentId::Claude,
+        AgentId::Codex,
+        AgentId::Gemini,
+        AgentId::Copilot,
+        AgentId::OpenCode,
+    ];
+
     pub fn as_str(self) -> &'static str {
         match self {
             AgentId::Claude => "claude",
             AgentId::Codex => "codex",
+            AgentId::Gemini => "gemini",
+            AgentId::Copilot => "copilot",
+            AgentId::OpenCode => "opencode",
         }
     }
 
     pub fn parse(s: &str) -> Option<Self> {
-        match s {
-            "claude" => Some(AgentId::Claude),
-            "codex" => Some(AgentId::Codex),
-            _ => None,
-        }
+        Self::ALL.into_iter().find(|id| id.as_str() == s)
     }
 }
 
@@ -109,7 +126,55 @@ pub trait AgentAdapter: Send + Sync {
 
 /// The adapters chda ships.
 pub fn adapters() -> Vec<Box<dyn AgentAdapter>> {
-    vec![Box::new(ClaudeAdapter), Box::new(CodexAdapter)]
+    vec![
+        Box::new(ClaudeAdapter),
+        Box::new(CodexAdapter),
+        Box::new(GeminiAdapter),
+        Box::new(CopilotAdapter),
+        Box::new(OpenCodeAdapter),
+    ]
+}
+
+/// A launch command as the argument vector a pane runs. Environment
+/// variables the adapter set go in front through `env`, since a pane takes
+/// only a program and its arguments.
+pub fn command_argv(cmd: &Command) -> Vec<String> {
+    let lossy = |s: &std::ffi::OsStr| s.to_string_lossy().into_owned();
+    let mut argv = Vec::new();
+    let envs: Vec<String> = cmd
+        .get_envs()
+        .filter_map(|(k, v)| Some(format!("{}={}", lossy(k), lossy(v?))))
+        .collect();
+    if !envs.is_empty() {
+        argv.push("env".to_owned());
+        argv.extend(envs);
+    }
+    argv.push(lossy(cmd.get_program()));
+    argv.extend(cmd.get_args().map(lossy));
+    argv
+}
+
+/// Quote a path for a hook command line that a shell runs.
+pub(crate) fn shell_quote(path: &Path) -> String {
+    let s = path.to_string_lossy();
+    if s.chars()
+        .all(|c| c.is_alphanumeric() || "/._-+".contains(c))
+    {
+        s.into_owned()
+    } else {
+        format!("'{}'", s.replace('\'', "'\\''"))
+    }
+}
+
+/// Write `text` to `path` unless it already holds exactly that.
+pub(crate) fn write_if_changed(path: &Path, text: &str) -> std::io::Result<()> {
+    if let Some(dir) = path.parent() {
+        std::fs::create_dir_all(dir)?;
+    }
+    if std::fs::read_to_string(path).ok().as_deref() != Some(text) {
+        std::fs::write(path, text)?;
+    }
+    Ok(())
 }
 
 /// Find an executable on `PATH`.
@@ -149,6 +214,37 @@ pub fn index_sessions(
 }
 
 #[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn ids_round_trip_and_launch_env_goes_through_env() {
+        for id in AgentId::ALL {
+            assert_eq!(AgentId::parse(id.as_str()), Some(id));
+            assert_eq!(
+                serde_json::to_string(&id).unwrap(),
+                format!("\"{}\"", id.as_str())
+            );
+        }
+        assert_eq!(adapters().len(), AgentId::ALL.len());
+        let mut cmd = Command::new("gemini");
+        cmd.arg("--resume").arg("abc");
+        assert_eq!(command_argv(&cmd), vec!["gemini", "--resume", "abc"]);
+        cmd.env("GEMINI_CLI_SYSTEM_DEFAULTS_PATH", "/d/a b.json");
+        assert_eq!(
+            command_argv(&cmd),
+            vec![
+                "env",
+                "GEMINI_CLI_SYSTEM_DEFAULTS_PATH=/d/a b.json",
+                "gemini",
+                "--resume",
+                "abc"
+            ]
+        );
+    }
+}
+
+#[cfg(test)]
 mod real_sessions {
     #[test]
     #[ignore = "indexes the real ~/.claude and ~/.codex session files; run with CHDA_REAL=1"]
@@ -180,6 +276,13 @@ mod real_sessions {
             eprintln!(
                 "{:?} {} {} {:?} {}",
                 s.agent, s.started_at, s.message_count, s.cwd, s.snippet
+            );
+        }
+        for agent in super::AgentId::ALL {
+            eprintln!(
+                "{}: {}",
+                agent.as_str(),
+                sessions.iter().filter(|s| s.agent == agent).count()
             );
         }
         let chda: Vec<_> = sessions

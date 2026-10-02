@@ -30,6 +30,24 @@ pub enum DefaultAction {
     Terminal,
     Claude,
     Codex,
+    Gemini,
+    Copilot,
+    #[serde(rename = "opencode")]
+    OpenCode,
+}
+
+impl DefaultAction {
+    /// The agent this action runs, by id; `None` for a plain shell.
+    pub fn agent(self) -> Option<&'static str> {
+        match self {
+            DefaultAction::Terminal => None,
+            DefaultAction::Claude => Some("claude"),
+            DefaultAction::Codex => Some("codex"),
+            DefaultAction::Gemini => Some("gemini"),
+            DefaultAction::Copilot => Some("copilot"),
+            DefaultAction::OpenCode => Some("opencode"),
+        }
+    }
 }
 
 /// How "Update branch" brings a worktree's upstream in.
@@ -55,7 +73,8 @@ pub struct ChdaConfig {
     pub worktree_path_template: String,
     pub default_action: DefaultAction,
     pub tab_title: TabTitle,
-    /// Agents shown in the sidebar, by id (`claude`, `codex`).
+    /// Agents offered in the sidebar and the palette, by id (`claude`,
+    /// `codex`, `gemini`, `copilot`, `opencode`).
     pub agents: Vec<String>,
     pub sidebar_width: u32,
     pub sidebar_visible: bool,
@@ -204,6 +223,9 @@ mod tests {
         assert_eq!(ChdaConfig::load(&path).unwrap().pull, PullStrategy::Rebase);
         fs::write(&path, "pull = \"ff-only\"\n").unwrap();
         assert_eq!(ChdaConfig::load(&path).unwrap().pull, PullStrategy::FfOnly);
+        fs::write(&path, "default-action = \"opencode\"\n").unwrap();
+        let c = ChdaConfig::load(&path).unwrap();
+        assert_eq!(c.default_action.agent(), Some("opencode"));
         fs::remove_dir_all(&dir).unwrap();
     }
 

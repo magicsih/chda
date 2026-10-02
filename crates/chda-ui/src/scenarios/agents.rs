@@ -58,3 +58,41 @@ fn hook_events_drive_status_badge_jump_and_notification_click(cx: &mut TestAppCo
         v.ws.focused_pane() == Some(second) && v.ws.pane(second).unwrap().agent.is_none()
     });
 }
+
+#[gpui::test]
+fn gemini_copilot_and_opencode_report_like_claude_code(cx: &mut TestAppContext) {
+    let mut h = Harness::open(cx, "moreagents", |_| {});
+    h.wait_prompt();
+    let pane = h.read(|v, _| v.ws.tabs()[0].panes()[0]);
+    let home = h.home.home.clone();
+    for (agent, name) in [
+        ("gemini", "Gemini CLI"),
+        ("copilot", "Copilot CLI"),
+        ("opencode", "OpenCode"),
+    ] {
+        h.hook_from(
+            agent,
+            Some(pane.raw()),
+            &home,
+            HookKind::PromptSubmitted,
+            "s",
+        );
+        h.wait_for("the agent to work", move |v, _| {
+            v.ws.pane(pane)
+                .and_then(|p| p.agent.as_ref())
+                .is_some_and(|a| a.agent == agent && a.status == AgentStatus::Working)
+        });
+        h.hook_from(agent, Some(pane.raw()), &home, HookKind::WaitingInput, "s");
+        h.wait_for("the agent to wait", move |v, _| {
+            v.ws.pane(pane)
+                .and_then(|p| p.agent.as_ref())
+                .is_some_and(|a| a.status == AgentStatus::WaitingInput)
+        });
+        let title = h.system.0.borrow().notifications.last().unwrap().0.clone();
+        assert_eq!(title, format!("{name} is waiting"));
+        h.hook_from(agent, Some(pane.raw()), &home, HookKind::SessionEnd, "s");
+        h.wait_for("the session to end", move |v, _| {
+            v.ws.pane(pane).is_some_and(|p| p.agent.is_none())
+        });
+    }
+}
