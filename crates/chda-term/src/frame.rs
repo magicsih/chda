@@ -151,6 +151,9 @@ pub struct Frame {
     pub text: String,
     /// `None` when hidden or scrolled out of the viewport.
     pub cursor: Option<Cursor>,
+    /// The cursor cell even while the application hides the cursor, as
+    /// TUIs that draw their own do. IME composition is drawn here.
+    pub ime_anchor: Option<(u16, u16)>,
     pub foreground: Rgb,
     pub background: Rgb,
     pub scrollbar: Scrollbar,

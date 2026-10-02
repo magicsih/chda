@@ -945,6 +945,8 @@ impl EntityInputHandler for TerminalView {
         cx: &mut Context<Self>,
     ) {
         self.marked_text = (!new_text.is_empty()).then(|| new_text.to_owned());
+        // Typing restarts the blink in its visible phase, as keys do.
+        self.touch();
         cx.notify();
     }
 

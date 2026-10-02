@@ -672,6 +672,9 @@ impl Terminal {
             rows: Vec::with_capacity(usize::from(size.rows)),
             text: String::new(),
             cursor: cursor_from(&snapshot)?,
+            ime_anchor: snapshot
+                .cursor_viewport()?
+                .map(|vp| (vp.x.saturating_sub(u16::from(vp.at_wide_tail)), vp.y)),
             foreground: rgb(colors.foreground),
             background: rgb(colors.background),
             scrollbar,
@@ -1233,6 +1236,17 @@ mod tests {
         term.feed(b"\x1b[?1049h");
         assert!(term.alternate_screen());
         assert!(term.frame().unwrap().alternate_screen);
+    }
+
+    #[test]
+    fn hidden_cursor_keeps_an_ime_anchor() {
+        let mut t = term();
+        t.feed(b"ab\x1b[?25l\x1b[2;4H");
+        let frame = t.frame().unwrap();
+        assert_eq!(frame.cursor, None);
+        assert_eq!(frame.ime_anchor, Some((3, 1)));
+        t.feed(b"\x1b[?25h");
+        assert_eq!(t.frame().unwrap().ime_anchor, Some((3, 1)));
     }
 
     #[test]

@@ -226,7 +226,16 @@ impl Element for TerminalElement {
             layout.cursor = None;
         }
 
-        if let (Some(text), Some(cursor)) = (marked_text, &layout.cursor) {
+        // Composition goes at the cursor cell whether or not the cursor is
+        // drawn: TUIs hide it, and the blink hides it half the time.
+        let anchor = frame.ime_anchor.map(|(x, y)| {
+            let origin = point(
+                bounds.origin.x + metrics.cell_width * f32::from(x),
+                bounds.origin.y + metrics.line_height * f32::from(y),
+            );
+            rect(origin, 1, metrics)
+        });
+        if let (Some(text), Some(anchor)) = (marked_text, anchor) {
             let run = TextRun {
                 len: text.len(),
                 font: font.clone(),
@@ -245,11 +254,12 @@ impl Element for TerminalElement {
                 &[run],
                 Some(metrics.cell_width),
             );
-            let mut b = cursor.bounds;
+            let mut b = anchor;
             b.size.width = line.width().max(metrics.cell_width);
             layout.marked = Some((b, line));
         }
-        let cursor_bounds = layout.cursor.as_ref().map(|c| c.bounds);
+        // The IME candidate window follows the same cell.
+        let cursor_bounds = layout.cursor.as_ref().map(|c| c.bounds).or(anchor);
         self.view
             .update(cx, |view, _| view.cursor_bounds = cursor_bounds);
         layout
