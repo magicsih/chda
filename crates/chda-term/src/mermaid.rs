@@ -3,8 +3,9 @@
 //! Agents print diagrams either as fenced Markdown (```` ```mermaid ````) or,
 //! when their UI renders the Markdown, as the bare source: a line starting
 //! with a diagram keyword (`flowchart LR`, `sequenceDiagram`, ...), up to the
-//! next blank line. Both may be indented and the first line may carry the
-//! agent's bullet (`⏺`, `●`, `•`).
+//! blank line after its body. Blank lines inside the body (between
+//! subgraphs, in a loop) do not end it. Both may be indented and the first
+//! line may carry the agent's bullet (`⏺`, `●`, `•`).
 
 use crate::frame::Frame;
 
@@ -137,10 +138,63 @@ fn dedent(lines: &[&str], first_col: usize) -> String {
     out
 }
 
+/// Keywords that open a block closed by `end` (flowchart subgraphs,
+/// sequence diagram loops and alternatives, state composites).
+const OPENERS: &[&str] = &[
+    "subgraph", "loop", "alt", "opt", "par", "critical", "break", "rect", "box",
+];
+
+/// How many `end`-closed blocks a line opens (1) or closes (-1).
+fn depth_change(text: &str) -> i32 {
+    match text.split_whitespace().next() {
+        Some("end") => -1,
+        Some(word) if OPENERS.contains(&word) => 1,
+        Some("state") if text.trim_end().ends_with('{') => 1,
+        Some("}") => -1,
+        _ => 0,
+    }
+}
+
+fn indent(line: &str) -> usize {
+    line.len() - line.trim_start().len()
+}
+
+/// Where an unfenced diagram starting at `start` (content at column `col`)
+/// ends: the index of its last line, or `None` when the lines run out before
+/// the end is known. A blank line ends it unless the next line is still
+/// part of the body: indented deeper than the header, or inside an open
+/// `subgraph`/`loop`/... block.
+fn unfenced_end(lines: &[&str], start: usize, col: usize) -> Option<usize> {
+    let mut depth = 0;
+    let mut last = start;
+    let mut j = start + 1;
+    while j < lines.len() {
+        let text = content(lines[j]).1;
+        if is_fence_close(text) {
+            return Some(last);
+        }
+        if text.is_empty() {
+            let next = (j + 1..lines.len()).find(|&k| !lines[k].trim().is_empty())?;
+            if depth > 0 || indent(lines[next]) > col {
+                j = next;
+                continue;
+            }
+            return Some(last);
+        }
+        depth = (depth + depth_change(text)).max(0);
+        last = j;
+        j += 1;
+    }
+    None
+}
+
 /// Diagrams in a list of logical lines, as `(first line, last line,
-/// source)`. A fenced block needs its closing fence; an unfenced one ends
-/// before the next blank line.
-fn find(lines: &[&str]) -> Vec<(usize, usize, String)> {
+/// source)`. A fenced block needs its closing fence; an unfenced one ends at
+/// the blank line after its body. When `open_end` is set, an unfenced block
+/// running to the last line counts as complete (the whole scrollback);
+/// otherwise it may go on past the lines given (the viewport) and is left
+/// out.
+fn find(lines: &[&str], open_end: bool) -> Vec<(usize, usize, String)> {
     let mut out = Vec::new();
     let mut i = 0;
     while i < lines.len() {
@@ -153,14 +207,14 @@ fn find(lines: &[&str]) -> Vec<(usize, usize, String)> {
                     let indent = body
                         .iter()
                         .filter(|l| !l.trim().is_empty())
-                        .map(|l| l.len() - l.trim_start().len())
+                        .map(|l| indent(l))
                         .min()
                         .unwrap_or(0)
                         .min(col);
                     let source: String = body
                         .iter()
                         .map(|l| {
-                            let strip = indent.min(l.len() - l.trim_start().len());
+                            let strip = indent.min(self::indent(l));
                             format!("{}\n", l[strip..].trim_end())
                         })
                         .collect();
@@ -172,12 +226,16 @@ fn find(lines: &[&str]) -> Vec<(usize, usize, String)> {
             // Still printing, or its end is out of view.
             break;
         } else if is_header(text) {
-            let end = (i + 1..lines.len())
-                .find(|&j| lines[j].trim().is_empty() || is_fence_close(content(lines[j]).1))
-                .unwrap_or(lines.len());
-            if end > i + 1 {
-                out.push((i, end - 1, dedent(&lines[i..end], col)));
-                i = end;
+            let end = match unfenced_end(lines, i, col) {
+                Some(end) => Some(end),
+                None if open_end => (i + 1..lines.len())
+                    .rev()
+                    .find(|&j| !lines[j].trim().is_empty()),
+                None => break,
+            };
+            if let Some(end) = end.filter(|&end| end > i) {
+                out.push((i, end, dedent(&lines[i..=end], col)));
+                i = end + 1;
                 continue;
             }
         }
@@ -207,7 +265,7 @@ pub fn diagrams(frame: &Frame) -> Vec<Diagram> {
         l.2.truncate(l.2.trim_end().len());
     }
     let texts: Vec<&str> = lines.iter().map(|l| l.2.as_str()).collect();
-    find(&texts)
+    find(&texts, false)
         .into_iter()
         .map(|(first, last, source)| Diagram {
             first_row: lines[first].0,
@@ -220,7 +278,7 @@ pub fn diagrams(frame: &Frame) -> Vec<Diagram> {
 /// The last diagram in plain text, one line per row (the scrollback).
 pub fn last_diagram(text: &str) -> Option<String> {
     let lines: Vec<&str> = text.lines().collect();
-    find(&lines).pop().map(|(_, _, source)| source)
+    find(&lines, true).pop().map(|(_, _, source)| source)
 }
 
 /// A row's text with trailing blanks kept, so soft-wrapped rows join at
@@ -261,6 +319,40 @@ mod tests {
         );
         let text = "  graph TD\n    a-->b\n";
         assert_eq!(last_diagram(text).as_deref(), Some("graph TD\n  a-->b\n"));
+    }
+
+    #[test]
+    fn unfenced_blocks_continue_across_blank_lines_inside_the_body() {
+        // Subgraphs separated by blank lines, all indented under the header.
+        let text = "graph LR\n    subgraph A[\"one\"]\n        a1[\"x\"]\n    end\n\n    subgraph B[\"two\"]\n        b1[\"y\"]\n    end\n\n    a1 --> b1\n\nThat is the layout.";
+        assert_eq!(
+            last_diagram(text).as_deref(),
+            Some(
+                "graph LR\n    subgraph A[\"one\"]\n        a1[\"x\"]\n    end\n\n    subgraph B[\"two\"]\n        b1[\"y\"]\n    end\n\n    a1 --> b1\n"
+            )
+        );
+        // An open block keeps going even when the next line is not deeper.
+        let text = "sequenceDiagram\nloop Every minute\nA->>B: ping\n\nB-->>A: pong\nend\n\ndone";
+        assert_eq!(
+            last_diagram(text).as_deref(),
+            Some("sequenceDiagram\nloop Every minute\nA->>B: ping\n\nB-->>A: pong\nend\n")
+        );
+    }
+
+    #[test]
+    fn a_block_that_may_go_on_below_the_viewport_gets_no_chip() {
+        let mut t = crate::Terminal::new(crate::Size { cols: 30, rows: 6 }, 10_000).unwrap();
+        // The second subgraph is cut off: the source in view is incomplete.
+        t.feed(b"graph LR\r\n  subgraph A\r\n    a\r\n  end\r\n\r\n  subgraph B");
+        assert_eq!(diagrams(&t.frame().unwrap()), []);
+        // Only a blank line in view after the body: it may continue below.
+        let mut t = crate::Terminal::new(crate::Size { cols: 30, rows: 4 }, 10_000).unwrap();
+        t.feed(b"graph LR\r\n  a --> b\r\n\r\n");
+        assert_eq!(diagrams(&t.frame().unwrap()), []);
+        // Followed by less indented text, it is complete.
+        let mut t = crate::Terminal::new(crate::Size { cols: 30, rows: 6 }, 10_000).unwrap();
+        t.feed(b"graph LR\r\n  a --> b\r\n\r\n$ ");
+        assert_eq!(diagrams(&t.frame().unwrap()).len(), 1);
     }
 
     #[test]

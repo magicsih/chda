@@ -67,9 +67,12 @@ display. Unicode placeholder (virtual) placements are not drawn yet.
 Mermaid diagrams are found in the visible rows on the terminal thread
 (`chda-term::mermaid`): fenced ```` ```mermaid ```` blocks, and unfenced
 blocks that start with a diagram keyword on its own line (`flowchart LR`,
-`sequenceDiagram`, ...) and end at a blank line, as agents print them after
-rendering Markdown. Frames carry each block's rows and source; the pane
-shows a "View diagram" chip on its first row, and cmd-click on the block or
+`sequenceDiagram`, ...) and end at the blank line after their body, as
+agents print them after rendering Markdown. A blank line followed by a line
+indented deeper than the header, or inside an open `subgraph`, `loop` or
+similar block, stays in the diagram. Frames carry each block's rows and
+source; the pane shows a "View diagram" chip on its first row, only for
+blocks whose end is in view, and cmd-click on the block or
 the palette's "View last diagram" (which searches the whole scrollback) open
 it. The viewer is an HTML page written to the data directory next to a
 bundled `mermaid.min.js` and opened in the default browser, so diagrams never
