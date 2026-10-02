@@ -1,6 +1,7 @@
 //! Write operations through the `git` binary (ADR-0003). Results are judged
 //! by exit status and porcelain output; nothing here parses human text.
 
+use std::collections::HashMap;
 use std::io;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Output};
@@ -446,6 +447,47 @@ pub fn pull_upstream(worktree: &Path, mode: PullMode) -> io::Result<MergeOutcome
     Ok(MergeOutcome::Conflicted)
 }
 
+/// Branch descriptions (`branch.<name>.description`, what
+/// `git branch --edit-description` writes), keyed by branch name.
+pub fn branch_descriptions(repo: &Path) -> io::Result<HashMap<String, String>> {
+    let out = run(
+        repo,
+        &["config", "-z", "--get-regexp", r"^branch\..*\.description$"],
+    )?;
+    // Exit status 1: no description is set.
+    if !out.status.success() && out.status.code() != Some(1) {
+        return Err(io::Error::other(
+            String::from_utf8_lossy(&out.stderr).trim().to_owned(),
+        ));
+    }
+    Ok(String::from_utf8_lossy(&out.stdout)
+        .split('\0')
+        .filter_map(|entry| {
+            let (key, value) = entry.split_once('\n')?;
+            let branch = key.strip_prefix("branch.")?.strip_suffix(".description")?;
+            let value = value.trim_end();
+            (!value.is_empty()).then(|| (branch.to_owned(), value.to_owned()))
+        })
+        .collect())
+}
+
+/// Set `branch`'s description; blank text removes it.
+pub fn set_branch_description(repo: &Path, branch: &str, text: &str) -> io::Result<()> {
+    let key = format!("branch.{branch}.description");
+    let text = text.trim();
+    if text.is_empty() {
+        let out = run(repo, &["config", "--unset", &key])?;
+        // Exit status 5: it was not set.
+        if out.status.success() || out.status.code() == Some(5) {
+            return Ok(());
+        }
+        return Err(io::Error::other(
+            String::from_utf8_lossy(&out.stderr).trim().to_owned(),
+        ));
+    }
+    check(repo, &["config", &key, &format!("{text}\n")])
+}
+
 /// The branch checked out in `worktree`, if not detached.
 pub fn current_branch(worktree: &Path) -> io::Result<Option<String>> {
     let out = run(worktree, &["symbolic-ref", "--short", "-q", "HEAD"])?;
@@ -718,6 +760,35 @@ mod tests {
         assert!(
             list.contains("worktrees/b"),
             "the other record stays: {list}"
+        );
+    }
+
+    #[test]
+    fn branch_descriptions_round_trip() {
+        let repo = TempRepo::new("desc");
+        assert!(branch_descriptions(&repo.path).unwrap().is_empty());
+        TempRepo::git(&repo.path, &["branch", "feat/a.b"]);
+        set_branch_description(
+            &repo.path,
+            "feat/a.b",
+            "Fix login loop\n\nSee #123 = details\n",
+        )
+        .unwrap();
+        set_branch_description(&repo.path, "main", "trunk").unwrap();
+        let notes = branch_descriptions(&repo.path).unwrap();
+        assert_eq!(notes["feat/a.b"], "Fix login loop\n\nSee #123 = details");
+        assert_eq!(notes["main"], "trunk");
+        // Stored like `git branch --edit-description` does: with a newline.
+        assert_eq!(
+            TempRepo::git(&repo.path, &["config", "branch.main.description"]),
+            "trunk\n\n"
+        );
+        set_branch_description(&repo.path, "main", "  ").unwrap();
+        set_branch_description(&repo.path, "main", "").unwrap();
+        assert!(
+            !branch_descriptions(&repo.path)
+                .unwrap()
+                .contains_key("main")
         );
     }
 

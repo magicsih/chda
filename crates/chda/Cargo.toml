@@ -15,6 +15,7 @@ path = "src/main.rs"
 [dependencies]
 chda-agents.workspace = true
 chda-config.workspace = true
+chda-core.workspace = true
 chda-ui.workspace = true
 
 [lints]

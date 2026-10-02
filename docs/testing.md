@@ -43,6 +43,7 @@ Three layers, all run by `cargo test --workspace` (CI: the macOS job).
 | PR badges per host, login hint for the other | `pull_requests::badges_per_host_and_a_login_hint_for_the_other` | #33 |
 | Update branch from upstream: disabled reasons, fast-forward, diverged choice | `worktrees::update_branch_from_upstream_when_safe` | #28 |
 | New worktree from a branch, random name, collisions | `worktrees::new_worktree_from_a_branch_with_a_random_name` | #27 |
+| Branch notes: sheet, new worktree sheet, external change, palette | `worktrees::branch_notes_show_in_the_sidebar`, `chda` `tests/note.rs` | #36 |
 | Missing worktree folders | `worktrees::missing_worktree_is_marked_and_pruned` | #42 |
 | IME composition with a hidden cursor | `input::ime_composition_is_placed_even_when_the_app_hides_the_cursor` | #37 |
 | Shells get a UTF-8 locale | `input::shells_get_the_locale` | #38 |

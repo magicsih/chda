@@ -114,6 +114,11 @@ pub(crate) enum MenuAction {
         repo: PathBuf,
         base: String,
     },
+    /// Edit the branch's note (its git branch description).
+    EditNote {
+        repo: PathBuf,
+        branch: String,
+    },
     /// Merge into the default branch, remove the worktree and branch.
     MergeAndClean {
         repo: PathBuf,
@@ -162,6 +167,17 @@ struct NewWorktreeSheet {
     /// Random name used when the field is left empty.
     suggestion: String,
     input: Entity<TextInput>,
+    /// Optional note: what the branch is for.
+    note: Entity<TextInput>,
+    _subs: [Subscription; 2],
+    error: Option<String>,
+}
+
+/// The "edit note" sheet for a branch.
+struct NoteSheet {
+    repo: PathBuf,
+    branch: String,
+    input: Entity<TextInput>,
     _sub: Subscription,
     error: Option<String>,
 }
@@ -188,6 +204,7 @@ pub struct WorkspaceView {
     watch_events: Option<mpsc::Receiver<PathBuf>>,
     pub(crate) context_menu: Option<ContextMenu>,
     sheet: Option<NewWorktreeSheet>,
+    note_sheet: Option<NoteSheet>,
     pub(crate) confirm: Option<ConfirmSheet>,
     pub(crate) palette: Option<(Entity<Palette>, Subscription)>,
     /// Inline editor for a tab title.
@@ -281,6 +298,7 @@ impl WorkspaceView {
             watch_events,
             context_menu: None,
             sheet: None,
+            note_sheet: None,
             confirm: None,
             palette: None,
             renaming: None,
@@ -1531,7 +1549,10 @@ impl WorkspaceView {
     }
 
     fn close_surface(&mut self, _: &CloseSurface, window: &mut Window, cx: &mut Context<Self>) {
-        if self.sheet.take().is_some() || self.context_menu.take().is_some() {
+        if self.sheet.take().is_some()
+            || self.note_sheet.take().is_some()
+            || self.context_menu.take().is_some()
+        {
             self.focus_active(window, cx);
             return;
         }
@@ -1696,12 +1717,19 @@ impl WorkspaceView {
                     "New worktree...".into(),
                     MenuAction::NewWorktree(repo.clone()),
                 ));
-                if let Some(base) = entry.branch.clone() {
+                if let Some(branch) = entry.branch.clone() {
                     items.push((
                         "New worktree from this branch...".into(),
                         MenuAction::NewWorktreeFrom {
                             repo: repo.clone(),
-                            base,
+                            base: branch.clone(),
+                        },
+                    ));
+                    items.push((
+                        "Edit note...".into(),
+                        MenuAction::EditNote {
+                            repo: repo.clone(),
+                            branch,
                         },
                     ));
                 }
@@ -2012,6 +2040,7 @@ impl WorkspaceView {
             MenuAction::NewWorktreeFrom { repo, base } => {
                 self.open_sheet_from(repo, Some(base), window, cx)
             }
+            MenuAction::EditNote { repo, branch } => self.open_note_sheet(repo, branch, window, cx),
             MenuAction::MergeAndClean {
                 repo,
                 worktree,
@@ -2363,13 +2392,34 @@ impl WorkspaceView {
         let bg = hsla(self.settings.colors.background.unwrap_or_default());
         let fg = hsla(self.settings.colors.foreground.unwrap_or_default());
         let input = cx.new(|cx| TextInput::new("branch name", fg, blend(bg, fg, 0.12), cx));
-        let sub = cx.subscribe_in(&input, window, |this, _, event, window, cx| match event {
-            TextInputEvent::Submit(branch) => this.create_worktree(branch.clone(), window, cx),
+        let note = cx.new(|cx| {
+            let mut note = TextInput::new(
+                "note: what is this branch for? (optional)",
+                fg,
+                blend(bg, fg, 0.12),
+                cx,
+            );
+            note.multiline = true;
+            note
+        });
+        let on_event = |this: &mut Self,
+                        event: &TextInputEvent,
+                        window: &mut Window,
+                        cx: &mut Context<Self>| match event {
+            TextInputEvent::Submit(_) => this.create_worktree(window, cx),
             TextInputEvent::Cancel => {
                 this.sheet = None;
                 this.focus_active(window, cx);
             }
-        });
+        };
+        let subs = [
+            cx.subscribe_in(&input, window, move |this, _, event, window, cx| {
+                on_event(this, event, window, cx)
+            }),
+            cx.subscribe_in(&note, window, move |this, _, event, window, cx| {
+                on_event(this, event, window, cx)
+            }),
+        ];
         let handle = input.read(cx).focus_handle(cx);
         window.focus(&handle, cx);
         self.sheet = Some(NewWorktreeSheet {
@@ -2377,10 +2427,109 @@ impl WorkspaceView {
             base,
             suggestion,
             input,
+            note,
+            _subs: subs,
+            error: None,
+        });
+        cx.notify();
+    }
+
+    /// Tab moves between the branch name and the note.
+    fn sheet_tab(
+        &mut self,
+        event: &gpui::KeyDownEvent,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(sheet) = &self.sheet else {
+            return;
+        };
+        if event.keystroke.key != "tab" {
+            return;
+        }
+        let on_name = sheet.input.read(cx).focus_handle(cx).is_focused(window);
+        let next = if on_name { &sheet.note } else { &sheet.input };
+        let handle = next.read(cx).focus_handle(cx);
+        window.focus(&handle, cx);
+        cx.stop_propagation();
+    }
+
+    /// The sheet for a branch's note, prefilled with the current one.
+    pub(crate) fn open_note_sheet(
+        &mut self,
+        repo: PathBuf,
+        branch: String,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let current = self
+            .sidebar
+            .read(cx)
+            .model
+            .repos
+            .iter()
+            .filter(|r| r.path == repo)
+            .flat_map(|r| r.worktrees.iter())
+            .find(|w| w.branch.as_deref() == Some(branch.as_str()))
+            .and_then(|w| w.note.clone())
+            .unwrap_or_default();
+        let bg = hsla(self.settings.colors.background.unwrap_or_default());
+        let fg = hsla(self.settings.colors.foreground.unwrap_or_default());
+        let input = cx.new(|cx| {
+            let mut input = TextInput::new("what is this branch for?", fg, blend(bg, fg, 0.12), cx);
+            input.multiline = true;
+            input.set_text(&current, cx);
+            input
+        });
+        let sub = cx.subscribe_in(&input, window, |this, _, event, window, cx| match event {
+            TextInputEvent::Submit(text) => this.save_note(text.clone(), window, cx),
+            TextInputEvent::Cancel => {
+                this.note_sheet = None;
+                this.focus_active(window, cx);
+            }
+        });
+        let handle = input.read(cx).focus_handle(cx);
+        window.focus(&handle, cx);
+        self.note_sheet = Some(NoteSheet {
+            repo,
+            branch,
+            input,
             _sub: sub,
             error: None,
         });
         cx.notify();
+    }
+
+    fn save_note(&mut self, text: String, window: &mut Window, cx: &mut Context<Self>) {
+        let Some(sheet) = &mut self.note_sheet else {
+            return;
+        };
+        match chda_core::set_note(&sheet.repo, &sheet.branch, &text) {
+            Ok(()) => {
+                let (repo, branch) = (sheet.repo.clone(), sheet.branch.clone());
+                self.note_sheet = None;
+                self.show_note(&repo, &branch, &text, cx);
+                self.refresh_repo(repo, cx);
+                self.focus_active(window, cx);
+            }
+            Err(e) => sheet.error = Some(e.to_string()),
+        }
+        cx.notify();
+    }
+
+    /// Show a saved note right away, before the refresh reads it back.
+    fn show_note(&mut self, repo: &Path, branch: &str, text: &str, cx: &mut Context<Self>) {
+        let text = text.trim();
+        self.sidebar.update(cx, |s, cx| {
+            if let Some(r) = s.model.repo_mut(repo) {
+                for w in &mut r.worktrees {
+                    if w.branch.as_deref() == Some(branch) {
+                        w.note = (!text.is_empty()).then(|| text.to_owned());
+                    }
+                }
+            }
+            cx.notify();
+        });
     }
 
     #[cfg(test)]
@@ -2416,20 +2565,27 @@ impl WorkspaceView {
         }
     }
 
-    fn create_worktree(&mut self, branch: String, window: &mut Window, cx: &mut Context<Self>) {
+    fn create_worktree(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let Some(sheet) = &mut self.sheet else {
             return;
         };
-        let branch = match branch.trim() {
+        let branch = match sheet.input.read(cx).text().trim() {
             "" => sheet.suggestion.clone(),
             typed => typed.to_owned(),
         };
+        let note = sheet.note.read(cx).text().trim().to_owned();
         let repo = sheet.repo.clone();
         let base = sheet.base.clone();
         let path = self.config.worktree_path(&repo, &branch);
         match chda_core::create_worktree(&repo, &branch, &path, base.as_deref()) {
             Ok(()) => {
                 self.sheet = None;
+                if !note.is_empty()
+                    && let Err(e) = chda_core::set_note(&repo, &branch, &note)
+                {
+                    self.status_line =
+                        Some(format!("Created {branch}, but saving its note failed: {e}"));
+                }
                 self.refresh_repo(repo, cx);
                 let command = match self.config.default_action {
                     DefaultAction::Terminal => None,
@@ -2469,7 +2625,7 @@ impl WorkspaceView {
         cx.notify();
     }
 
-    fn palette_items(&self, cx: &App) -> Vec<PaletteItem> {
+    pub(crate) fn palette_items(&self, cx: &App) -> Vec<PaletteItem> {
         let mut items: Vec<PaletteItem> = [
             ("New tab", "cmd-t", "new_tab"),
             ("Close pane", "cmd-w", "close"),
@@ -2513,7 +2669,15 @@ impl WorkspaceView {
                 let branch = wt.branch.clone().unwrap_or_else(|| "(detached)".into());
                 items.push(PaletteItem {
                     label: format!("Go to {}/{branch}", repo.name),
-                    detail: wt.path.to_string_lossy().into_owned(),
+                    detail: match &wt.note {
+                        // The whole note, so any of its words finds the worktree.
+                        Some(note) => format!(
+                            "{}  {}",
+                            note.split_whitespace().collect::<Vec<_>>().join(" "),
+                            wt.path.display()
+                        ),
+                        None => wt.path.to_string_lossy().into_owned(),
+                    },
                     command: PaletteCommand::GoToWorktree(wt.path.clone()),
                 });
                 for a in self.adapters.iter() {
@@ -2832,6 +2996,7 @@ impl WorkspaceView {
 
     fn dismiss(&mut self, _: &Dismiss, window: &mut Window, cx: &mut Context<Self>) {
         if self.sheet.take().is_some()
+            || self.note_sheet.take().is_some()
             || self.confirm.take().is_some()
             || self.palette.take().is_some()
             || self.context_menu.take().is_some()
@@ -3123,7 +3288,6 @@ impl WorkspaceView {
 
     fn render_sheet(&self, cx: &mut Context<Self>) -> Option<AnyElement> {
         let sheet = self.sheet.as_ref()?;
-        let bg = hsla(self.settings.colors.background.unwrap_or_default());
         let fg = hsla(self.settings.colors.foreground.unwrap_or_default());
         let repo_name = sheet
             .repo
@@ -3150,55 +3314,84 @@ impl WorkspaceView {
             Some(base) => format!("New worktree in {repo_name} from {base}"),
             None => format!("New worktree in {repo_name}"),
         };
-        Some(
-            deferred(
+        let body = div()
+            .flex()
+            .flex_col()
+            .gap_2()
+            .on_key_down(cx.listener(Self::sheet_tab))
+            .child(sheet.input.clone())
+            .child(sheet.note.clone())
+            .child(
                 div()
-                    .absolute()
-                    .size_full()
-                    .top_0()
-                    .left_0()
                     .flex()
-                    .items_start()
-                    .justify_center()
-                    .pt_16()
-                    .bg(gpui::black().opacity(0.3))
-                    .occlude()
-                    .child(
-                        div()
-                            .w(px(420.0))
-                            .p_3()
-                            .rounded_md()
-                            .bg(blend(bg, fg, 0.08))
-                            .border_1()
-                            .border_color(fg.opacity(0.2))
-                            .shadow_lg()
-                            .text_sm()
-                            .text_color(fg)
-                            .flex()
-                            .flex_col()
-                            .gap_2()
-                            .child(title)
-                            .child(sheet.input.clone())
-                            .child(
-                                div()
-                                    .flex()
-                                    .flex_col()
-                                    .text_xs()
-                                    .text_color(fg.opacity(0.6))
-                                    .children(preview),
-                            )
-                            .children(
-                                sheet.error.clone().map(|e| {
-                                    div().text_xs().text_color(gpui::rgb(0xf38ba8)).child(e)
-                                }),
-                            )
-                            .child(div().text_xs().text_color(fg.opacity(0.5)).child(
-                                "Leave empty for a random name. Enter to create, Esc to cancel",
-                            )),
-                    ),
-            )
-            .into_any_element(),
+                    .flex_col()
+                    .text_xs()
+                    .text_color(fg.opacity(0.6))
+                    .children(preview),
+            );
+        Some(self.sheet_frame(
+            title,
+            body,
+            sheet.error.clone(),
+            "Leave the name empty for a random one. Tab to the note, shift-enter for a new line. Enter to create, Esc to cancel",
+        ))
+    }
+
+    fn render_note_sheet(&self) -> Option<AnyElement> {
+        let sheet = self.note_sheet.as_ref()?;
+        Some(self.sheet_frame(
+            format!("Note for {}", sheet.branch),
+            div().child(sheet.input.clone()),
+            sheet.error.clone(),
+            "First line is the title shown in the sidebar. Shift-enter for a new line, Enter to save, Esc to cancel",
+        ))
+    }
+
+    /// A modal panel near the top of the window.
+    fn sheet_frame(
+        &self,
+        title: String,
+        body: gpui::Div,
+        error: Option<String>,
+        hint: &'static str,
+    ) -> AnyElement {
+        let bg = hsla(self.settings.colors.background.unwrap_or_default());
+        let fg = hsla(self.settings.colors.foreground.unwrap_or_default());
+        deferred(
+            div()
+                .absolute()
+                .size_full()
+                .top_0()
+                .left_0()
+                .flex()
+                .items_start()
+                .justify_center()
+                .pt_16()
+                .bg(gpui::black().opacity(0.3))
+                .occlude()
+                .child(
+                    div()
+                        .w(px(420.0))
+                        .p_3()
+                        .rounded_md()
+                        .bg(blend(bg, fg, 0.08))
+                        .border_1()
+                        .border_color(fg.opacity(0.2))
+                        .shadow_lg()
+                        .text_sm()
+                        .text_color(fg)
+                        .flex()
+                        .flex_col()
+                        .gap_2()
+                        .child(title)
+                        .child(body)
+                        .children(
+                            error.map(|e| div().text_xs().text_color(gpui::rgb(0xf38ba8)).child(e)),
+                        )
+                        .child(div().text_xs().text_color(fg.opacity(0.5)).child(hint)),
+                ),
         )
+        .into_any_element()
     }
 }
 
@@ -3437,6 +3630,7 @@ impl Render for WorkspaceView {
             .child(main)
             .children(self.render_context_menu(cx))
             .children(self.render_sheet(cx))
+            .children(self.render_note_sheet())
             .children(self.render_confirm(cx))
             .children(self.render_palette())
     }

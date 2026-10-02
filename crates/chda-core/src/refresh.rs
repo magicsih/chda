@@ -83,6 +83,7 @@ pub fn worktrees_of(repo: &Path, fetch: bool) -> io::Result<Vec<WorktreeEntry>> 
     let merged = chda_git::merge_target(repo)
         .map(|base| merged_branches(repo, &base, &branches))
         .unwrap_or_default();
+    let mut notes = chda_git::branch_descriptions(repo).unwrap_or_default();
     let mut out = Vec::new();
     for info in infos {
         let badges = if info.missing {
@@ -91,6 +92,7 @@ pub fn worktrees_of(repo: &Path, fetch: bool) -> io::Result<Vec<WorktreeEntry>> 
             chda_git::status(&info.path).map(badges).unwrap_or_default()
         };
         let merged = info.branch.as_ref().is_some_and(|b| merged.contains(b));
+        let note = info.branch.as_ref().and_then(|b| notes.remove(b));
         out.push(WorktreeEntry {
             path: info.path,
             branch: info.branch,
@@ -98,6 +100,7 @@ pub fn worktrees_of(repo: &Path, fetch: bool) -> io::Result<Vec<WorktreeEntry>> 
             badges,
             merged,
             missing: info.missing,
+            note,
             ..Default::default()
         });
     }
@@ -156,6 +159,39 @@ pub fn delete_worktree(repo: &Path, path: &Path, force: bool) -> io::Result<()> 
 /// Delete a local branch; `force` deletes unmerged branches too.
 pub fn delete_branch(repo: &Path, branch: &str, force: bool) -> io::Result<()> {
     chda_git::delete_branch(repo, branch, force)
+}
+
+/// Set the note of `branch` (its git branch description); blank removes it.
+pub fn set_note(repo: &Path, branch: &str, text: &str) -> io::Result<()> {
+    chda_git::set_branch_description(repo, branch, text)
+}
+
+/// `chda note [<text>...]`, run inside a worktree: print the note of the
+/// checked-out branch, or set it (an empty text removes it). Returns the
+/// process exit code.
+pub fn note_main(args: &[String]) -> i32 {
+    let run = || -> io::Result<Option<String>> {
+        let cwd = std::env::current_dir()?;
+        let branch = chda_git::current_branch(&cwd)?.ok_or_else(|| {
+            io::Error::other("not on a branch (detached HEAD or not a git repository)")
+        })?;
+        if args.is_empty() {
+            return Ok(chda_git::branch_descriptions(&cwd)?.remove(&branch));
+        }
+        set_note(&cwd, &branch, &args.join(" "))?;
+        Ok(None)
+    };
+    match run() {
+        Ok(Some(note)) => {
+            println!("{note}");
+            0
+        }
+        Ok(None) => 0,
+        Err(e) => {
+            eprintln!("chda note: {e}");
+            1
+        }
+    }
 }
 
 /// Fresh badges for one worktree.

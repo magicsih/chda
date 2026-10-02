@@ -584,3 +584,131 @@ fn new_worktree_from_a_branch_with_a_random_name(cx: &mut TestAppContext) {
     );
     assert_eq!(count(&h), before + 1);
 }
+
+fn note_of(dir: &std::path::Path, branch: &str) -> Option<String> {
+    let out = std::process::Command::new("git")
+        .args(["config", &format!("branch.{branch}.description")])
+        .current_dir(dir)
+        .output()
+        .unwrap();
+    out.status
+        .success()
+        .then(|| String::from_utf8_lossy(&out.stdout).trim_end().to_owned())
+}
+
+/// Notes on branches: edited in a sheet, given when creating a worktree or
+/// set from outside (`chda note`), shown in the sidebar and found by the
+/// palette (#36).
+#[gpui::test]
+fn branch_notes_show_in_the_sidebar(cx: &mut TestAppContext) {
+    let mut repo = std::path::PathBuf::new();
+    let mut feat = std::path::PathBuf::new();
+    let mut h = Harness::open(cx, "note", |home| {
+        repo = home.repo("app");
+        feat = repo.parent().unwrap().join("app.worktrees/feat");
+        git(
+            &repo,
+            &[
+                "worktree",
+                "add",
+                "-q",
+                "-b",
+                "feat",
+                feat.to_str().unwrap(),
+            ],
+        );
+        config_with_repo(home, &repo);
+    });
+    let note_in_sidebar = |path: std::path::PathBuf| {
+        move |v: &crate::workspace_view::WorkspaceView, cx: &gpui::App| {
+            v.sidebar
+                .read(cx)
+                .model
+                .worktree_for_path(&path)
+                .and_then(|(_, w)| w.note_title().map(str::to_owned))
+        }
+    };
+    h.wait_for("feat in the sidebar", {
+        let feat = feat.clone();
+        move |v, cx| {
+            v.sidebar
+                .read(cx)
+                .model
+                .worktree_for_path(&feat)
+                .is_some_and(|(_, w)| w.path == feat && w.note.is_none())
+        }
+    });
+
+    // Edit note...: two lines, the first is the title.
+    let edit = MenuAction::EditNote {
+        repo: repo.clone(),
+        branch: "feat".into(),
+    };
+    h.cx.update(|window, cx| {
+        h.view
+            .update(cx, |v, cx| v.run_menu_action(edit, window, cx))
+    });
+    h.type_text("Fix login redirect loop");
+    h.keys("shift-enter");
+    h.type_text("see #123");
+    h.keys("enter");
+    assert_eq!(
+        note_of(&repo, "feat").as_deref(),
+        Some("Fix login redirect loop\nsee #123")
+    );
+    assert_eq!(
+        h.read(note_in_sidebar(feat.clone())).as_deref(),
+        Some("Fix login redirect loop")
+    );
+    let found = h.read(|v, cx| {
+        v.palette_items(cx).into_iter().any(|i| {
+            matches!(&i.command, crate::palette::PaletteCommand::GoToWorktree(p) if *p == feat)
+                && crate::palette::fuzzy_score("redirect", &format!("{} {}", i.label, i.detail))
+                    .is_some()
+        })
+    });
+    assert!(found, "the palette finds the worktree by its note");
+
+    // Set from outside, as `chda note` does: the sidebar follows.
+    git(
+        &repo,
+        &["config", "branch.feat.description", "Ship the fix\n"],
+    );
+    h.wait_for("the new note", {
+        let f = note_in_sidebar(feat.clone());
+        move |v, cx| f(v, cx).as_deref() == Some("Ship the fix")
+    });
+
+    // A note given in the new worktree sheet.
+    let r = repo.clone();
+    h.cx.update(|window, cx| h.view.update(cx, |v, cx| v.open_sheet(r, window, cx)));
+    h.type_text("fix-b");
+    h.keys("tab");
+    h.type_text("Try the other approach");
+    h.keys("enter");
+    let b = repo.parent().unwrap().join("app.worktrees/fix-b");
+    h.wait_for("fix-b with its note", {
+        let f = note_in_sidebar(b.clone());
+        move |v, cx| f(v, cx).as_deref() == Some("Try the other approach")
+    });
+    assert_eq!(
+        note_of(&repo, "fix-b").as_deref(),
+        Some("Try the other approach")
+    );
+
+    // Rows without notes stay as they were; an empty note removes it.
+    let edit = MenuAction::EditNote {
+        repo: repo.clone(),
+        branch: "feat".into(),
+    };
+    h.cx.update(|window, cx| {
+        h.view
+            .update(cx, |v, cx| v.run_menu_action(edit, window, cx))
+    });
+    for _ in 0.."Ship the fix".len() {
+        h.keys("backspace");
+    }
+    h.keys("enter");
+    assert_eq!(note_of(&repo, "feat"), None);
+    assert_eq!(h.read(note_in_sidebar(feat.clone())), None);
+}

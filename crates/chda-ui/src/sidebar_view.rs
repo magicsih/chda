@@ -425,16 +425,42 @@ impl SidebarView {
                     })
                     .child("\u{25cf}"),
             )
-            .child(
-                div()
+            .child(match wt.note_title() {
+                // With a note, the task is the label and the branch sits
+                // small underneath.
+                Some(title) => div()
+                    .flex_1()
+                    .min_w_0()
+                    .flex()
+                    .flex_col()
+                    .child(
+                        div()
+                            .overflow_hidden()
+                            .whitespace_nowrap()
+                            .text_ellipsis()
+                            .child(title.to_owned()),
+                    )
+                    .child(
+                        div()
+                            .overflow_hidden()
+                            .whitespace_nowrap()
+                            .text_ellipsis()
+                            .text_xs()
+                            .text_color(fg.opacity(0.5))
+                            .child(name.clone()),
+                    ),
+                None => div()
                     .flex_1()
                     .min_w_0()
                     .overflow_hidden()
                     .whitespace_nowrap()
                     .text_ellipsis()
-                    .child(name),
-            )
-            .children(badges.into_iter().map(|b| div().text_xs().child(b)));
+                    .child(name.clone()),
+            })
+            .children(badges.into_iter().map(|b| div().text_xs().child(b)))
+            .when_some(wt.note.clone(), |d, note| {
+                d.tooltip(crate::tooltip::text(format!("{note}\n\n{name}")))
+            });
         let mut col = div().flex().flex_col().child(row);
         if let Some(err) = &wt.error {
             col = col.child(

@@ -1,4 +1,5 @@
-//! A minimal single-line text field for sheets (branch names, paths).
+//! A minimal text field for sheets (branch names, paths, notes). Single
+//! line unless `multiline`, where shift-enter starts a new line.
 
 use std::ops::Range;
 
@@ -22,6 +23,8 @@ pub struct TextInput {
     pub placeholder: String,
     pub fg: Hsla,
     pub bg: Hsla,
+    /// Shift-enter inserts a line break; enter still submits.
+    pub multiline: bool,
 }
 
 impl EventEmitter<TextInputEvent> for TextInput {}
@@ -36,11 +39,19 @@ impl TextInput {
             placeholder: placeholder.into(),
             fg,
             bg,
+            multiline: false,
         }
     }
 
     pub fn text(&self) -> &str {
         &self.text
+    }
+
+    /// Replace the text and put the cursor at its end.
+    pub fn set_text(&mut self, text: &str, cx: &mut Context<Self>) {
+        self.text = text.to_owned();
+        self.cursor = self.text.chars().count();
+        cx.notify();
     }
 
     fn byte_at(&self, chars: usize) -> usize {
@@ -64,6 +75,7 @@ impl TextInput {
             return;
         }
         match ks.key.as_str() {
+            "enter" if self.multiline && ks.modifiers.shift => self.insert("\n", cx),
             "enter" => cx.emit(TextInputEvent::Submit(self.text.clone())),
             "escape" => cx.emit(TextInputEvent::Cancel),
             "backspace" => {
@@ -227,9 +239,13 @@ impl gpui::Element for Field {
         window: &mut Window,
         cx: &mut App,
     ) -> (gpui::LayoutId, ()) {
+        let lines = {
+            let i = self.input.read(cx);
+            i.text.lines().count().max(1) + usize::from(i.text.ends_with('\n'))
+        };
         let mut style = gpui::Style::default();
         style.size.width = gpui::relative(1.0).into();
-        style.size.height = window.line_height().into();
+        style.size.height = (window.line_height() * lines as f32).into();
         (window.request_layout(style, [], cx), ())
     }
 
@@ -284,38 +300,46 @@ impl gpui::Element for Field {
         let empty = shown.is_empty();
         let display = if empty { placeholder } else { shown };
         let color = if empty { fg.opacity(0.4) } else { fg };
-        let run = gpui::TextRun {
-            len: display.len(),
-            font: style.font(),
-            color,
-            background_color: None,
-            underline: None,
-            strikethrough: None,
+        let font = style.font();
+        let line_height = window.line_height();
+        // Byte offset of the cursor in `display`, after any marked text.
+        let cursor_at = if empty {
+            0
+        } else {
+            cursor_byte + marked.map(|m| m.len()).unwrap_or(0)
         };
-        let line = window
-            .text_system()
-            .shape_line(display.into(), font_size, &[run], None);
-        let _ = line.paint(
-            bounds.origin,
-            window.line_height(),
-            gpui::TextAlign::Left,
-            None,
-            window,
-            cx,
-        );
-        if self.focus.is_focused(window) {
-            let x = if empty {
-                px(0.0)
-            } else {
-                line.x_for_index(cursor_byte + marked.map(|m| m.len()).unwrap_or(0))
+        let mut start = 0;
+        let mut cursor_pos = None;
+        for (row, text) in display.split('\n').enumerate() {
+            let run = gpui::TextRun {
+                len: text.len(),
+                font: font.clone(),
+                color,
+                background_color: None,
+                underline: None,
+                strikethrough: None,
             };
-            window.paint_quad(fill(
-                Bounds::new(
-                    gpui::point(bounds.origin.x + x, bounds.origin.y),
-                    gpui::size(px(1.5), bounds.size.height),
-                ),
-                fg,
-            ));
+            let line =
+                window
+                    .text_system()
+                    .shape_line(text.to_owned().into(), font_size, &[run], None);
+            let origin = gpui::point(bounds.origin.x, bounds.origin.y + line_height * row as f32);
+            let _ = line.paint(origin, line_height, gpui::TextAlign::Left, None, window, cx);
+            let end = start + text.len();
+            if cursor_pos.is_none() && cursor_at <= end {
+                let x = if empty {
+                    px(0.0)
+                } else {
+                    line.x_for_index(cursor_at - start)
+                };
+                cursor_pos = Some(gpui::point(origin.x + x, origin.y));
+            }
+            start = end + 1;
+        }
+        if self.focus.is_focused(window)
+            && let Some(at) = cursor_pos
+        {
+            window.paint_quad(fill(Bounds::new(at, gpui::size(px(1.5), line_height)), fg));
         }
     }
 }
