@@ -72,6 +72,14 @@ actions!(
         ResetFontSize,
         GoToWaitingAgent,
         SelectTheme,
+        OpenConfig,
+        OpenGhosttyConfig,
+        ReloadConfig,
+        Minimize,
+        ZoomWindow,
+        RunClaude,
+        RunCodex,
+        ResumeSession,
     ]
 );
 
@@ -1278,7 +1286,7 @@ impl WorkspaceView {
         cx: &mut Context<Self>,
     ) {
         let Some(template) = self.config.editor.as_deref() else {
-            cx.open_with_system(path);
+            self.env.system.open_file(path, cx);
             return;
         };
         let argv = chda_config::editor_command(template, path, line, column);
@@ -2161,6 +2169,74 @@ impl WorkspaceView {
         self.open_palette(items, selected, "Select a theme", window, cx);
     }
 
+    /// Open `config.toml`, writing the current values first if it does not
+    /// exist yet.
+    fn open_config(&mut self, _: &OpenConfig, _: &mut Window, cx: &mut Context<Self>) {
+        let Some(path) = self.env.config_path.clone() else {
+            return;
+        };
+        if !path.exists() {
+            self.save_config();
+        }
+        self.open_path(&path, None, None, cx);
+    }
+
+    /// Open the Ghostty config chda reads, creating an empty one if there is
+    /// none.
+    fn open_ghostty_config(
+        &mut self,
+        _: &OpenGhosttyConfig,
+        _: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let files = &self.ghostty_paths.config_files;
+        let Some(path) = files.iter().find(|p| p.exists()).or(files.first()).cloned() else {
+            return;
+        };
+        if !path.exists()
+            && let Err(e) = path
+                .parent()
+                .map_or(Ok(()), std::fs::create_dir_all)
+                .and_then(|()| std::fs::write(&path, ""))
+        {
+            self.status_line = Some(format!("{}: {e}", path.display()));
+            cx.notify();
+            return;
+        }
+        self.open_path(&path, None, None, cx);
+    }
+
+    /// Run an agent in the focused pane's worktree, or its directory when it
+    /// is in none.
+    fn run_agent_here(&mut self, agent: AgentId, window: &mut Window, cx: &mut Context<Self>) {
+        let Some(cwd) = self.focused_cwd() else {
+            return;
+        };
+        let dir = self
+            .sidebar
+            .read(cx)
+            .model
+            .worktree_for_path(&cwd)
+            .map(|(_, w)| w.path.clone())
+            .unwrap_or(cwd);
+        self.run_agent(&dir, agent, None, window, cx);
+    }
+
+    /// The palette's "Resume" entries alone.
+    fn resume_session(&mut self, _: &ResumeSession, window: &mut Window, cx: &mut Context<Self>) {
+        let items: Vec<PaletteItem> = self
+            .palette_items(cx)
+            .into_iter()
+            .filter(|i| matches!(i.command, PaletteCommand::ResumeSession { .. }))
+            .collect();
+        if items.is_empty() {
+            self.status_line = Some("No agent sessions in the sidebar's worktrees yet".into());
+            cx.notify();
+            return;
+        }
+        self.open_palette(items, 0, "Resume an agent session", window, cx);
+    }
+
     /// Show `theme` (`None`: the Ghostty config's) without saving it.
     fn show_theme(&mut self, theme: Option<&str>, cx: &mut Context<Self>) {
         let ghostty = chda_config::load(&self.ghostty_paths, theme);
@@ -2803,6 +2879,20 @@ impl Render for WorkspaceView {
             .on_action(cx.listener(Self::reset_font_size))
             .on_action(cx.listener(Self::go_to_waiting_agent))
             .on_action(cx.listener(Self::select_theme))
+            .on_action(cx.listener(Self::open_config))
+            .on_action(cx.listener(Self::open_ghostty_config))
+            .on_action(cx.listener(Self::resume_session))
+            .on_action(
+                cx.listener(|this, _: &ReloadConfig, window, cx| this.reload_config(window, cx)),
+            )
+            .on_action(cx.listener(|this, _: &RunClaude, window, cx| {
+                this.run_agent_here(AgentId::Claude, window, cx)
+            }))
+            .on_action(cx.listener(|this, _: &RunCodex, window, cx| {
+                this.run_agent_here(AgentId::Codex, window, cx)
+            }))
+            .on_action(|_: &Minimize, window, _| window.minimize_window())
+            .on_action(|_: &ZoomWindow, window, _| window.zoom_window())
             .on_action(cx.listener(|this, _: &NextTab, w, cx| {
                 this.ws.cycle_tab_in_group(true);
                 this.focus_active(w, cx);

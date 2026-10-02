@@ -144,6 +144,11 @@ value Ghostty would reject keeps the previous settings and shows a message.
 | `cmd-n` | new worktree |
 | `cmd-shift-p` | command palette |
 | `cmd-c` / `cmd-v` | copy selection / paste |
+| `cmd-,` / `cmd-shift-,` | open `config.toml` / reload both configs |
+| `cmd-m`, `cmd-h`, `cmd-alt-h` | minimize, hide chda, hide others |
+
+Every action is also in the menu bar, with agent launches and session resume
+under Agents.
 
 ## Status and roadmap
 

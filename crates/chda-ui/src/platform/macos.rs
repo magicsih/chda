@@ -165,6 +165,13 @@ pub fn locale_identifier() -> String {
     NSLocale::currentLocale().localeIdentifier().to_string()
 }
 
+pub fn show_about() {
+    let Some(mtm) = MainThreadMarker::new() else {
+        return;
+    };
+    NSApplication::sharedApplication(mtm).orderFrontStandardAboutPanel(None);
+}
+
 pub fn restore_windows() {
     let Some(mtm) = MainThreadMarker::new() else {
         return;

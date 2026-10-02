@@ -147,6 +147,12 @@ pub fn notify(title: &str, body: &str, target: &NotificationTarget) {
     let _ = (title, body, target);
 }
 
+/// Show the standard About panel: name, version and icon from the bundle.
+pub fn show_about() {
+    #[cfg(target_os = "macos")]
+    macos::show_about();
+}
+
 /// Un-minimize the app's windows (before bringing one to the front).
 pub fn restore_windows() {
     #[cfg(target_os = "macos")]

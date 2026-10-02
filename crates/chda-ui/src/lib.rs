@@ -2,6 +2,7 @@
 
 mod environment;
 mod fonts;
+mod menus;
 mod palette;
 mod platform;
 #[cfg(test)]
@@ -77,6 +78,11 @@ fn key_bindings() -> Vec<KeyBinding> {
         KeyBinding::new("cmd--", DecreaseFontSize, None),
         KeyBinding::new("cmd-0", ResetFontSize, None),
         KeyBinding::new("cmd-shift-a", GoToWaitingAgent, None),
+        KeyBinding::new("cmd-,", OpenConfig, None),
+        KeyBinding::new("cmd-shift-,", ReloadConfig, None),
+        KeyBinding::new("cmd-m", Minimize, None),
+        KeyBinding::new("cmd-h", menus::Hide, None),
+        KeyBinding::new("cmd-alt-h", menus::HideOthers, None),
         // Global bindings count as matching at the focused element's depth,
         // so these name the focused field and come last: on equal depth the
         // later binding wins over the global escape (Dismiss).
@@ -95,6 +101,7 @@ pub fn run(ghostty: chda_config::GhosttyConfig) {
         fonts::register(cx);
         cx.bind_keys(key_bindings());
         cx.on_action(|_: &Quit, cx| cx.quit());
+        menus::install(cx);
 
         let env = std::rc::Rc::new(environment::Environment::for_user());
         let config = env.load_config();
