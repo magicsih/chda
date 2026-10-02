@@ -284,6 +284,44 @@ fn cherry_all_applied(repo: &Path, base: &str, head: &str) -> io::Result<bool> {
 }
 
 /// Trimmed stdout of a git command that must succeed.
+/// Size of a worktree's changes against the commit it branched from.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct DiffStat {
+    /// The merge base of `HEAD` and the base branch.
+    pub merge_base: String,
+    pub files: usize,
+    pub added: usize,
+    pub removed: usize,
+}
+
+/// Tracked changes in `worktree` (commits and uncommitted edits) against
+/// its merge base with `base`.
+pub fn diff_stat(worktree: &Path, base: &str) -> io::Result<DiffStat> {
+    let merge_base = output(worktree, &["merge-base", "HEAD", base])?;
+    let numstat = output(
+        worktree,
+        &["diff", "--numstat", "--no-renames", &merge_base],
+    )?;
+    let mut stat = parse_numstat(&numstat);
+    stat.merge_base = merge_base;
+    Ok(stat)
+}
+
+/// `git diff --numstat` lines: `added<TAB>removed<TAB>path`, with `-` for
+/// binary files.
+fn parse_numstat(text: &str) -> DiffStat {
+    let mut stat = DiffStat::default();
+    for line in text.lines().filter(|l| !l.is_empty()) {
+        let mut cols = line.split('\t');
+        let added = cols.next().and_then(|n| n.parse::<usize>().ok());
+        let removed = cols.next().and_then(|n| n.parse::<usize>().ok());
+        stat.files += 1;
+        stat.added += added.unwrap_or(0);
+        stat.removed += removed.unwrap_or(0);
+    }
+    stat
+}
+
 fn output(repo: &Path, args: &[&str]) -> io::Result<String> {
     let out = run(repo, args)?;
     if !out.status.success() {
@@ -806,5 +844,29 @@ mod tests {
         );
         fetch_default_branch(&repo.path).unwrap();
         assert_eq!(merge_target(&repo.path).unwrap(), "origin/main");
+    }
+
+    #[test]
+    fn diff_stat_counts_commits_and_edits_since_the_merge_base() {
+        let repo = TempRepo::new("diffstat");
+        let wt = repo.root.join("wt");
+        crate::add_worktree(&repo.path, "feat", &wt, None).unwrap();
+        assert_eq!(diff_stat(&wt, "main").unwrap().files, 0);
+        repo.commit_file(&wt, "new.txt", "one\ntwo\n");
+        // main moves on; that must not count.
+        repo.commit_file(&repo.path, "other.txt", "x\n");
+        std::fs::write(wt.join("a.txt"), "changed\n").unwrap();
+        let stat = diff_stat(&wt, "main").unwrap();
+        assert_eq!((stat.files, stat.added), (2, 3));
+        assert_eq!(stat.merge_base.len(), 40);
+        assert_eq!(
+            parse_numstat("-\t-\tlogo.png\n4\t1\tsrc/x.rs\n"),
+            DiffStat {
+                merge_base: String::new(),
+                files: 2,
+                added: 4,
+                removed: 1
+            }
+        );
     }
 }
