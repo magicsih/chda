@@ -54,6 +54,8 @@ Three layers, all run by `cargo test --workspace` (CI: the macOS job).
 | Right-click a folder in `ls -la`: open a tab there, `cd` there | `paths::ls_folder_opens_a_terminal_tab_and_cds_there` | #34 |
 | Right-click `src/main.rs:12:5`: reveal in Finder, copy relative path | `paths::compiler_error_path_reveals_the_file` | #34 |
 | A quoted path with spaces is one link | `paths::quoted_path_with_spaces_is_one_link` | #34 |
+| Drop files on a pane: quoted paths pasted, even right after typing | `paths::dropped_files_paste_as_quoted_paths` | #17 |
+| Drop a folder on the sidebar: added as a repository | `paths::dropped_folder_on_the_sidebar_becomes_a_repository` | #17 |
 | Palette arrow keys choose a later entry | `palette::arrow_keys_choose_a_later_entry` | |
 | Theme picker: preview, restore on escape, save on enter | `palette::theme_picker_previews_restores_and_saves` | |
 | Menu actions: Settings opens config.toml, agent items explain themselves | `menus::settings_writes_a_missing_config_file`, `menus::agent_items_explain_why_nothing_ran` | |

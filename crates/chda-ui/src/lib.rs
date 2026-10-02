@@ -2,6 +2,7 @@
 
 mod diagram;
 mod environment;
+mod external_drop;
 mod fonts;
 mod link_menu;
 mod menus;

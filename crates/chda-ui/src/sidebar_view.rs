@@ -25,6 +25,8 @@ pub enum SidebarEvent {
     /// pane each.
     ResumeSessions(Vec<SessionPick>),
     AddRepo,
+    /// Folders were dropped on the sidebar: add them as repositories.
+    AddRepos(Vec<PathBuf>),
     /// Open a URL (a pull request badge was clicked).
     OpenUrl(String),
     /// Focus an open tab from the activity list.
@@ -83,6 +85,8 @@ pub struct SidebarView {
     focus_handle: FocusHandle,
     fg: Hsla,
     bg: Hsla,
+    /// Folders dragged over the window from another app.
+    dragged: crate::external_drop::Dragged,
 }
 
 impl EventEmitter<SidebarEvent> for SidebarView {}
@@ -108,6 +112,7 @@ impl SidebarView {
             focus_handle: cx.focus_handle(),
             fg,
             bg,
+            dragged: Default::default(),
         }
     }
 
@@ -815,7 +820,7 @@ impl Render for SidebarView {
                     .into_any_element()
             })
             .collect();
-        div()
+        let list = div()
             .id("sidebar")
             .flex()
             .flex_col()
@@ -921,11 +926,26 @@ impl Render for SidebarView {
                         .flex_col()
                         .gap_1()
                         .child("Get started")
-                        .child("1. Add a repository: \"+ repo\" or cmd-shift-o.")
+                        .child("1. Add a repository: \"+ repo\", cmd-shift-o, or drop its folder here.")
                         .child("2. Click \"+\" next to it and name a branch to create a worktree.")
                         .child("3. Right-click the worktree to open a terminal or run Claude Code / Codex."),
                 )
-            })
+            });
+        div()
+            .relative()
+            .size_full()
+            .on_drag_move(cx.listener(|this, e, _, cx| this.dragged.track(e, cx)))
+            .child(list)
+            .child(crate::external_drop::catcher(
+                cx.entity(),
+                |v: &mut Self| &mut v.dragged,
+                |_, paths, _, cx| {
+                    let folders: Vec<PathBuf> = paths.into_iter().filter(|p| p.is_dir()).collect();
+                    if !folders.is_empty() {
+                        cx.emit(SidebarEvent::AddRepos(folders));
+                    }
+                },
+            ))
     }
 }
 
