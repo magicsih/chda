@@ -495,6 +495,12 @@ fn layout_frame(
         }
 
         // Text batches: adjacent cells with the same style share one shaped line.
+        // The cursor cell is shaped alone, as in Ghostty, so a ligature never
+        // hides the character under the cursor.
+        let cursor_x = frame
+            .cursor
+            .filter(|c| c.y == y)
+            .map(|c| c.x.saturating_sub(u16::from(c.at_wide_tail)));
         let mut batch: Option<(u16, u16, RunStyle, String)> = None;
         let flush = |batch: &mut Option<(u16, u16, RunStyle, String)>, layout: &mut Layout| {
             if let Some((start, _, style, text)) = batch.take() {
@@ -524,16 +530,16 @@ fn layout_frame(
                 continue;
             }
             let style = RunStyle::of(cell, frame, selection);
-            let wide = cell.width == CellWidth::Wide;
+            let alone = cell.width == CellWidth::Wide || cursor_x == Some(x);
             match batch.as_mut() {
-                Some((_, end, s, buf)) if !wide && *s == style && *end + 1 == x => {
+                Some((_, end, s, buf)) if !alone && *s == style && *end + 1 == x => {
                     buf.push_str(text);
                     *end = x;
                 }
                 _ => {
                     flush(&mut batch, layout);
                     batch = Some((x, x, style, text.to_owned()));
-                    if wide {
+                    if alone {
                         flush(&mut batch, layout);
                     }
                 }

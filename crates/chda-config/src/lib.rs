@@ -61,6 +61,9 @@ pub struct GhosttyConfig {
     pub font_family: Option<String>,
     /// `font-size` in points.
     pub font_size: Option<f32>,
+    /// `font-feature` settings as OpenType tag and value, in file order;
+    /// later entries for the same tag win.
+    pub font_features: Vec<(String, u32)>,
     pub theme: Option<String>,
     pub background: Option<Color>,
     pub foreground: Option<Color>,
@@ -108,6 +111,16 @@ impl GhosttyConfig {
             "font-family" => {
                 if self.font_family.is_none() && !value.is_empty() {
                     self.font_family = Some(value.to_owned());
+                }
+            }
+            "font-feature" => {
+                if value.is_empty() {
+                    self.font_features.clear();
+                }
+                for setting in value.split(',').map(str::trim).filter(|s| !s.is_empty()) {
+                    let feature = parse_font_feature(setting);
+                    check(feature.is_some());
+                    self.font_features.extend(feature);
                 }
             }
             "font-size" => {
@@ -200,6 +213,8 @@ impl GhosttyConfig {
             shell_integration
         );
         self.palette.extend(other.palette.iter().copied());
+        self.font_features
+            .extend(other.font_features.iter().cloned());
         self.problems.extend(other.problems.iter().cloned());
         self.sources.extend(other.sources.iter().cloned());
         if other.padding != Padding::default() {
@@ -218,6 +233,30 @@ impl GhosttyConfig {
         }
         out
     }
+}
+
+/// One `font-feature` setting in Ghostty's (HarfBuzz's) syntax: `calt`,
+/// `+calt` and `calt=1` enable, `-calt` and `calt=0` disable, `cv01=2` picks
+/// an alternate; `calt on` and `calt off` work too.
+fn parse_font_feature(setting: &str) -> Option<(String, u32)> {
+    let setting = setting.trim_matches(|c| c == '"' || c == '\'');
+    let (tag, value) = if let Some(tag) = setting.strip_prefix('-') {
+        (tag, 0)
+    } else if let Some(tag) = setting.strip_prefix('+') {
+        (tag, 1)
+    } else if let Some((tag, value)) = setting.split_once(['=', ' ']) {
+        let value = match value.trim() {
+            "on" | "true" => 1,
+            "off" | "false" => 0,
+            v => v.parse().ok()?,
+        };
+        (tag.trim(), value)
+    } else {
+        (setting, 1)
+    };
+    let tag = tag.trim_matches(|c| c == '"' || c == '\'');
+    (tag.len() == 4 && tag.chars().all(|c| c.is_ascii_alphanumeric()))
+        .then(|| (tag.to_owned(), value))
 }
 
 /// `"4"` means both sides, `"2,6"` means first and second.
@@ -416,6 +455,37 @@ mod tests {
             }
         );
         assert_eq!(c.scrollback_limit, Some(1000));
+    }
+
+    #[test]
+    fn font_features_use_ghosttys_syntax() {
+        let mut c = GhosttyConfig::default();
+        parse(
+            "font-feature = calt\nfont-feature = -liga, ss01\nfont-feature = cv01=2\n\
+             font-feature = \"zero\" on\nfont-feature = dlig=off\nfont-feature = toolong\n",
+            None,
+            &mut c,
+        );
+        let tags: Vec<(&str, u32)> = c
+            .font_features
+            .iter()
+            .map(|(t, v)| (t.as_str(), *v))
+            .collect();
+        assert_eq!(
+            tags,
+            [
+                ("calt", 1),
+                ("liga", 0),
+                ("ss01", 1),
+                ("cv01", 2),
+                ("zero", 1),
+                ("dlig", 0)
+            ]
+        );
+        assert_eq!(c.problems, ["font-feature = toolong"]);
+
+        parse("font-feature =\n", None, &mut c);
+        assert!(c.font_features.is_empty());
     }
 
     #[test]
