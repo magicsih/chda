@@ -30,6 +30,7 @@ Three layers, all run by `cargo test --workspace` (CI: the macOS job).
 | S1 New work: create a worktree from the sheet | `worktrees::create_then_delete_a_worktree_in_one_go` | |
 | S2 Watching agents: status per pane, ACTIVE list, Dock badge, notification, jump, notification click | `agents::hook_events_drive_status_badge_jump_and_notification_click` | #12, #13, #25 |
 | S3 Resuming: a worktree lists its agent sessions | `worktrees::worktree_lists_its_agent_sessions` | #41 |
+| S3 Resuming several sessions side by side, newest message first | `worktrees::picked_sessions_resume_in_one_tab` | #30 |
 | S4 Finishing: merge into main and clean up | `worktrees::merge_into_main_and_clean_up` | |
 | S5 Plain terminal: tabs, splits, focus | `workspace::new_tab_split_and_close` | |
 | Font size shortcuts | `workspace::font_size_shortcuts_apply_to_every_pane` | #8 |

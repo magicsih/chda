@@ -1,8 +1,9 @@
-//! Worktrees in the sidebar: create, delete, missing folders.
+//! Worktrees in the sidebar: create, delete, missing folders, sessions.
 
 use gpui::TestAppContext;
 
 use super::harness::{Harness, git};
+use crate::sidebar_view::SessionPick;
 use crate::workspace_view::MenuAction;
 
 fn config_with_repo(home: &super::harness::Home, repo: &std::path::Path) {
@@ -151,6 +152,65 @@ fn worktree_lists_its_agent_sessions(cx: &mut TestAppContext) {
         }
     });
     assert!(h.read(|v, cx| v.sidebar.read(cx).sessions_loaded));
+}
+
+/// S3: sessions are listed by their last message; picking three resumes
+/// them in one tab, a pane each.
+#[gpui::test]
+fn picked_sessions_resume_in_one_tab(cx: &mut TestAppContext) {
+    let mut repo = std::path::PathBuf::new();
+    let mut h = Harness::open(cx, "resume", |home| {
+        repo = home.repo("app");
+        config_with_repo(home, &repo);
+        home.fake_claude();
+        for id in ["s1", "s2", "s3"] {
+            home.claude_session(&repo, id, &format!("task {id}"));
+            // Distinct modification times: the last written is the newest.
+            std::thread::sleep(std::time::Duration::from_millis(20));
+        }
+    });
+    h.wait_prompt();
+    h.wait_for("three sessions, the last active first", {
+        let repo = repo.clone();
+        move |v, cx| {
+            v.sidebar
+                .read(cx)
+                .model
+                .worktree_for_path(&repo)
+                .is_some_and(|(_, w)| {
+                    let ids: Vec<&str> = w.sessions.iter().map(|s| s.id.as_str()).collect();
+                    ids == ["s3", "s2", "s1"]
+                })
+        }
+    });
+    let sidebar = h.read(|v, _| v.sidebar.clone());
+    sidebar.update(&mut h.cx, |s, cx| {
+        assert_eq!(s.agents[0].short, "CC");
+        for id in ["s1", "s2", "s3"] {
+            s.toggle_pick(
+                SessionPick {
+                    worktree: repo.clone(),
+                    agent: "claude".into(),
+                    session: id.into(),
+                },
+                cx,
+            );
+        }
+        s.resume_picked(cx);
+    });
+    h.wait_for("one new tab running the three sessions", |v, cx| {
+        let tabs = v.ws.tabs();
+        tabs.len() == 2 && {
+            let panes = tabs[1].panes();
+            panes.len() == 3
+                && ["s1", "s2", "s3"].iter().all(|id| {
+                    panes
+                        .iter()
+                        .any(|p| v.pane_text(*p, cx).contains(&format!("--resume {id}")))
+                })
+        }
+    });
+    assert!(h.read(|v, cx| v.sidebar.read(cx).picked.is_empty()));
 }
 
 /// S4: merge a finished worktree into main and clean it up.

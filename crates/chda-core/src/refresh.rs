@@ -158,6 +158,7 @@ pub fn index_sessions(
                     agent: s.agent.as_str().to_owned(),
                     id: s.id.0,
                     started_at: s.started_at,
+                    last_active_at: s.last_active_at,
                     snippet: s.snippet,
                     message_count: s.message_count,
                 },

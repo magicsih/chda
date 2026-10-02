@@ -76,6 +76,9 @@ impl AgentAdapter for TestClaude {
     fn display_name(&self) -> &str {
         self.inner.display_name()
     }
+    fn short_label(&self) -> String {
+        self.inner.short_label()
+    }
     fn is_installed(&self) -> bool {
         self.bin.is_file()
     }

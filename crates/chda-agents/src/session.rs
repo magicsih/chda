@@ -20,6 +20,9 @@ pub struct AgentSession {
     pub cwd: PathBuf,
     /// Milliseconds since the Unix epoch.
     pub started_at: u64,
+    /// When the transcript was last written, i.e. the last message, in
+    /// milliseconds since the Unix epoch.
+    pub last_active_at: u64,
     /// First user prompt, at most 120 characters.
     pub snippet: String,
     pub message_count: usize,
@@ -30,7 +33,7 @@ pub struct AgentSession {
 const CACHE_FILE: &str = "session-index.json";
 
 /// Bumped when the cached data changes shape or meaning.
-const CACHE_VERSION: u32 = 1;
+const CACHE_VERSION: u32 = 2;
 
 /// What is known about one transcript file at a given mtime and size.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
@@ -195,6 +198,17 @@ pub(crate) fn matching_lines(
         }))
 }
 
+/// A file's modification time in milliseconds since the Unix epoch.
+pub(crate) fn file_mtime_ms(file: &Path) -> Option<u64> {
+    std::fs::metadata(file)
+        .ok()?
+        .modified()
+        .ok()?
+        .duration_since(UNIX_EPOCH)
+        .ok()
+        .map(|d| d.as_millis() as u64)
+}
+
 /// All `.jsonl` files under `root`, recursively.
 pub(crate) fn jsonl_files(root: &Path) -> Vec<PathBuf> {
     let mut out = Vec::new();
@@ -271,6 +285,7 @@ mod tests {
             agent: AgentId::Claude,
             cwd: head_cwd(file).unwrap(),
             started_at: 1,
+            last_active_at: 1,
             snippet: "hi".into(),
             message_count: 1,
             file: file.to_path_buf(),
