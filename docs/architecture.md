@@ -5,7 +5,7 @@ direction is enforced by `deny.toml` (`cargo deny check bans`).
 
 | Crate | Role | May depend on |
 |---|---|---|
-| `chda` (bin) | Entry point. GUI, and CLI subcommands such as `chda hook` | `chda-ui`, `chda-core`, `chda-agents`, `chda-config` |
+| `chda` (bin) | Entry point. GUI, and CLI subcommands such as `chda hook` and `chda note` | `chda-ui`, `chda-core`, `chda-agents`, `chda-config` |
 | `chda-ui` | GPUI views, elements, theme. The only crate that knows GPUI | `chda-core`, `chda-term`, `chda-config`, `gpui` |
 | `chda-core` | Domain hub: workspace, worktrees, agents, event bus | `chda-term`, `chda-git`, `chda-agents`, `chda-config` |
 | `chda-term` | `libghostty-vt` wrapper. PTY bytes in, plain-struct frames out | `chda-pty`, `libghostty-vt` |
@@ -107,7 +107,8 @@ directory (`chda-pty`, macOS only so far).
 ## Sidebar and agents
 
 `chda-core::Sidebar` holds registered repositories, their worktrees with git
-badges, per-agent status (idle, working, waiting for input, review) and the
+badges and branch notes (git's own `branch.<name>.description`, so other git
+tools see them and they are never pushed), per-agent status (idle, working, waiting for input, review) and the
 sessions found in agent transcripts. `chda-git` reads with gix and writes
 with the `git` binary. `chda-agents` knows each agent: how to launch it with
 hooks (Claude Code gets a per-launch `--settings` file; Codex gets a

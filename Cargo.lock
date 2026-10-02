@@ -852,6 +852,7 @@ version = "0.1.6"
 dependencies = [
  "chda-agents",
  "chda-config",
+ "chda-core",
  "chda-ui",
 ]
 

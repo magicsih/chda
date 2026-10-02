@@ -124,6 +124,9 @@ pub struct WorktreeEntry {
     pub busy: Option<String>,
     /// The last operation on it failed with this message.
     pub error: Option<String>,
+    /// What the branch is for (`branch.<name>.description`); first line is
+    /// the title.
+    pub note: Option<String>,
 }
 
 impl WorktreeEntry {
@@ -143,6 +146,15 @@ impl WorktreeEntry {
             && self.is_merged()
             && self.badges.dirty_count() == 0
             && self.badges.ahead.unwrap_or(0) == 0
+    }
+
+    /// The note's first non-empty line.
+    pub fn note_title(&self) -> Option<&str> {
+        self.note
+            .as_deref()?
+            .lines()
+            .map(str::trim)
+            .find(|l| !l.is_empty())
     }
 
     /// The most urgent agent status across agents.
