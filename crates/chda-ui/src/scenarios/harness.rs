@@ -65,16 +65,17 @@ impl System for RecordingSystem {
     }
 }
 
-/// The real Claude Code adapter with transcripts read from a test folder.
-/// It counts as installed when the home has a fake `claude` script
-/// ([`Home::fake_claude`]), which then runs in its place.
-struct TestClaude {
+/// A real adapter that reads transcripts only from the test home: Claude
+/// Code's from a test folder, the others' not at all. Claude Code counts as
+/// installed when the home has a fake `claude` script ([`Home::fake_claude`]),
+/// which then runs in its place; the others are never installed.
+struct TestAdapter {
     inner: Box<dyn AgentAdapter>,
-    projects: PathBuf,
-    bin: PathBuf,
+    projects: Option<PathBuf>,
+    bin: Option<PathBuf>,
 }
 
-impl AgentAdapter for TestClaude {
+impl AgentAdapter for TestAdapter {
     fn id(&self) -> AgentId {
         self.inner.id()
     }
@@ -85,7 +86,7 @@ impl AgentAdapter for TestClaude {
         self.inner.short_label()
     }
     fn is_installed(&self) -> bool {
-        self.bin.is_file()
+        self.bin.as_ref().is_some_and(|b| b.is_file())
     }
     fn launch_command(
         &self,
@@ -94,12 +95,15 @@ impl AgentAdapter for TestClaude {
         hook_bin: &Path,
     ) -> std::process::Command {
         let real = self.inner.launch_command(cwd, resume, hook_bin);
-        let mut cmd = std::process::Command::new(&self.bin);
+        let Some(bin) = &self.bin else {
+            return real;
+        };
+        let mut cmd = std::process::Command::new(bin);
         cmd.args(real.get_args()).current_dir(cwd);
         cmd
     }
     fn session_roots(&self) -> Vec<PathBuf> {
-        vec![self.projects.clone()]
+        self.projects.clone().into_iter().collect()
     }
     fn parse_session(&self, file: &Path) -> Option<chda_core::agents::AgentSession> {
         self.inner.parse_session(file)
@@ -282,14 +286,19 @@ fn open_window(
                 ("HOME".into(), home.home.to_string_lossy().into_owned()),
                 ("ZDOTDIR".into(), home.home.to_string_lossy().into_owned()),
             ],
-            adapters: Arc::new(vec![Box::new(TestClaude {
-                inner: adapters()
+            adapters: Arc::new(
+                adapters()
                     .into_iter()
-                    .find(|a| a.id() == AgentId::Claude)
-                    .unwrap(),
-                projects: home.claude_projects.clone(),
-                bin: home.claude_bin.clone(),
-            }) as Box<dyn AgentAdapter>]),
+                    .map(|inner| {
+                        let claude = inner.id() == AgentId::Claude;
+                        Box::new(TestAdapter {
+                            inner,
+                            projects: claude.then(|| home.claude_projects.clone()),
+                            bin: claude.then(|| home.claude_bin.clone()),
+                        }) as Box<dyn AgentAdapter>
+                    })
+                    .collect(),
+            ),
             forge_clis: chda_core::ForgeClis {
                 gh: home.bin.join("gh"),
                 glab: home.bin.join("glab"),
@@ -365,8 +374,20 @@ impl Harness {
 
     /// [`Harness::hook`] for a given Claude Code session id.
     pub fn hook_session(&self, pane: Option<u64>, cwd: &Path, kind: HookKind, session: &str) {
+        self.hook_from("claude", pane, cwd, kind, session);
+    }
+
+    /// [`Harness::hook`] for the agent with id `agent` and a session id.
+    pub fn hook_from(
+        &self,
+        agent: &str,
+        pane: Option<u64>,
+        cwd: &Path,
+        kind: HookKind,
+        session: &str,
+    ) {
         let event = HookEvent {
-            agent: "claude".into(),
+            agent: agent.into(),
             session_id: session.into(),
             cwd: cwd.to_path_buf(),
             kind,

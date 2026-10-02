@@ -17,7 +17,8 @@ status (tabs, ACTIVE list, Dock badge), notification click to the agent's pane
 and jumping to the waiting agent.
 
 Candidates after M5, in no order: an MCP server so agents can open worktrees
-and tabs, more agents (OpenCode, Gemini CLI, Copilot CLI), GitLab and Gitea pull
-request status, ligatures and Kitty graphics.
+and tabs, GitLab and Gitea pull request status, ligatures and Kitty graphics.
+
+Done since v0.1.6: Gemini CLI, GitHub Copilot CLI and OpenCode adapters.
 
 Decisions that are hard to reverse are summarized in `docs/decisions/`.

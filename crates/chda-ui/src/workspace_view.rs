@@ -7,7 +7,7 @@ use std::sync::mpsc;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
-use chda_config::{ChdaConfig, DefaultAction, GhosttyConfig, Paths, PullStrategy, TabTitle};
+use chda_config::{ChdaConfig, GhosttyConfig, Paths, PullStrategy, TabTitle};
 
 use crate::environment::Environment;
 use chda_core::agents::{AgentAdapter, AgentId, HookEvent, HookKind, SessionCache, SessionId, ipc};
@@ -750,6 +750,16 @@ impl WorkspaceView {
             .filter(|(_, i)| i.cwd.as_ref().is_some_and(|c| c.starts_with(&root)))
             .max_by_key(|(_, i)| i.last_activity)
             .map(|(p, _)| p)
+    }
+
+    /// The adapters of the agents `config.toml` lists, in its order.
+    fn configured_adapters(&self) -> impl Iterator<Item = &dyn AgentAdapter> {
+        self.config.agents.iter().filter_map(|id| {
+            self.adapters
+                .iter()
+                .find(|a| a.id().as_str() == id)
+                .map(|a| a.as_ref())
+        })
     }
 
     /// Display name of an agent id, e.g. "Claude Code" for `claude`.
@@ -1740,11 +1750,7 @@ impl WorkspaceView {
                         MenuAction::ViewDiff(path.clone()),
                     ));
                 }
-                for a in self
-                    .adapters
-                    .iter()
-                    .filter(|a| self.config.agents.iter().any(|id| id == a.id().as_str()))
-                {
+                for a in self.configured_adapters() {
                     items.push((
                         format!("Run {}", a.display_name()),
                         MenuAction::RunAgent(path.clone(), a.id()),
@@ -1876,11 +1882,7 @@ impl WorkspaceView {
             self.focus_active(window, cx);
             return;
         }
-        let command = match self.config.default_action {
-            DefaultAction::Terminal => None,
-            DefaultAction::Claude => self.agent_argv(path, AgentId::Claude, None),
-            DefaultAction::Codex => self.agent_argv(path, AgentId::Codex, None),
-        };
+        let command = self.default_action_argv(path);
         self.open_tab_at(Some(path.to_path_buf()), command, window, cx);
     }
 
@@ -1980,9 +1982,14 @@ impl WorkspaceView {
     ) -> Option<Vec<String>> {
         let adapter = self.adapters.iter().find(|a| a.id() == agent)?;
         let cmd = adapter.launch_command(cwd, resume, &Self::hook_bin());
-        let mut argv = vec![cmd.get_program().to_string_lossy().into_owned()];
-        argv.extend(cmd.get_args().map(|a| a.to_string_lossy().into_owned()));
-        Some(argv)
+        Some(chda_core::agents::command_argv(&cmd))
+    }
+
+    /// What `default-action` runs in a new worktree's first tab; `None` is
+    /// the login shell.
+    fn default_action_argv(&self, cwd: &Path) -> Option<Vec<String>> {
+        let agent = AgentId::parse(self.config.default_action.agent()?)?;
+        self.agent_argv(cwd, agent, None)
     }
 
     fn run_agent(
@@ -2661,11 +2668,7 @@ impl WorkspaceView {
                         Some(format!("Created {branch}, but saving its note failed: {e}"));
                 }
                 self.refresh_repo(repo, cx);
-                let command = match self.config.default_action {
-                    DefaultAction::Terminal => None,
-                    DefaultAction::Claude => self.agent_argv(&path, AgentId::Claude, None),
-                    DefaultAction::Codex => self.agent_argv(&path, AgentId::Codex, None),
-                };
+                let command = self.default_action_argv(&path);
                 self.open_tab_at(Some(path), command, window, cx);
             }
             Err(e) => {
@@ -2754,7 +2757,7 @@ impl WorkspaceView {
                     },
                     command: PaletteCommand::GoToWorktree(wt.path.clone()),
                 });
-                for a in self.adapters.iter() {
+                for a in self.configured_adapters() {
                     items.push(PaletteItem {
                         label: format!("Run {} in {}/{branch}", a.display_name(), repo.name),
                         detail: wt.path.to_string_lossy().into_owned(),

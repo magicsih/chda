@@ -103,6 +103,68 @@ pub fn claude_event(payload: &Value) -> Option<HookEvent> {
     })
 }
 
+/// Map a Gemini CLI hook payload (stdin JSON) to an event.
+pub fn gemini_event(payload: &Value) -> Option<HookEvent> {
+    let kind = match payload.get("hook_event_name")?.as_str()? {
+        "SessionStart" => HookKind::SessionStart,
+        "BeforeAgent" => HookKind::PromptSubmitted,
+        // `ToolPermission` is the only notification Gemini CLI documents.
+        "Notification" => match payload.get("notification_type").and_then(Value::as_str) {
+            None | Some("ToolPermission") => HookKind::WaitingInput,
+            Some(_) => return None,
+        },
+        "AfterAgent" => HookKind::Stopped,
+        "SessionEnd" => HookKind::SessionEnd,
+        _ => return None,
+    };
+    Some(HookEvent {
+        agent: "gemini".into(),
+        session_id: payload.get("session_id")?.as_str()?.to_owned(),
+        cwd: PathBuf::from(payload.get("cwd")?.as_str()?),
+        kind,
+        timestamp: now_ms(),
+        pane: None,
+    })
+}
+
+/// Map a GitHub Copilot CLI hook payload (stdin JSON) to an event. Its
+/// payloads do not name the event, so chda registers one command per event
+/// and passes the name as an argument.
+pub fn copilot_event(event: &str, payload: &Value) -> Option<HookEvent> {
+    let kind = match event {
+        "sessionStart" => HookKind::SessionStart,
+        "userPromptSubmitted" => HookKind::PromptSubmitted,
+        "notification" => match payload.get("notification_type").and_then(Value::as_str) {
+            Some("permission_prompt" | "elicitation_dialog") => HookKind::WaitingInput,
+            _ => return None,
+        },
+        "agentStop" => HookKind::Stopped,
+        "sessionEnd" => HookKind::SessionEnd,
+        _ => return None,
+    };
+    Some(HookEvent {
+        agent: "copilot".into(),
+        session_id: payload.get("sessionId")?.as_str()?.to_owned(),
+        cwd: PathBuf::from(payload.get("cwd")?.as_str()?),
+        kind,
+        timestamp: now_ms(),
+        pane: None,
+    })
+}
+
+/// Map the payload of chda's OpenCode plugin (stdin JSON) to an event. The
+/// plugin already reduces OpenCode's bus events to a [`HookKind`].
+pub fn opencode_event(payload: &Value) -> Option<HookEvent> {
+    Some(HookEvent {
+        agent: "opencode".into(),
+        session_id: payload.get("session_id")?.as_str()?.to_owned(),
+        cwd: PathBuf::from(payload.get("cwd")?.as_str()?),
+        kind: serde_json::from_value(payload.get("kind")?.clone()).ok()?,
+        timestamp: now_ms(),
+        pane: None,
+    })
+}
+
 /// Map a Codex `notify` payload (last argv item, JSON) to an event.
 pub fn codex_event(payload: &Value, cwd: &Path) -> Option<HookEvent> {
     let kind = match payload.get("type")?.as_str()? {
@@ -133,17 +195,22 @@ pub fn codex_event(payload: &Value, cwd: &Path) -> Option<HookEvent> {
 /// hook that errors must not disturb the agent.
 pub fn hook_main(args: &[String]) -> i32 {
     let Some(agent) = args.first() else {
-        eprintln!("usage: chda hook <claude|codex>");
+        eprintln!("usage: chda hook <claude|codex|gemini|copilot|opencode>");
         return 2;
     };
+    let stdin_json = || {
+        let mut input = String::new();
+        let _ = io::stdin().read_to_string(&mut input);
+        serde_json::from_str::<Value>(&input).ok()
+    };
     let event = match agent.as_str() {
-        "claude" => {
-            let mut input = String::new();
-            let _ = io::stdin().read_to_string(&mut input);
-            serde_json::from_str::<Value>(&input)
-                .ok()
-                .and_then(|v| claude_event(&v))
+        "claude" => stdin_json().and_then(|v| claude_event(&v)),
+        "gemini" => stdin_json().and_then(|v| gemini_event(&v)),
+        "copilot" => {
+            let name = args.get(1).map(String::as_str).unwrap_or("");
+            stdin_json().and_then(|v| copilot_event(name, &v))
         }
+        "opencode" => stdin_json().and_then(|v| opencode_event(&v)),
         "codex" => {
             let json = args.last().filter(|a| a.starts_with('{'));
             let cwd = std::env::current_dir().unwrap_or_default();
@@ -159,8 +226,9 @@ pub fn hook_main(args: &[String]) -> i32 {
         event.pane = std::env::var(PANE_ENV).ok().and_then(|v| v.parse().ok());
         deliver(&event);
     }
-    // Claude Code reads stdout as JSON; an empty object means "carry on".
-    if agent == "claude" {
+    // Claude Code and Gemini CLI read stdout as JSON; an empty object means
+    // "carry on".
+    if agent == "claude" || agent == "gemini" {
         println!("{{}}");
     }
     0
@@ -243,6 +311,56 @@ mod tests {
         )
         .unwrap();
         assert_eq!(old.pane, None);
+
+        let g = gemini_event(&json!({
+            "session_id": "g1", "cwd": "/w", "hook_event_name": "Notification",
+            "notification_type": "ToolPermission", "timestamp": "2026-10-02T00:00:00Z"
+        }))
+        .unwrap();
+        assert_eq!(
+            (g.kind, g.agent_id()),
+            (HookKind::WaitingInput, Some(AgentId::Gemini))
+        );
+        assert_eq!(
+            gemini_event(&json!({"session_id": "g", "cwd": "/w", "hook_event_name": "AfterAgent"}))
+                .unwrap()
+                .kind,
+            HookKind::Stopped
+        );
+        assert!(
+            gemini_event(&json!({"session_id": "g", "cwd": "/w", "hook_event_name": "BeforeTool"}))
+                .is_none()
+        );
+
+        // Payload as Copilot CLI 1.0.91 sends it.
+        let start = json!({
+            "sessionId": "72b6", "timestamp": 1_790_943_851_694_u64, "cwd": "/w",
+            "source": "new", "initialPrompt": "hi"
+        });
+        let p = copilot_event("sessionStart", &start).unwrap();
+        assert_eq!(
+            (p.kind, p.session_id.as_str(), p.agent_id()),
+            (HookKind::SessionStart, "72b6", Some(AgentId::Copilot))
+        );
+        let note = |t: &str| {
+            copilot_event(
+                "notification",
+                &json!({"sessionId": "s", "cwd": "/w", "notification_type": t}),
+            )
+            .map(|e| e.kind)
+        };
+        assert_eq!(note("permission_prompt"), Some(HookKind::WaitingInput));
+        assert_eq!(note("shell_completed"), None);
+        assert_eq!(copilot_event("preToolUse", &start), None);
+
+        let o =
+            opencode_event(&json!({"kind": "waiting_input", "session_id": "ses_1", "cwd": "/w"}))
+                .unwrap();
+        assert_eq!(
+            (o.kind, o.agent_id()),
+            (HookKind::WaitingInput, Some(AgentId::OpenCode))
+        );
+        assert!(opencode_event(&json!({"kind": "nope", "session_id": "s", "cwd": "/w"})).is_none());
         let line = serde_json::to_string(&HookEvent {
             pane: Some(7),
             ..old

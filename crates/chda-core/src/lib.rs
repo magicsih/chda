@@ -26,7 +26,7 @@ pub mod agents {
     pub use chda_agents::hook::data_dir;
     pub use chda_agents::{
         AgentAdapter, AgentId, AgentSession, HookEvent, HookInstallReport, HookKind, PANE_ENV,
-        SessionCache, SessionId, adapters, ipc,
+        SessionCache, SessionId, adapters, command_argv, ipc,
     };
 }
 pub use chda_git::PullMode;

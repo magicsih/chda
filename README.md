@@ -78,7 +78,7 @@ and adds pull request badges. On a managed Mac where Homebrew cannot write to
 | Tabs and splits | Ghostty's default shortcuts; tabs grouped by repository; rename a tab with a double-click; tabs, splits and directories come back after a restart |
 | Sidebar | Repositories, worktrees, dirty / ahead / behind / conflict badges, lines added and removed against the default branch (click for a read-only diff tab), pull request state via `gh`, `glab` or `tea`, open-tab counts, an ACTIVE list sorted by last activity; every badge explains itself on hover |
 | Worktrees | Create from a new or existing branch, delete with a safety check, merge-and-clean, bulk cleanup of merged branches, update a branch from its upstream when it is clean and no agent works in it (fast-forward; a diverged branch asks before a rebase or merge and never rewrites pushed commits); a note per branch saying what the task is (right-click "Edit note...", or `chda note <text>` inside the worktree), shown as the row's label and searchable in the palette |
-| Agents | Claude Code and Codex status from their own hooks on tabs, the ACTIVE list, worktree rows and the Dock badge; notifications that open the agent's pane; jump to the agent that waits (`cmd-shift-a`); session list ordered by the last message, with one-click resume; cmd-click several sessions to resume them side by side in one tab |
+| Agents | Claude Code, Codex, Gemini CLI, GitHub Copilot CLI and OpenCode status from their own hooks on tabs, the ACTIVE list, worktree rows and the Dock badge; notifications that open the agent's pane; jump to the agent that waits (`cmd-shift-a`); session list ordered by the last message, with one-click resume; cmd-click several sessions to resume them side by side in one tab |
 | Palette | `cmd-shift-p`: every action, worktree, agent launch and session in one fuzzy list |
 | Config | Reads your Ghostty font, colors and padding; chda's own settings in one TOML file; edits apply without a restart |
 
@@ -88,11 +88,21 @@ chda is the hook. When it launches Claude Code it passes a per-session
 `--settings` file that registers `chda hook claude` for session start, prompt
 submit, permission requests, stop and session end. Codex gets `-c notify=[...]`
 pointing at `chda hook codex`; if you already use a notify program, chda runs it
-after its own. The hook forwards only the session id, working directory, event
+after its own. Gemini CLI gets `GEMINI_CLI_SYSTEM_DEFAULTS_PATH` pointing at a
+copy of your machine's system defaults with chda's hooks added (Gemini CLI
+concatenates hooks from all settings layers). GitHub Copilot CLI gets
+`--plugin-dir` with a local plugin whose hooks call `chda hook copilot`.
+OpenCode gets `OPENCODE_CONFIG_DIR` with a plugin that reports session status
+to `chda hook opencode`; if you set `OPENCODE_CONFIG_DIR` yourself, chda leaves
+it alone and OpenCode reports nothing. The hook forwards only the session id, working directory, event
 kind, a timestamp and the chda pane it runs in (from `CHDA_PANE_ID`, which
 every chda shell sets) to the running app over a local socket. Prompt text and
-transcripts are never stored. Your `~/.claude/settings.json` and
-`~/.codex/config.toml` are not modified.
+transcripts are never stored. None of the agents' own settings files
+(`~/.claude/settings.json`, `~/.codex/config.toml`, `~/.gemini/settings.json`,
+`~/.copilot`, `~/.config/opencode`) are modified.
+
+Past sessions are listed under each worktree for Claude Code, Codex, Gemini CLI
+and Copilot CLI. OpenCode keeps its sessions in a database chda does not read.
 
 ## Configuration
 
@@ -115,9 +125,9 @@ chda's own settings live in `~/.config/chda/config.toml`:
 ```toml
 repos = ["/path/to/repo"]
 worktree-path-template = "{repo_parent}/{repo_name}.worktrees/{branch}"
-default-action = "terminal"   # terminal | claude | codex, after creating a worktree
+default-action = "terminal"   # terminal | claude | codex | gemini | copilot | opencode
 tab-title = "branch"          # branch | path
-agents = ["claude", "codex"]
+agents = ["claude", "codex"]  # offered in menus; add "gemini", "copilot", "opencode"
 sidebar-width = 280
 sidebar-visible = true
 notifications = true

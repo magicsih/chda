@@ -118,9 +118,19 @@ badges and branch notes (git's own `branch.<name>.description`, so other git
 tools see them and they are never pushed), per-agent status (idle, working, waiting for input, review) and the
 sessions found in agent transcripts. `chda-git` reads with gix and writes
 with the `git` binary. `chda-agents` knows each agent: how to launch it with
-hooks (Claude Code gets a per-launch `--settings` file; Codex gets a
-`-c notify=[...]` override that chains the user's own notify program), where
-its transcripts live and how to parse them. Agents report through
+hooks, where its transcripts live and how to parse them. Every agent gets its
+hooks per launch, never in the user's own config:
+
+| Agent | Hooks | Transcripts |
+|---|---|---|
+| Claude Code | `--settings` file | `~/.claude/projects/<dir>/*.jsonl` |
+| Codex | `-c notify=[...]`, chaining the user's notify program | `~/.codex/sessions/**/*.jsonl` |
+| Gemini CLI | `GEMINI_CLI_SYSTEM_DEFAULTS_PATH`: the machine's system defaults plus chda's hooks | `~/.gemini/tmp/<project>/chats/*.jsonl` |
+| Copilot CLI | `--plugin-dir` with a plugin whose hooks pass the event name as an argument | `~/.copilot/session-state/<id>/events.jsonl` |
+| OpenCode | `OPENCODE_CONFIG_DIR` with a JavaScript plugin that maps bus events to hook kinds | none (SQLite) |
+
+A pane runs a program and its arguments only, so environment variables an
+adapter sets go in front through `env`. Agents report through
 `chda hook <agent>`, which forwards the event over a Unix socket in the data
 directory, or appends to `events.jsonl` when no app is running. The UI
 refreshes badges every 5 s while the sidebar is visible, one refresh per

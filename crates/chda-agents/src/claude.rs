@@ -9,7 +9,10 @@ use std::process::Command;
 use serde_json::{Value, json};
 
 use crate::session::{file_mtime_ms, parse_rfc3339_ms, snippet};
-use crate::{AgentAdapter, AgentId, AgentSession, HookInstallReport, SessionId, which};
+use crate::{
+    AgentAdapter, AgentId, AgentSession, HookInstallReport, SessionId, shell_quote, which,
+    write_if_changed,
+};
 
 pub struct ClaudeAdapter;
 
@@ -38,17 +41,6 @@ pub fn hooks_settings(hook_bin: &Path) -> Value {
         );
     }
     json!({ "hooks": hooks })
-}
-
-fn shell_quote(path: &Path) -> String {
-    let s = path.to_string_lossy();
-    if s.chars()
-        .all(|c| c.is_alphanumeric() || "/._-+".contains(c))
-    {
-        s.into_owned()
-    } else {
-        format!("'{}'", s.replace('\'', "'\\''"))
-    }
 }
 
 impl AgentAdapter for ClaudeAdapter {
@@ -117,13 +109,10 @@ impl AgentAdapter for ClaudeAdapter {
 
     fn install_hooks(&self, data_dir: &Path, hook_bin: &Path) -> io::Result<HookInstallReport> {
         let path = settings_path(data_dir);
-        if let Some(dir) = path.parent() {
-            fs::create_dir_all(dir)?;
-        }
-        let text = serde_json::to_string_pretty(&hooks_settings(hook_bin))?;
-        if fs::read_to_string(&path).ok().as_deref() != Some(&text) {
-            fs::write(&path, text)?;
-        }
+        write_if_changed(
+            &path,
+            &serde_json::to_string_pretty(&hooks_settings(hook_bin))?,
+        )?;
         Ok(HookInstallReport {
             file: Some(path),
             note: None,
