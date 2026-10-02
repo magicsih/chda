@@ -4,6 +4,26 @@ All notable changes to chda. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); entries are
 generated from conventional commit messages by release-plz.
 
+## [0.1.6](https://github.com/magicsih/chda/compare/v0.1.5...v0.1.6) - 2026-10-02
+
+### Added
+
+- *(ui)* add a macOS menu bar with File, Edit, View, Agents, Window and Help ([#45](https://github.com/magicsih/chda/pull/45))
+- *(palette)* pick a theme with a live preview from 650+ bundled themes ([#45](https://github.com/magicsih/chda/pull/45))
+- *(term)* bundle JetBrains Mono and Nerd Font icons, and size cells like Ghostty ([#45](https://github.com/magicsih/chda/pull/45))
+- *(sidebar)* show worktrees whose folder is missing and prune them
+
+### Fixed
+
+- *(config)* read Ghostty's config.ghostty files, not only the legacy config ([#48](https://github.com/magicsih/chda/pull/48))
+- *(platform)* give the macOS app icon a transparent background ([#49](https://github.com/magicsih/chda/pull/49))
+- *(palette)* move the selection with the arrow keys ([#45](https://github.com/magicsih/chda/pull/45))
+- *(ui)* start panes in the configured shell, and allow GPUI's test deps
+
+### Changed
+
+- *(agents)* show agent session lists right after launch
+
 ## [0.1.5](https://github.com/magicsih/chda/compare/v0.1.4...v0.1.5) - 2026-10-02
 
 ### Fixed
