@@ -1332,6 +1332,7 @@ impl WorkspaceView {
             TerminalEvent::OpenPath { path, line, column } => {
                 self.open_path(path, *line, *column, cx);
             }
+            TerminalEvent::ViewDiagram(source) => self.view_diagram(source.as_deref(), cx),
             TerminalEvent::Activity(at) => {
                 if let Some(info) = self.ws.pane_mut(pane) {
                     info.last_activity = *at;
@@ -1345,6 +1346,21 @@ impl WorkspaceView {
 
     /// Open a cmd-clicked file with the configured editor, else the system's
     /// default application.
+    /// Render a Mermaid diagram in the browser from a local page.
+    fn view_diagram(&mut self, source: Option<&str>, cx: &mut Context<Self>) {
+        let Some(source) = source else {
+            self.status_line = Some("No Mermaid diagram in this pane's output".into());
+            return;
+        };
+        let Some(dir) = self.env.data_dir.as_ref().map(|d| d.join("diagrams")) else {
+            return;
+        };
+        match crate::diagram::write_page(&dir, source) {
+            Ok(page) => self.env.system.open_file(&page, cx),
+            Err(e) => self.status_line = Some(format!("diagram: {e}")),
+        }
+    }
+
     fn open_path(
         &mut self,
         path: &Path,
@@ -2158,6 +2174,11 @@ impl WorkspaceView {
             ("Reset font size", "cmd-0", "font_reset"),
             ("Select theme...", "preview with the arrow keys", "theme"),
             ("Go to waiting agent", "cmd-shift-a", "waiting_agent"),
+            (
+                "View last diagram",
+                "Mermaid in this pane's output, rendered offline",
+                "view_diagram",
+            ),
         ]
         .into_iter()
         .map(|(label, detail, action)| PaletteItem {
@@ -2401,6 +2422,13 @@ impl WorkspaceView {
                 "font_reset" => self.reset_font_size(&ResetFontSize, window, cx),
                 "waiting_agent" => self.go_to_waiting_agent(&GoToWaitingAgent, window, cx),
                 "theme" => self.select_theme(&SelectTheme, window, cx),
+                "view_diagram" => {
+                    if let Some(pane) = self.ws.focused_pane()
+                        && let Some((view, _)) = self.panes.get(&pane)
+                    {
+                        view.read(cx).view_last_diagram();
+                    }
+                }
                 "rename_tab" => {
                     if let Some(tab) = self.ws.active_tab().map(|t| t.id) {
                         self.start_rename(tab, window, cx);

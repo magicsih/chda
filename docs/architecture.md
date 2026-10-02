@@ -57,6 +57,17 @@ and frees textures that left the screen. Cell sizes reach the terminal in
 device pixels, as in Ghostty, so images and pixel mouse reports match the
 display. Unicode placeholder (virtual) placements are not drawn yet.
 
+Mermaid diagrams are found in the visible rows on the terminal thread
+(`chda-term::mermaid`): fenced ```` ```mermaid ```` blocks, and unfenced
+blocks that start with a diagram keyword on its own line (`flowchart LR`,
+`sequenceDiagram`, ...) and end at a blank line, as agents print them after
+rendering Markdown. Frames carry each block's rows and source; the pane
+shows a "View diagram" chip on its first row, and cmd-click on the block or
+the palette's "View last diagram" (which searches the whole scrollback) open
+it. The viewer is an HTML page written to the data directory next to a
+bundled `mermaid.min.js` and opened in the default browser, so diagrams never
+leave the machine.
+
 ## Workspace model
 
 `chda-core` holds the window model: tabs, each with a binary split tree of

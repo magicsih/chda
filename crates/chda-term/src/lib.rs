@@ -5,6 +5,7 @@ mod frame;
 mod graphics;
 mod input;
 mod links;
+pub mod mermaid;
 mod pwd;
 mod search;
 mod session;

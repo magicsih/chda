@@ -166,6 +166,8 @@ pub struct Frame {
     pub hyperlinks: Vec<crate::links::Hyperlink>,
     /// Kitty graphics placements that touch the viewport, sorted by `z`.
     pub images: Vec<crate::graphics::ImagePlacement>,
+    /// Mermaid diagrams whose whole source is in the viewport.
+    pub diagrams: Vec<crate::mermaid::Diagram>,
     /// Monotonic counter, bumped on every rebuild.
     pub generation: u64,
 }
