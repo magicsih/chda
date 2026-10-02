@@ -10,6 +10,7 @@ use std::time::Duration;
 use chda_config::{ChdaConfig, GhosttyConfig, Paths, PullStrategy, TabTitle};
 
 use crate::environment::Environment;
+use chda_core::agents::control::{Incoming, Reply, Request};
 use chda_core::agents::{AgentAdapter, AgentId, HookEvent, HookKind, SessionCache, SessionId, ipc};
 use chda_core::{
     ActiveTab, AgentEvent, AgentSessionRef, AgentStatus, Axis, Direction, FileWatcher, Node,
@@ -218,7 +219,7 @@ pub struct WorkspaceView {
     sidebar_visible: bool,
     adapters: Arc<Vec<Box<dyn AgentAdapter>>>,
     session_cache: Arc<Mutex<SessionCache>>,
-    hook_events: Option<mpsc::Receiver<HookEvent>>,
+    hook_events: Option<mpsc::Receiver<Incoming>>,
     refreshing: HashSet<PathBuf>,
     refresh_again: HashSet<PathBuf>,
     watcher: Option<RepoWatcher>,
@@ -411,7 +412,7 @@ impl WorkspaceView {
         data_dir: PathBuf,
         window: &mut Window,
         cx: &mut Context<Self>,
-    ) -> Option<mpsc::Receiver<HookEvent>> {
+    ) -> Option<mpsc::Receiver<Incoming>> {
         let (tx, rx) = mpsc::channel();
         let (wake_tx, mut wake_rx) = unbounded::<()>();
         let socket = ipc::socket_path(&data_dir);
@@ -424,7 +425,7 @@ impl WorkspaceView {
         if let Ok(text) = std::fs::read_to_string(&log) {
             for line in text.lines() {
                 if let Ok(ev) = serde_json::from_str::<HookEvent>(line) {
-                    let _ = tx.send(ev);
+                    let _ = tx.send(Incoming::Event(ev));
                 }
             }
             let _ = std::fs::remove_file(&log);
@@ -628,10 +629,128 @@ impl WorkspaceView {
         let Some(rx) = &self.hook_events else {
             return;
         };
-        let events: Vec<HookEvent> = rx.try_iter().collect();
-        for ev in events {
-            self.apply_hook_event(ev, window, cx);
+        let incoming: Vec<Incoming> = rx.try_iter().collect();
+        for item in incoming {
+            match item {
+                Incoming::Event(ev) => self.apply_hook_event(ev, window, cx),
+                Incoming::Request(request, reply) => {
+                    let _ = reply.send(self.handle_request(request, window, cx));
+                }
+            }
         }
+    }
+
+    /// Do what `chda mcp` asked for on behalf of an agent.
+    fn handle_request(
+        &mut self,
+        request: Request,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> Reply {
+        match request {
+            Request::CreateWorktree {
+                cwd,
+                branch,
+                base,
+                note,
+                open,
+                agent,
+            } => {
+                let agent = match self.requested_agent(agent.as_deref()) {
+                    Ok(agent) => agent,
+                    Err(reply) => return reply,
+                };
+                let Some(repo) = self.repo_for_request(&cwd, cx) else {
+                    return Reply::err(format!("{} is not in a git repository", cwd.display()));
+                };
+                let branch = branch.unwrap_or_else(|| {
+                    chda_core::new_branch_name(&repo, |b| self.config.worktree_path(&repo, b))
+                });
+                let path = self.config.worktree_path(&repo, &branch);
+                if let Err(e) = chda_core::create_worktree(&repo, &branch, &path, base.as_deref()) {
+                    return Reply::err(format!("Could not create {branch}: {e}"));
+                }
+                let mut message = format!("Created branch {branch} in {}", path.display());
+                if let Some(note) = note
+                    && let Err(e) = chda_core::set_note(&repo, &branch, &note)
+                {
+                    message.push_str(&format!("; saving its note failed: {e}"));
+                }
+                self.refresh_repo(repo.clone(), cx);
+                if open {
+                    let command = match agent {
+                        Some(agent) => self.agent_argv(&path, agent, None),
+                        None => self.default_action_argv(&path),
+                    };
+                    self.open_tab_at(Some(path.clone()), command, window, cx);
+                    message.push_str(" and opened a tab there");
+                }
+                Reply::ok(
+                    message,
+                    serde_json::json!({ "path": path, "branch": branch, "repo": repo }),
+                )
+            }
+            Request::OpenTab { path, agent } => {
+                if !path.is_dir() {
+                    return Reply::err(format!("{} is not a directory", path.display()));
+                }
+                let command = match self.requested_agent(agent.as_deref()) {
+                    Ok(agent) => agent.and_then(|agent| self.agent_argv(&path, agent, None)),
+                    Err(reply) => return reply,
+                };
+                self.open_tab_at(Some(path.clone()), command, window, cx);
+                Reply::ok(
+                    format!("Opened a tab in {}", path.display()),
+                    serde_json::json!({ "path": path }),
+                )
+            }
+            Request::ListWorktrees { cwd } => {
+                let model = &self.sidebar.read(cx).model;
+                let repo = model.worktree_for_path(&cwd).map(|(r, _)| r.path.clone());
+                let worktrees: Vec<serde_json::Value> = model
+                    .repos
+                    .iter()
+                    .filter(|r| repo.as_ref().is_none_or(|p| *p == r.path))
+                    .flat_map(|r| r.worktrees.iter().map(move |w| (r, w)))
+                    .map(|(r, w)| worktree_json(r, w))
+                    .collect();
+                Reply::ok(
+                    format!("{} worktrees", worktrees.len()),
+                    serde_json::json!({ "worktrees": worktrees }),
+                )
+            }
+        }
+    }
+
+    /// The agent a request names, checked to be known and installed;
+    /// `Ok(None)` when it names none.
+    fn requested_agent(&self, agent: Option<&str>) -> Result<Option<AgentId>, Reply> {
+        let Some(id) = agent else {
+            return Ok(None);
+        };
+        let Some(adapter) =
+            AgentId::parse(id).and_then(|agent| self.adapters.iter().find(|a| a.id() == agent))
+        else {
+            return Err(Reply::err(format!("unknown agent {id}")));
+        };
+        if !adapter.is_installed() {
+            return Err(Reply::err(format!(
+                "{} is not on PATH",
+                adapter.display_name()
+            )));
+        }
+        Ok(Some(adapter.id()))
+    }
+
+    /// The repository a request's directory belongs to, added to the sidebar
+    /// when it is not there yet.
+    fn repo_for_request(&mut self, cwd: &Path, cx: &mut Context<Self>) -> Option<PathBuf> {
+        if let Some((repo, _)) = self.sidebar.read(cx).model.worktree_for_path(cwd) {
+            return Some(repo.path.clone());
+        }
+        let repo = chda_core::repo_of(cwd).ok()?;
+        self.register_repo(repo.clone(), cx);
+        Some(repo)
     }
 
     fn apply_hook_event(&mut self, ev: HookEvent, window: &mut Window, cx: &mut Context<Self>) {
@@ -3767,4 +3886,33 @@ impl Render for WorkspaceView {
             .children(self.render_confirm(cx))
             .children(self.render_palette())
     }
+}
+
+/// A worktree as `chda mcp`'s `list_worktrees` reports it.
+fn worktree_json(repo: &chda_core::RepoEntry, w: &chda_core::WorktreeEntry) -> serde_json::Value {
+    let pr = w.pr.as_ref().map(|p| {
+        serde_json::json!({
+            "number": p.number,
+            "url": p.url,
+            "state": format!("{:?}", p.state).to_lowercase(),
+        })
+    });
+    let agents: serde_json::Map<String, serde_json::Value> = w
+        .agents
+        .iter()
+        .map(|(id, status)| (id.clone(), format!("{status:?}").to_lowercase().into()))
+        .collect();
+    serde_json::json!({
+        "repo": repo.path,
+        "branch": w.branch,
+        "path": w.path,
+        "main": w.is_main,
+        "note": w.note,
+        "uncommitted": w.badges.dirty_count(),
+        "ahead": w.badges.ahead,
+        "behind": w.badges.behind,
+        "merged": w.is_merged(),
+        "pull_request": pr,
+        "agents": agents,
+    })
 }

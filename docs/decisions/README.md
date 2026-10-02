@@ -10,3 +10,4 @@ new record rather than editing an accepted one.
 | 0003 | Worktree backend is in-app: gix for reads, `git` subprocess for writes |
 | 0004 | macOS first; Linux and Windows must keep building in CI |
 | 0005 | Name `chda`, MIT license, personal public repository |
+| 0006 | `chda mcp` is a stateless MCP server relaying to the running app over the hook socket |
