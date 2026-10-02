@@ -64,6 +64,19 @@ pub enum PullStrategy {
     Merge,
 }
 
+/// A named way to start an agent, e.g. Claude Code with `--model opus`.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub struct AgentPreset {
+    /// Shown in menus: "Run <name>".
+    pub name: String,
+    /// Agent id, e.g. `claude` or `codex`.
+    pub agent: String,
+    /// Arguments added after the ones chda passes for its hooks.
+    #[serde(default)]
+    pub args: Vec<String>,
+}
+
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(default, rename_all = "kebab-case")]
 pub struct ChdaConfig {
@@ -95,6 +108,8 @@ pub struct ChdaConfig {
     pub repo_hosts: BTreeMap<PathBuf, String>,
     /// What "Update branch" does when the branch has diverged.
     pub pull: PullStrategy,
+    /// Named agent launches for the sidebar menu and the palette.
+    pub agent_presets: Vec<AgentPreset>,
 }
 
 impl Default for ChdaConfig {
@@ -114,6 +129,7 @@ impl Default for ChdaConfig {
             theme: None,
             repo_hosts: BTreeMap::new(),
             pull: PullStrategy::FfOnly,
+            agent_presets: Vec::new(),
         }
     }
 }
@@ -226,6 +242,41 @@ mod tests {
         fs::write(&path, "default-action = \"opencode\"\n").unwrap();
         let c = ChdaConfig::load(&path).unwrap();
         assert_eq!(c.default_action.agent(), Some("opencode"));
+        fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn agent_presets_round_trip() {
+        let dir = std::env::temp_dir().join(format!("chda-presets-{}", std::process::id()));
+        let path = dir.join("config.toml");
+        fs::create_dir_all(&dir).unwrap();
+        fs::write(
+            &path,
+            concat!(
+                "theme = \"x\"\n",
+                "[[agent-presets]]\nname = \"Opus\"\nagent = \"claude\"\nargs = [\"--model\", \"opus\"]\n",
+                "[[agent-presets]]\nname = \"Codex auto\"\nagent = \"codex\"\n",
+            ),
+        )
+        .unwrap();
+        let c = ChdaConfig::load(&path).unwrap();
+        assert_eq!(
+            c.agent_presets,
+            vec![
+                AgentPreset {
+                    name: "Opus".into(),
+                    agent: "claude".into(),
+                    args: vec!["--model".into(), "opus".into()],
+                },
+                AgentPreset {
+                    name: "Codex auto".into(),
+                    agent: "codex".into(),
+                    args: Vec::new(),
+                },
+            ]
+        );
+        c.save(&path).unwrap();
+        assert_eq!(ChdaConfig::load(&path).unwrap(), c);
         fs::remove_dir_all(&dir).unwrap();
     }
 

@@ -139,6 +139,17 @@ pull = "ff-only"              # ff-only | rebase | merge: "Update branch" on a d
 
 [repo-hosts]                  # pull request host when the remote does not say
 "/path/to/repo" = "github.example.com"
+
+# Named agent launches, in a worktree's right-click menu and the palette
+[[agent-presets]]
+name = "Claude Opus"
+agent = "claude"              # claude | codex | gemini | copilot | opencode
+args = ["--model", "opus"]    # added after chda's hook arguments
+
+[[agent-presets]]
+name = "Codex full auto"
+agent = "codex"
+args = ["--full-auto"]
 ```
 
 "Select theme..." in the command palette lists the 650+ themes chda bundles

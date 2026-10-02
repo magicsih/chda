@@ -16,6 +16,8 @@ pub enum PaletteCommand {
     Action(&'static str),
     GoToWorktree(PathBuf),
     RunAgent(PathBuf, String),
+    /// Run the `agent-presets` entry with this name.
+    RunPreset(PathBuf, String),
     ResumeSession {
         worktree: PathBuf,
         agent: String,
