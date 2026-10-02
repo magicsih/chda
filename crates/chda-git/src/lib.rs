@@ -9,4 +9,6 @@ pub use cli::{
     delete_branch, fetch_default_branch, local_branches, merge_into, merge_target, patch_merged,
     remove_worktree, resolve,
 };
-pub use read::{GitStatus, WorktreeInfo, list_worktrees, main_worktree, status};
+pub use read::{
+    GitStatus, RemoteInfo, WorktreeInfo, list_worktrees, main_worktree, remotes, status,
+};

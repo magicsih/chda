@@ -212,6 +212,15 @@ impl SidebarView {
                     .child(err.clone()),
             );
         }
+        if let Some(hint) = &repo.pr_hint {
+            col = col.child(
+                div()
+                    .px_4()
+                    .text_xs()
+                    .text_color(fg.opacity(0.5))
+                    .child(hint.clone()),
+            );
+        }
         if !collapsed {
             for wt in &repo.worktrees {
                 col = col.child(self.render_worktree(wt, cx));

@@ -11,7 +11,7 @@ mod watch;
 mod workspace;
 
 pub use cleanup::*;
-pub use github::{gh_available, pr_for_branch};
+pub use github::{Gh, RemoteRepo, login_hint, repo_remote};
 pub use refresh::*;
 pub use restore::*;
 

@@ -131,8 +131,13 @@ Finishing a worktree (`chda-core::cleanup`) merges its branch into the
 default branch inside the main worktree, removes the worktree and deletes
 the branch; blockers (uncommitted changes, unpushed commits, an open pull
 request, the base branch not being checked out) stop it unless the user
-forces. Pull request badges come from `gh pr list` per branch, fetched at
-most once a minute per repository.
+forces. Pull request badges come from `gh pr list --repo <host>/<owner>/<name>`
+per branch, fetched at most once a minute per repository. The host and path
+come from the remote `gh` would pick (`gh repo set-default`, then
+`upstream`, `github`, `origin`), with SSH aliases resolved through
+`ssh -G` and `repo-hosts` in `config.toml` as an override. `gh auth status
+--hostname` is checked per host and cached for five minutes; a host that is
+not logged in gets a hint on its repository rows only.
 
 ## Config reload and session restore
 

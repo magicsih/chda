@@ -159,6 +159,9 @@ pub struct RepoEntry {
     pub collapsed: bool,
     /// Last refresh failed with this message.
     pub error: Option<String>,
+    /// Why this repository has no pull request badges, e.g. the forge host
+    /// is not logged in.
+    pub pr_hint: Option<String>,
 }
 
 /// Sort order for worktrees inside a repository.

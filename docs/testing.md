@@ -40,6 +40,7 @@ Three layers, all run by `cargo test --workspace` (CI: the macOS job).
 | Session restore | `restore::tabs_splits_and_directories_come_back` | #10 |
 | Session restore reopens agent conversations | `restore::agent_conversations_reopen_in_their_panes` | #31 |
 | Deleting a worktree takes one confirmation | `worktrees::create_then_delete_a_worktree_in_one_go` | #29 |
+| PR badges per host, login hint for the other | `pull_requests::badges_per_host_and_a_login_hint_for_the_other` | #33 |
 | Missing worktree folders | `worktrees::missing_worktree_is_marked_and_pruned` | #42 |
 | IME composition with a hidden cursor | `input::ime_composition_is_placed_even_when_the_app_hides_the_cursor` | #37 |
 | Shells get a UTF-8 locale | `input::shells_get_the_locale` | #38 |
