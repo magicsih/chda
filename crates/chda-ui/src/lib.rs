@@ -10,6 +10,7 @@ mod scenarios;
 mod settings;
 mod sidebar_view;
 mod terminal_element;
+mod terminal_images;
 mod terminal_view;
 mod text_input;
 mod tooltip;

@@ -46,6 +46,17 @@ times a second). Frames also carry OSC 8 hyperlinks; plain URLs and file
 paths are found in the visible rows, joined across soft wraps, when the user
 holds `cmd`.
 
+Images from the Kitty graphics protocol are stored and placed by
+libghostty-vt; chda decodes PNG payloads for it (`png` crate) and allows the
+direct, file, temporary file and shared memory media, with Ghostty's 320 MB
+storage limit. Frames carry each visible placement with its viewport cell,
+pixel size, source rectangle and layer (below backgrounds, below text, above
+text), and share the decoded RGBA pixels by image version. The UI turns each
+image version into one texture, draws the layers around backgrounds and text,
+and frees textures that left the screen. Cell sizes reach the terminal in
+device pixels, as in Ghostty, so images and pixel mouse reports match the
+display. Unicode placeholder (virtual) placements are not drawn yet.
+
 ## Workspace model
 
 `chda-core` holds the window model: tabs, each with a binary split tree of

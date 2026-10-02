@@ -164,6 +164,8 @@ pub struct Frame {
     pub alternate_screen: bool,
     /// OSC 8 hyperlinks in the viewport.
     pub hyperlinks: Vec<crate::links::Hyperlink>,
+    /// Kitty graphics placements that touch the viewport, sorted by `z`.
+    pub images: Vec<crate::graphics::ImagePlacement>,
     /// Monotonic counter, bumped on every rebuild.
     pub generation: u64,
 }

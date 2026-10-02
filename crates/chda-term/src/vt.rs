@@ -1,10 +1,13 @@
 //! Single-threaded wrapper over `libghostty-vt`.
 
 use std::cell::{Cell as StdCell, RefCell};
+use std::collections::HashMap;
 use std::rc::Rc;
+use std::sync::Arc;
 
 use libghostty_vt::fmt::{Format, Formatter, FormatterOptions};
 use libghostty_vt::key::{self, Encoder as KeyEncoder};
+use libghostty_vt::kitty::graphics::{self as kitty, PlacementIterator};
 use libghostty_vt::mouse::{self, Encoder as MouseEncoder};
 use libghostty_vt::render::{
     CellIterator, CursorVisualStyle, Dirty, RenderState, RowIterator, Snapshot,
@@ -22,6 +25,7 @@ use crate::frame::{
     Cell, CellStyle, CellWidth, ColorConfig, Cursor, CursorShape, Frame, Rgb, Row, Scrollbar,
     SemanticPrompt, Size, Underline,
 };
+use crate::graphics::{self, Image, ImageLayer, ImagePlacement};
 use crate::input::{KeyAction, KeyCode, KeyInput, Modifiers, MouseAction, MouseButton, MouseInput};
 use crate::search::{self, Match, SearchMark, SearchQuery, SearchStatus};
 
@@ -98,6 +102,12 @@ pub struct Terminal {
     /// Absolute row of the prompt the cursor last sat on.
     last_prompt_row: Option<u64>,
     search: Option<Search>,
+    placements: PlacementIterator<'static>,
+    /// Decoded Kitty images by id, reused across frames until the image
+    /// changes.
+    images: HashMap<u32, Arc<Image>>,
+    /// Image storage generation the last frame saw.
+    images_generation: u64,
 }
 
 impl Terminal {
@@ -138,6 +148,14 @@ impl Terminal {
             }
         })?;
 
+        // libghostty asks the embedder to decode PNG payloads, on the
+        // thread that owns the terminal.
+        kitty::set_png_decoder(Some(Box::new(graphics::PngDecoder)))?;
+        vt.set_kitty_image_storage_limit(graphics::STORAGE_LIMIT)?
+            .set_kitty_image_from_file_allowed(true)?
+            .set_kitty_image_from_temp_file_allowed(true)?
+            .set_kitty_image_from_shared_mem_allowed(true)?;
+
         Ok(Self {
             vt,
             render: RenderState::new()?,
@@ -151,6 +169,9 @@ impl Terminal {
             generation: 0,
             last_prompt_row: None,
             search: None,
+            placements: PlacementIterator::new()?,
+            images: HashMap::new(),
+            images_generation: 0,
         })
     }
 
@@ -645,7 +666,8 @@ impl Terminal {
     /// Whether anything changed since the last [`Terminal::frame`].
     pub fn is_dirty(&mut self) -> Result<bool> {
         let snapshot = self.render.update(&self.vt)?;
-        Ok(snapshot.dirty()? != Dirty::Clean)
+        let images_changed = self.vt.kitty_graphics()?.generation()? != self.images_generation;
+        Ok(images_changed || snapshot.dirty()? != Dirty::Clean)
     }
 
     /// Build a plain-data snapshot of the viewport.
@@ -682,6 +704,7 @@ impl Terminal {
             pwd,
             alternate_screen,
             hyperlinks: Vec::new(),
+            images: Vec::new(),
             generation: self.generation,
         };
         // Cells carrying an OSC 8 link; their URIs are looked up afterwards.
@@ -769,6 +792,7 @@ impl Terminal {
         snapshot.set_dirty(Dirty::Clean)?;
         self.mark_search(&mut frame);
         frame.hyperlinks = self.hyperlinks(&linked);
+        frame.images = self.image_placements()?;
         // A prompt on a row we have not seen a prompt on before means the
         // previous command finished, even if no frame caught the output.
         let prompt_row = frame.cursor.and_then(|c| {
@@ -787,6 +811,83 @@ impl Terminal {
 }
 
 impl Terminal {
+    /// Kitty graphics placements that touch the viewport. Virtual
+    /// (Unicode placeholder) placements are not drawn.
+    fn image_placements(&mut self) -> Result<Vec<ImagePlacement>> {
+        let storage = self.vt.kitty_graphics()?;
+        let generation = storage.generation()?;
+        if generation != self.images_generation {
+            self.images_generation = generation;
+            // Drop images that were deleted or replaced; the rest are
+            // checked against their own generation below.
+            let images = &mut self.images;
+            images.retain(|id, image| {
+                storage
+                    .image(*id)
+                    .and_then(|i| i.generation().ok())
+                    .is_some_and(|g| g == image.generation)
+            });
+        }
+        if generation == 0 {
+            return Ok(Vec::new());
+        }
+        let mut out = Vec::new();
+        let mut iteration = self.placements.update(&storage)?;
+        while let Some(p) = iteration.next() {
+            if p.is_virtual()? {
+                continue;
+            }
+            let id = p.image_id()?;
+            let Some(image) = storage.image(id) else {
+                continue;
+            };
+            let info = p.placement_render_info(&image, &self.vt)?;
+            if !info.viewport_visible || info.pixel_width == 0 || info.pixel_height == 0 {
+                continue;
+            }
+            let image = match self.images.get(&id) {
+                Some(cached) if cached.generation == image.generation()? => Arc::clone(cached),
+                _ => {
+                    let (width, height) = (image.width()?, image.height()?);
+                    let Some(rgba) =
+                        graphics::to_rgba(image.format()?, image.data()?, width, height)
+                    else {
+                        continue;
+                    };
+                    let decoded = Arc::new(Image {
+                        id,
+                        generation: image.generation()?,
+                        width,
+                        height,
+                        rgba: rgba.into(),
+                    });
+                    self.images.insert(id, Arc::clone(&decoded));
+                    decoded
+                }
+            };
+            let z = p.z()?;
+            out.push(ImagePlacement {
+                image,
+                col: info.viewport_col,
+                row: info.viewport_row,
+                x_offset: p.x_offset()?,
+                y_offset: p.y_offset()?,
+                width: info.pixel_width,
+                height: info.pixel_height,
+                source: (
+                    info.source_x,
+                    info.source_y,
+                    info.source_width,
+                    info.source_height,
+                ),
+                layer: ImageLayer::of(z),
+                z,
+            });
+        }
+        out.sort_by_key(|p| p.z);
+        Ok(out)
+    }
+
     /// URIs of linked viewport cells, merged into runs of the same link.
     fn hyperlinks(&self, cells: &[(u16, u16)]) -> Vec<crate::links::Hyperlink> {
         let mut out: Vec<crate::links::Hyperlink> = Vec::new();
@@ -1283,6 +1384,51 @@ mod tests {
                 uri: "https://example.com/x".into()
             }]
         );
+    }
+
+    #[test]
+    fn kitty_images_are_placed_and_scroll_with_the_text() {
+        let mut t = Terminal::new(Size { cols: 20, rows: 5 }, 100_000).unwrap();
+        t.resize(Size { cols: 20, rows: 5 }, 10, 20).unwrap();
+        assert!(t.frame().unwrap().images.is_empty());
+
+        // A 1x1 red PNG, transmitted and shown at the cursor, two cells
+        // wide and two rows tall.
+        t.feed(b"ab\x1b_Ga=T,f=100,q=2,c=2,r=2;iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR4nGP4z8DwHwAFAAH/iZk9HQAAAABJRU5ErkJggg==\x1b\\");
+        assert!(t.is_dirty().unwrap());
+        let f = t.frame().unwrap();
+        assert_eq!(f.images.len(), 1);
+        let p = &f.images[0];
+        assert_eq!((p.col, p.row), (2, 0));
+        assert_eq!((p.width, p.height), (20, 40));
+        assert_eq!(p.source, (0, 0, 1, 1));
+        assert_eq!(p.layer, ImageLayer::AboveText);
+        assert_eq!((p.image.width, p.image.height), (1, 1));
+        assert_eq!(&p.image.rgba[..], &[255, 0, 0, 255]);
+
+        // Raw RGB (f=24) under the text, with an id the next frame reuses.
+        t.feed(b"\x1b_Ga=T,f=24,s=1,v=1,i=7,z=-1,q=2;AAD/\x1b\\");
+        let f2 = t.frame().unwrap();
+        assert_eq!(f2.images.len(), 2);
+        let blue = &f2.images[0];
+        assert_eq!(blue.layer, ImageLayer::BelowText);
+        assert_eq!(&blue.image.rgba[..], &[0, 0, 255, 255]);
+        let red = &f2.images[1];
+        assert!(
+            Arc::ptr_eq(&red.image, &p.image),
+            "unchanged images are not re-decoded"
+        );
+
+        // Output moves the red image up with its text.
+        t.feed(b"\r\n\n\n\n");
+        let f3 = t.frame().unwrap();
+        let red = f3.images.iter().find(|p| p.image.id != 7).unwrap();
+        assert!(red.row < 0, "row {}", red.row);
+
+        // Deleting every image empties the frame.
+        t.feed(b"\x1b_Ga=d,d=A,q=2\x1b\\");
+        assert!(t.is_dirty().unwrap());
+        assert!(t.frame().unwrap().images.is_empty());
     }
 
     #[test]

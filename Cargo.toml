@@ -40,6 +40,11 @@ gpui_platform = { git = "https://github.com/zed-industries/zed.git", rev = "f8c2
 libghostty-vt = "0.2.2"
 
 # git reads (ADR-0003). Only chda-git may depend on it.
+# Kitty graphics PNG payloads; the version GPUI's `image` crate already uses.
+png = "0.18.1"
+# Pixel buffers for GPUI images; GPUI's own version.
+image = { version = "0.25.1", default-features = false }
+
 gix = { version = "0.88.0", default-features = false, features = ["status", "revision", "parallel", "sha1"] }
 
 # PTY (ADR-0004). Only chda-pty may depend on it.
