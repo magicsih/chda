@@ -126,6 +126,14 @@ config's, so picking a theme in chda never edits Ghostty's files.
 zoom, tab names and pane directories, written to `session.json` in the data
 directory whenever they change and read on the next launch.
 
+A pane also keeps the agent and session id its hooks last reported (through
+`CHDA_PANE_ID`); a `SessionEnd` or a new shell prompt (the agent exited)
+forgets it. With `restore-agents` on, such a pane comes back running the
+adapter's resume command (`claude --resume <id>`, `codex resume <id>`) with
+chda's hooks, in the saved directory. When the agent is not on `PATH` or
+`AgentAdapter::has_session` finds no transcript, the pane gets a shell and the
+restore note says why.
+
 ## Environment
 
 `WorkspaceView` gets an `Environment`: the config and data directories,

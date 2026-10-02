@@ -51,6 +51,9 @@ pub struct ChdaConfig {
     pub editor: Option<String>,
     /// Reopen the last window's tabs, splits and directories on launch.
     pub restore_session: bool,
+    /// When restoring the last session, reopen the agent conversation a
+    /// pane was running instead of a plain shell.
+    pub restore_agents: bool,
     /// Theme name; replaces the Ghostty config's `theme` when set.
     pub theme: Option<String>,
 }
@@ -68,6 +71,7 @@ impl Default for ChdaConfig {
             notifications: true,
             editor: None,
             restore_session: true,
+            restore_agents: true,
             theme: None,
         }
     }

@@ -267,6 +267,17 @@ pub struct PaneInfo {
     pub last_activity: u64,
     /// The coding agent running in the pane, as its hooks report it.
     pub agent: Option<PaneAgent>,
+    /// The conversation of the agent running in the pane, kept until the
+    /// agent ends so a restored session can reopen it.
+    pub agent_session: Option<AgentSessionRef>,
+}
+
+/// An agent conversation: which agent and its session id.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct AgentSessionRef {
+    /// Agent id, e.g. `claude` or `codex`.
+    pub agent: String,
+    pub session: String,
 }
 
 /// An agent's state in one pane.
@@ -463,6 +474,17 @@ impl Workspace {
         });
         let changed = info.agent != next;
         info.agent = next;
+        changed
+    }
+
+    /// Remember the conversation an agent reported from a pane, or forget it
+    /// when the session ended. Returns whether anything changed.
+    pub fn set_agent_session(&mut self, pane: PaneId, session: Option<AgentSessionRef>) -> bool {
+        let Some(info) = self.panes.get_mut(&pane) else {
+            return false;
+        };
+        let changed = info.agent_session != session;
+        info.agent_session = session;
         changed
     }
 

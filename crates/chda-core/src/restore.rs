@@ -1,6 +1,8 @@
 //! Session restore: the window's tabs, split layout, working directories
 //! and tab names, saved as JSON in the data directory and rebuilt on the
-//! next launch. Running programs are not restored; each pane gets a shell.
+//! next launch. Running programs are not restored; each pane gets a shell,
+//! except that a pane running a coding agent remembers the agent and its
+//! session so the UI can reopen that conversation.
 
 use std::fs;
 use std::io;
@@ -8,7 +10,7 @@ use std::path::{Path, PathBuf};
 
 use serde::{Deserialize, Serialize};
 
-use crate::workspace::{Axis, Node, PaneId, PaneInfo, Workspace};
+use crate::workspace::{AgentSessionRef, Axis, Node, PaneId, PaneInfo, Workspace};
 
 /// File name inside the data directory.
 const FILE_NAME: &str = "session.json";
@@ -55,6 +57,12 @@ pub enum SavedNode {
         /// when `cwd` is gone.
         #[serde(default, skip_serializing_if = "Option::is_none")]
         repo: Option<PathBuf>,
+        /// Agent id running in the pane, e.g. `claude`.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        agent: Option<String>,
+        /// That agent's session id.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        session: Option<String>,
     },
     Split {
         /// `horizontal` places the children side by side.
@@ -71,6 +79,8 @@ pub struct RestoredPane {
     pub pane: PaneId,
     /// `None`: the home directory.
     pub cwd: Option<PathBuf>,
+    /// The agent conversation the pane had open.
+    pub agent: Option<AgentSessionRef>,
 }
 
 /// Saved directories that no longer exist, with what replaced them.
@@ -142,9 +152,12 @@ impl Workspace {
         match node {
             Node::Leaf(p) => {
                 let info = self.pane(*p);
+                let agent = info.and_then(|i| i.agent_session.clone());
                 SavedNode::Pane {
                     cwd: info.and_then(|i| i.cwd.clone()),
                     repo: info.and_then(|i| i.repo.clone()),
+                    agent: agent.as_ref().map(|a| a.agent.clone()),
+                    session: agent.map(|a| a.session),
                 }
             }
             Node::Split {
@@ -170,18 +183,14 @@ impl Workspace {
         for tab in &saved.tabs {
             let mut leaves = Vec::new();
             let root = self.restore_node(&tab.root, &mut leaves, &mut report);
-            let ids: Vec<PaneId> = leaves.iter().map(|(p, _)| *p).collect();
+            let ids: Vec<PaneId> = leaves.iter().map(|p| p.pane).collect();
             let focused = ids.get(tab.focused).or(ids.first()).copied();
             let Some(focused) = focused else {
                 continue;
             };
             let zoomed = tab.zoomed.and_then(|i| ids.get(i).copied());
             self.push_tab(root, focused, zoomed, tab.title.clone());
-            panes.extend(
-                leaves
-                    .into_iter()
-                    .map(|(pane, cwd)| RestoredPane { pane, cwd }),
-            );
+            panes.extend(leaves);
         }
         self.activate_tab(saved.active.min(self.tabs().len().saturating_sub(1)));
         (panes, report)
@@ -190,11 +199,16 @@ impl Workspace {
     fn restore_node(
         &mut self,
         node: &SavedNode,
-        leaves: &mut Vec<(PaneId, Option<PathBuf>)>,
+        leaves: &mut Vec<RestoredPane>,
         report: &mut RestoreReport,
     ) -> Node {
         match node {
-            SavedNode::Pane { cwd, repo } => {
+            SavedNode::Pane {
+                cwd,
+                repo,
+                agent,
+                session,
+            } => {
                 let resolved = match cwd {
                     Some(dir) if !dir.is_dir() => {
                         let fallback = repo.clone().filter(|r| r.is_dir());
@@ -203,11 +217,20 @@ impl Workspace {
                     }
                     other => other.clone(),
                 };
+                let agent = agent
+                    .clone()
+                    .zip(session.clone())
+                    .map(|(agent, session)| AgentSessionRef { agent, session });
                 let pane = self.add_pane(PaneInfo {
                     cwd: resolved.clone(),
+                    agent_session: agent.clone(),
                     ..Default::default()
                 });
-                leaves.push((pane, resolved));
+                leaves.push(RestoredPane {
+                    pane,
+                    cwd: resolved,
+                    agent,
+                });
                 Node::Leaf(pane)
             }
             SavedNode::Split {
@@ -246,6 +269,11 @@ mod tests {
         let b = ws.split(Axis::Vertical).unwrap();
         ws.pane_mut(b).unwrap().cwd = Some(repo.join("gone"));
         ws.pane_mut(b).unwrap().repo = Some(repo.clone());
+        let conversation = AgentSessionRef {
+            agent: "claude".into(),
+            session: "s1".into(),
+        };
+        assert!(ws.set_agent_session(b, Some(conversation.clone())));
         ws.resize(crate::Direction::Up, 0.2);
         let tab = ws.active_tab().unwrap().id;
         ws.rename_tab(tab, "work");
@@ -293,6 +321,19 @@ mod tests {
             ]
         );
         assert_eq!(fresh.pane(panes[1].pane).unwrap().cwd, Some(repo));
+        let agents: Vec<_> = panes.iter().map(|p| p.agent.clone()).collect();
+        assert_eq!(agents, vec![None, Some(conversation.clone()), None]);
+        assert_eq!(
+            fresh.pane(panes[1].pane).unwrap().agent_session,
+            Some(conversation)
+        );
+
+        // Files written before agents were saved still load.
+        let old = r#"{"tabs":[{"root":{"kind":"pane","cwd":"/tmp"},"focused":0}],"active":0}"#;
+        fs::write(SavedWindow::path(&tmp), old).unwrap();
+        let old = SavedWindow::load(&tmp).unwrap();
+        let (panes, _) = Workspace::new().restore(&old);
+        assert_eq!(panes[0].agent, None);
 
         SavedWindow::default().save(&tmp).unwrap();
         assert!(SavedWindow::load(&tmp).is_none());

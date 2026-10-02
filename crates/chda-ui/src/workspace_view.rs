@@ -12,8 +12,8 @@ use chda_config::{ChdaConfig, DefaultAction, GhosttyConfig, Paths, TabTitle};
 use crate::environment::Environment;
 use chda_core::agents::{AgentAdapter, AgentId, HookEvent, HookKind, SessionCache, SessionId, ipc};
 use chda_core::{
-    ActiveTab, AgentEvent, AgentStatus, Axis, Direction, FileWatcher, Node, PaneId, RepoWatcher,
-    SavedBounds, SavedWindow, TabId, TitleMode, Workspace,
+    ActiveTab, AgentEvent, AgentSessionRef, AgentStatus, Axis, Direction, FileWatcher, Node,
+    PaneId, RepoWatcher, SavedBounds, SavedWindow, TabId, TitleMode, Workspace,
 };
 use futures::StreamExt;
 use futures::channel::mpsc::unbounded;
@@ -593,6 +593,16 @@ impl WorkspaceView {
             r
         });
         let pane = self.pane_for_event(&ev, cx);
+        // Only a pane the hook named itself is sure to hold the conversation.
+        if let Some(p) = ev.pane.and_then(|raw| self.ws.pane_by_raw(raw)) {
+            let conversation = (event != AgentEvent::SessionEnd).then(|| AgentSessionRef {
+                agent: ev.agent.clone(),
+                session: ev.session_id.clone(),
+            });
+            if self.ws.set_agent_session(p, conversation) {
+                self.save_session();
+            }
+        }
         let pane_changed =
             pane.is_some_and(|p| self.ws.set_agent_status(p, &ev.agent, status, ev.timestamp));
         if worktree_changed.is_none() && !pane_changed {
@@ -1056,7 +1066,8 @@ impl WorkspaceView {
 
     /// Tell the sidebar which panes live in which worktree, and remember each
     /// pane's branch and repository for tab titles and grouping.
-    /// Rebuild the saved window's tabs with a shell in each saved directory.
+    /// Rebuild the saved window's tabs with a shell in each saved directory,
+    /// or the agent conversation a pane had open.
     fn restore_session(
         &mut self,
         saved: &SavedWindow,
@@ -1064,28 +1075,80 @@ impl WorkspaceView {
         cx: &mut Context<Self>,
     ) {
         let (panes, report) = self.ws.restore(saved);
+        let mut notes: Vec<String> = report
+            .missing
+            .iter()
+            .map(|(dir, to)| match to {
+                Some(repo) => format!("{} is missing (opened {})", dir.display(), repo.display()),
+                None => format!("{} is missing (opened the home directory)", dir.display()),
+            })
+            .collect();
         for p in panes {
-            self.open_pane(p.pane, p.cwd, None, window, cx);
+            let command = match &p.agent {
+                Some(conversation) if self.config.restore_agents => {
+                    let cwd = p.cwd.clone().unwrap_or_default();
+                    match self.resume_argv(&cwd, conversation) {
+                        Ok(argv) => Some(argv),
+                        Err(why) => {
+                            notes.push(why);
+                            None
+                        }
+                    }
+                }
+                _ => None,
+            };
+            if command.is_none() {
+                self.ws.set_agent_session(p.pane, None);
+            }
+            self.open_pane(p.pane, p.cwd, command, window, cx);
         }
         if self.ws.is_empty() {
             self.new_tab(&NewTab, window, cx);
             return;
         }
-        if !report.missing.is_empty() {
-            let gone: Vec<String> = report
-                .missing
-                .iter()
-                .map(|(dir, to)| match to {
-                    Some(repo) => format!("{} (opened {})", dir.display(), repo.display()),
-                    None => format!("{} (opened the home directory)", dir.display()),
-                })
-                .collect();
-            self.status_line = Some(format!(
-                "Restored the last session; missing: {}",
-                gone.join(", ")
-            ));
+        if !notes.is_empty() {
+            self.status_line = Some(format!("Restored the last session; {}", notes.join("; ")));
         }
         self.focus_active(window, cx);
+    }
+
+    /// The command that reopens a saved agent conversation in `cwd`, or why
+    /// it cannot be reopened.
+    fn resume_argv(
+        &self,
+        cwd: &Path,
+        conversation: &AgentSessionRef,
+    ) -> Result<Vec<String>, String> {
+        let adapter = AgentId::parse(&conversation.agent)
+            .and_then(|id| self.adapters.iter().find(|a| a.id() == id));
+        let Some(adapter) = adapter else {
+            return Err(format!(
+                "unknown agent {}, opened a shell",
+                conversation.agent
+            ));
+        };
+        let name = adapter.display_name();
+        if !adapter.is_installed() {
+            return Err(format!(
+                "{name} is not on PATH, opened a shell in {}",
+                cwd.display()
+            ));
+        }
+        let session = SessionId(conversation.session.clone());
+        if !adapter.has_session(&session) {
+            return Err(format!(
+                "{name} session {} is gone, opened a shell in {}",
+                session.0,
+                cwd.display()
+            ));
+        }
+        self.agent_argv(cwd, adapter.id(), Some(&session))
+            .ok_or_else(|| {
+                format!(
+                    "could not start {name}, opened a shell in {}",
+                    cwd.display()
+                )
+            })
     }
 
     /// The window's origin and content size: a window opens with the size
@@ -1256,6 +1319,10 @@ impl WorkspaceView {
                 self.reviewed_focused(cx);
             }
             TerminalEvent::Prompt => {
+                // A shell prompt after an agent ran means the agent exited.
+                if self.ws.set_agent_session(pane, None) {
+                    self.save_session();
+                }
                 if self.sidebar_visible
                     && let Some(cwd) = self.ws.pane(pane).and_then(|i| i.cwd.clone())
                 {
@@ -2815,7 +2882,15 @@ pub fn blend(a: Hsla, b: Hsla, t: f32) -> Hsla {
 impl WorkspaceView {
     /// The focused pane's visible text, rows joined with newlines.
     pub(crate) fn focused_text(&self, cx: &App) -> String {
-        let Some((view, _)) = self.ws.focused_pane().and_then(|p| self.panes.get(&p)) else {
+        self.ws
+            .focused_pane()
+            .map(|p| self.pane_text(p, cx))
+            .unwrap_or_default()
+    }
+
+    /// A pane's visible text, rows joined with newlines.
+    pub(crate) fn pane_text(&self, pane: PaneId, cx: &App) -> String {
+        let Some((view, _)) = self.panes.get(&pane) else {
             return String::new();
         };
         let frame = view.read(cx).frame();

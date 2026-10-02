@@ -61,9 +61,12 @@ impl System for RecordingSystem {
 }
 
 /// The real Claude Code adapter with transcripts read from a test folder.
+/// It counts as installed when the home has a fake `claude` script
+/// ([`Home::fake_claude`]), which then runs in its place.
 struct TestClaude {
     inner: Box<dyn AgentAdapter>,
     projects: PathBuf,
+    bin: PathBuf,
 }
 
 impl AgentAdapter for TestClaude {
@@ -74,7 +77,7 @@ impl AgentAdapter for TestClaude {
         self.inner.display_name()
     }
     fn is_installed(&self) -> bool {
-        false
+        self.bin.is_file()
     }
     fn launch_command(
         &self,
@@ -82,7 +85,10 @@ impl AgentAdapter for TestClaude {
         resume: Option<&SessionId>,
         hook_bin: &Path,
     ) -> std::process::Command {
-        self.inner.launch_command(cwd, resume, hook_bin)
+        let real = self.inner.launch_command(cwd, resume, hook_bin);
+        let mut cmd = std::process::Command::new(&self.bin);
+        cmd.args(real.get_args()).current_dir(cwd);
+        cmd
     }
     fn session_roots(&self) -> Vec<PathBuf> {
         vec![self.projects.clone()]
@@ -134,6 +140,8 @@ pub struct Home {
     pub home: PathBuf,
     /// Claude Code transcripts the window indexes (`~/.claude/projects`).
     pub claude_projects: PathBuf,
+    /// Where [`Home::fake_claude`] puts its script.
+    pub claude_bin: PathBuf,
     pub config: PathBuf,
     pub data: PathBuf,
     pub ghostty: PathBuf,
@@ -152,6 +160,18 @@ impl Home {
             "message": {"role": "user", "content": prompt},
         });
         std::fs::write(dir.join(format!("{id}.jsonl")), format!("{line}\n")).unwrap();
+    }
+
+    /// Install a stand-in `claude` that prints its arguments and waits.
+    pub fn fake_claude(&self) {
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::create_dir_all(self.claude_bin.parent().unwrap()).unwrap();
+        std::fs::write(
+            &self.claude_bin,
+            "#!/bin/sh\necho \"fake-claude $*\"\nexec cat >/dev/null\n",
+        )
+        .unwrap();
+        std::fs::set_permissions(&self.claude_bin, std::fs::Permissions::from_mode(0o755)).unwrap();
     }
 
     /// Create a git repository with one commit under the home.
@@ -186,6 +206,7 @@ impl Harness {
         let home = Home {
             home: root.0.join("home"),
             claude_projects: root.0.join("claude-projects"),
+            claude_bin: root.0.join("bin/claude"),
             config: root.0.join("home/.config/chda/config.toml"),
             data: root.0.join("data"),
             ghostty: root.0.join("home/.config/ghostty/config"),
@@ -255,6 +276,7 @@ fn open_window(
                     .find(|a| a.id() == AgentId::Claude)
                     .unwrap(),
                 projects: home.claude_projects.clone(),
+                bin: home.claude_bin.clone(),
             }) as Box<dyn AgentAdapter>]),
             use_gh: false,
             system,
@@ -276,18 +298,7 @@ fn open_window(
 impl Harness {
     /// Run the window until `done` holds, letting shells and watchers work.
     pub fn wait_for(&mut self, what: &str, done: impl Fn(&WorkspaceView, &App) -> bool) {
-        let deadline = Instant::now() + Duration::from_secs(15);
-        loop {
-            self.cx.run_until_parked();
-            if self.view.read_with(&self.cx, |v, cx| done(v, cx)) {
-                return;
-            }
-            if Instant::now() >= deadline {
-                let screen = self.view.read_with(&self.cx, |v, cx| v.focused_text(cx));
-                panic!("timed out waiting for {what}; focused pane shows:\n{screen}");
-            }
-            std::thread::sleep(Duration::from_millis(20));
-        }
+        wait_until(&mut self.cx, &self.view, what, done);
     }
 
     pub fn read<R>(&self, f: impl FnOnce(&WorkspaceView, &App) -> R) -> R {
@@ -333,9 +344,14 @@ impl Harness {
     /// Send an agent hook event through the app's socket, as `chda hook`
     /// would from inside a pane.
     pub fn hook(&self, pane: Option<u64>, cwd: &Path, kind: HookKind) {
+        self.hook_session(pane, cwd, kind, "s");
+    }
+
+    /// [`Harness::hook`] for a given Claude Code session id.
+    pub fn hook_session(&self, pane: Option<u64>, cwd: &Path, kind: HookKind, session: &str) {
         let event = HookEvent {
             agent: "claude".into(),
-            session_id: "s".into(),
+            session_id: session.into(),
             cwd: cwd.to_path_buf(),
             kind,
             timestamp: std::time::SystemTime::now()
@@ -345,5 +361,26 @@ impl Harness {
             pane,
         };
         ipc::send(&ipc::socket_path(&self.home.data), &event).unwrap();
+    }
+}
+
+/// Run a window until `done` holds, letting shells and watchers work.
+pub fn wait_until(
+    cx: &mut VisualTestContext,
+    view: &Entity<WorkspaceView>,
+    what: &str,
+    done: impl Fn(&WorkspaceView, &App) -> bool,
+) {
+    let deadline = Instant::now() + Duration::from_secs(15);
+    loop {
+        cx.run_until_parked();
+        if view.read_with(cx, |v, cx| done(v, cx)) {
+            return;
+        }
+        if Instant::now() >= deadline {
+            let screen = view.read_with(cx, |v, cx| v.focused_text(cx));
+            panic!("timed out waiting for {what}; focused pane shows:\n{screen}");
+        }
+        std::thread::sleep(Duration::from_millis(20));
     }
 }
