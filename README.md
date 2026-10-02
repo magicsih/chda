@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="docs/media/hero.png" alt="chda: a terminal with a git worktree sidebar showing agent status, tabs and splits" width="880">
+  <img src="docs/media/hero.png" alt="chda: a git worktree sidebar with notes, diff badges and agent status next to a terminal showing a Mermaid diagram" width="880">
 </p>
 
 <h1 align="center">chda</h1>
@@ -47,7 +47,7 @@ and adds pull request badges. On a managed Mac where Homebrew cannot write to
 ## Sixty-second tour
 
 <p align="center">
-  <img src="docs/media/demo.gif" alt="Creating a worktree, running Claude Code, watching its status and merging back" width="880">
+  <img src="docs/media/demo.gif" alt="Agents report working and waiting in the sidebar, an agent creates a worktree with a note through chda mcp, a Mermaid diagram gets a View diagram button and an image shows inline" width="880">
 </p>
 
 1. Press `cmd-shift-o` (or click "+ repo") and pick a git repository. It appears in
