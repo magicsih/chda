@@ -4,6 +4,22 @@ All notable changes to chda. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); entries are
 generated from conventional commit messages by release-plz.
 
+## [0.1.6](https://github.com/magicsih/chda/compare/v0.1.5...v0.1.6) - 2026-10-02
+
+### Added
+
+- *(ui)* 메뉴 막대, 테마 선택기, 내장 글꼴 ([#45](https://github.com/magicsih/chda/pull/45))
+- *(sidebar)* show worktrees whose folder is missing and prune them
+
+### Fixed
+
+- *(config)* read Ghostty's config.ghostty files, not only the legacy config ([#48](https://github.com/magicsih/chda/pull/48))
+- *(ui)* start panes in the configured shell, and allow GPUI's test deps
+
+### Changed
+
+- *(agents)* show agent session lists right after launch
+
 ## [0.1.5](https://github.com/magicsih/chda/compare/v0.1.4...v0.1.5) - 2026-10-02
 
 ### Fixed
