@@ -4,6 +4,17 @@ All notable changes to chda. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); entries are
 generated from conventional commit messages by release-plz.
 
+## [0.1.5](https://github.com/magicsih/chda/compare/v0.1.4...v0.1.5) - 2026-10-02
+
+### Fixed
+
+- *(term)* show IME composition in apps that hide the cursor
+- *(platform)* start shells in a UTF-8 locale when launched from the Dock
+
+### Changed
+
+- *(term)* show typed characters without waiting for the frame throttle
+
 ## [0.1.4](https://github.com/magicsih/chda/compare/v0.1.3...v0.1.4) - 2026-10-01
 
 ### Added
