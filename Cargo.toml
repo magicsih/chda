@@ -12,7 +12,7 @@ members = [
 ]
 
 [workspace.package]
-version = "0.1.4"
+version = "0.1.5"
 edition = "2024"
 description = "Terminal with a git worktree sidebar and a live status board for Claude Code and Codex"
 keywords = ["terminal", "git-worktree", "claude-code", "codex", "ghostty"]
