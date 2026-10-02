@@ -51,8 +51,10 @@ and adds pull request badges. On a managed Mac where Homebrew cannot write to
 
 1. Press `cmd-shift-o` (or click "+ repo") and pick a git repository. It appears in
    the sidebar with its worktrees.
-2. Click "+" next to the repository, type a branch name, press Enter. chda creates
-   `<repo>.worktrees/<branch>` and opens a tab there.
+2. Click "+" next to the repository, type a branch name (or leave it empty for a
+   random one like `brisk-otter`), press Enter. chda creates
+   `<repo>.worktrees/<branch>` and opens a tab there. To stack work on another
+   branch, right-click its worktree and choose "New worktree from this branch..."
 3. Right-click the worktree and choose "Run Claude Code" or "Run Codex". The agent
    starts in that worktree with chda's hooks attached.
 4. Watch the dot next to the branch:

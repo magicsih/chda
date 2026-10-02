@@ -109,6 +109,11 @@ pub(crate) enum MenuAction {
     OpenTerminal(PathBuf),
     RunAgent(PathBuf, AgentId),
     NewWorktree(PathBuf),
+    /// New worktree on a new branch starting at `base`'s HEAD.
+    NewWorktreeFrom {
+        repo: PathBuf,
+        base: String,
+    },
     /// Merge into the default branch, remove the worktree and branch.
     MergeAndClean {
         repo: PathBuf,
@@ -152,6 +157,10 @@ pub(crate) struct ConfirmSheet {
 /// The "new worktree" sheet.
 struct NewWorktreeSheet {
     repo: PathBuf,
+    /// Branch the new one starts from; `None`: the main worktree's HEAD.
+    base: Option<String>,
+    /// Random name used when the field is left empty.
+    suggestion: String,
     input: Entity<TextInput>,
     _sub: Subscription,
     error: Option<String>,
@@ -1687,6 +1696,15 @@ impl WorkspaceView {
                     "New worktree...".into(),
                     MenuAction::NewWorktree(repo.clone()),
                 ));
+                if let Some(base) = entry.branch.clone() {
+                    items.push((
+                        "New worktree from this branch...".into(),
+                        MenuAction::NewWorktreeFrom {
+                            repo: repo.clone(),
+                            base,
+                        },
+                    ));
+                }
                 items.push(match chda_core::update_blocker(&entry) {
                     None => (
                         match entry.badges.behind.filter(|b| *b > 0) {
@@ -1991,6 +2009,9 @@ impl WorkspaceView {
             MenuAction::OpenTerminal(path) => self.open_tab_at(Some(path), None, window, cx),
             MenuAction::RunAgent(path, agent) => self.run_agent(&path, agent, None, window, cx),
             MenuAction::NewWorktree(repo) => self.open_sheet(repo, window, cx),
+            MenuAction::NewWorktreeFrom { repo, base } => {
+                self.open_sheet_from(repo, Some(base), window, cx)
+            }
             MenuAction::MergeAndClean {
                 repo,
                 worktree,
@@ -2327,6 +2348,18 @@ impl WorkspaceView {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        self.open_sheet_from(repo, None, window, cx);
+    }
+
+    /// The new worktree sheet; with `base`, the new branch starts there.
+    pub(crate) fn open_sheet_from(
+        &mut self,
+        repo: PathBuf,
+        base: Option<String>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let suggestion = chda_core::new_branch_name(&repo, |b| self.config.worktree_path(&repo, b));
         let bg = hsla(self.settings.colors.background.unwrap_or_default());
         let fg = hsla(self.settings.colors.foreground.unwrap_or_default());
         let input = cx.new(|cx| TextInput::new("branch name", fg, blend(bg, fg, 0.12), cx));
@@ -2341,11 +2374,18 @@ impl WorkspaceView {
         window.focus(&handle, cx);
         self.sheet = Some(NewWorktreeSheet {
             repo,
+            base,
+            suggestion,
             input,
             _sub: sub,
             error: None,
         });
         cx.notify();
+    }
+
+    #[cfg(test)]
+    pub(crate) fn sheet_error(&self) -> Option<&str> {
+        self.sheet.as_ref()?.error.as_deref()
     }
 
     fn new_worktree_action(
@@ -2377,18 +2417,17 @@ impl WorkspaceView {
     }
 
     fn create_worktree(&mut self, branch: String, window: &mut Window, cx: &mut Context<Self>) {
-        let branch = branch.trim().to_owned();
         let Some(sheet) = &mut self.sheet else {
             return;
         };
-        if branch.is_empty() {
-            sheet.error = Some("Branch name is empty".into());
-            cx.notify();
-            return;
-        }
+        let branch = match branch.trim() {
+            "" => sheet.suggestion.clone(),
+            typed => typed.to_owned(),
+        };
         let repo = sheet.repo.clone();
+        let base = sheet.base.clone();
         let path = self.config.worktree_path(&repo, &branch);
-        match chda_core::create_worktree(&repo, &branch, &path) {
+        match chda_core::create_worktree(&repo, &branch, &path, base.as_deref()) {
             Ok(()) => {
                 self.sheet = None;
                 self.refresh_repo(repo, cx);
@@ -2742,7 +2781,7 @@ impl WorkspaceView {
             }
             PaletteCommand::CheckoutBranch(repo, branch) => {
                 let path = self.config.worktree_path(&repo, &branch);
-                match chda_core::create_worktree(&repo, &branch, &path) {
+                match chda_core::create_worktree(&repo, &branch, &path, None) {
                     Ok(()) => {
                         self.refresh_repo(repo, cx);
                         self.open_tab_at(Some(path), None, window, cx);
@@ -3091,11 +3130,26 @@ impl WorkspaceView {
             .file_name()
             .map(|n| n.to_string_lossy().into_owned())
             .unwrap_or_default();
-        let preview = self
-            .config
-            .worktree_path(&sheet.repo, sheet.input.read(cx).text())
-            .to_string_lossy()
-            .into_owned();
+        let typed = sheet.input.read(cx).text().trim();
+        let branch = if typed.is_empty() {
+            format!("{} (random)", sheet.suggestion)
+        } else {
+            typed.to_owned()
+        };
+        let path = self.config.worktree_path(
+            &sheet.repo,
+            if typed.is_empty() {
+                &sheet.suggestion
+            } else {
+                typed
+            },
+        );
+        let base = sheet.base.as_deref().unwrap_or("HEAD");
+        let preview = [format!("{branch} from {base}"), path.display().to_string()];
+        let title = match &sheet.base {
+            Some(base) => format!("New worktree in {repo_name} from {base}"),
+            None => format!("New worktree in {repo_name}"),
+        };
         Some(
             deferred(
                 div()
@@ -3123,20 +3177,24 @@ impl WorkspaceView {
                             .flex()
                             .flex_col()
                             .gap_2()
-                            .child(format!("New worktree in {repo_name}"))
+                            .child(title)
                             .child(sheet.input.clone())
-                            .child(div().text_xs().text_color(fg.opacity(0.6)).child(preview))
+                            .child(
+                                div()
+                                    .flex()
+                                    .flex_col()
+                                    .text_xs()
+                                    .text_color(fg.opacity(0.6))
+                                    .children(preview),
+                            )
                             .children(
                                 sheet.error.clone().map(|e| {
                                     div().text_xs().text_color(gpui::rgb(0xf38ba8)).child(e)
                                 }),
                             )
-                            .child(
-                                div()
-                                    .text_xs()
-                                    .text_color(fg.opacity(0.5))
-                                    .child("Enter to create, Esc to cancel"),
-                            ),
+                            .child(div().text_xs().text_color(fg.opacity(0.5)).child(
+                                "Leave empty for a random name. Enter to create, Esc to cancel",
+                            )),
                     ),
             )
             .into_any_element(),

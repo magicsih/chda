@@ -487,3 +487,100 @@ fn update_branch_from_upstream_when_safe(cx: &mut TestAppContext) {
     });
     assert_eq!(rev(&repo, "HEAD~1"), head(&other), "local commit on top");
 }
+
+/// Stacked work: a new worktree starts at another branch's HEAD, with a
+/// random name when the field is left empty (#27).
+#[gpui::test]
+fn new_worktree_from_a_branch_with_a_random_name(cx: &mut TestAppContext) {
+    let mut repo = std::path::PathBuf::new();
+    let mut feat = std::path::PathBuf::new();
+    let mut h = Harness::open(cx, "from", |home| {
+        repo = home.repo("app");
+        feat = repo.parent().unwrap().join("app.worktrees/feat-a");
+        git(
+            &repo,
+            &[
+                "worktree",
+                "add",
+                "-q",
+                "-b",
+                "feat/a",
+                feat.to_str().unwrap(),
+            ],
+        );
+        git(&feat, &["commit", "-q", "--allow-empty", "-m", "work on a"]);
+        config_with_repo(home, &repo);
+    });
+    h.wait_for("feat/a in the sidebar", {
+        let feat = feat.clone();
+        move |v, cx| {
+            v.sidebar
+                .read(cx)
+                .model
+                .worktree_for_path(&feat)
+                .is_some_and(|(_, w)| w.path == feat)
+        }
+    });
+    let count = |h: &Harness| h.read(|v, cx| v.sidebar.read(cx).model.repos[0].worktrees.len());
+    let before = count(&h);
+
+    let from_a = MenuAction::NewWorktreeFrom {
+        repo: repo.clone(),
+        base: "feat/a".into(),
+    };
+    h.cx.update(|window, cx| {
+        h.view
+            .update(cx, |v, cx| v.run_menu_action(from_a.clone(), window, cx))
+    });
+    h.keys("enter");
+    h.wait_for("the new worktree", move |v, cx| {
+        v.sidebar.read(cx).model.repos[0].worktrees.len() == before + 1
+    });
+    let new = h.read(|v, cx| {
+        v.sidebar.read(cx).model.repos[0]
+            .worktrees
+            .iter()
+            .find(|w| !w.is_main && w.branch.as_deref() != Some("feat/a"))
+            .cloned()
+            .unwrap()
+    });
+    let name = new.branch.clone().unwrap();
+    assert!(
+        name.split('-').count() == 2 && name.chars().all(|c| c.is_ascii_lowercase() || c == '-'),
+        "random adjective-noun name: {name}"
+    );
+    assert_eq!(
+        rev(&new.path, "HEAD"),
+        rev(&repo, "feat/a"),
+        "starts at feat/a"
+    );
+
+    // A typed name that is already a branch is refused in the sheet.
+    h.cx.update(|window, cx| {
+        h.view
+            .update(cx, |v, cx| v.run_menu_action(from_a, window, cx))
+    });
+    h.type_text("feat/a");
+    h.keys("enter");
+    assert!(
+        h.read(|v, _| v
+            .sheet_error()
+            .is_some_and(|e| e.contains("already exists"))),
+        "collision shown in the sheet"
+    );
+    h.keys("escape");
+
+    // So is a name whose folder exists, in the plain sheet too.
+    std::fs::create_dir_all(repo.parent().unwrap().join("app.worktrees/taken")).unwrap();
+    let r = repo.clone();
+    h.cx.update(|window, cx| h.view.update(cx, |v, cx| v.open_sheet(r, window, cx)));
+    h.type_text("taken");
+    h.keys("enter");
+    assert!(
+        h.read(|v, _| v
+            .sheet_error()
+            .is_some_and(|e| e.contains("already exists"))),
+        "path collision shown in the sheet"
+    );
+    assert_eq!(count(&h), before + 1);
+}

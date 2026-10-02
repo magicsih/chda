@@ -4,6 +4,7 @@
 
 mod cleanup;
 mod github;
+mod names;
 mod refresh;
 mod restore;
 mod sidebar;
@@ -13,6 +14,7 @@ mod workspace;
 
 pub use cleanup::*;
 pub use github::{Gh, RemoteRepo, login_hint, repo_remote};
+pub use names::random_branch_name;
 pub use refresh::*;
 pub use restore::*;
 
