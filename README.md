@@ -5,7 +5,8 @@
 <h1 align="center">chda</h1>
 
 <p align="center"><b>Checkout · Hack · Deliver · Again.</b><br>
-A terminal with a git worktree sidebar and a live status board for Claude Code and Codex.</p>
+A terminal with a git worktree sidebar and a live status board for coding agents:<br>
+Claude Code, Codex, Gemini CLI, GitHub Copilot CLI and OpenCode.</p>
 
 <p align="center">
   <a href="https://github.com/magicsih/chda/releases/latest"><img src="https://img.shields.io/github/v/release/magicsih/chda?label=release" alt="Latest release"></a>
@@ -52,11 +53,14 @@ and adds pull request badges. On a managed Mac where Homebrew cannot write to
 1. Press `cmd-shift-o` (or click "+ repo") and pick a git repository. It appears in
    the sidebar with its worktrees.
 2. Click "+" next to the repository, type a branch name (or leave it empty for a
-   random one like `brisk-otter`), press Enter. chda creates
-   `<repo>.worktrees/<branch>` and opens a tab there. To stack work on another
-   branch, right-click its worktree and choose "New worktree from this branch..."
+   random one like `brisk-otter`), and optionally a note saying what the task is,
+   then press Enter. chda creates `<repo>.worktrees/<branch>` and opens a tab
+   there; the note becomes the row's label. To stack work on another branch,
+   right-click its worktree and choose "New worktree from this branch..."
 3. Right-click the worktree and choose "Run Claude Code" or "Run Codex". The agent
-   starts in that worktree with chda's hooks attached.
+   starts in that worktree with chda's hooks attached. Gemini CLI, Copilot CLI
+   and OpenCode join the menu through `agents` in `config.toml`, and your usual
+   flags through `[[agent-presets]]`.
 4. Watch the dot next to the branch:
 
    | Dot | Meaning |
@@ -66,15 +70,16 @@ and adds pull request badges. On a managed Mac where Homebrew cannot write to
    | orange | waiting for your input (you also get a notification) |
    | green | finished; clears when you look at the tab |
 
-5. When the branch is done, right-click it and choose "Merge into main and clean
-   up". chda merges, removes the worktree and deletes the branch, and refuses when
-   there are uncommitted changes, unpushed commits or an open pull request.
+5. When the branch is done, click its `+12 −3` badge to read the diff in a tab,
+   then right-click it and choose "Merge into main and clean up". chda merges,
+   removes the worktree and deletes the branch, and refuses when there are
+   uncommitted changes, unpushed commits or an open pull request.
 
 ## Features
 
 | Area | What you get |
 |---|---|
-| Terminal | Ghostty-accurate VT handling, true color, wide glyphs, IME input, mouse selection and reporting, scrollback search (`cmd-f`), cmd-click links and file paths, inline images (Kitty graphics protocol), Mermaid diagrams in agent output rendered offline ("View diagram"), font size shortcuts, prompt jumping (`cmd-up` / `cmd-down`) |
+| Terminal | Ghostty-accurate VT handling, true color, wide glyphs, IME input, mouse selection and reporting, scrollback search (`cmd-f`), cmd-click links and file paths, right-click actions on paths (reveal in Finder, open a tab or `cd` there, copy), drag and drop paths, inline images (Kitty graphics protocol), Mermaid diagrams in agent output rendered offline ("View diagram"), font size shortcuts, prompt jumping (`cmd-up` / `cmd-down`) |
 | Tabs and splits | Ghostty's default shortcuts; tabs grouped by repository; rename a tab with a double-click; tabs, splits and directories come back after a restart |
 | Sidebar | Repositories, worktrees, dirty / ahead / behind / conflict badges, lines added and removed against the default branch (click for a read-only diff tab), pull request state via `gh`, `glab` or `tea`, open-tab counts, an ACTIVE list sorted by last activity; every badge explains itself on hover |
 | Worktrees | Create from a new or existing branch, delete with a safety check, merge-and-clean, bulk cleanup of merged branches, update a branch from its upstream when it is clean and no agent works in it (fast-forward; a diverged branch asks before a rebase or merge and never rewrites pushed commits); a note per branch saying what the task is (right-click "Edit note...", or `chda note <text>` inside the worktree), shown as the row's label and searchable in the palette |

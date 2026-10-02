@@ -4,7 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>chda — git worktree terminal for coding agents</title>
-<meta name="description" content="chda is a macOS terminal with a git worktree sidebar and a live status board for Claude Code and Codex. Ghostty terminal core, written in Rust on GPUI. Free and open source.">
+<meta name="description" content="chda is a macOS terminal with a git worktree sidebar and a live status board for coding agents: Claude Code, Codex, Gemini CLI, GitHub Copilot CLI and OpenCode. Ghostty terminal core, written in Rust on GPUI. Free and open source.">
 <link rel="canonical" href="https://magicsih.github.io/chda/">
 <meta property="og:type" content="website">
 <meta property="og:title" content="chda — git worktree terminal for coding agents">
@@ -13,7 +13,7 @@
 <meta property="og:image" content="https://magicsih.github.io/chda/social-preview.png">
 <meta name="twitter:card" content="summary_large_image">
 <meta name="twitter:title" content="chda — git worktree terminal for coding agents">
-<meta name="twitter:description" content="A terminal with a git worktree sidebar and a live status board for Claude Code and Codex.">
+<meta name="twitter:description" content="A terminal with a git worktree sidebar and a live status board for Claude Code, Codex, Gemini CLI, Copilot CLI and OpenCode.">
 <meta name="twitter:image" content="https://magicsih.github.io/chda/social-preview.png">
 <link rel="icon" href="icon.png" type="image/png">
 <script type="application/ld+json">
@@ -27,7 +27,7 @@
   "url": "https://magicsih.github.io/chda/",
   "downloadUrl": "https://github.com/magicsih/chda/releases/latest",
   "softwareHelp": "https://github.com/magicsih/chda#readme",
-  "description": "Terminal with a git worktree sidebar and a live status board for Claude Code and Codex.",
+  "description": "Terminal with a git worktree sidebar and a live status board for coding agents: Claude Code, Codex, Gemini CLI, GitHub Copilot CLI and OpenCode.",
   "offers": { "@type": "Offer", "price": "0", "priceCurrency": "USD" }
 }
 </script>
@@ -72,7 +72,7 @@
 <main>
   <header>
     <h1>chda</h1>
-    <p class="tag">A terminal with a git worktree sidebar and a live status board for Claude Code and Codex.</p>
+    <p class="tag">A terminal with a git worktree sidebar and a live status board for coding agents.</p>
     <div class="install" id="install">
       <code id="cmd">brew tap magicsih/tap &amp;&amp; brew trust magicsih/tap &amp;&amp; brew install --cask chda</code>
       <button type="button" onclick="navigator.clipboard.writeText(document.getElementById('cmd').textContent).then(()=>{this.textContent='Copied'})">Copy</button>
@@ -83,9 +83,12 @@
   <section>
     <h2>Why a worktree terminal</h2>
     <div class="cols">
-      <div class="col"><h3>One worktree per task</h3><p>Create a worktree from the sidebar, work in it, merge it back and clean it up. Branch names are the only thing you type.</p></div>
-      <div class="col"><h3>Agents you can see</h3><p>Claude Code and Codex report through chda's hooks. A dot tells you who is working, who is waiting for you, and who is done.</p></div>
-      <div class="col"><h3>Ghostty inside</h3><p>The VT core is libghostty-vt, so escapes, Unicode and keys behave like Ghostty. Your Ghostty font and colors carry over.</p></div>
+      <div class="col"><h3>One worktree per task</h3><p>Create a worktree from the sidebar, from any branch, with a note saying what the task is. Work in it, read its diff, merge it back and clean it up.</p></div>
+      <div class="col"><h3>Agents you can see</h3><p>Claude Code, Codex, Gemini CLI, Copilot CLI and OpenCode report through chda's hooks. A dot tells you who is working, who is waiting for you, and who is done.</p></div>
+      <div class="col"><h3>Ghostty inside</h3><p>The VT core is libghostty-vt, so escapes, Unicode and keys behave like Ghostty. Your Ghostty font, colors and ligatures carry over.</p></div>
+      <div class="col"><h3>Agents can drive it</h3><p><code>chda mcp</code> lets an agent create a worktree, open a tab or report its status. New worktrees show up in the sidebar at once.</p></div>
+      <div class="col"><h3>Pick up where you left off</h3><p>After a restart, tabs, splits and directories come back, and panes that ran an agent reopen its conversation. Past sessions resume side by side.</p></div>
+      <div class="col"><h3>More than text</h3><p>Images through the Kitty graphics protocol, Mermaid diagrams rendered offline, and right-click actions on every file path in the output.</p></div>
     </div>
   </section>
 
@@ -102,7 +105,7 @@
     <pre>brew tap magicsih/tap
 brew trust magicsih/tap
 brew install --cask chda</pre>
-    <p>macOS 14 or newer on Apple silicon. Signed and notarized. Needs <code>git</code>; <code>gh</code> adds pull request badges. Prefer a zip? Get it from the <a href="https://github.com/magicsih/chda/releases/latest">releases page</a>.</p>
+    <p>macOS 14 or newer on Apple silicon. Signed and notarized. Needs <code>git</code>; <code>gh</code>, <code>glab</code> or <code>tea</code> add pull request badges for GitHub, GitLab or Gitea. Prefer a zip? Get it from the <a href="https://github.com/magicsih/chda/releases/latest">releases page</a>.</p>
   </section>
 
   <section>
@@ -110,8 +113,8 @@ brew install --cask chda</pre>
     <dl>
       <dt>Does chda read my prompts?</dt>
       <dd>No. Hooks pass only a session id, directory, event kind and time. Nothing is sent anywhere; the app makes no network requests of its own.</dd>
-      <dt>Do I have to change my Claude Code or Codex config?</dt>
-      <dd>No. chda passes hook settings per launch and leaves your config files alone.</dd>
+      <dt>Do I have to change my agents' config?</dt>
+      <dd>No. chda passes hook settings per launch and leaves your config files alone. Only the optional MCP server is added once per agent, with the agent's own <code>mcp add</code> command.</dd>
       <dt>Linux or Windows?</dt>
       <dd>They build in CI and are the next milestone. Today it is macOS only.</dd>
     </dl>
