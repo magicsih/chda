@@ -110,6 +110,8 @@ pub(crate) enum MenuAction {
     /// A read-only tab with the worktree's diff against its base.
     ViewDiff(PathBuf),
     RunAgent(PathBuf, AgentId),
+    /// Run the `agent-presets` entry with this name.
+    RunPreset(PathBuf, String),
     NewWorktree(PathBuf),
     /// New worktree on a new branch starting at `base`'s HEAD.
     NewWorktreeFrom {
@@ -1756,6 +1758,12 @@ impl WorkspaceView {
                         MenuAction::RunAgent(path.clone(), a.id()),
                     ));
                 }
+                for p in self.presets() {
+                    items.push((
+                        format!("Run {}", p.name),
+                        MenuAction::RunPreset(path.clone(), p.name.clone()),
+                    ));
+                }
                 items.push((
                     "New worktree...".into(),
                     MenuAction::NewWorktree(repo.clone()),
@@ -2017,6 +2025,37 @@ impl WorkspaceView {
         self.open_tab_at(Some(cwd.to_path_buf()), argv, window, cx);
     }
 
+    /// Start the `agent-presets` entry called `name` in a new tab at `cwd`.
+    fn run_preset(&mut self, cwd: &Path, name: &str, window: &mut Window, cx: &mut Context<Self>) {
+        let Some(preset) = self.config.agent_presets.iter().find(|p| p.name == name) else {
+            return;
+        };
+        let adapter = AgentId::parse(&preset.agent)
+            .and_then(|id| self.adapters.iter().find(|a| a.id() == id));
+        let Some(adapter) = adapter else {
+            self.status_line = Some(format!("Preset {name}: unknown agent {:?}", preset.agent));
+            cx.notify();
+            return;
+        };
+        if !adapter.is_installed() {
+            self.status_line = Some(format!("{} is not on PATH", adapter.display_name()));
+            cx.notify();
+            return;
+        }
+        let argv = self.agent_argv(cwd, adapter.id(), None).map(|mut argv| {
+            argv.extend(preset.args.iter().cloned());
+            argv
+        });
+        self.open_tab_at(Some(cwd.to_path_buf()), argv, window, cx);
+    }
+
+    /// The presets that can run: those naming an agent chda knows.
+    fn presets(&self) -> impl Iterator<Item = &chda_config::AgentPreset> {
+        self.config.agent_presets.iter().filter(|p| {
+            AgentId::parse(&p.agent).is_some_and(|id| self.adapters.iter().any(|a| a.id() == id))
+        })
+    }
+
     /// Resume past sessions in one new tab: the first fills it, each next
     /// one splits the largest pane along its longer side.
     pub(crate) fn resume_sessions(
@@ -2110,6 +2149,7 @@ impl WorkspaceView {
             MenuAction::OpenTerminal(path) => self.open_tab_at(Some(path), None, window, cx),
             MenuAction::ViewDiff(path) => self.open_diff(&path, window, cx),
             MenuAction::RunAgent(path, agent) => self.run_agent(&path, agent, None, window, cx),
+            MenuAction::RunPreset(path, name) => self.run_preset(&path, &name, window, cx),
             MenuAction::NewWorktree(repo) => self.open_sheet(repo, window, cx),
             MenuAction::NewWorktreeFrom { repo, base } => {
                 self.open_sheet_from(repo, Some(base), window, cx)
@@ -2769,6 +2809,16 @@ impl WorkspaceView {
                         command: PaletteCommand::RunAgent(wt.path.clone(), a.id().as_str().into()),
                     });
                 }
+                for p in self.presets() {
+                    items.push(PaletteItem {
+                        label: format!("Run {} in {}/{branch}", p.name, repo.name),
+                        detail: std::iter::once(p.agent.as_str())
+                            .chain(p.args.iter().map(String::as_str))
+                            .collect::<Vec<_>>()
+                            .join(" "),
+                        command: PaletteCommand::RunPreset(wt.path.clone(), p.name.clone()),
+                    });
+                }
                 for s in wt.sessions.iter().take(5) {
                     items.push(PaletteItem {
                         label: format!(
@@ -3008,6 +3058,7 @@ impl WorkspaceView {
                     self.run_agent(&path, agent, None, window, cx);
                 }
             }
+            PaletteCommand::RunPreset(path, name) => self.run_preset(&path, &name, window, cx),
             PaletteCommand::ResumeSession {
                 worktree,
                 agent,

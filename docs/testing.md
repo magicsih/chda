@@ -60,6 +60,7 @@ Three layers, all run by `cargo test --workspace` (CI: the macOS job).
 | Palette arrow keys choose a later entry | `palette::arrow_keys_choose_a_later_entry` | |
 | Theme picker: preview, restore on escape, save on enter | `palette::theme_picker_previews_restores_and_saves` | |
 | Menu actions: Settings opens config.toml, agent items explain themselves | `menus::settings_writes_a_missing_config_file`, `menus::agent_items_explain_why_nothing_ran` | |
+| Agent launch presets from the palette and the worktree menu | `menus::agent_presets_start_from_the_palette_and_the_sidebar_menu` | #16 |
 
 Not covered by scenarios: anything visual (colors, layout, rendering), since
 the test platform draws no pixels; launching real agents (a stand-in
