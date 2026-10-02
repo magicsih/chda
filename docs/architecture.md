@@ -142,13 +142,17 @@ clean, has no merge or rebase stopped half way, has an upstream and no agent
 works in it; it fetches the upstream, fast-forwards, and on divergence
 stops and offers a rebase only when none of the local commits is on any
 remote (`git rev-list @{u}..HEAD --not --remotes`), a merge otherwise; the
-`pull` key changes that default. Pull request badges come from `gh pr list --repo <host>/<owner>/<name>`
-per branch, fetched at most once a minute per repository. The host and path
-come from the remote `gh` would pick (`gh repo set-default`, then
-`upstream`, `github`, `origin`), with SSH aliases resolved through
-`ssh -G` and `repo-hosts` in `config.toml` as an override. `gh auth status
---hostname` is checked per host and cached for five minutes; a host that is
-not logged in gets a hint on its repository rows only.
+`pull` key changes that default. Pull request badges come from the forge CLI of each repository's host
+(`chda-core::forge`), fetched at most once a minute per repository: `gh pr
+list --repo <host>/<owner>/<name>` per branch, `glab mr list` and `glab mr
+view` (for the head pipeline) with `GITLAB_HOST`, or one `tea pulls list`
+with the `tea` login whose URL is on that host. The host and path come from
+the remote `gh` would pick (`gh repo set-default`, then `upstream`,
+`github`, `origin`), with SSH aliases resolved through `ssh -G` and
+`repo-hosts` in `config.toml` as an override. github.com, gitlab.com,
+gitea.com and codeberg.org map to their forge; other hosts go to the first
+CLI logged in to them. Logins are checked per host and cached for five
+minutes; a host no CLI is logged in to gets a hint on its repository row.
 
 ## Config reload and session restore
 

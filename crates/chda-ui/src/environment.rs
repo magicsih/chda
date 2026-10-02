@@ -7,6 +7,7 @@ use std::rc::Rc;
 use std::sync::Arc;
 
 use chda_config::{ChdaConfig, Paths};
+use chda_core::ForgeClis;
 use chda_core::agents::{AgentAdapter, adapters, data_dir};
 
 use crate::platform::{self, NotificationTarget};
@@ -72,9 +73,8 @@ pub struct Environment {
     /// Extra environment for every pane's shell.
     pub pane_env: Vec<(String, String)>,
     pub adapters: Arc<Vec<Box<dyn AgentAdapter>>>,
-    /// The `gh` binary to ask for pull request state; `None` turns pull
-    /// request badges off.
-    pub gh: Option<PathBuf>,
+    /// The forge CLIs (`gh`, `glab`, `tea`) to ask for pull request state.
+    pub forge_clis: ForgeClis,
     pub system: Rc<dyn System>,
 }
 
@@ -88,7 +88,7 @@ impl Environment {
             shell: chda_term::login_shell(),
             pane_env: Vec::new(),
             adapters: Arc::new(adapters()),
-            gh: Some("gh".into()),
+            forge_clis: ForgeClis::default(),
             system: Rc::new(NativeSystem),
         }
     }

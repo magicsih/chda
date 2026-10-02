@@ -211,8 +211,8 @@ pub struct WorkspaceView {
     renaming: Option<(TabId, Entity<TextInput>, Subscription)>,
     /// Repository whose tabs the tab bar shows (`None`: tabs outside repos).
     tab_group: Option<PathBuf>,
-    /// `gh`, once it is known to be installed.
-    gh: Option<Arc<chda_core::Gh>>,
+    /// The forge CLIs, once one of them is known to be installed.
+    forges: Option<Arc<chda_core::Forges>>,
     /// Last time pull requests were fetched per repository.
     pr_fetched: HashMap<PathBuf, std::time::Instant>,
     /// Last `origin/<default>` fetch per repository.
@@ -303,7 +303,7 @@ impl WorkspaceView {
             palette: None,
             renaming: None,
             tab_group: None,
-            gh: None,
+            forges: None,
             pr_fetched: HashMap::new(),
             base_fetched: HashMap::new(),
             status_line: None,
@@ -340,22 +340,21 @@ impl WorkspaceView {
         .detach();
         this.config_watcher = Self::start_config_watcher(window, cx);
         this.watch_config_files();
-        if let Some(bin) = this.env.gh.clone() {
-            let gh = cx.background_spawn(async move {
-                let gh = chda_core::Gh::new(bin);
-                gh.installed().then(|| Arc::new(gh))
+        let clis = this.env.forge_clis.clone();
+        let forges = cx.background_spawn(async move {
+            let forges = chda_core::Forges::new(clis);
+            forges.any_installed().then(|| Arc::new(forges))
+        });
+        cx.spawn(async move |this, cx| {
+            let forges = forges.await;
+            let _ = this.update(cx, |view, cx| {
+                if forges.is_some() {
+                    view.forges = forges;
+                    view.refresh_prs(false, cx);
+                }
             });
-            cx.spawn(async move |this, cx| {
-                let gh = gh.await;
-                let _ = this.update(cx, |view, cx| {
-                    if gh.is_some() {
-                        view.gh = gh;
-                        view.refresh_prs(false, cx);
-                    }
-                });
-            })
-            .detach();
-        }
+        })
+        .detach();
         for repo in this.config.repos.clone() {
             this.sidebar.update(cx, |s, _| {
                 s.model.add_repo(repo.clone());
@@ -1009,12 +1008,12 @@ impl WorkspaceView {
         .detach();
     }
 
-    /// Fetch pull request state for every non-main worktree through `gh`,
-    /// at most once a minute per repository unless `force`. Each repository
-    /// asks the host of its own remote; a host `gh` is not logged in to gets
-    /// a hint on the repository row instead of badges.
+    /// Fetch pull request state for every non-main worktree through the
+    /// forge CLI of the repository's host, at most once a minute per
+    /// repository unless `force`. A host no CLI is logged in to gets a hint
+    /// on the repository row instead of badges.
     fn refresh_prs(&mut self, force: bool, cx: &mut Context<Self>) {
-        let Some(gh) = self.gh.clone() else {
+        let Some(forges) = self.forges.clone() else {
             return;
         };
         let now = std::time::Instant::now();
@@ -1048,18 +1047,12 @@ impl WorkspaceView {
             }
             self.pr_fetched.insert(repo.clone(), now);
             let host_override = self.config.repo_hosts.get(&repo).cloned();
-            let gh = Arc::clone(&gh);
+            let forges = Arc::clone(&forges);
             let task = cx.background_spawn({
                 let repo = repo.clone();
                 async move {
                     let remote = chda_core::repo_remote(&repo, host_override.as_deref())?;
-                    if !gh.logged_in(&remote.host) {
-                        return Some(Err(chda_core::login_hint(&remote.host)));
-                    }
-                    Some(Ok(branches
-                        .into_iter()
-                        .map(|(path, branch)| (path, gh.pr_for_branch(&remote, &branch)))
-                        .collect::<Vec<_>>()))
+                    Some(forges.pull_requests(&remote, &branches))
                 }
             });
             cx.spawn(async move |this, cx| {
@@ -1074,7 +1067,7 @@ impl WorkspaceView {
                                 }
                                 None
                             }
-                            Some(Err(hint)) => Some(hint),
+                            Some(Err(hint)) => hint,
                             None => None,
                         };
                         if let Some(r) = s.model.repo_mut(&repo)

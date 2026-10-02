@@ -304,7 +304,7 @@ impl SidebarView {
                         cx.stop_propagation();
                         cx.emit(SidebarEvent::OpenUrl(url.clone()));
                     }))
-                    .child(format!("#{}{}", pr.number, icon))
+                    .child(format!("{}{}", pr_reference(pr).1, icon))
                     .into_any_element(),
             );
         }
@@ -522,7 +522,7 @@ fn dirty_tooltip(b: &GitBadges) -> String {
     )
 }
 
-/// `host/owner/repo#5` from a pull request URL such as
+/// `host/owner/repo` from a pull request URL such as
 /// `https://github.example.com/owner/repo/pull/5`.
 fn pr_location(url: &str) -> Option<String> {
     let rest = url.split_once("://")?.1;
@@ -537,7 +537,16 @@ fn pr_location(url: &str) -> Option<String> {
     if cut == 0 || number.parse::<u64>().is_err() {
         return None;
     }
-    Some(format!("{host}/{}#{number}", path[..cut].join("/")))
+    Some(format!("{host}/{}", path[..cut].join("/")))
+}
+
+/// "PR" and `#5`, or "MR" and `!5` for a GitLab merge request.
+fn pr_reference(pr: &PrInfo) -> (&'static str, String) {
+    if pr.url.contains("/-/merge_requests/") {
+        ("MR", format!("!{}", pr.number))
+    } else {
+        ("PR", format!("#{}", pr.number))
+    }
 }
 
 /// What a pull request badge means, and where it points.
@@ -550,10 +559,12 @@ fn pr_tooltip(pr: &PrInfo) -> String {
         (PrState::Open, CheckState::Pending) => "open, checks running",
         (PrState::Open, CheckState::None) => "open, no checks",
     };
-    let mut text = format!("PR #{} {state}. Click to open.", pr.number);
+    let (kind, reference) = pr_reference(pr);
+    let mut text = format!("{kind} {reference} {state}. Click to open.");
     if let Some(location) = pr_location(&pr.url) {
         text.push('\n');
         text.push_str(&location);
+        text.push_str(&reference);
     }
     text
 }
@@ -937,21 +948,29 @@ mod tests {
             pr_tooltip(&pr(PrState::Open, CheckState::None, "not a url")),
             "PR #5 open, no checks. Click to open."
         );
+        assert_eq!(
+            pr_tooltip(&pr(
+                PrState::Merged,
+                CheckState::None,
+                "https://gitlab.com/group/proj/-/merge_requests/5"
+            )),
+            "MR !5 merged. Click to open.\ngitlab.com/group/proj!5"
+        );
     }
 
     #[test]
     fn pr_location_reads_github_gitlab_and_gitea_urls() {
         assert_eq!(
             pr_location("https://github.com/magicsih/chda/pull/49").as_deref(),
-            Some("github.com/magicsih/chda#49")
+            Some("github.com/magicsih/chda")
         );
         assert_eq!(
             pr_location("https://gitlab.com/group/sub/proj/-/merge_requests/12").as_deref(),
-            Some("gitlab.com/group/sub/proj#12")
+            Some("gitlab.com/group/sub/proj")
         );
         assert_eq!(
             pr_location("https://gitea.example.com/org/repo/pulls/3").as_deref(),
-            Some("gitea.example.com/org/repo#3")
+            Some("gitea.example.com/org/repo")
         );
         assert_eq!(pr_location("https://github.com/pull/x"), None);
     }
