@@ -97,11 +97,16 @@ transcripts are never stored. Your `~/.claude/settings.json` and
 chda reads Ghostty's config files in Ghostty's order:
 `~/.config/ghostty/config` and `config.ghostty`, then on macOS the same two in
 `~/Library/Application Support/com.mitchellh.ghostty`. It honors `font-family`,
-`font-size`, `theme`, `background`, `foreground`, `palette`, `cursor-style`,
-`cursor-style-blink`, `window-padding-x/y`, `shell-integration` and
-`scrollback-limit`, so a Ghostty user gets the same look without copying
+`font-size`, `font-feature`, `theme`, `background`, `foreground`, `palette`,
+`cursor-style`, `cursor-style-blink`, `window-padding-x/y`, `shell-integration`
+and `scrollback-limit`, so a Ghostty user gets the same look without copying
 anything. Like Ghostty, chda ships JetBrains
 Mono as the default font and Symbols Nerd Font Mono for prompt and TUI icons.
+
+Programming ligatures (`->`, `!=`, `>=` in JetBrains Mono, Fira Code and
+similar fonts) are off by default. Turn them on with `font-feature = calt`;
+`font-feature` takes Ghostty's syntax (`-liga`, `ss01`, `cv01=2`, repeated or
+comma-separated). The character under the cursor is always drawn on its own.
 
 chda's own settings live in `~/.config/chda/config.toml`:
 

@@ -10,6 +10,8 @@ use gpui::{Font, FontFeatures, FontStyle, FontWeight, Pixels, px};
 pub struct Settings {
     pub font_family: String,
     pub font_size: Pixels,
+    /// OpenType features for the terminal font (`font-feature`).
+    pub font_features: FontFeatures,
     pub padding: Padding,
     pub colors: ColorConfig,
     pub selection_background: Option<Rgb>,
@@ -33,6 +35,23 @@ fn rgb(c: Color) -> Rgb {
     }
 }
 
+/// The configured features, the last setting for a tag winning. Programming
+/// ligatures (`calt`) stay off unless the config turns them on with
+/// `font-feature = calt`.
+fn font_features(settings: &[(String, u32)]) -> FontFeatures {
+    let mut features: Vec<(String, u32)> = Vec::new();
+    for (tag, value) in settings {
+        match features.iter_mut().find(|(t, _)| t == tag) {
+            Some(slot) => slot.1 = *value,
+            None => features.push((tag.clone(), *value)),
+        }
+    }
+    if !features.iter().any(|(t, _)| t == "calt") {
+        features.insert(0, ("calt".into(), 0));
+    }
+    FontFeatures(features.into())
+}
+
 impl Settings {
     /// Ghostty's defaults fill in whatever the config leaves unset.
     pub fn from_ghostty(c: &GhosttyConfig) -> Self {
@@ -42,6 +61,7 @@ impl Settings {
                 .clone()
                 .unwrap_or_else(|| fonts::DEFAULT_FAMILY.into()),
             font_size: px(c.font_size.unwrap_or(13.0)),
+            font_features: font_features(&c.font_features),
             padding: c.padding,
             colors: ColorConfig {
                 foreground: Some(rgb(c.foreground.unwrap_or(Color {
@@ -84,10 +104,38 @@ impl Settings {
     pub fn font(&self) -> Font {
         Font {
             family: self.font_family.clone().into(),
-            features: FontFeatures::disable_ligatures(),
+            features: self.font_features.clone(),
             fallbacks: Some(fonts::fallbacks()),
             weight: FontWeight::NORMAL,
             style: FontStyle::Normal,
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn tags(c: &str) -> Vec<(String, u32)> {
+        let mut config = GhosttyConfig::default();
+        chda_config::parse(c, None, &mut config);
+        Settings::from_ghostty(&config)
+            .font()
+            .features
+            .tag_value_list()
+            .to_vec()
+    }
+
+    #[test]
+    fn ligatures_are_off_until_the_config_turns_calt_on() {
+        assert_eq!(tags(""), [("calt".to_owned(), 0)]);
+        assert_eq!(
+            tags("font-feature = ss01\n"),
+            [("calt".to_owned(), 0), ("ss01".to_owned(), 1)]
+        );
+        assert_eq!(
+            tags("font-feature = calt\nfont-feature = liga\nfont-feature = -liga\n"),
+            [("calt".to_owned(), 1), ("liga".to_owned(), 0)]
+        );
     }
 }

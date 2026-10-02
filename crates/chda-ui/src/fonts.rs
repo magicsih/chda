@@ -7,18 +7,18 @@ use gpui::{App, FontFallbacks};
 
 use crate::platform;
 
-/// Default terminal family. The NL cut has no ligatures, which chda turns
-/// off anyway.
-pub const DEFAULT_FAMILY: &str = "JetBrains Mono NL";
+/// Default terminal family. Its programming ligatures stay off unless the
+/// config turns them on (`font-feature = calt`).
+pub const DEFAULT_FAMILY: &str = "JetBrains Mono";
 
 /// Fallback for Nerd Font icons (private use area) that text fonts lack.
 const SYMBOLS_FAMILY: &str = "Symbols Nerd Font Mono";
 
 const TEXT_FONTS: [&[u8]; 4] = [
-    include_bytes!("../assets/fonts/JetBrainsMonoNL-Regular.ttf"),
-    include_bytes!("../assets/fonts/JetBrainsMonoNL-Bold.ttf"),
-    include_bytes!("../assets/fonts/JetBrainsMonoNL-Italic.ttf"),
-    include_bytes!("../assets/fonts/JetBrainsMonoNL-BoldItalic.ttf"),
+    include_bytes!("../assets/fonts/JetBrainsMono-Regular.ttf"),
+    include_bytes!("../assets/fonts/JetBrainsMono-Bold.ttf"),
+    include_bytes!("../assets/fonts/JetBrainsMono-Italic.ttf"),
+    include_bytes!("../assets/fonts/JetBrainsMono-BoldItalic.ttf"),
 ];
 
 const SYMBOLS_FONT: &[u8] = include_bytes!("../assets/fonts/SymbolsNerdFontMono-Regular.ttf");
