@@ -116,9 +116,36 @@ pub fn repo_of(path: &Path) -> io::Result<PathBuf> {
     chda_git::main_worktree(path)
 }
 
-/// Create a worktree for `branch` at `path` (new branch from HEAD unless it exists).
-pub fn create_worktree(repo: &Path, branch: &str, path: &Path) -> io::Result<()> {
-    chda_git::add_worktree(repo, branch, path, None)
+/// Create a worktree for `branch` at `path`. Without `base` the branch is
+/// created from HEAD, or checked out when it exists already. With `base` it
+/// must be a new branch starting at `base`.
+pub fn create_worktree(
+    repo: &Path,
+    branch: &str,
+    path: &Path,
+    base: Option<&str>,
+) -> io::Result<()> {
+    if path.exists() {
+        return Err(io::Error::other(format!(
+            "{} already exists",
+            path.display()
+        )));
+    }
+    if let Some(base) = base
+        && chda_git::local_branches(repo)?.iter().any(|b| b == branch)
+    {
+        return Err(io::Error::other(format!(
+            "branch {branch} already exists; pick another name to start from {base}"
+        )));
+    }
+    chda_git::add_worktree(repo, branch, path, base)
+}
+
+/// A random readable branch name (`brisk-otter`) that is neither a local
+/// branch of `repo` nor would land on an existing folder via `path_of`.
+pub fn new_branch_name(repo: &Path, path_of: impl Fn(&str) -> PathBuf) -> String {
+    let branches = chda_git::local_branches(repo).unwrap_or_default();
+    crate::random_branch_name(|name| branches.iter().any(|b| b == name) || path_of(name).exists())
 }
 
 /// Remove a worktree and prune.
