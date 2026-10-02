@@ -26,6 +26,8 @@ pub trait System {
     fn on_notification_click(&self, handler: Box<dyn Fn(NotificationTarget)>);
     /// Open a file with the system's default application.
     fn open_file(&self, path: &Path, cx: &gpui::App);
+    /// Show `path` selected in its folder in the file manager.
+    fn reveal_path(&self, path: &Path, cx: &gpui::App);
 }
 
 /// The real OS.
@@ -58,6 +60,10 @@ impl System for NativeSystem {
 
     fn open_file(&self, path: &Path, cx: &gpui::App) {
         cx.open_with_system(path);
+    }
+
+    fn reveal_path(&self, path: &Path, cx: &gpui::App) {
+        cx.reveal_path(path);
     }
 }
 

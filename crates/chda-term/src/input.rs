@@ -87,3 +87,28 @@ pub struct MouseInput {
     pub px_x: u32,
     pub px_y: u32,
 }
+
+/// Quote `text` as one word for POSIX shells and fish: bare when it only has
+/// safe characters, else in single quotes with `'` written as `'\''`.
+pub fn shell_quote(text: &str) -> String {
+    let safe = |c: char| c.is_alphanumeric() || "/._-+=:@%,~".contains(c);
+    if !text.is_empty() && text.chars().all(safe) && !text.starts_with('~') {
+        return text.to_owned();
+    }
+    format!("'{}'", text.replace('\'', r"'\''"))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn shell_quote_keeps_one_word() {
+        assert_eq!(shell_quote("/a/b.rs"), "/a/b.rs");
+        assert_eq!(shell_quote("/My Notes/a"), "'/My Notes/a'");
+        assert_eq!(shell_quote("it's"), r"'it'\''s'");
+        assert_eq!(shell_quote("~x"), "'~x'");
+        assert_eq!(shell_quote("$HOME"), "'$HOME'");
+        assert_eq!(shell_quote(""), "''");
+    }
+}

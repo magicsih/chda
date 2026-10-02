@@ -14,7 +14,7 @@ use gpui::{
     px, relative, size,
 };
 
-use crate::terminal_view::{GridGeometry, TerminalView};
+use crate::terminal_view::{GridGeometry, LinkOpen, TerminalView};
 
 /// Cell dimensions for the current font.
 #[derive(Clone, Copy, Debug)]
@@ -216,15 +216,28 @@ impl Element for TerminalElement {
         });
         if let Some(link) = self.view.read(cx).hovered_link.as_ref() {
             let color = hsla(frame.foreground);
+            // Files get a solid underline, folders a dotted one.
+            let dotted = matches!(link.open, LinkOpen::Path { is_dir: true, .. });
             for &(row, from, to) in &link.cells {
                 let origin = point(
                     bounds.origin.x + metrics.cell_width * f32::from(from),
                     bounds.origin.y + metrics.line_height * f32::from(row + 1) - px(1.0),
                 );
                 let width = metrics.cell_width * f32::from(to - from + 1);
-                layout
-                    .link
-                    .push((Bounds::new(origin, size(width, px(1.0))), color));
+                if !dotted {
+                    layout
+                        .link
+                        .push((Bounds::new(origin, size(width, px(1.0))), color));
+                    continue;
+                }
+                let mut x = px(0.0);
+                while x < width {
+                    let dot = point(origin.x + x, origin.y);
+                    layout
+                        .link
+                        .push((Bounds::new(dot, size(px(2.0), px(1.0))), color));
+                    x += px(4.0);
+                }
             }
         }
         let key = (

@@ -152,6 +152,23 @@ pub(crate) enum MenuAction {
     },
     /// A menu item that cannot be used now, with the reason.
     Unavailable(String),
+    /// Open a file or folder with the editor or the default application.
+    OpenPath {
+        path: PathBuf,
+        line: Option<u32>,
+        column: Option<u32>,
+    },
+    /// Show a file or folder selected in the file manager.
+    RevealPath(PathBuf),
+    /// Open with the system's default application (a folder: the file manager).
+    OpenWithSystem(PathBuf),
+    /// Type `cd <dir>` at the shell prompt of `pane`.
+    CdHere {
+        pane: PaneId,
+        dir: PathBuf,
+    },
+    OpenUrl(String),
+    Copy(String),
 }
 
 /// A yes/no sheet before a destructive action.
@@ -1394,6 +1411,17 @@ impl WorkspaceView {
                 self.open_path(path, *line, *column, cx);
             }
             TerminalEvent::ViewDiagram(source) => self.view_diagram(source.as_deref(), cx),
+            TerminalEvent::LinkMenu {
+                link,
+                position,
+                at_prompt,
+            } => {
+                let cwd = self.ws.pane(pane).and_then(|i| i.cwd.clone());
+                self.context_menu = Some(ContextMenu {
+                    position: *position,
+                    items: crate::link_menu::items(link, pane, cwd.as_deref(), *at_prompt),
+                });
+            }
             TerminalEvent::Activity(at) => {
                 if let Some(info) = self.ws.pane_mut(pane) {
                     info.last_activity = *at;
@@ -1405,8 +1433,6 @@ impl WorkspaceView {
         cx.notify();
     }
 
-    /// Open a cmd-clicked file with the configured editor, else the system's
-    /// default application.
     /// Render a Mermaid diagram in the browser from a local page.
     fn view_diagram(&mut self, source: Option<&str>, cx: &mut Context<Self>) {
         let Some(source) = source else {
@@ -1422,6 +1448,8 @@ impl WorkspaceView {
         }
     }
 
+    /// Open a cmd-clicked file with the configured editor, else the system's
+    /// default application; folders always go to the file manager.
     fn open_path(
         &mut self,
         path: &Path,
@@ -1429,7 +1457,8 @@ impl WorkspaceView {
         column: Option<u32>,
         cx: &mut Context<Self>,
     ) {
-        let Some(template) = self.config.editor.as_deref() else {
+        let template = self.config.editor.as_deref().filter(|_| !path.is_dir());
+        let Some(template) = template else {
             self.env.system.open_file(path, cx);
             return;
         };
@@ -2400,6 +2429,18 @@ impl WorkspaceView {
                 self.refresh_sessions(cx);
                 self.refresh_prs(true, cx);
             }
+            MenuAction::OpenPath { path, line, column } => {
+                self.open_path(&path, line, column, cx);
+            }
+            MenuAction::RevealPath(path) => self.env.system.reveal_path(&path, cx),
+            MenuAction::OpenWithSystem(path) => self.env.system.open_file(&path, cx),
+            MenuAction::CdHere { pane, dir } => {
+                if let Some((view, _)) = self.panes.get(&pane) {
+                    view.update(cx, |v, _| v.cd(&dir));
+                }
+            }
+            MenuAction::OpenUrl(url) => cx.open_url(&url),
+            MenuAction::Copy(text) => cx.write_to_clipboard(gpui::ClipboardItem::new_string(text)),
         }
         cx.notify();
     }

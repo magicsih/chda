@@ -687,6 +687,7 @@ impl Terminal {
         let title = self.title();
         let pwd = self.pwd();
         let alternate_screen = self.alternate_screen();
+        let mouse_tracking = self.mouse_tracking();
         let scrollbar = self.vt.scrollbar().map(|s| Scrollbar {
             total: s.total,
             offset: s.offset,
@@ -714,6 +715,7 @@ impl Terminal {
             title,
             pwd,
             alternate_screen,
+            mouse_tracking,
             hyperlinks: Vec::new(),
             images: Vec::new(),
             diagrams: Vec::new(),

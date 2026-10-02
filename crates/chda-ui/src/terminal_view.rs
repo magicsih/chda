@@ -1,7 +1,7 @@
 //! A view that owns one terminal session and forwards input to it.
 
 use std::ops::Range;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::sync::mpsc;
 
@@ -18,8 +18,8 @@ use gpui::{
     App, Bounds, ClipboardItem, Context, Entity, EntityInputHandler, EventEmitter, FocusHandle,
     Focusable, KeyDownEvent, Keystroke, Modifiers as GpuiModifiers, ModifiersChangedEvent,
     MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent, Pixels, Point, Render,
-    ScrollWheelEvent, Subscription, TouchPhase, UTF16Selection, Window, actions, div, prelude::*,
-    px,
+    ScrollWheelEvent, Subscription, TouchPhase, UTF16Selection, Window, actions, anchored,
+    deferred, div, point, prelude::*, px,
 };
 
 use crate::settings::Settings;
@@ -76,16 +76,26 @@ pub enum TerminalEvent {
         line: Option<u32>,
         column: Option<u32>,
     },
+    /// The user right-clicked (or cmd-shift-clicked) a link: show what can
+    /// be done with it. `at_prompt` tells whether the shell waits for a
+    /// command, so typing one is safe.
+    LinkMenu {
+        link: LinkOpen,
+        position: Point<Pixels>,
+        at_prompt: bool,
+    },
 }
 
-/// Where a cmd-clicked link goes.
+/// Where a link under the mouse goes.
 #[derive(Clone, Debug, PartialEq)]
 pub enum LinkOpen {
     Url(String),
+    /// An existing file or folder, as an absolute path.
     Path {
         path: PathBuf,
         line: Option<u32>,
         column: Option<u32>,
+        is_dir: bool,
     },
 }
 
@@ -537,6 +547,17 @@ impl TerminalView {
         }
     }
 
+    /// Change the shell's directory to `dir` by typing a `cd` command,
+    /// replacing whatever is on the command line.
+    pub fn cd(&mut self, dir: &Path) {
+        let command = format!("cd {}\r", chda_term::shell_quote(&dir.to_string_lossy()));
+        // ctrl-e, ctrl-u: clear the line in emacs-style line editors.
+        let mut bytes = b"\x05\x15".to_vec();
+        bytes.extend_from_slice(command.as_bytes());
+        self.touch();
+        self.session.write(bytes);
+    }
+
     fn copy(&mut self, _: &Copy, _: &mut Window, _: &mut Context<Self>) {
         self.session.copy_selection();
     }
@@ -748,6 +769,44 @@ impl TerminalView {
         )
     }
 
+    /// The resolved absolute path under a cmd-hovered path link, shown just
+    /// below the link's last row.
+    fn render_link_hint(&self) -> Option<gpui::AnyElement> {
+        let link = self.hovered_link.as_ref()?;
+        let LinkOpen::Path { path, is_dir, .. } = &link.open else {
+            return None;
+        };
+        let g = self.geometry?;
+        let &(row, from, _) = link.cells.last()?;
+        let at = point(
+            g.origin.x + g.cell_width * f32::from(from),
+            g.origin.y + g.line_height * f32::from(row + 1) + px(2.0),
+        );
+        let fg = hsla(self.settings.colors.foreground.unwrap_or_default());
+        let bg = hsla(self.settings.colors.background.unwrap_or_default());
+        let mut text = path.to_string_lossy().into_owned();
+        if *is_dir && !text.ends_with('/') {
+            text.push('/');
+        }
+        Some(
+            deferred(
+                anchored().position(at).snap_to_window().child(
+                    div()
+                        .px_2()
+                        .py_0p5()
+                        .rounded_sm()
+                        .bg(crate::workspace_view::blend(bg, fg, 0.12))
+                        .border_1()
+                        .border_color(fg.opacity(0.2))
+                        .text_xs()
+                        .text_color(fg)
+                        .child(text),
+                ),
+            )
+            .into_any_element(),
+        )
+    }
+
     /// Translate a window position into a grid cell and grid-relative pixels.
     fn mouse_input(
         &self,
@@ -781,15 +840,25 @@ impl TerminalView {
     /// Recompute the link under the mouse; only shown while cmd is held.
     fn update_link(&mut self, cx: &mut Context<Self>) {
         let link = match (self.cmd_held, self.hover_cell) {
-            (true, Some((x, y))) => chda_term::link_at(&self.frame, x, y)
-                .and_then(|l| Some((self.resolve_link(l.target)?, l.cells)))
-                .map(|(open, cells)| HoveredLink { cells, open }),
+            (true, Some((x, y))) => self.link_at(x, y),
             _ => None,
         };
         if link != self.hovered_link {
             self.hovered_link = link;
             cx.notify();
         }
+    }
+
+    /// The first link candidate at cell `(x, y)` that resolves.
+    fn link_at(&self, x: u16, y: u16) -> Option<HoveredLink> {
+        chda_term::links_at(&self.frame, x, y)
+            .into_iter()
+            .find_map(|l| {
+                Some(HoveredLink {
+                    open: self.resolve_link(l.target)?,
+                    cells: l.cells,
+                })
+            })
     }
 
     /// URLs open as they are; paths must exist, relative to the shell's
@@ -808,10 +877,12 @@ impl TerminalView {
                         self.cwd.as_ref()?.join(p)
                     }
                 };
-                p.exists().then_some(LinkOpen::Path {
+                let meta = std::fs::metadata(&p).ok()?;
+                Some(LinkOpen::Path {
                     path: p,
                     line,
                     column,
+                    is_dir: meta.is_dir(),
                 })
             }
         }
@@ -852,15 +923,31 @@ impl TerminalView {
             cx.emit(TerminalEvent::Focused);
         }
         self.track_hover(event.position, event.modifiers, cx);
+        let wants_menu = match event.button {
+            MouseButton::Right => !self.frame.mouse_tracking || event.modifiers.shift,
+            MouseButton::Left => event.modifiers.platform && event.modifiers.shift,
+            _ => false,
+        };
+        if wants_menu
+            && let Some((x, y)) = self.hover_cell
+            && let Some(link) = self.link_at(x, y)
+        {
+            cx.emit(TerminalEvent::LinkMenu {
+                link: link.open,
+                position: event.position,
+                at_prompt: self.frame.at_prompt(),
+            });
+            return;
+        }
         if event.button == MouseButton::Left
             && event.modifiers.platform
             && let Some(link) = self.hovered_link.clone()
         {
             match link.open {
                 LinkOpen::Url(url) => cx.open_url(&url),
-                LinkOpen::Path { path, line, column } => {
-                    cx.emit(TerminalEvent::OpenPath { path, line, column })
-                }
+                LinkOpen::Path {
+                    path, line, column, ..
+                } => cx.emit(TerminalEvent::OpenPath { path, line, column }),
             }
             return;
         }
@@ -1068,6 +1155,7 @@ impl Render for TerminalView {
         let p = self.settings.padding;
         let search = self.render_search(cx);
         let chips = self.render_diagram_chips(cx);
+        let link_hint = self.render_link_hint();
         div()
             .size_full()
             .relative()
@@ -1100,6 +1188,7 @@ impl Render for TerminalView {
             .child(TerminalElement::new(cx.entity(), self.focus_handle.clone()))
             .children(chips)
             .children(search)
+            .children(link_hint)
     }
 }
 

@@ -3,6 +3,7 @@
 mod diagram;
 mod environment;
 mod fonts;
+mod link_menu;
 mod menus;
 mod palette;
 mod platform;

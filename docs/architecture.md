@@ -44,7 +44,14 @@ carry the highlights for the visible rows. A tracked grid reference keeps the
 current match in place while new output re-runs the search (at most four
 times a second). Frames also carry OSC 8 hyperlinks; plain URLs and file
 paths are found in the visible rows, joined across soft wraps, when the user
-holds `cmd`.
+holds `cmd` or right-clicks. Paths can be quoted or backslash-escaped to
+contain spaces, and `file://` URLs count as paths. Since `ls` prints bare
+names, any word is a path candidate: the UI resolves candidates against the
+pane's directory (OSC 7) and keeps the first that exists, so the underline
+(solid for files, dotted for folders) only appears on real files and
+folders. Right-click (cmd-shift-click while an application reads the mouse)
+opens a menu to open, reveal in the file manager, open a tab or `cd` there
+(only while the cursor sits on a shell prompt) and copy the path.
 
 Images from the Kitty graphics protocol are stored and placed by
 libghostty-vt; chda decodes PNG payloads for it (`png` crate) and allows the

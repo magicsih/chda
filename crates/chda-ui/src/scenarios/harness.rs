@@ -24,6 +24,7 @@ pub struct Recorded {
     pub beeps: usize,
     pub click: Option<Box<dyn Fn(NotificationTarget)>>,
     pub opened_files: Vec<PathBuf>,
+    pub revealed: Vec<PathBuf>,
 }
 
 #[derive(Default)]
@@ -57,6 +58,10 @@ impl System for RecordingSystem {
 
     fn open_file(&self, path: &Path, _: &App) {
         self.0.borrow_mut().opened_files.push(path.to_path_buf());
+    }
+
+    fn reveal_path(&self, path: &Path, _: &App) {
+        self.0.borrow_mut().revealed.push(path.to_path_buf());
     }
 }
 
