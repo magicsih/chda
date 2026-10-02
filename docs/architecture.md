@@ -75,6 +75,15 @@ it. The viewer is an HTML page written to the data directory next to a
 bundled `mermaid.min.js` and opened in the default browser, so diagrams never
 leave the machine.
 
+Files dropped from other applications go through
+`chda-ui::external_drop`. GPUI only hands a drop to the element under the
+mouse, and nothing counts as under the mouse while the last input was a key,
+which a drag from Finder does not change. So targets (panes and the sidebar)
+remember the dragged paths from `on_drag_move`, and an invisible layer takes
+the drop on mouse up inside their bounds. A pane pastes the paths quoted for
+the shell (`chda_term::shell_quote`); the sidebar adds dropped folders as
+repositories.
+
 ## Workspace model
 
 `chda-core` holds the window model: tabs, each with a binary split tree of

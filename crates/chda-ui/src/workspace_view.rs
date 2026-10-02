@@ -1837,6 +1837,11 @@ impl WorkspaceView {
             SidebarEvent::NewWorktree(repo) => self.open_sheet(repo, window, cx),
             SidebarEvent::ResumeSessions(picks) => self.resume_sessions(picks, window, cx),
             SidebarEvent::AddRepo => self.add_repo(&AddRepo, window, cx),
+            SidebarEvent::AddRepos(paths) => {
+                for path in paths {
+                    self.register_repo(path, cx);
+                }
+            }
             SidebarEvent::OpenUrl(url) => cx.open_url(&url),
             SidebarEvent::JumpToAgent(path) => self.jump_to_worktree_agent(&path, window, cx),
             SidebarEvent::OpenDiff(path) => self.open_diff(&path, window, cx),

@@ -154,3 +154,72 @@ fn quoted_path_with_spaces_is_one_link(cx: &mut gpui::TestAppContext) {
     let copied = h.read(|_, cx| cx.read_from_clipboard().and_then(|c| c.text()));
     assert_eq!(copied.as_deref(), Some(&*todo.to_string_lossy()));
 }
+
+/// Drag `paths` from another app and drop them at `at`.
+fn drop_files(h: &mut Harness, at: Point<Pixels>, paths: &[std::path::PathBuf]) {
+    use gpui::{ExternalPaths, FileDropEvent};
+    h.cx.simulate_event(FileDropEvent::Entered {
+        position: at,
+        paths: ExternalPaths(paths.iter().cloned().collect()),
+    });
+    eprintln!(
+        "DEBUG active after enter: {}",
+        h.cx.update(|_, cx| cx.has_active_drag())
+    );
+    h.cx.simulate_event(FileDropEvent::Pending { position: at });
+    h.cx.simulate_event(FileDropEvent::Submit { position: at });
+    h.cx.run_until_parked();
+}
+
+#[gpui::test]
+fn dropped_files_paste_as_quoted_paths(cx: &mut gpui::TestAppContext) {
+    let mut h = Harness::open(cx, "dropf", |home| {
+        std::fs::write(home.home.join("My File.txt"), "x\n").unwrap();
+        std::fs::write(home.home.join("it's.md"), "x\n").unwrap();
+    });
+    let files = [h.home.home.join("My File.txt"), h.home.home.join("it's.md")];
+    h.wait_prompt();
+    h.type_text("clear; printf '[%s]\\n' ");
+    let at = h.read(|v, cx| {
+        let pane = v.ws.focused_pane().unwrap();
+        let g = v.panes[&pane].0.read(cx).geometry.unwrap();
+        point(
+            g.origin.x + g.cell_width * 5.0,
+            g.origin.y + g.line_height * 5.0,
+        )
+    });
+    drop_files(&mut h, at, &files);
+    h.keys("enter");
+    for file in &files {
+        let line = format!("[{}]", file.display());
+        h.wait_for(&line.clone(), move |v, cx| {
+            v.focused_text(cx).lines().any(|l| l == line)
+        });
+    }
+}
+
+#[gpui::test]
+fn dropped_folder_on_the_sidebar_becomes_a_repository(cx: &mut gpui::TestAppContext) {
+    let mut h = Harness::open(cx, "dropr", |_| {});
+    let repo = h.home.repo("dropped");
+    let file = h.home.home.join("note.txt");
+    std::fs::write(&file, "x\n").unwrap();
+    h.wait_prompt();
+    // Typing first: drops must still land while the last input was a key.
+    h.type_text("x");
+    let at = h.read(|v, cx| {
+        let pane = v.ws.focused_pane().unwrap();
+        let g = v.panes[&pane].0.read(cx).geometry.unwrap();
+        point(g.origin.x / 2.0, g.origin.y + gpui::px(200.0))
+    });
+    drop_files(&mut h, at, &[repo.clone(), file]);
+    h.wait_for("the dropped repository in the sidebar", move |v, cx| {
+        v.sidebar
+            .read(cx)
+            .model
+            .repos
+            .iter()
+            .any(|r| r.path == repo)
+    });
+    assert_eq!(h.read(|v, cx| v.sidebar.read(cx).model.repos.len()), 1);
+}

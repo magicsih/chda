@@ -163,6 +163,8 @@ pub struct TerminalView {
     hover_cell: Option<(u16, u16)>,
     cmd_held: bool,
     pub hovered_link: Option<HoveredLink>,
+    /// Files dragged over the window from another app.
+    dragged: crate::external_drop::Dragged,
 }
 
 impl EventEmitter<TerminalEvent> for TerminalView {}
@@ -265,6 +267,7 @@ impl TerminalView {
             hover_cell: None,
             cmd_held: false,
             hovered_link: None,
+            dragged: Default::default(),
         }
     }
 
@@ -544,6 +547,22 @@ impl TerminalView {
     fn paste(&mut self, _: &Paste, _: &mut Window, cx: &mut Context<Self>) {
         if let Some(text) = cx.read_from_clipboard().and_then(|item| item.text()) {
             self.session.paste(text);
+        }
+    }
+
+    /// Files dropped on the pane: paste their paths, quoted for the shell
+    /// and separated by spaces, with a space after the last one.
+    fn drop_paths(&mut self, paths: Vec<PathBuf>, window: &mut Window, cx: &mut Context<Self>) {
+        let mut text = paths
+            .iter()
+            .map(|p| chda_term::shell_quote(&p.to_string_lossy()))
+            .collect::<Vec<_>>()
+            .join(" ");
+        text.push(' ');
+        self.session.paste(text);
+        if !self.focus_handle.is_focused(window) {
+            self.focus(window, cx);
+            cx.emit(TerminalEvent::Focused);
         }
     }
 
@@ -1185,9 +1204,15 @@ impl Render for TerminalView {
             .on_mouse_move(cx.listener(Self::mouse_move))
             .on_modifiers_changed(cx.listener(Self::modifiers_changed))
             .on_scroll_wheel(cx.listener(Self::scroll_wheel))
+            .on_drag_move(cx.listener(|this, e, _, cx| this.dragged.track(e, cx)))
             .child(TerminalElement::new(cx.entity(), self.focus_handle.clone()))
             .children(chips)
             .children(search)
+            .child(crate::external_drop::catcher(
+                cx.entity(),
+                |v: &mut Self| &mut v.dragged,
+                Self::drop_paths,
+            ))
             .children(link_hint)
     }
 }
