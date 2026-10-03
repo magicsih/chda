@@ -4,6 +4,13 @@ All notable changes to chda. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); entries are
 generated from conventional commit messages by release-plz.
 
+## [0.1.11](https://github.com/magicsih/chda/compare/v0.1.10...v0.1.11) - 2026-10-03
+
+### Added
+
+- *(ui)* resize the sidebar by dragging its border and collapse it from the title bar ([#98](https://github.com/magicsih/chda/pull/98))
+- *(sidebar)* add folders that are not git repositories, with an offer to run git init ([#96](https://github.com/magicsih/chda/pull/96))
+
 ## [0.1.10](https://github.com/magicsih/chda/compare/v0.1.9...v0.1.10) - 2026-10-03
 
 ### Added
