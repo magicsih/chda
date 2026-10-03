@@ -89,6 +89,11 @@ fn write_font(dir: &Path, name: &str, data: &[u8]) -> std::io::Result<PathBuf> {
 /// buttons, which sit over it.
 pub const TITLE_BAR_INSET: f32 = if cfg!(target_os = "macos") { 78.0 } else { 8.0 };
 
+/// Top of the macOS window buttons, and their height; the title bar's
+/// content is centered on them.
+pub const WINDOW_BUTTONS_TOP: f32 = 10.0;
+pub const WINDOW_BUTTONS_HEIGHT: f32 = 14.0;
+
 /// The title bar options for chda's windows. On macOS the system bar is
 /// transparent and chda draws its own, with the window buttons kept;
 /// elsewhere the system bar stays and chda's sits under it.
@@ -97,7 +102,7 @@ pub fn titlebar(title: &str) -> gpui::TitlebarOptions {
         title: Some(title.to_owned().into()),
         appears_transparent: cfg!(target_os = "macos"),
         traffic_light_position: cfg!(target_os = "macos")
-            .then(|| gpui::point(gpui::px(12.0), gpui::px(10.0))),
+            .then(|| gpui::point(gpui::px(12.0), gpui::px(WINDOW_BUTTONS_TOP))),
     }
 }
 

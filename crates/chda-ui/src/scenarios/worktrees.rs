@@ -791,6 +791,16 @@ fn title_bar_opens_the_worktree_in_the_picked_app(cx: &mut TestAppContext) {
         h.cx.run_until_parked();
     };
 
+    // The buttons sit on the line through the middle of the window buttons.
+    let middle = crate::platform::WINDOW_BUTTONS_TOP + crate::platform::WINDOW_BUTTONS_HEIGHT / 2.0;
+    for selector in ["open-in-pick", "open-in-go"] {
+        let center = h.cx.debug_bounds(selector).unwrap().center().y;
+        assert!(
+            (f32::from(center) - middle).abs() < 0.6,
+            "{selector} centered at {center:?}, window buttons at {middle}"
+        );
+    }
+
     // Nothing picked yet: the first installed app, at the worktree root.
     click(&mut h, "open-in-go");
     assert_eq!(

@@ -86,8 +86,11 @@ actions!(
 
 /// Fraction of the tab a keyboard resize moves the divider by.
 const RESIZE_STEP: f32 = 0.05;
-/// Height of the window's own title bar.
-const TITLE_BAR_HEIGHT: f32 = 32.0;
+/// Height of the window's own title bar, bottom border included. Its
+/// content is centered on the macOS window buttons.
+pub(crate) const TITLE_BAR_HEIGHT: f32 = 2.0
+    * (crate::platform::WINDOW_BUTTONS_TOP + crate::platform::WINDOW_BUTTONS_HEIGHT / 2.0)
+    + 1.0;
 /// Font size bounds and step for the runtime font size actions (Ghostty's).
 const FONT_SIZE_STEP: f32 = 1.0;
 const FONT_SIZE_MIN: f32 = 4.0;
