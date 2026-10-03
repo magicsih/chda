@@ -21,8 +21,8 @@ use futures::StreamExt;
 use futures::channel::mpsc::unbounded;
 use gpui::{
     AnyElement, App, Context, Entity, FocusHandle, Focusable, Hsla, MouseButton, MouseDownEvent,
-    PathPromptOptions, Pixels, Point, PromptLevel, Render, Subscription, Window, actions, anchored,
-    deferred, div, img, point, prelude::*, px, relative,
+    MouseMoveEvent, PathPromptOptions, Pixels, Point, PromptLevel, Render, Subscription, Window,
+    actions, anchored, deferred, div, img, point, prelude::*, px, relative,
 };
 
 use crate::palette::{Palette, PaletteCommand, PaletteEvent, PaletteItem};
@@ -101,6 +101,23 @@ const FONT_SIZE_MAX: f32 = 255.0;
 const STATUS_REFRESH: Duration = Duration::from_secs(60);
 /// How often session transcripts are re-indexed while the window is active.
 const SESSION_REFRESH: Duration = Duration::from_secs(120);
+/// Sidebar width bounds while dragging its border, and the room the panes
+/// keep next to it.
+const SIDEBAR_MIN: f32 = 180.0;
+const SIDEBAR_MAX: f32 = 600.0;
+const PANES_MIN: f32 = 320.0;
+/// Width of the grab area on the sidebar's border.
+const SIDEBAR_GRIP: f32 = 6.0;
+
+/// `width` kept within the bounds and leaving the panes their room in a
+/// window `window_width` wide.
+fn clamp_sidebar(width: f32, window_width: f32) -> f32 {
+    let max = SIDEBAR_MAX.min(window_width - PANES_MIN).max(SIDEBAR_MIN);
+    width.clamp(SIDEBAR_MIN, max)
+}
+
+const ICON_SIDEBAR: &str = "\u{f10aa}"; // nf-md-dock_left
+
 /// Answers when an added folder is not a git repository.
 const INIT_GIT: &str = "Initialize git";
 const ADD_AS_FOLDER: &str = "Add as folder";
@@ -235,7 +252,9 @@ pub struct WorkspaceView {
     focus_handle: FocusHandle,
     pub(crate) sidebar: Entity<SidebarView>,
     _sidebar_sub: Subscription,
-    sidebar_visible: bool,
+    pub(crate) sidebar_visible: bool,
+    /// The sidebar's border is being dragged.
+    sidebar_drag: bool,
     adapters: Arc<Vec<Box<dyn AgentAdapter>>>,
     session_cache: Arc<Mutex<SessionCache>>,
     hook_events: Option<mpsc::Receiver<Incoming>>,
@@ -324,6 +343,7 @@ impl WorkspaceView {
         };
         let mut this = Self {
             sidebar_visible: config.sidebar_visible,
+            sidebar_drag: false,
             configured_font_size: settings.font_size,
             settings,
             config,
@@ -1726,6 +1746,37 @@ impl WorkspaceView {
 
     /// The window's own title bar: drag area, title, and the "open in" app
     /// picker and button.
+    /// The grab area on the sidebar's right border: drag to resize,
+    /// double-click for the default width.
+    fn render_sidebar_grip(&self, divider: Hsla, cx: &mut Context<Self>) -> AnyElement {
+        div()
+            .id("sidebar-grip")
+            .debug_selector(|| "sidebar-grip".into())
+            .absolute()
+            .top_0()
+            .bottom_0()
+            .right_0()
+            .w(px(SIDEBAR_GRIP))
+            .cursor_col_resize()
+            .when(self.sidebar_drag, |d| d.bg(divider))
+            .hover(|s| s.bg(divider))
+            .on_mouse_down(
+                MouseButton::Left,
+                cx.listener(|this, e: &MouseDownEvent, _, cx| {
+                    cx.stop_propagation();
+                    if e.click_count == 2 {
+                        this.sidebar_drag = false;
+                        this.config.sidebar_width = ChdaConfig::default().sidebar_width;
+                        this.save_config();
+                    } else {
+                        this.sidebar_drag = true;
+                    }
+                    cx.notify();
+                }),
+            )
+            .into_any_element()
+    }
+
     fn render_title_bar(&self, window: &Window, cx: &mut Context<Self>) -> AnyElement {
         let bg = hsla(self.settings.colors.background.unwrap_or_default());
         let fg = hsla(self.settings.colors.foreground.unwrap_or_default());
@@ -1776,6 +1827,35 @@ impl WorkspaceView {
                     window.titlebar_double_click();
                 }
             })
+            .child(
+                div()
+                    .id("sidebar-toggle")
+                    .debug_selector(|| "sidebar-toggle".into())
+                    .h(px(22.0))
+                    .px_1()
+                    .flex()
+                    .items_center()
+                    .rounded_md()
+                    .text_color(fg.opacity(if self.sidebar_visible { 0.8 } else { 0.55 }))
+                    .cursor_pointer()
+                    .hover(|s| s.bg(fg.opacity(0.1)))
+                    .on_mouse_down(MouseButton::Left, stop)
+                    .tooltip(crate::tooltip::text(if self.sidebar_visible {
+                        "Hide the sidebar (cmd-b)"
+                    } else {
+                        "Show the sidebar (cmd-b)"
+                    }))
+                    .on_click(cx.listener(|this, _, window, cx| {
+                        this.toggle_sidebar(&ToggleSidebar, window, cx);
+                        cx.notify();
+                    }))
+                    .child(
+                        div()
+                            .font_family(crate::fonts::SYMBOLS_FAMILY)
+                            .text_base()
+                            .child(optical(ICON_SIDEBAR)),
+                    ),
+            )
             .child(
                 div()
                     .flex_1()
@@ -2094,6 +2174,42 @@ impl WorkspaceView {
             self.refresh_all(cx);
         }
         self.focus_active(window, cx);
+    }
+
+    /// The sidebar's width in this window.
+    fn sidebar_width(&self, window: &Window) -> f32 {
+        clamp_sidebar(
+            self.config.sidebar_width as f32,
+            f32::from(window.viewport_size().width),
+        )
+    }
+
+    /// Follow the pointer while the sidebar's border is dragged.
+    fn drag_sidebar(&mut self, e: &MouseMoveEvent, window: &mut Window, cx: &mut Context<Self>) {
+        if !self.sidebar_drag {
+            return;
+        }
+        if e.pressed_button != Some(MouseButton::Left) {
+            // Released outside the window.
+            self.end_sidebar_drag(cx);
+            return;
+        }
+        let width = clamp_sidebar(
+            f32::from(e.position.x),
+            f32::from(window.viewport_size().width),
+        );
+        let width = width.round() as u32;
+        if width != self.config.sidebar_width {
+            self.config.sidebar_width = width;
+            cx.notify();
+        }
+    }
+
+    fn end_sidebar_drag(&mut self, cx: &mut Context<Self>) {
+        if std::mem::take(&mut self.sidebar_drag) {
+            self.save_config();
+            cx.notify();
+        }
     }
 
     fn add_repo(&mut self, _: &AddRepo, window: &mut Window, cx: &mut Context<Self>) {
@@ -2640,7 +2756,7 @@ impl WorkspaceView {
     fn tab_aspect(&self, window: &Window) -> f32 {
         let size = window.viewport_size();
         let sidebar = if self.sidebar_visible {
-            self.config.sidebar_width as f32
+            self.sidebar_width(window)
         } else {
             0.0
         };
@@ -4255,7 +4371,7 @@ impl Render for WorkspaceView {
             },
             None => div().into_any_element(),
         };
-        let sidebar_width = px(self.config.sidebar_width as f32);
+        let sidebar_width = px(self.sidebar_width(window));
         // The status line sits under the sidebar, or under the panes when
         // the sidebar is hidden.
         let mut status = self.render_status_line(cx);
@@ -4400,16 +4516,35 @@ impl Render for WorkspaceView {
                                 .w(sidebar_width)
                                 .h_full()
                                 .flex_shrink_0()
+                                .relative()
                                 .flex()
                                 .flex_col()
                                 .border_r_1()
                                 .border_color(divider)
                                 .child(div().flex_1().min_h_0().child(self.sidebar.clone()))
-                                .children(status),
+                                .children(status)
+                                .child(self.render_sidebar_grip(divider, cx)),
                         )
                     })
                     .child(main),
             )
+            .when(self.sidebar_drag, |d| {
+                // Over everything while the border is dragged, so the panes
+                // do not take the drag for a text selection.
+                d.child(
+                    div()
+                        .id("sidebar-drag")
+                        .absolute()
+                        .inset_0()
+                        .occlude()
+                        .cursor_col_resize()
+                        .on_mouse_move(cx.listener(Self::drag_sidebar))
+                        .on_mouse_up(
+                            MouseButton::Left,
+                            cx.listener(|this, _, _, cx| this.end_sidebar_drag(cx)),
+                        ),
+                )
+            })
             .children(self.render_context_menu(cx))
             .children(self.render_sheet(cx))
             .children(self.render_note_sheet())
