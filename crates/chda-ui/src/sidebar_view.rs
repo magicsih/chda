@@ -84,6 +84,53 @@ fn icon_text(icon: &'static str) -> gpui::Div {
     div().font_family(crate::fonts::SYMBOLS_FAMILY).child(icon)
 }
 
+/// A session's usage for its tooltip: the token breakdown, the cost at API
+/// list prices, and the plan limit when the agent reports one. Empty when
+/// the transcript records no usage.
+fn usage_lines(usage: &chda_core::agents::Usage) -> String {
+    use chda_core::agents::compact_tokens as k;
+    if usage.is_empty() {
+        return String::new();
+    }
+    let s = usage.summed();
+    let mut parts = vec![format!("{} in", k(s.input))];
+    let writes = s.cache_write_5m + s.cache_write_1h;
+    if writes > 0 {
+        parts.push(format!("{} cache write", k(writes)));
+    }
+    if s.cache_read > 0 {
+        parts.push(format!("{} cache read", k(s.cache_read)));
+    }
+    parts.push(format!("{} out", k(s.output)));
+    let mut text = format!("\n{} tokens: {}", k(usage.total()), parts.join(", "));
+    let models: Vec<&str> = usage.models.iter().map(|m| m.model.as_str()).collect();
+    let (dollars, complete) = usage.cost();
+    if dollars > 0.0 {
+        let approx = if complete {
+            "\u{2248}"
+        } else {
+            "at least \u{2248}"
+        };
+        text.push_str(&format!(
+            "\n{approx} ${dollars:.2} at API list prices ({}). Subscriptions are not billed per token.",
+            models.join(", ")
+        ));
+    }
+    if let Some(limit) = usage.limit {
+        let window = match limit.window_minutes {
+            10_080 => "weekly".to_owned(),
+            m if m % 1_440 == 0 => format!("{}-day", m / 1_440),
+            m if m % 60 == 0 => format!("{}-hour", m / 60),
+            m => format!("{m}-minute"),
+        };
+        text.push_str(&format!(
+            "\nPlan limit: {}% of the {window} window used at the last turn.",
+            limit.used_percent
+        ));
+    }
+    text
+}
+
 /// Tooltip for an operation running on a worktree, e.g. "deleting".
 fn busy_tooltip(busy: &str) -> String {
     let mut chars = busy.chars();
@@ -721,8 +768,9 @@ impl SidebarView {
             .when(picked, |d| d.bg(fg.opacity(0.14)))
             .hover(|s| s.bg(fg.opacity(0.08)))
             .tooltip(crate::tooltip::text(format!(
-                "{name}, {messages}. Click to resume in a new tab; \
-                 cmd-click to pick several and resume them side by side."
+                "{name}, {messages}.{}\nClick to resume in a new tab; \
+                 cmd-click to pick several and resume them side by side.",
+                usage_lines(&session.usage)
             )))
             .on_click(cx.listener(move |this, e: &ClickEvent, _, cx| {
                 if e.modifiers().platform {
@@ -765,7 +813,11 @@ impl SidebarView {
                             .gap_1()
                             .text_color(fg.opacity(0.5))
                             .group_hover(group.clone(), |s| s.invisible())
-                            .child(format!("{}", session.message_count))
+                            .child(if session.usage.is_empty() {
+                                session.message_count.to_string()
+                            } else {
+                                chda_core::agents::compact_tokens(session.usage.total())
+                            })
                             .child(relative_age(now, session.last_active_at)),
                     )
                     .child(
@@ -998,6 +1050,33 @@ impl Render for SidebarView {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn session_usage_tooltip() {
+        use chda_core::agents::{ModelUsage, Usage};
+        assert_eq!(usage_lines(&Usage::default()), "");
+        let mut u = Usage::default();
+        u.add(&ModelUsage {
+            model: "claude-opus-5-5".into(),
+            input: 30_000,
+            cache_write_1h: 210_000,
+            cache_read: 950_000,
+            output: 20_000,
+            ..Default::default()
+        });
+        assert_eq!(
+            usage_lines(&u),
+            "\n1.2M tokens: 30K in, 210K cache write, 950K cache read, 20K out\n\u{2248} $2.39 at API list prices (claude-opus-5-5). Subscriptions are not billed per token."
+        );
+        u.limit = Some(chda_core::agents::LimitUsage {
+            used_percent: 34,
+            window_minutes: 10_080,
+        });
+        assert!(
+            usage_lines(&u)
+                .ends_with("Plan limit: 34% of the weekly window used at the last turn.")
+        );
+    }
 
     #[test]
     fn busy_badges_explain_themselves() {

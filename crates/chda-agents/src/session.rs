@@ -27,13 +27,16 @@ pub struct AgentSession {
     pub snippet: String,
     pub message_count: usize,
     pub file: PathBuf,
+    /// Tokens used, per model, when the transcript records them.
+    #[serde(default)]
+    pub usage: crate::Usage,
 }
 
 /// File name of the persisted cache inside the data directory.
 const CACHE_FILE: &str = "session-index.json";
 
 /// Bumped when the cached data changes shape or meaning.
-const CACHE_VERSION: u32 = 2;
+const CACHE_VERSION: u32 = 3;
 
 /// What is known about one transcript file at a given mtime and size.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
@@ -288,6 +291,7 @@ mod tests {
             last_active_at: 1,
             snippet: "hi".into(),
             message_count: 1,
+            usage: Default::default(),
             file: file.to_path_buf(),
         };
         let parses = std::cell::Cell::new(0);

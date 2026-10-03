@@ -12,7 +12,9 @@ pub mod hook;
 pub mod ipc;
 mod mcp;
 mod opencode;
+mod pricing;
 mod session;
+mod usage;
 
 use std::path::{Path, PathBuf};
 use std::process::Command;
@@ -25,6 +27,7 @@ pub use hook::{HookEvent, HookKind, PANE_ENV, hook_main};
 pub use mcp::mcp_main;
 pub use opencode::OpenCodeAdapter;
 pub use session::{AgentSession, SessionCache, SessionId};
+pub use usage::{LimitUsage, ModelUsage, Usage, compact_tokens};
 
 /// Which agent a thing belongs to.
 #[derive(

@@ -1,6 +1,7 @@
 //! Claude Code: `claude` CLI, `~/.claude/projects` transcripts, hooks
 //! injected per launch with `--settings`.
 
+use std::collections::HashSet;
 use std::fs;
 use std::io;
 use std::path::{Path, PathBuf};
@@ -9,6 +10,7 @@ use std::process::Command;
 use serde_json::{Value, json};
 
 use crate::session::{file_mtime_ms, parse_rfc3339_ms, snippet};
+use crate::usage::{ModelUsage, Usage};
 use crate::{
     AgentAdapter, AgentId, AgentSession, HookInstallReport, SessionId, shell_quote, which,
     write_if_changed,
@@ -144,15 +146,159 @@ fn user_text(message: &Value) -> Option<String> {
     }
 }
 
+/// The parts of an assistant line that carry usage. Deserializing into
+/// this skips the rest of the line (message content, tool calls) without
+/// building it, which matters on large transcripts.
+#[derive(serde::Deserialize)]
+struct UsageLine {
+    #[serde(rename = "type")]
+    kind: Option<String>,
+    message: Option<UsageMessage>,
+}
+
+#[derive(serde::Deserialize)]
+struct UsageMessage {
+    id: Option<String>,
+    model: Option<String>,
+    usage: Option<RawUsage>,
+}
+
+#[derive(serde::Deserialize)]
+struct RawUsage {
+    #[serde(default)]
+    input_tokens: u64,
+    #[serde(default)]
+    cache_creation_input_tokens: u64,
+    #[serde(default)]
+    cache_read_input_tokens: u64,
+    #[serde(default)]
+    output_tokens: u64,
+    cache_creation: Option<CacheSplit>,
+}
+
+#[derive(serde::Deserialize)]
+struct CacheSplit {
+    #[serde(default)]
+    ephemeral_5m_input_tokens: u64,
+    #[serde(default)]
+    ephemeral_1h_input_tokens: u64,
+}
+
+/// Token usage of one assistant line: its message id, then the usage.
+/// Claude Code writes one response over several lines that repeat the same
+/// id and usage, so callers count each id once.
+fn line_usage(line: &str) -> Option<(String, ModelUsage)> {
+    quick_line_usage(line).or_else(|| full_line_usage(line))
+}
+
+/// [`line_usage`] without scanning the message content: an unescaped
+/// `"key":` can only be a real key (quotes inside JSON strings are
+/// escaped), so the message id, model and usage object are found by
+/// position and only the usage object is parsed. `None` when any of them
+/// is missing; the full parse then decides.
+fn quick_line_usage(line: &str) -> Option<(String, ModelUsage)> {
+    if !line.contains("\"type\":\"assistant\"") {
+        return None;
+    }
+    let string_after = |key: &str| {
+        let start = line.find(key)? + key.len();
+        let end = start + line[start..].find('"')?;
+        Some(line[start..end].to_owned())
+    };
+    let id = string_after("\"id\":\"msg_").map(|rest| format!("msg_{rest}"))?;
+    let model = string_after("\"model\":\"")?;
+    // The message's usage comes after its content, so take the last one.
+    let at = line.rfind("\"usage\":{")? + "\"usage\":".len();
+    let usage: RawUsage = serde_json::Deserializer::from_str(&line[at..])
+        .into_iter()
+        .next()?
+        .ok()?;
+    Some((id, model_usage(model, usage)))
+}
+
+fn model_usage(model: String, usage: RawUsage) -> ModelUsage {
+    let (write_5m, write_1h) = match usage.cache_creation {
+        Some(split) => (
+            split.ephemeral_5m_input_tokens,
+            split.ephemeral_1h_input_tokens,
+        ),
+        None => (usage.cache_creation_input_tokens, 0),
+    };
+    ModelUsage {
+        model,
+        input: usage.input_tokens,
+        cache_write_5m: write_5m,
+        cache_write_1h: write_1h,
+        cache_read: usage.cache_read_input_tokens,
+        output: usage.output_tokens,
+    }
+}
+
+/// [`line_usage`] by deserializing the line's fields that matter.
+fn full_line_usage(line: &str) -> Option<(String, ModelUsage)> {
+    let line: UsageLine = serde_json::from_str(line).ok()?;
+    if line.kind.as_deref() != Some("assistant") {
+        return None;
+    }
+    let message = line.message?;
+    let usage = message.usage?;
+    Some((
+        message.id?,
+        model_usage(message.model.unwrap_or_default(), usage),
+    ))
+}
+
+/// Add the usage recorded in `file` to `usage`, once per response.
+fn add_usage(file: &Path, seen: &mut HashSet<String>, usage: &mut Usage) {
+    let Ok(lines) = crate::session::matching_lines(file, &["\"usage\""]) else {
+        return;
+    };
+    for line in lines {
+        if let Some((id, u)) = line_usage(&line)
+            && seen.insert(id)
+        {
+            usage.add(&u);
+        }
+    }
+}
+
+/// Add the usage of the subagents a session started
+/// (`<session>/subagents/*.jsonl`).
+fn add_subagent_usage(file: &Path, seen: &mut HashSet<String>, usage: &mut Usage) {
+    let subagents = file.with_extension("").join("subagents");
+    if let Ok(entries) = std::fs::read_dir(subagents) {
+        let mut files: Vec<PathBuf> = entries
+            .filter_map(|e| e.ok().map(|e| e.path()))
+            .filter(|p| p.extension().is_some_and(|x| x == "jsonl"))
+            .collect();
+        files.sort();
+        for f in files {
+            add_usage(&f, seen, usage);
+        }
+    }
+}
+
 /// Parse a Claude Code transcript. The format is internal to Claude Code;
-/// this reads only `type == "user"` lines and tolerates anything else.
+/// this reads `type == "user"` lines for the prompts, assistant usage for
+/// the tokens, and tolerates anything else.
 pub fn parse_transcript(file: &Path) -> Option<AgentSession> {
     let mut id = None;
     let mut cwd = None;
     let mut started_at = None;
     let mut first = None;
     let mut count = 0;
-    for line in crate::session::matching_lines(file, &["\"type\":\"user\""]).ok()? {
+    let mut seen = HashSet::new();
+    let mut usage = Usage::default();
+    let needles = &["\"type\":\"user\"", "\"usage\""];
+    for line in crate::session::matching_lines(file, needles).ok()? {
+        if line.contains("\"type\":\"assistant\"") {
+            if let Some((id, u)) = line_usage(&line)
+                && seen.insert(id)
+            {
+                usage.add(&u);
+            }
+            continue;
+        }
         let Ok(v) = serde_json::from_str::<Value>(&line) else {
             continue;
         };
@@ -197,6 +343,10 @@ pub fn parse_transcript(file: &Path) -> Option<AgentSession> {
         snippet: snippet(&first, 120),
         message_count: count,
         file: file.to_path_buf(),
+        usage: {
+            add_subagent_usage(file, &mut seen, &mut usage);
+            usage
+        },
     })
 }
 
@@ -236,6 +386,89 @@ mod tests {
         let written = fs::read_to_string(report.file.unwrap()).unwrap();
         assert!(written.contains("/usr/local/bin/chda hook claude"));
         fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn usage_counts_each_response_once_and_includes_subagents() {
+        let dir = std::env::temp_dir().join(format!("chda-claude-usage-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&dir);
+        fs::create_dir_all(dir.join("s1/subagents")).unwrap();
+        let file = dir.join("s1.jsonl");
+        // One response written over two lines with the same id and usage.
+        let a1 = r#"{"type":"assistant","message":{"id":"msg_1","model":"claude-opus-5-5","usage":{"input_tokens":10,"cache_creation_input_tokens":1000,"cache_read_input_tokens":20000,"output_tokens":300,"cache_creation":{"ephemeral_5m_input_tokens":0,"ephemeral_1h_input_tokens":1000}},"content":[]}}"#;
+        fs::write(&file, [
+            r#"{"type":"user","sessionId":"s1","cwd":"/w","message":{"role":"user","content":"go"}}"#,
+            a1,
+            a1,
+            r#"{"type":"assistant","message":{"id":"msg_2","model":"claude-opus-5-5","usage":{"input_tokens":5,"cache_creation_input_tokens":0,"cache_read_input_tokens":21000,"output_tokens":100},"content":[]}}"#,
+            r#"{"type":"assistant","message":{"id":"msg_3","model":"<synthetic>","usage":{"input_tokens":0,"output_tokens":0},"content":[]}}"#,
+        ].join("\n")).unwrap();
+        fs::write(dir.join("s1/subagents/agent-a.jsonl"),
+            r#"{"type":"assistant","message":{"id":"msg_9","model":"claude-haiku-4-5","usage":{"input_tokens":2000,"cache_creation_input_tokens":0,"cache_read_input_tokens":0,"output_tokens":500},"content":[]}}"#,
+        ).unwrap();
+        let s = parse_transcript(&file).unwrap();
+        let opus = s
+            .usage
+            .models
+            .iter()
+            .find(|m| m.model == "claude-opus-5-5")
+            .unwrap();
+        assert_eq!(
+            (
+                opus.input,
+                opus.cache_write_5m,
+                opus.cache_write_1h,
+                opus.cache_read,
+                opus.output
+            ),
+            (15, 0, 1000, 41_000, 400)
+        );
+        assert_eq!(
+            s.usage.models.len(),
+            2,
+            "haiku from the subagent, no synthetic entry"
+        );
+        // By hand: Opus 5.5 at $4 in, $8 1h writes, $0.20 reads, $20 out;
+        // Haiku 4.5 at $1 in, $5 out.
+        let expected = (15.0 * 4.0
+            + 1000.0 * 8.0
+            + 41_000.0 * 0.2
+            + 400.0 * 20.0
+            + 2000.0 * 1.0
+            + 500.0 * 5.0)
+            / 1_000_000.0;
+        let (dollars, complete) = s.usage.cost();
+        assert!(complete);
+        assert!(
+            (dollars - expected).abs() < 1e-12,
+            "{dollars} vs {expected}"
+        );
+        fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn quick_and_full_usage_parses_agree() {
+        // Content mentions model and usage keys inside strings (escaped) and a
+        // tool input with its own "model" key, after the message's model.
+        let line = r#"{"parentUuid":"p","type":"assistant","message":{"model":"claude-sonnet-5-5","id":"msg_01AB","type":"message","role":"assistant","content":[{"type":"text","text":"the \"usage\":{\"input_tokens\":999} and \"model\":\"x\""},{"type":"tool_use","id":"toolu_1","input":{"model":"gpt-5"}}],"usage":{"input_tokens":3,"cache_creation_input_tokens":40,"cache_read_input_tokens":500,"output_tokens":60,"cache_creation":{"ephemeral_5m_input_tokens":40,"ephemeral_1h_input_tokens":0}}},"requestId":"r","uuid":"u"}"#;
+        let quick = quick_line_usage(line).unwrap();
+        assert_eq!(quick, full_line_usage(line).unwrap());
+        assert_eq!(quick.0, "msg_01AB");
+        assert_eq!(
+            (
+                quick.1.model.as_str(),
+                quick.1.input,
+                quick.1.cache_write_5m,
+                quick.1.cache_read,
+                quick.1.output
+            ),
+            ("claude-sonnet-5-5", 3, 40, 500, 60)
+        );
+        // Without a message id neither parse counts the line.
+        assert_eq!(
+            line_usage(r#"{"type":"assistant","message":{"usage":{}}}"#),
+            None
+        );
     }
 
     #[test]

@@ -9,6 +9,7 @@ use std::process::Command;
 use serde_json::Value;
 
 use crate::session::{file_mtime_ms, parse_rfc3339_ms, snippet};
+use crate::usage::{LimitUsage, ModelUsage, Usage};
 use crate::{AgentAdapter, AgentId, AgentSession, HookInstallReport, SessionId, which};
 
 pub struct CodexAdapter;
@@ -121,6 +122,57 @@ fn user_message_text(item: &Value) -> Option<String> {
     }
 }
 
+/// Token usage of a rollout, fed line by line. `token_count` events carry
+/// running totals for the session; each increase is counted toward the
+/// model of the turn it happened in (`turn_context`), so a session that
+/// switched models splits correctly. The last rate-limit reading is kept.
+#[derive(Default)]
+struct UsageTracker {
+    usage: Usage,
+    model: String,
+    /// Last totals: input, cached input, output.
+    prev: (u64, u64, u64),
+}
+
+impl UsageTracker {
+    fn token_count(&mut self, payload: &Value) {
+        if let Some(total) = payload.pointer("/info/total_token_usage") {
+            let n = |key: &str| total.get(key).and_then(Value::as_u64).unwrap_or(0);
+            let now = (
+                n("input_tokens"),
+                n("cached_input_tokens"),
+                n("output_tokens"),
+            );
+            // Totals only grow; a drop means they started over.
+            let base = if now.0 < self.prev.0 || now.2 < self.prev.2 {
+                (0, 0, 0)
+            } else {
+                self.prev
+            };
+            let input = now.0 - base.0;
+            let cached = now.1.saturating_sub(base.1).min(input);
+            self.usage.add(&ModelUsage {
+                model: self.model.clone(),
+                input: input - cached,
+                cache_read: cached,
+                output: now.2 - base.2,
+                ..Default::default()
+            });
+            self.prev = now;
+        }
+        if let Some(limit) = payload.pointer("/rate_limits/primary") {
+            let used = limit.get("used_percent").and_then(Value::as_f64);
+            let window = limit.get("window_minutes").and_then(Value::as_u64);
+            if let (Some(used), Some(window)) = (used, window) {
+                self.usage.limit = Some(LimitUsage {
+                    used_percent: used.round() as u32,
+                    window_minutes: window,
+                });
+            }
+        }
+    }
+}
+
 /// Parse a Codex rollout: `session_meta` for id and cwd, then
 /// `event_msg`/`item_completed` with a `UserMessage` item per prompt.
 pub fn parse_rollout(file: &Path) -> Option<AgentSession> {
@@ -129,7 +181,24 @@ pub fn parse_rollout(file: &Path) -> Option<AgentSession> {
     let mut started_at = None;
     let mut first = None;
     let mut count = 0;
-    for line in crate::session::matching_lines(file, &["session_meta", "UserMessage"]).ok()? {
+    let mut tracker = UsageTracker::default();
+    let needles = &[
+        "session_meta",
+        "UserMessage",
+        "\"turn_context\"",
+        "\"token_count\"",
+    ];
+    for line in crate::session::matching_lines(file, needles).ok()? {
+        // A turn's context repeats the whole instructions; only its model is
+        // needed, and an unescaped `"model":"` can only be a real key.
+        if line.contains("\"type\":\"turn_context\"") {
+            if let Some(start) = line.find("\"model\":\"").map(|i| i + "\"model\":\"".len())
+                && let Some(len) = line[start..].find('"')
+            {
+                tracker.model = line[start..start + len].to_owned();
+            }
+            continue;
+        }
         let Ok(v) = serde_json::from_str::<Value>(&line) else {
             continue;
         };
@@ -150,8 +219,13 @@ pub fn parse_rollout(file: &Path) -> Option<AgentSession> {
             }
             Some("event_msg") => {
                 let Some(p) = payload else { continue };
-                if p.get("type").and_then(Value::as_str) != Some("item_completed") {
-                    continue;
+                match p.get("type").and_then(Value::as_str) {
+                    Some("token_count") => {
+                        tracker.token_count(p);
+                        continue;
+                    }
+                    Some("item_completed") => {}
+                    _ => continue,
                 }
                 let Some(item) = p.get("item") else { continue };
                 if item.get("type").and_then(Value::as_str) != Some("UserMessage") {
@@ -178,12 +252,60 @@ pub fn parse_rollout(file: &Path) -> Option<AgentSession> {
         snippet: snippet(&first, 120),
         message_count: count,
         file: file.to_path_buf(),
+        usage: tracker.usage,
     })
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn rollout_usage_follows_running_totals_per_model() {
+        let dir = std::env::temp_dir().join(format!("chda-codex-usage-{}", std::process::id()));
+        fs::create_dir_all(&dir).unwrap();
+        let file = dir.join("rollout-u.jsonl");
+        let count = |input: u64, cached: u64, output: u64, used: f64| {
+            format!(
+                r#"{{"type":"event_msg","payload":{{"type":"token_count","info":{{"total_token_usage":{{"input_tokens":{input},"cached_input_tokens":{cached},"output_tokens":{output}}}}},"rate_limits":{{"primary":{{"used_percent":{used},"window_minutes":10080}}}}}}}}"#
+            )
+        };
+        fs::write(&file, [
+            r#"{"type":"session_meta","payload":{"id":"u1","cwd":"/w"}}"#.to_owned(),
+            r#"{"type":"event_msg","payload":{"type":"item_completed","item":{"type":"UserMessage","content":"go"}}}"#.to_owned(),
+            r#"{"type":"turn_context","payload":{"model":"gpt-6.1-sol"}}"#.to_owned(),
+            count(1000, 800, 50, 30.0),
+            // The same totals reported twice add nothing.
+            count(1000, 800, 50, 30.0),
+            r#"{"type":"turn_context","payload":{"model":"gpt-6-astra"}}"#.to_owned(),
+            count(3000, 2500, 150, 33.6),
+            r#"{"type":"event_msg","payload":{"type":"token_count","info":null}}"#.to_owned(),
+        ].join("\n")).unwrap();
+        let s = parse_rollout(&file).unwrap();
+        let sol = &s.usage.models[0];
+        assert_eq!(
+            (sol.model.as_str(), sol.input, sol.cache_read, sol.output),
+            ("gpt-6.1-sol", 200, 800, 50)
+        );
+        let astra = &s.usage.models[1];
+        assert_eq!(
+            (
+                astra.model.as_str(),
+                astra.input,
+                astra.cache_read,
+                astra.output
+            ),
+            ("gpt-6-astra", 300, 1700, 100)
+        );
+        assert_eq!(
+            s.usage.limit,
+            Some(LimitUsage {
+                used_percent: 34,
+                window_minutes: 10080
+            })
+        );
+        fs::remove_dir_all(&dir).unwrap();
+    }
 
     #[test]
     fn parses_a_rollout_and_chains_notify() {
