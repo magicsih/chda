@@ -152,6 +152,32 @@ pub fn repo_of(path: &Path) -> io::Result<PathBuf> {
     chda_git::main_worktree(path)
 }
 
+/// What a path in the sidebar holds now.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum Listing {
+    /// A repository's worktrees.
+    Repository(Vec<WorktreeEntry>),
+    /// A folder that is not the main worktree of a repository.
+    Folder,
+}
+
+/// List a registered path. Repositories are registered by their main
+/// worktree, so a path that is not one was added as a plain folder; once
+/// `git init` runs in it, it lists as a repository.
+pub fn list_registered(path: &Path, fetch: bool) -> io::Result<Listing> {
+    match chda_git::main_worktree(path) {
+        Ok(main) if main == path => worktrees_of(path, fetch).map(Listing::Repository),
+        _ if path.is_dir() => Ok(Listing::Folder),
+        Ok(_) => Ok(Listing::Folder),
+        Err(e) => Err(e),
+    }
+}
+
+/// `git init` in a plain folder.
+pub fn init_repository(dir: &Path) -> io::Result<()> {
+    chda_git::init(dir)
+}
+
 /// Create a worktree for `branch` at `path`. Without `base` the branch is
 /// created from HEAD, or checked out when it exists already. With `base` it
 /// must be a new branch starting at `base`.

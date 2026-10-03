@@ -196,6 +196,9 @@ pub struct RepoEntry {
     /// Why this repository has no pull request badges, e.g. the forge host
     /// is not logged in.
     pub pr_hint: Option<String>,
+    /// A plain folder, not a git repository: one row for the folder itself
+    /// and no git actions.
+    pub folder: bool,
 }
 
 /// Sort order for worktrees inside a repository.
@@ -285,7 +288,27 @@ impl Sidebar {
             })
             .collect();
         entry.error = None;
+        entry.folder = false;
         sort_worktrees(&mut entry.worktrees, sort);
+    }
+
+    /// Show `path` as a plain folder: a single row for the folder itself,
+    /// keeping its agent and session state.
+    pub fn set_folder(&mut self, path: &Path) {
+        let row = WorktreeEntry {
+            path: path.to_path_buf(),
+            is_main: true,
+            ..Default::default()
+        };
+        self.set_worktrees(path, vec![row]);
+        if let Some(entry) = self.repo_mut(path) {
+            entry.folder = true;
+        }
+    }
+
+    /// Whether `path` was added as a plain folder.
+    pub fn is_folder(&self, path: &Path) -> bool {
+        self.repos.iter().any(|r| r.path == path && r.folder)
     }
 
     /// The worktree at exactly `path`.

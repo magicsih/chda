@@ -262,24 +262,26 @@ impl SidebarView {
                     .font_weight(gpui::FontWeight::BOLD)
                     .child(repo.name.clone()),
             )
-            .child(
-                div()
-                    .id(ElementId::Name(
-                        format!("repo-add:{}", repo.path.display()).into(),
-                    ))
-                    .px_1()
-                    .rounded_sm()
-                    .text_color(fg.opacity(0.7))
-                    .hover(|s| s.bg(fg.opacity(0.15)))
-                    .on_click({
-                        let path = path.clone();
-                        cx.listener(move |_, _, _, cx| {
-                            cx.stop_propagation();
-                            cx.emit(SidebarEvent::NewWorktree(path.clone()));
+            .when(!repo.folder, |d| {
+                d.child(
+                    div()
+                        .id(ElementId::Name(
+                            format!("repo-add:{}", repo.path.display()).into(),
+                        ))
+                        .px_1()
+                        .rounded_sm()
+                        .text_color(fg.opacity(0.7))
+                        .hover(|s| s.bg(fg.opacity(0.15)))
+                        .on_click({
+                            let path = path.clone();
+                            cx.listener(move |_, _, _, cx| {
+                                cx.stop_propagation();
+                                cx.emit(SidebarEvent::NewWorktree(path.clone()));
+                            })
                         })
-                    })
-                    .child("+"),
-            );
+                        .child("+"),
+                )
+            });
         let mut col = div().flex().flex_col().child(header);
         if let Some(err) = &repo.error {
             col = col.child(
@@ -301,18 +303,28 @@ impl SidebarView {
         }
         if !collapsed {
             for wt in &repo.worktrees {
-                col = col.child(self.render_worktree(wt, cx));
+                col = col.child(self.render_worktree(wt, repo.folder, cx));
             }
         }
         col.into_any_element()
     }
 
-    fn render_worktree(&self, wt: &WorktreeEntry, cx: &mut Context<Self>) -> AnyElement {
+    /// A worktree's row; `folder` for the one row of a plain folder.
+    fn render_worktree(
+        &self,
+        wt: &WorktreeEntry,
+        folder: bool,
+        cx: &mut Context<Self>,
+    ) -> AnyElement {
         let fg = self.fg;
         let path = wt.path.clone();
         let expanded = self.expanded.contains(&wt.path);
         let status = wt.status();
-        let name = wt.branch.clone().unwrap_or_else(|| "(detached)".into());
+        let name = match &wt.branch {
+            _ if folder => "(no git)".to_owned(),
+            Some(branch) => branch.clone(),
+            None => "(detached)".to_owned(),
+        };
         let b = wt.badges;
         let badge_id = |kind: &str| ElementId::Name(format!("{kind}:{}", wt.path.display()).into());
         let mut badges: Vec<AnyElement> = Vec::new();
