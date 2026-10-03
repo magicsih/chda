@@ -63,7 +63,7 @@ elif [[ -n "${APPLE_ID:-}" && -n "${APPLE_TEAM_ID:-}" && -n "${APPLE_APP_PASSWOR
   notarize=(--apple-id "$APPLE_ID" --team-id "$APPLE_TEAM_ID" --password "$APPLE_APP_PASSWORD")
 fi
 if [[ -n "${CHDA_SIGN_IDENTITY:-}" && ${#notarize[@]} -gt 0 ]]; then
-  xcrun notarytool submit "$zip_path" "${notarize[@]}" --wait
+  xcrun notarytool submit "$zip_path" "${notarize[@]}" --wait --timeout 20m
   xcrun stapler staple "$app"
   rm -f "$zip_path"
   ditto -c -k --keepParent "$app" "$zip_path"
