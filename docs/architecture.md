@@ -78,6 +78,16 @@ it. The viewer is an HTML page written to the data directory next to a
 bundled `mermaid.min.js` and opened in the default browser, so diagrams never
 leave the machine.
 
+Markdown files are previewed the same way (`chda-ui::markdown_preview`): the
+file is rendered with pulldown-cmark (GitHub tables, task lists,
+strikethrough, footnotes, alerts) into a page next to the same Mermaid
+script, with `<base>` pointing at the file's folder so relative images load.
+Fenced `mermaid` blocks become diagrams. Raw HTML is kept, and a Content
+Security Policy keeps the page offline and limits scripts to chda's own,
+which carry a per-page nonce: nothing remote loads, and scripts or event
+handlers in the document do not run. The right-click menu of a Markdown path
+and the palette (the Markdown files in the focused pane's folder) open it.
+
 Files dropped from other applications go through
 `chda-ui::external_drop`. GPUI only hands a drop to the element under the
 mouse, and nothing counts as under the mouse while the last input was a key,

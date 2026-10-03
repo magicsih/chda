@@ -223,3 +223,51 @@ fn dropped_folder_on_the_sidebar_becomes_a_repository(cx: &mut gpui::TestAppCont
     });
     assert_eq!(h.read(|v, cx| v.sidebar.read(cx).model.repos.len()), 1);
 }
+
+/// A Markdown file in the output: right-click "Preview Markdown" renders it
+/// to a local page and opens that; the palette lists the files in the
+/// pane's folder.
+#[gpui::test]
+fn markdown_path_previews_in_the_browser(cx: &mut gpui::TestAppContext) {
+    let mut h = Harness::open(cx, "mdprev", |home| {
+        std::fs::create_dir_all(home.home.join("docs")).unwrap();
+        std::fs::write(
+            home.home.join("docs/notes.md"),
+            "# Release notes\n\n| a | b |\n|---|---|\n| 1 | 2 |\n",
+        )
+        .unwrap();
+    });
+    h.wait_prompt();
+    h.run("cd docs; clear; ls", "notes.md");
+    let term = h.focused_terminal();
+    let at = find_on_screen(&mut h, &term, |t| t.contains("notes.md"), "notes");
+    right_click(&mut h, at);
+    choose(&mut h, "Preview Markdown");
+    let page = h
+        .system
+        .0
+        .borrow()
+        .opened_files
+        .last()
+        .cloned()
+        .expect("a page was opened");
+    assert!(page.extension().is_some_and(|e| e == "html"), "{page:?}");
+    let html = std::fs::read_to_string(&page).unwrap();
+    assert!(html.contains("<h1>Release notes</h1>") && html.contains("<table>"));
+
+    // The palette offers the folder's Markdown files.
+    h.wait_for("the shell to report docs/", |v, _| {
+        v.ws.focused_pane()
+            .and_then(|p| v.ws.pane(p))
+            .and_then(|i| i.cwd.as_ref())
+            .is_some_and(|c| c.ends_with("docs"))
+    });
+    let items = h.read(|v, cx| v.palette_items(cx));
+    assert!(
+        items
+            .iter()
+            .any(|i| i.label == "Preview Markdown: notes.md"),
+        "{:?}",
+        items.iter().map(|i| &i.label).collect::<Vec<_>>()
+    );
+}

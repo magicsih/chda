@@ -10,7 +10,7 @@ use std::path::{Path, PathBuf};
 /// Mermaid 12.1.0 (MIT), `dist/mermaid.min.js` from npm. License in
 /// `assets/mermaid/LICENSE`.
 const MERMAID_JS: &[u8] = include_bytes!("../assets/mermaid/mermaid.min.js");
-const MERMAID_FILE: &str = "mermaid-12.1.0.min.js";
+pub(crate) const MERMAID_FILE: &str = "mermaid-12.1.0.min.js";
 
 /// Pages kept in the directory; older ones are removed.
 const KEEP_PAGES: usize = 50;
@@ -18,6 +18,18 @@ const KEEP_PAGES: usize = 50;
 /// Write a page that renders `source` into `dir` (with the Mermaid script
 /// beside it) and return its path.
 pub fn write_page(dir: &Path, source: &str) -> io::Result<PathBuf> {
+    install_script(dir)?;
+    let mut hasher = DefaultHasher::new();
+    source.hash(&mut hasher);
+    let page = dir.join(format!("diagram-{:016x}.html", hasher.finish()));
+    fs::write(&page, html(source))?;
+    prune(dir, &page);
+    Ok(page)
+}
+
+/// Put the bundled Mermaid script into `dir` unless it is already there;
+/// returns its path. Diagram pages and Markdown previews share it.
+pub(crate) fn install_script(dir: &Path) -> io::Result<PathBuf> {
     fs::create_dir_all(dir)?;
     let script = dir.join(MERMAID_FILE);
     if fs::metadata(&script).map(|m| m.len()).ok() != Some(MERMAID_JS.len() as u64) {
@@ -25,12 +37,7 @@ pub fn write_page(dir: &Path, source: &str) -> io::Result<PathBuf> {
         fs::write(&tmp, MERMAID_JS)?;
         fs::rename(&tmp, &script)?;
     }
-    let mut hasher = DefaultHasher::new();
-    source.hash(&mut hasher);
-    let page = dir.join(format!("diagram-{:016x}.html", hasher.finish()));
-    fs::write(&page, html(source))?;
-    prune(dir, &page);
-    Ok(page)
+    Ok(script)
 }
 
 fn html(source: &str) -> String {
@@ -63,7 +70,7 @@ fn html(source: &str) -> String {
     )
 }
 
-fn escape(s: &str) -> String {
+pub(crate) fn escape(s: &str) -> String {
     let mut out = String::with_capacity(s.len());
     for c in s.chars() {
         match c {
@@ -78,7 +85,7 @@ fn escape(s: &str) -> String {
 }
 
 /// Remove all but the newest pages.
-fn prune(dir: &Path, keep: &Path) {
+pub(crate) fn prune(dir: &Path, keep: &Path) {
     let Ok(entries) = fs::read_dir(dir) else {
         return;
     };

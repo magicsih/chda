@@ -5,6 +5,7 @@ mod environment;
 mod external_drop;
 mod fonts;
 mod link_menu;
+mod markdown_preview;
 mod menus;
 mod palette;
 mod platform;

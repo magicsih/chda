@@ -51,6 +51,17 @@ pub(crate) fn items(
             format!("Reveal in {manager}"),
             MenuAction::RevealPath(path.clone()),
         ),
+    ];
+    if !is_dir && crate::markdown_preview::is_markdown(path) {
+        items.insert(
+            1,
+            (
+                "Preview Markdown".into(),
+                MenuAction::PreviewMarkdown(path.clone()),
+            ),
+        );
+    }
+    items.extend([
         (
             if is_dir {
                 format!("Open folder in {manager}")
@@ -63,7 +74,7 @@ pub(crate) fn items(
             "Open a terminal tab here".into(),
             MenuAction::OpenTerminal(folder.clone()),
         ),
-    ];
+    ]);
     if at_prompt {
         items.push((
             "cd here in this pane".into(),
