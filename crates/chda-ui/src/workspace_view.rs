@@ -1704,7 +1704,7 @@ impl WorkspaceView {
                     .text_ellipsis()
                     .flex()
                     .justify_center()
-                    .child(title),
+                    .child(optical(title)),
             );
         if let Some(app) = self.folder_app() {
             let folder = self.open_in_folder(cx);
@@ -1749,7 +1749,7 @@ impl WorkspaceView {
                     cx.notify();
                 }))
                 .children(icon.map(|i| img(i).size(px(16.0)).flex_shrink_0()))
-                .child(name.clone())
+                .child(optical(name.clone()))
                 .child(
                     div()
                         .text_xs()
@@ -1765,7 +1765,7 @@ impl WorkspaceView {
                 .tooltip(crate::tooltip::text(tip))
                 .when(folder.is_none(), |d| d.opacity(0.5))
                 .on_click(cx.listener(move |this, _, _, cx| this.open_folder_in(&id, cx)))
-                .child("\u{25b6}");
+                .child(optical("\u{25b6}"));
             bar = bar.child(div().flex().flex_row().gap_1().child(picker).child(go));
         }
         bar.into_any_element()
@@ -3943,6 +3943,13 @@ impl WorkspaceView {
 }
 
 /// Mix `a` towards `b` by `t`.
+/// Text in the title bar, nudged down so its ink, not its line box, sits on
+/// the window buttons' center line: the UI font's ascent is taller than its
+/// descent, which leaves centered text about a point high.
+fn optical(text: impl IntoElement) -> gpui::Div {
+    div().relative().top(px(1.0)).child(text)
+}
+
 /// Markdown files directly in `dir`, sorted, at most 20: the palette offers
 /// to preview them.
 fn markdown_files(dir: &Path) -> Vec<PathBuf> {
