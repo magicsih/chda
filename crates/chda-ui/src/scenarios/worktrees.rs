@@ -434,8 +434,16 @@ fn update_branch_from_upstream_when_safe(cx: &mut TestAppContext) {
     });
     let head = |dir: &std::path::Path| rev(dir, "HEAD");
 
-    // Dirty: offered but disabled with the reason.
+    // Dirty: offered but disabled with the reason. The repository watcher
+    // only watches `.git`; edits in the working tree show up on the next
+    // periodic refresh, which the test platform's clock does not run, so ask
+    // for one.
     std::fs::write(repo.join("scratch.txt"), "x").unwrap();
+    let refresh = MenuAction::RefreshRepo(repo.clone());
+    h.cx.update(|window, cx| {
+        h.view
+            .update(cx, |v, cx| v.run_menu_action(refresh, window, cx))
+    });
     h.wait_for("the change badge", {
         let repo = repo.clone();
         move |v, cx| {
