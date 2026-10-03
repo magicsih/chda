@@ -3,16 +3,16 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>chda — git worktree terminal for coding agents</title>
+<title>chda — terminal for running Claude Code and Codex in parallel git worktrees</title>
 <meta name="description" content="chda is a macOS terminal with a git worktree sidebar and a live status board for coding agents: Claude Code, Codex, Gemini CLI, GitHub Copilot CLI and OpenCode. Ghostty terminal core, written in Rust on GPUI. Free and open source.">
 <link rel="canonical" href="https://magicsih.github.io/chda/">
 <meta property="og:type" content="website">
-<meta property="og:title" content="chda — git worktree terminal for coding agents">
+<meta property="og:title" content="chda — terminal for running Claude Code and Codex in parallel git worktrees">
 <meta property="og:description" content="One worktree, one task, one agent. See which worktree is running which agent and what it is waiting for.">
 <meta property="og:url" content="https://magicsih.github.io/chda/">
 <meta property="og:image" content="https://magicsih.github.io/chda/social-preview.png">
 <meta name="twitter:card" content="summary_large_image">
-<meta name="twitter:title" content="chda — git worktree terminal for coding agents">
+<meta name="twitter:title" content="chda — terminal for running Claude Code and Codex in parallel git worktrees">
 <meta name="twitter:description" content="A terminal with a git worktree sidebar and a live status board for Claude Code, Codex, Gemini CLI, Copilot CLI and OpenCode.">
 <meta name="twitter:image" content="https://magicsih.github.io/chda/social-preview.png">
 <link rel="icon" href="icon.png" type="image/png">
@@ -28,7 +28,67 @@
   "downloadUrl": "https://github.com/magicsih/chda/releases/latest",
   "softwareHelp": "https://github.com/magicsih/chda#readme",
   "description": "Terminal with a git worktree sidebar and a live status board for coding agents: Claude Code, Codex, Gemini CLI, GitHub Copilot CLI and OpenCode.",
-  "offers": { "@type": "Offer", "price": "0", "priceCurrency": "USD" }
+  "offers": { "@type": "Offer", "price": "0", "priceCurrency": "USD" },
+  "image": "https://magicsih.github.io/chda/social-preview.png",
+  "screenshot": "https://magicsih.github.io/chda/sidebar.png",
+  "author": { "@type": "Person", "name": "magicsih", "url": "https://github.com/magicsih" },
+  "sameAs": ["https://github.com/magicsih/chda"]
+}
+</script>
+<script type="application/ld+json">
+{
+ "@context": "https://schema.org",
+ "@type": "FAQPage",
+ "mainEntity": [
+  {
+   "@type": "Question",
+   "name": "How do I run several Claude Code agents in parallel?",
+   "acceptedAnswer": {
+    "@type": "Answer",
+    "text": "Give each task its own git worktree and run one agent in each. chda creates the worktree from the sidebar (or from the agent, through chda mcp), opens a tab in it, and shows every agent's state next to its branch: working, waiting for you, or done."
+   }
+  },
+  {
+   "@type": "Question",
+   "name": "Which coding agents does chda work with?",
+   "acceptedAnswer": {
+    "@type": "Answer",
+    "text": "Claude Code, Codex, Gemini CLI, GitHub Copilot CLI and OpenCode. chda attaches to each through the agent's own hooks or plugins, per launch, so their status shows in the sidebar, on tabs and on the Dock icon."
+   }
+  },
+  {
+   "@type": "Question",
+   "name": "How is chda different from tmux or Ghostty?",
+   "acceptedAnswer": {
+    "@type": "Answer",
+    "text": "Ghostty is the terminal; chda uses its core (libghostty-vt) and adds what parallel agent work needs: a sidebar of worktrees with git and pull request badges, agent status, notifications when an agent waits, and merge-and-clean when a branch is done."
+   }
+  },
+  {
+   "@type": "Question",
+   "name": "Does chda read my prompts?",
+   "acceptedAnswer": {
+    "@type": "Answer",
+    "text": "No. Hooks pass only a session id, directory, event kind and time. Nothing is sent anywhere; the app makes no network requests of its own."
+   }
+  },
+  {
+   "@type": "Question",
+   "name": "Do I have to change my agents' config?",
+   "acceptedAnswer": {
+    "@type": "Answer",
+    "text": "No. chda passes hook settings per launch and leaves your config files alone. Only the optional MCP server is added once per agent, with the agent's own mcp add command."
+   }
+  },
+  {
+   "@type": "Question",
+   "name": "Linux or Windows?",
+   "acceptedAnswer": {
+    "@type": "Answer",
+    "text": "They build in CI and are the next milestone. Today it is macOS only, on Apple silicon."
+   }
+  }
+ ]
 }
 </script>
 <style>
@@ -97,18 +157,18 @@
   <section>
     <h2>What it looks like</h2>
     <div class="shots">
-      <img src="sidebar.png" alt="The sidebar: worktrees labeled by their notes, diff badges, merged and open-tab icons, agent status dots and the ACTIVE list" width="800" height="600">
-      <img src="palette.png" alt="The command palette listing worktrees, agent launches and sessions" width="800" height="600">
+      <img src="sidebar.png" loading="lazy" decoding="async" alt="The sidebar: worktrees labeled by their notes, diff badges, merged and open-tab icons, agent status dots and the ACTIVE list" width="800" height="600">
+      <img src="palette.png" loading="lazy" decoding="async" alt="The command palette listing worktrees, agent launches and sessions" width="800" height="600">
     </div>
   </section>
 
   <section>
     <h2>Diagrams and Markdown, rendered offline</h2>
     <p class="lead">Mermaid in an agent's answer opens as a diagram, and Markdown files open formatted, as local pages in your browser. Nothing is uploaded; scripts in the document do not run.</p>
-    <img class="wide" src="diagram.png" alt="An architecture flowchart with five subgraphs, from clients through the API gateway and acme-api to Postgres, OpenSearch, Redis and a background indexer, rendered from an agent's output" width="1600" height="460">
+    <img class="wide" src="diagram.png" loading="lazy" decoding="async" alt="An architecture flowchart with five subgraphs, from clients through the API gateway and acme-api to Postgres, OpenSearch, Redis and a background indexer, rendered from an agent's output" width="1600" height="460">
     <div class="shots">
-      <img src="markdown.png" alt="A Markdown design doc previewed in the browser: title, status table, summary with a Note alert and a task list" width="1200" height="847">
-      <img src="markdown-flow.png" alt="The same doc's request flow: a Mermaid sequence diagram with a cache hit and miss branch" width="1200" height="847">
+      <img src="markdown.png" loading="lazy" decoding="async" alt="A Markdown design doc previewed in the browser: title, status table, summary with a Note alert and a task list" width="1200" height="847">
+      <img src="markdown-flow.png" loading="lazy" decoding="async" alt="The same doc's request flow: a Mermaid sequence diagram with a cache hit and miss branch" width="1200" height="847">
     </div>
   </section>
 
@@ -123,12 +183,18 @@ brew install --cask chda</pre>
   <section>
     <h2>Questions</h2>
     <dl>
+      <dt>How do I run several Claude Code agents in parallel?</dt>
+      <dd>Give each task its own git worktree and run one agent in each. chda creates the worktree from the sidebar (or from the agent, through chda mcp), opens a tab in it, and shows every agent's state next to its branch: working, waiting for you, or done.</dd>
+      <dt>Which coding agents does chda work with?</dt>
+      <dd>Claude Code, Codex, Gemini CLI, GitHub Copilot CLI and OpenCode. chda attaches to each through the agent's own hooks or plugins, per launch, so their status shows in the sidebar, on tabs and on the Dock icon.</dd>
+      <dt>How is chda different from tmux or Ghostty?</dt>
+      <dd>Ghostty is the terminal; chda uses its core (libghostty-vt) and adds what parallel agent work needs: a sidebar of worktrees with git and pull request badges, agent status, notifications when an agent waits, and merge-and-clean when a branch is done.</dd>
       <dt>Does chda read my prompts?</dt>
       <dd>No. Hooks pass only a session id, directory, event kind and time. Nothing is sent anywhere; the app makes no network requests of its own.</dd>
       <dt>Do I have to change my agents' config?</dt>
       <dd>No. chda passes hook settings per launch and leaves your config files alone. Only the optional MCP server is added once per agent, with the agent's own <code>mcp add</code> command.</dd>
       <dt>Linux or Windows?</dt>
-      <dd>They build in CI and are the next milestone. Today it is macOS only.</dd>
+      <dd>They build in CI and are the next milestone. Today it is macOS only, on Apple silicon.</dd>
     </dl>
   </section>
 
