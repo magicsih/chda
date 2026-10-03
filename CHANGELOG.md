@@ -4,6 +4,35 @@ All notable changes to chda. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); entries are
 generated from conventional commit messages by release-plz.
 
+## [0.1.7](https://github.com/magicsih/chda/compare/v0.1.6...v0.1.7) - 2026-10-03
+
+### Added
+
+- *(agents)* let agents create worktrees, open tabs and report status through `chda mcp` ([#68](https://github.com/magicsih/chda/pull/68))
+- *(sidebar)* add notes to worktree branches and show them in the sidebar ([#62](https://github.com/magicsih/chda/pull/62))
+- *(sidebar)* show merged, missing folder, open tabs and deleting as icons ([#72](https://github.com/magicsih/chda/pull/72))
+- *(agents)* add named agent launch presets ([#66](https://github.com/magicsih/chda/pull/66))
+- *(ui)* drop files on a pane to paste their paths, and folders on the sidebar to add repositories ([#67](https://github.com/magicsih/chda/pull/67))
+- *(agents)* track Gemini CLI, GitHub Copilot CLI and OpenCode like Claude Code ([#60](https://github.com/magicsih/chda/pull/60))
+- *(term)* right-click file and folder paths to open, reveal, cd or copy them ([#56](https://github.com/magicsih/chda/pull/56))
+- *(sidebar)* show each worktree's diff size and open its diff in a tab ([#65](https://github.com/magicsih/chda/pull/65))
+- *(sidebar)* show merge request and pull request badges for GitLab and Gitea ([#64](https://github.com/magicsih/chda/pull/64))
+- *(sidebar)* create a worktree from any branch, with a random name when left empty ([#55](https://github.com/magicsih/chda/pull/55))
+- *(sidebar)* update a worktree's branch from its upstream when it is safe ([#63](https://github.com/magicsih/chda/pull/63))
+- *(sidebar)* show pull request badges for every GitHub host a repository uses ([#54](https://github.com/magicsih/chda/pull/54))
+- *(sidebar)* order sessions by last message and resume several side by side ([#57](https://github.com/magicsih/chda/pull/57))
+- *(sidebar)* explain every sidebar badge in a tooltip ([#50](https://github.com/magicsih/chda/pull/50))
+- *(term)* open Mermaid diagrams from the output in an offline viewer ([#61](https://github.com/magicsih/chda/pull/61))
+- *(term)* show images sent with the Kitty graphics protocol ([#59](https://github.com/magicsih/chda/pull/59))
+- *(term)* turn on font ligatures with Ghostty's font-feature setting ([#52](https://github.com/magicsih/chda/pull/52))
+- *(agents)* reopen agent conversations when restoring the last session ([#53](https://github.com/magicsih/chda/pull/53))
+
+### Fixed
+
+- *(sidebar)* stop the window crashing when the mouse moves over a past session ([#73](https://github.com/magicsih/chda/pull/73))
+- *(sidebar)* delete a worktree with one confirmation, even when it is locked or large ([#51](https://github.com/magicsih/chda/pull/51))
+- *(term)* keep unfenced Mermaid diagrams whole across blank lines ([#71](https://github.com/magicsih/chda/pull/71))
+
 ## [0.1.6](https://github.com/magicsih/chda/compare/v0.1.5...v0.1.6) - 2026-10-02
 
 ### Added
