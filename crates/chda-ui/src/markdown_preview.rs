@@ -130,6 +130,16 @@ fn page_html(title: &str, base: &Path, body: &str, mermaid: Option<&Path>) -> St
   img {{ max-width: 100%; }}
   hr {{ border: 0; border-top: 1px solid var(--line); }}
   .file {{ color: var(--muted); font-size: 13px; margin-bottom: 24px; }}
+  blockquote[class^="markdown-alert-"] {{ color: inherit; border-left-color: var(--alert); }}
+  blockquote[class^="markdown-alert-"]::before {{ display: block; margin: 8px 0 4px; font-weight: 600; color: var(--alert); }}
+  .markdown-alert-note {{ --alert: #4493f8; }} .markdown-alert-note::before {{ content: "\24D8  Note"; }}
+  .markdown-alert-tip {{ --alert: #3fb950; }} .markdown-alert-tip::before {{ content: "\2726  Tip"; }}
+  .markdown-alert-important {{ --alert: #ab7df8; }} .markdown-alert-important::before {{ content: "\2759  Important"; }}
+  .markdown-alert-warning {{ --alert: #d29922; }} .markdown-alert-warning::before {{ content: "\26A0  Warning"; }}
+  .markdown-alert-caution {{ --alert: #f85149; }} .markdown-alert-caution::before {{ content: "\2716  Caution"; }}
+  .footnote-definition {{ display: flex; gap: 6px; font-size: 85%; color: var(--muted); }}
+  .footnote-definition:first-of-type {{ border-top: 1px solid var(--line); margin-top: 32px; padding-top: 16px; }}
+  .footnote-definition p {{ margin: 0; }}
 </style>
 </head>
 <body>
@@ -140,8 +150,17 @@ fn page_html(title: &str, base: &Path, body: &str, mermaid: Option<&Path>) -> St
 </html>
 "#,
         title = diagram::escape(title),
-        path = diagram::escape(&base.join(title).to_string_lossy()),
+        path = diagram::escape(&display_path(&base.join(title))),
     )
+}
+
+/// `path` for the page header, with the home folder as `~`.
+fn display_path(path: &Path) -> String {
+    let home = std::env::var_os("HOME").map(PathBuf::from);
+    match home.as_deref().and_then(|h| path.strip_prefix(h).ok()) {
+        Some(rest) => format!("~/{}", rest.display()),
+        None => path.display().to_string(),
+    }
 }
 
 /// A `file://` URL for `path`, percent-encoded; directories end in `/`.
@@ -185,6 +204,16 @@ mod tests {
         assert!(html.contains(r#"<code class="language-rust">"#));
         assert!(mermaid);
         assert!(!render("plain *text*").1);
+    }
+
+    #[test]
+    fn alerts_and_footnotes_get_their_styles() {
+        let (html, _) = render("> [!WARNING]\n> careful\n\nText[^1]\n\n[^1]: the note\n");
+        assert!(html.contains(r#"<blockquote class="markdown-alert-warning">"#));
+        assert!(html.contains(r#"class="footnote-definition""#));
+        let page = page_html("a.md", Path::new("/w"), &html, None);
+        assert!(page.contains(".markdown-alert-warning::before"));
+        assert!(page.contains(".footnote-definition {"));
     }
 
     #[test]
