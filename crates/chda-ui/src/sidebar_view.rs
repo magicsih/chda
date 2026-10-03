@@ -71,6 +71,29 @@ impl AgentLabel {
     }
 }
 
+/// Badge icons, from the bundled Symbols Nerd Font Mono. Each badge's
+/// tooltip says what it means.
+const ICON_MERGED: &str = "\u{f062d}"; // nf-md-source_merge
+const ICON_MISSING: &str = "\u{f0dcc}"; // nf-md-folder_alert
+const ICON_PANES: &str = "\u{f04e9}"; // nf-md-tab
+const ICON_DELETING: &str = "\u{f0a7a}"; // nf-md-trash_can_outline
+const ICON_BUSY: &str = "\u{eb19}"; // nf-cod-loading
+
+/// A badge icon in the icon font.
+fn icon_text(icon: &'static str) -> gpui::Div {
+    div().font_family(crate::fonts::SYMBOLS_FAMILY).child(icon)
+}
+
+/// Tooltip for an operation running on a worktree, e.g. "deleting".
+fn busy_tooltip(busy: &str) -> String {
+    let mut chars = busy.chars();
+    let first = chars
+        .next()
+        .map(|c| c.to_uppercase().collect::<String>())
+        .unwrap_or_default();
+    format!("{first}{} this worktree\u{2026}", chars.as_str())
+}
+
 pub struct SidebarView {
     pub model: Sidebar,
     /// The first session index has finished.
@@ -343,10 +366,17 @@ impl SidebarView {
             );
         }
         if let Some(busy) = &wt.busy {
+            let icon = if busy == "deleting" {
+                ICON_DELETING
+            } else {
+                ICON_BUSY
+            };
             badges.push(
                 div()
+                    .id(badge_id("busy"))
                     .text_color(fg.opacity(0.6))
-                    .child(format!("{busy}\u{2026}"))
+                    .tooltip(crate::tooltip::text(busy_tooltip(busy)))
+                    .child(icon_text(icon))
                     .into_any_element(),
             );
         }
@@ -356,9 +386,9 @@ impl SidebarView {
                     .id(badge_id("missing"))
                     .text_color(gpui::rgb(0xf38ba8))
                     .tooltip(crate::tooltip::text(
-                        "The worktree's folder was deleted outside git. Right-click to prune it.",
+                        "Folder missing: the worktree's folder was deleted outside git. Right-click to prune it.",
                     ))
-                    .child("folder missing")
+                    .child(icon_text(ICON_MISSING))
                     .into_any_element(),
             );
         }
@@ -368,9 +398,9 @@ impl SidebarView {
                     .id(badge_id("merged"))
                     .text_color(gpui::rgb(0xa6e3a1))
                     .tooltip(crate::tooltip::text(
-                        "The branch's commits are in the default branch.",
+                        "Merged: the branch's commits are in the default branch.",
                     ))
-                    .child("merged")
+                    .child(icon_text(ICON_MERGED))
                     .into_any_element(),
             );
         }
@@ -379,16 +409,17 @@ impl SidebarView {
             badges.push(
                 div()
                     .id(badge_id("panes"))
+                    .flex()
+                    .flex_row()
+                    .items_center()
+                    .gap_0p5()
                     .text_color(fg.opacity(0.6))
                     .tooltip(crate::tooltip::text(format!(
                         "{} in this worktree.",
                         plural(n, "open pane", "open panes")
                     )))
-                    .child(if n == 1 {
-                        "1 tab".to_owned()
-                    } else {
-                        format!("{n} tabs")
-                    })
+                    .child(icon_text(ICON_PANES))
+                    .child(n.to_string())
                     .into_any_element(),
             );
         }
@@ -952,6 +983,11 @@ impl Render for SidebarView {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn busy_badges_explain_themselves() {
+        assert_eq!(busy_tooltip("deleting"), "Deleting this worktree\u{2026}");
+    }
 
     fn pr(state: PrState, checks: CheckState, url: &str) -> PrInfo {
         PrInfo {
