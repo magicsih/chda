@@ -110,6 +110,9 @@ pub struct ChdaConfig {
     pub pull: PullStrategy,
     /// Named agent launches for the sidebar menu and the palette.
     pub agent_presets: Vec<AgentPreset>,
+    /// The app the title bar's open button uses, e.g. `vscode`; picked in
+    /// the title bar and saved here.
+    pub open_in: Option<String>,
 }
 
 impl Default for ChdaConfig {
@@ -130,6 +133,7 @@ impl Default for ChdaConfig {
             repo_hosts: BTreeMap::new(),
             pull: PullStrategy::FfOnly,
             agent_presets: Vec::new(),
+            open_in: None,
         }
     }
 }

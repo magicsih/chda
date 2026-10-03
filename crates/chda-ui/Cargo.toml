@@ -24,8 +24,30 @@ gpui = { workspace = true, features = ["test-support"] }
 [target.'cfg(target_os = "macos")'.dependencies]
 block2.workspace = true
 objc2.workspace = true
-objc2-app-kit = { workspace = true, features = ["NSApplication", "NSDockTile", "NSResponder", "NSWindow"] }
-objc2-foundation = { workspace = true, features = ["NSBundle", "NSError", "NSLocale", "NSString", "NSURL"] }
+objc2-app-kit = { workspace = true, features = [
+    "NSApplication",
+    "NSBitmapImageRep",
+    "NSDockTile",
+    "NSGraphics",
+    "NSGraphicsContext",
+    "NSImage",
+    "NSImageRep",
+    "NSResponder",
+    "NSWindow",
+    "NSWorkspace",
+    "objc2-core-foundation",
+] }
+objc2-foundation = { workspace = true, features = [
+    "NSBundle",
+    "NSData",
+    "NSDictionary",
+    "NSError",
+    "NSGeometry",
+    "NSLocale",
+    "NSString",
+    "NSURL",
+    "objc2-core-foundation",
+] }
 objc2-user-notifications = { workspace = true, features = [
     "block2",
     "UNNotification",

@@ -30,6 +30,8 @@ pub enum PaletteCommand {
     SetTheme(Option<String>),
     /// Render a Markdown file and open it in the browser.
     PreviewMarkdown(PathBuf),
+    /// Open the focused worktree in the app with this `FolderApp` id.
+    OpenFolderIn(String),
 }
 
 #[derive(Clone, Debug, PartialEq)]

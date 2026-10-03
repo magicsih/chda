@@ -10,7 +10,7 @@ use chda_config::{ChdaConfig, Paths};
 use chda_core::ForgeClis;
 use chda_core::agents::{AgentAdapter, adapters, data_dir};
 
-use crate::platform::{self, NotificationTarget};
+use crate::platform::{self, FolderApp, NotificationTarget};
 
 /// Side effects outside the window.
 pub trait System {
@@ -28,6 +28,10 @@ pub trait System {
     fn open_file(&self, path: &Path, cx: &gpui::App);
     /// Show `path` selected in its folder in the file manager.
     fn reveal_path(&self, path: &Path, cx: &gpui::App);
+    /// Installed apps that can open a folder (editors, git clients, ...).
+    fn folder_apps(&self) -> Vec<FolderApp>;
+    /// Open `folder` in the app with `id` (a [`FolderApp::id`]).
+    fn open_folder_in(&self, id: &str, folder: &Path) -> std::io::Result<()>;
 }
 
 /// The real OS.
@@ -64,6 +68,14 @@ impl System for NativeSystem {
 
     fn reveal_path(&self, path: &Path, cx: &gpui::App) {
         cx.reveal_path(path);
+    }
+
+    fn folder_apps(&self) -> Vec<FolderApp> {
+        platform::folder_apps()
+    }
+
+    fn open_folder_in(&self, id: &str, folder: &Path) -> std::io::Result<()> {
+        platform::open_folder_in(id, folder)
     }
 }
 

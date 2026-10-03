@@ -20,10 +20,7 @@ mod text_input;
 mod tooltip;
 mod workspace_view;
 
-use gpui::{
-    App, AppContext, Bounds, KeyBinding, TitlebarOptions, WindowBounds, WindowOptions, point, px,
-    size,
-};
+use gpui::{App, AppContext, Bounds, KeyBinding, WindowBounds, WindowOptions, point, px, size};
 
 pub use settings::Settings;
 use terminal_view::{
@@ -126,10 +123,7 @@ pub fn run(ghostty: chda_config::GhosttyConfig) {
             .open_window(
                 WindowOptions {
                     window_bounds: Some(WindowBounds::Windowed(bounds)),
-                    titlebar: Some(TitlebarOptions {
-                        title: Some("chda".into()),
-                        ..Default::default()
-                    }),
+                    titlebar: Some(platform::titlebar("chda")),
                     ..Default::default()
                 },
                 |window, cx| cx.new(|cx| WorkspaceView::new(ghostty, saved, env, window, cx)),
