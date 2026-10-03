@@ -11,7 +11,7 @@ Claude Code, Codex, Gemini CLI, GitHub Copilot CLI and OpenCode.</p>
 <p align="center">
   <a href="https://github.com/magicsih/chda/releases/latest"><img src="https://img.shields.io/github/v/release/magicsih/chda?label=release" alt="Latest release"></a>
   <a href="https://github.com/magicsih/chda/actions/workflows/ci.yml"><img src="https://github.com/magicsih/chda/actions/workflows/ci.yml/badge.svg" alt="CI"></a>
-  <img src="https://img.shields.io/badge/macOS-14%2B%20Apple%20silicon-black" alt="macOS 14 or newer, Apple silicon">
+  <img src="https://img.shields.io/badge/macOS-14%2B-black" alt="macOS 14 or newer">
   <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-blue" alt="MIT license"></a>
 </p>
 
@@ -36,11 +36,11 @@ brew trust magicsih/tap
 brew install --cask chda
 ```
 
-Or download `chda-<version>-macos-arm64.zip` from the
+Or download `chda-<version>-macos-universal.zip` from the
 [releases page](https://github.com/magicsih/chda/releases). The app is signed and
 notarized.
 
-Requirements: macOS 14 or newer, Apple silicon, `git` on `PATH`. `gh` is optional
+Requirements: macOS 14 or newer (Apple silicon or Intel), `git` on `PATH`. `gh` is optional
 and adds pull request badges. On a managed Mac where Homebrew cannot write to
 `/Applications`, add `--appdir=~/Applications`.
 
@@ -240,7 +240,7 @@ under Agents.
 
 ## Status and roadmap
 
-v0.1.x runs on macOS with Apple silicon. Linux and Windows compile in CI and are
+v0.1.x runs on macOS, Apple silicon and Intel. Linux and Windows compile in CI and are
 the next milestone. See [docs/roadmap.md](docs/roadmap.md) and
 [CHANGELOG.md](CHANGELOG.md).
 
@@ -250,8 +250,7 @@ the next milestone. See [docs/roadmap.md](docs/roadmap.md) and
 core and adds the worktree sidebar and agent status board. If you do not run
 several worktrees at once, Ghostty is the better terminal.
 
-**Intel Mac?** Not yet. The release is arm64 only; an x86_64 build is a matter of
-adding it to the release workflow once someone can test it.
+**Intel Mac?** Yes. The release is a universal app with an Intel build inside.
 
 **macOS says the app is damaged or from an unidentified developer.** Releases are
 signed and notarized, so this should not happen. If it does, you probably have a

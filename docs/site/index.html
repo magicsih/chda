@@ -21,7 +21,7 @@
   "@context": "https://schema.org",
   "@type": "SoftwareApplication",
   "name": "chda",
-  "operatingSystem": "macOS 14 or newer (Apple silicon)",
+  "operatingSystem": "macOS 14 or newer (Apple silicon or Intel)",
   "applicationCategory": "DeveloperApplication",
   "license": "https://opensource.org/licenses/MIT",
   "url": "https://magicsih.github.io/chda/",
@@ -85,7 +85,7 @@
    "name": "Linux or Windows?",
    "acceptedAnswer": {
     "@type": "Answer",
-    "text": "They build in CI and are the next milestone. Today it is macOS only, on Apple silicon."
+    "text": "They build in CI and are the next milestone. Today it is macOS only, on Apple silicon or Intel."
    }
   }
  ]
@@ -177,7 +177,7 @@
     <pre>brew tap magicsih/tap
 brew trust magicsih/tap
 brew install --cask chda</pre>
-    <p>macOS 14 or newer on Apple silicon. Signed and notarized. Needs <code>git</code>; <code>gh</code>, <code>glab</code> or <code>tea</code> add pull request badges for GitHub, GitLab or Gitea. Prefer a zip? Get it from the <a href="https://github.com/magicsih/chda/releases/latest">releases page</a>.</p>
+    <p>macOS 14 or newer, Apple silicon or Intel. Signed and notarized. Needs <code>git</code>; <code>gh</code>, <code>glab</code> or <code>tea</code> add pull request badges for GitHub, GitLab or Gitea. Prefer a zip? Get it from the <a href="https://github.com/magicsih/chda/releases/latest">releases page</a>.</p>
   </section>
 
   <section>
@@ -194,7 +194,7 @@ brew install --cask chda</pre>
       <dt>Do I have to change my agents' config?</dt>
       <dd>No. chda passes hook settings per launch and leaves your config files alone. Only the optional MCP server is added once per agent, with the agent's own <code>mcp add</code> command.</dd>
       <dt>Linux or Windows?</dt>
-      <dd>They build in CI and are the next milestone. Today it is macOS only, on Apple silicon.</dd>
+      <dd>They build in CI and are the next milestone. Today it is macOS only, on Apple silicon or Intel.</dd>
     </dl>
   </section>
 
