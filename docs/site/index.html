@@ -57,6 +57,8 @@
   .col p { margin: 0; color: var(--muted); font-size: 15px; }
   .shots { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
   .shots img { width: 100%; height: auto; border: 1px solid var(--line); border-radius: 10px; }
+  .wide { display: block; width: 100%; height: auto; margin-bottom: 16px; border: 1px solid var(--line); border-radius: 10px; }
+  .lead { color: var(--muted); margin: 0 0 16px; }
   pre { background: var(--code-bg); color: var(--code-fg); padding: 14px 16px; border-radius: 8px; overflow-x: auto; font-size: 14px; }
   dl dt { font-weight: 600; margin-top: 14px; }
   dl dd { margin: 4px 0 0; color: var(--muted); }
@@ -77,7 +79,7 @@
       <code id="cmd">brew tap magicsih/tap &amp;&amp; brew trust magicsih/tap &amp;&amp; brew install --cask chda</code>
       <button type="button" onclick="navigator.clipboard.writeText(document.getElementById('cmd').textContent).then(()=>{this.textContent='Copied'})">Copy</button>
     </div>
-    <div class="hero"><img src="demo.gif" alt="Agents report working and waiting in the sidebar, an agent creates a worktree with a note through chda mcp, a Mermaid diagram gets a View diagram button and an image shows inline" width="1200" height="750"></div>
+    <div class="hero"><img src="demo.gif" alt="Agents report working and waiting in the sidebar; an agent creates a worktree through chda mcp and prints an architecture diagram, which opens rendered in the browser; a Markdown design doc is previewed with its sequence diagram" width="1200" height="750"></div>
   </header>
 
   <section>
@@ -88,7 +90,7 @@
       <div class="col"><h3>Ghostty inside</h3><p>The VT core is libghostty-vt, so escapes, Unicode and keys behave like Ghostty. Your Ghostty font, colors and ligatures carry over.</p></div>
       <div class="col"><h3>Agents can drive it</h3><p><code>chda mcp</code> lets an agent create a worktree, open a tab or report its status. New worktrees show up in the sidebar at once.</p></div>
       <div class="col"><h3>Pick up where you left off</h3><p>After a restart, tabs, splits and directories come back, and panes that ran an agent reopen its conversation. Past sessions resume side by side.</p></div>
-      <div class="col"><h3>More than text</h3><p>Images through the Kitty graphics protocol, Mermaid diagrams rendered offline, and right-click actions on every file path in the output.</p></div>
+      <div class="col"><h3>More than text</h3><p>Images through the Kitty graphics protocol, Mermaid diagrams and Markdown files rendered offline in your browser, and right-click actions on every file path in the output.</p></div>
     </div>
   </section>
 
@@ -97,6 +99,16 @@
     <div class="shots">
       <img src="sidebar.png" alt="The sidebar: worktrees labeled by their notes, diff badges, merged and open-tab icons, agent status dots and the ACTIVE list" width="800" height="600">
       <img src="palette.png" alt="The command palette listing worktrees, agent launches and sessions" width="800" height="600">
+    </div>
+  </section>
+
+  <section>
+    <h2>Diagrams and Markdown, rendered offline</h2>
+    <p class="lead">Mermaid in an agent's answer opens as a diagram, and Markdown files open formatted, as local pages in your browser. Nothing is uploaded; scripts in the document do not run.</p>
+    <img class="wide" src="diagram.png" alt="An architecture flowchart with five subgraphs, from clients through the API gateway and acme-api to Postgres, OpenSearch, Redis and a background indexer, rendered from an agent's output" width="1600" height="460">
+    <div class="shots">
+      <img src="markdown.png" alt="A Markdown design doc previewed in the browser: title, status table, summary with a Note alert and a task list" width="1200" height="847">
+      <img src="markdown-flow.png" alt="The same doc's request flow: a Mermaid sequence diagram with a cache hit and miss branch" width="1200" height="847">
     </div>
   </section>
 
