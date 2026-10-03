@@ -163,6 +163,8 @@ pub(crate) enum MenuAction {
     },
     /// Show a file or folder selected in the file manager.
     RevealPath(PathBuf),
+    /// Render a Markdown file and open it in the browser.
+    PreviewMarkdown(PathBuf),
     /// Open with the system's default application (a folder: the file manager).
     OpenWithSystem(PathBuf),
     /// Type `cd <dir>` at the shell prompt of `pane`.
@@ -1579,6 +1581,18 @@ impl WorkspaceView {
         }
     }
 
+    /// Render a Markdown file to a local page and open it in the browser.
+    fn preview_markdown(&mut self, file: &Path, cx: &mut Context<Self>) {
+        let Some(dir) = self.env.data_dir.as_ref().map(|d| d.join("diagrams")) else {
+            return;
+        };
+        match crate::markdown_preview::write_page(&dir, file) {
+            Ok(page) => self.env.system.open_file(&page, cx),
+            Err(e) => self.status_line = Some(format!("Markdown preview: {e}")),
+        }
+        cx.notify();
+    }
+
     /// Open a cmd-clicked file with the configured editor, else the system's
     /// default application; folders always go to the file manager.
     fn open_path(
@@ -2604,6 +2618,7 @@ impl WorkspaceView {
                 self.open_path(&path, line, column, cx);
             }
             MenuAction::RevealPath(path) => self.env.system.reveal_path(&path, cx),
+            MenuAction::PreviewMarkdown(path) => self.preview_markdown(&path, cx),
             MenuAction::OpenWithSystem(path) => self.env.system.open_file(&path, cx),
             MenuAction::CdHere { pane, dir } => {
                 if let Some((view, _)) = self.panes.get(&pane) {
@@ -2899,6 +2914,18 @@ impl WorkspaceView {
             .duration_since(std::time::UNIX_EPOCH)
             .map(|d| d.as_millis() as u64)
             .unwrap_or(0);
+        if let Some(cwd) = self.focused_cwd() {
+            for file in markdown_files(&cwd) {
+                items.push(PaletteItem {
+                    label: format!(
+                        "Preview Markdown: {}",
+                        file.file_name().unwrap_or_default().to_string_lossy()
+                    ),
+                    detail: file.to_string_lossy().into_owned(),
+                    command: PaletteCommand::PreviewMarkdown(file),
+                });
+            }
+        }
         let sidebar = &self.sidebar.read(cx).model;
         for repo in &sidebar.repos {
             items.push(PaletteItem {
@@ -3188,6 +3215,10 @@ impl WorkspaceView {
                 }
             }
             PaletteCommand::NewWorktree(repo) => self.open_sheet(repo, window, cx),
+            PaletteCommand::PreviewMarkdown(file) => {
+                self.preview_markdown(&file, cx);
+                self.focus_active(window, cx);
+            }
             PaletteCommand::SetTheme(theme) => {
                 self.previewing_theme = false;
                 self.show_theme(theme.as_deref(), cx);
@@ -3683,6 +3714,22 @@ impl WorkspaceView {
 }
 
 /// Mix `a` towards `b` by `t`.
+/// Markdown files directly in `dir`, sorted, at most 20: the palette offers
+/// to preview them.
+fn markdown_files(dir: &Path) -> Vec<PathBuf> {
+    let Ok(entries) = std::fs::read_dir(dir) else {
+        return Vec::new();
+    };
+    let mut files: Vec<PathBuf> = entries
+        .filter_map(|e| e.ok())
+        .map(|e| e.path())
+        .filter(|p| p.is_file() && crate::markdown_preview::is_markdown(p))
+        .collect();
+    files.sort();
+    files.truncate(20);
+    files
+}
+
 pub fn blend(a: Hsla, b: Hsla, t: f32) -> Hsla {
     let (a, b) = (a.to_rgb(), b.to_rgb());
     gpui::Rgba {

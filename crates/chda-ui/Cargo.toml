@@ -16,6 +16,7 @@ futures.workspace = true
 gpui.workspace = true
 gpui_platform.workspace = true
 image.workspace = true
+pulldown-cmark.workspace = true
 
 [dev-dependencies]
 gpui = { workspace = true, features = ["test-support"] }

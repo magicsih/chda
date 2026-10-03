@@ -79,7 +79,7 @@ and adds pull request badges. On a managed Mac where Homebrew cannot write to
 
 | Area | What you get |
 |---|---|
-| Terminal | Ghostty-accurate VT handling, true color, wide glyphs, IME input, mouse selection and reporting, scrollback search (`cmd-f`), cmd-click links and file paths, right-click actions on paths (reveal in Finder, open a tab or `cd` there, copy), drag and drop paths, inline images (Kitty graphics protocol), Mermaid diagrams in agent output rendered offline ("View diagram"), font size shortcuts, prompt jumping (`cmd-up` / `cmd-down`) |
+| Terminal | Ghostty-accurate VT handling, true color, wide glyphs, IME input, mouse selection and reporting, scrollback search (`cmd-f`), cmd-click links and file paths, right-click actions on paths (reveal in Finder, open a tab or `cd` there, copy), drag and drop paths, inline images (Kitty graphics protocol), Mermaid diagrams in agent output rendered offline ("View diagram"), Markdown files previewed in the browser (right-click a `.md` path, or "Preview Markdown" in the palette), font size shortcuts, prompt jumping (`cmd-up` / `cmd-down`) |
 | Tabs and splits | Ghostty's default shortcuts; tabs grouped by repository; rename a tab with a double-click; tabs, splits and directories come back after a restart |
 | Sidebar | Repositories, worktrees, dirty / ahead / behind / conflict badges, lines added and removed against the default branch (click for a read-only diff tab), pull request state via `gh`, `glab` or `tea`, open-tab counts, an ACTIVE list sorted by last activity; every badge explains itself on hover |
 | Worktrees | Create from a new or existing branch, delete with a safety check, merge-and-clean, bulk cleanup of merged branches, update a branch from its upstream when it is clean and no agent works in it (fast-forward; a diverged branch asks before a rebase or merge and never rewrites pushed commits); a note per branch saying what the task is (right-click "Edit note...", or `chda note <text>` inside the worktree), shown as the row's label and searchable in the palette |
@@ -199,7 +199,7 @@ value Ghostty would reject keeps the previous settings and shows a message.
 | `cmd-f` | search the scrollback; `enter` / `shift-enter` older / newer, `alt-c` case, `alt-r` regex, `esc` close |
 | `cmd-click` | open a link or file path (hold `cmd` to see it underlined: solid for files, dotted for folders) |
 | drop files on a pane / a folder on the sidebar | paste the quoted paths / add the folder as a repository |
-| right-click a path | open, reveal in Finder, open a tab or `cd` there, copy the absolute or relative path (`cmd-shift-click` in apps that read the mouse) |
+| right-click a path | open, reveal in Finder, open a tab or `cd` there, copy the absolute or relative path, preview a Markdown file (`cmd-shift-click` in apps that read the mouse) |
 | `cmd-=` / `cmd--` / `cmd-0` | bigger / smaller / configured font size |
 | `cmd-shift-a` | go to the agent that waits for input, then to finished turns |
 | `cmd-b` | toggle the sidebar |
@@ -264,5 +264,6 @@ Font License 1.1 and [Symbols Nerd Font](https://github.com/ryanoasis/nerd-fonts
 under MIT; both texts are in `crates/chda-ui/assets/fonts`. The bundled themes
 come from [iTerm2-Color-Schemes](https://github.com/mbadolato/iTerm2-Color-Schemes)
 under MIT (`crates/chda-config/assets/themes-LICENSE.txt`).
-The diagram viewer bundles [Mermaid](https://github.com/mermaid-js/mermaid)
+Markdown previews use [pulldown-cmark](https://github.com/pulldown-cmark/pulldown-cmark)
+under MIT. The diagram viewer bundles [Mermaid](https://github.com/mermaid-js/mermaid)
 12.1.0 under MIT (`crates/chda-ui/assets/mermaid/LICENSE`).
