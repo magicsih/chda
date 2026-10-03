@@ -7,6 +7,7 @@ mod agents;
 mod config;
 mod diagrams;
 mod diff;
+mod folders;
 mod harness;
 mod input;
 mod mcp;

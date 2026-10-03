@@ -14,15 +14,15 @@ use chda_core::agents::control::{Incoming, Reply, Request};
 use chda_core::agents::{AgentAdapter, AgentId, HookEvent, HookKind, SessionCache, SessionId, ipc};
 use chda_core::release::{Release, ReleaseCheck, UPDATE_COMMAND, parse_latest};
 use chda_core::{
-    ActiveTab, AgentEvent, AgentSessionRef, AgentStatus, Axis, Direction, FileWatcher, Node,
-    PaneId, RepoWatcher, SavedBounds, SavedWindow, TabId, TitleMode, Workspace,
+    ActiveTab, AgentEvent, AgentSessionRef, AgentStatus, Axis, Direction, FileWatcher, Listing,
+    Node, PaneId, RepoWatcher, SavedBounds, SavedWindow, TabId, TitleMode, Workspace,
 };
 use futures::StreamExt;
 use futures::channel::mpsc::unbounded;
 use gpui::{
     AnyElement, App, Context, Entity, FocusHandle, Focusable, Hsla, MouseButton, MouseDownEvent,
-    PathPromptOptions, Pixels, Point, Render, Subscription, Window, actions, anchored, deferred,
-    div, img, point, prelude::*, px, relative,
+    PathPromptOptions, Pixels, Point, PromptLevel, Render, Subscription, Window, actions, anchored,
+    deferred, div, img, point, prelude::*, px, relative,
 };
 
 use crate::palette::{Palette, PaletteCommand, PaletteEvent, PaletteItem};
@@ -101,6 +101,9 @@ const FONT_SIZE_MAX: f32 = 255.0;
 const STATUS_REFRESH: Duration = Duration::from_secs(60);
 /// How often session transcripts are re-indexed while the window is active.
 const SESSION_REFRESH: Duration = Duration::from_secs(120);
+/// Answers when an added folder is not a git repository.
+const INIT_GIT: &str = "Initialize git";
+const ADD_AS_FOLDER: &str = "Add as folder";
 /// How often to see whether the daily release check is due.
 const RELEASE_CHECK: Duration = Duration::from_secs(60 * 60);
 /// Step of the "working" dot pulse; the timer only runs while an agent works.
@@ -177,6 +180,8 @@ pub(crate) enum MenuAction {
     PickFolderApp(String),
     /// Hide the new-version notice until the next release.
     DismissUpdate,
+    /// `git init` in a plain folder.
+    InitGit(PathBuf),
     /// Open with the system's default application (a folder: the file manager).
     OpenWithSystem(PathBuf),
     /// Type `cd <dir>` at the shell prompt of `pane`.
@@ -783,7 +788,7 @@ impl WorkspaceView {
             return Some(repo.path.clone());
         }
         let repo = chda_core::repo_of(cwd).ok()?;
-        self.register_repo(repo.clone(), cx);
+        self.add_to_sidebar(repo.clone(), cx);
         Some(repo)
     }
 
@@ -1218,16 +1223,24 @@ impl WorkspaceView {
         }
         let task = cx.background_spawn({
             let repo = repo.clone();
-            async move { chda_core::worktrees_of(&repo, fetch) }
+            async move { chda_core::list_registered(&repo, fetch) }
         });
         cx.spawn(async move |this, cx| {
             let result = task.await;
             let _ = this.update(cx, |view, cx| {
                 view.refreshing.remove(&repo);
                 let before = view.worktree_paths(cx);
+                if matches!(result, Ok(Listing::Repository(_))) {
+                    // A plain folder that became a repository has nothing
+                    // watched yet; watching twice is a no-op.
+                    view.watch_repo(&repo);
+                }
                 view.sidebar.update(cx, |s, cx| {
                     match result {
-                        Ok(worktrees) => s.model.set_worktrees(&repo, worktrees),
+                        Ok(Listing::Repository(worktrees)) => {
+                            s.model.set_worktrees(&repo, worktrees)
+                        }
+                        Ok(Listing::Folder) => s.model.set_folder(&repo),
                         Err(e) => {
                             if let Some(r) = s.model.repo_mut(&repo) {
                                 r.error = Some(e.to_string());
@@ -2094,24 +2107,84 @@ impl WorkspaceView {
             let Ok(Ok(Some(paths))) = rx.await else {
                 return;
             };
-            let _ = this.update(cx, |view, cx| {
+            let _ = this.update_in(cx, |view, window, cx| {
                 for path in paths {
-                    view.register_repo(path, cx);
+                    view.register_repo(path, window, cx);
                 }
             });
         })
         .detach();
     }
 
-    fn register_repo(&mut self, path: PathBuf, cx: &mut Context<Self>) {
-        let repo = match chda_core::repo_of(&path) {
-            Ok(repo) => repo,
+    /// Add a folder the user picked or dropped: its repository, or, when it
+    /// is in none, ask whether to run `git init` or add it as it is.
+    fn register_repo(&mut self, path: PathBuf, window: &mut Window, cx: &mut Context<Self>) {
+        match chda_core::repo_of(&path) {
+            Ok(repo) => self.add_to_sidebar(repo, cx),
+            Err(_) if path.is_dir() => self.ask_about_folder(path, window, cx),
             Err(e) => {
                 self.status_line = Some(format!("{}: {e}", path.display()));
                 cx.notify();
-                return;
             }
-        };
+        }
+    }
+
+    fn ask_about_folder(&mut self, path: PathBuf, window: &mut Window, cx: &mut Context<Self>) {
+        let name = path
+            .file_name()
+            .map(|n| n.to_string_lossy().into_owned())
+            .unwrap_or_else(|| path.to_string_lossy().into_owned());
+        let answer = window.prompt(
+            PromptLevel::Info,
+            &format!("{name} is not a git repository."),
+            Some(
+                "Initialize git to get worktrees, branches and badges, \
+                 or add it as a plain folder.",
+            ),
+            &[INIT_GIT, ADD_AS_FOLDER, "Cancel"],
+            cx,
+        );
+        cx.spawn(async move |this, cx| {
+            let Ok(choice) = answer.await else {
+                return;
+            };
+            let _ = this.update(cx, |view, cx| match choice {
+                0 => view.init_git(path, cx),
+                1 => view.add_to_sidebar(path, cx),
+                _ => {}
+            });
+        })
+        .detach();
+    }
+
+    /// `git init` in a folder, then show it as a repository: added to the
+    /// sidebar if it is not there yet, refreshed if it was a plain folder.
+    fn init_git(&mut self, path: PathBuf, cx: &mut Context<Self>) {
+        let task = cx.background_spawn({
+            let path = path.clone();
+            async move { chda_core::init_repository(&path) }
+        });
+        cx.spawn(async move |this, cx| {
+            let result = task.await;
+            let _ = this.update(cx, |view, cx| match result {
+                Ok(()) => {
+                    if view.sidebar.read(cx).model.is_folder(&path) {
+                        view.refresh_repo(path, cx);
+                    } else {
+                        view.add_to_sidebar(path, cx);
+                    }
+                }
+                Err(e) => {
+                    view.status_line = Some(format!("git init in {}: {e}", path.display()));
+                    cx.notify();
+                }
+            });
+        })
+        .detach();
+    }
+
+    /// Register a repository's main worktree, or a plain folder.
+    fn add_to_sidebar(&mut self, repo: PathBuf, cx: &mut Context<Self>) {
         let added = self.sidebar.update(cx, |s, cx| {
             let added = s.model.add_repo(repo.clone());
             cx.notify();
@@ -2173,6 +2246,14 @@ impl WorkspaceView {
                     "Open terminal".to_owned(),
                     MenuAction::OpenTerminal(path.clone()),
                 )];
+                if self.sidebar.read(cx).model.is_folder(&repo) {
+                    items.extend(self.agent_launch_items(&path));
+                    items.push((INIT_GIT.into(), MenuAction::InitGit(repo.clone())));
+                    items.push(("Remove from sidebar".into(), MenuAction::RemoveRepo(repo)));
+                    self.context_menu = Some(ContextMenu { position, items });
+                    cx.notify();
+                    return;
+                }
                 if let Some(base) = self
                     .sidebar
                     .read(cx)
@@ -2186,18 +2267,7 @@ impl WorkspaceView {
                         MenuAction::ViewDiff(path.clone()),
                     ));
                 }
-                for a in self.configured_adapters() {
-                    items.push((
-                        format!("Run {}", a.display_name()),
-                        MenuAction::RunAgent(path.clone(), a.id()),
-                    ));
-                }
-                for p in self.presets() {
-                    items.push((
-                        format!("Run {}", p.name),
-                        MenuAction::RunPreset(path.clone(), p.name.clone()),
-                    ));
-                }
+                items.extend(self.agent_launch_items(&path));
                 items.push((
                     "New worktree...".into(),
                     MenuAction::NewWorktree(repo.clone()),
@@ -2256,6 +2326,18 @@ impl WorkspaceView {
                 self.context_menu = Some(ContextMenu { position, items });
             }
             SidebarEvent::RepoMenu(repo, position) => {
+                if self.sidebar.read(cx).model.is_folder(&repo) {
+                    self.context_menu = Some(ContextMenu {
+                        position,
+                        items: vec![
+                            (INIT_GIT.into(), MenuAction::InitGit(repo.clone())),
+                            ("Refresh".into(), MenuAction::RefreshRepo(repo.clone())),
+                            ("Remove from sidebar".into(), MenuAction::RemoveRepo(repo)),
+                        ],
+                    });
+                    cx.notify();
+                    return;
+                }
                 self.context_menu = Some(ContextMenu {
                     position,
                     items: vec![
@@ -2281,7 +2363,7 @@ impl WorkspaceView {
             SidebarEvent::AddRepo => self.add_repo(&AddRepo, window, cx),
             SidebarEvent::AddRepos(paths) => {
                 for path in paths {
-                    self.register_repo(path, cx);
+                    self.register_repo(path, window, cx);
                 }
             }
             SidebarEvent::OpenUrl(url) => cx.open_url(&url),
@@ -2294,6 +2376,23 @@ impl WorkspaceView {
             }
         }
         cx.notify();
+    }
+
+    /// "Run <agent>" and "Run <preset>" for a folder.
+    fn agent_launch_items(&self, path: &Path) -> Vec<(String, MenuAction)> {
+        let agents = self.configured_adapters().map(|a| {
+            (
+                format!("Run {}", a.display_name()),
+                MenuAction::RunAgent(path.to_path_buf(), a.id()),
+            )
+        });
+        let presets = self.presets().map(|p| {
+            (
+                format!("Run {}", p.name),
+                MenuAction::RunPreset(path.to_path_buf(), p.name.clone()),
+            )
+        });
+        agents.chain(presets).collect()
     }
 
     /// Focus a pane already in the worktree, else open a tab there.
@@ -2920,6 +3019,7 @@ impl WorkspaceView {
             }
             MenuAction::RevealPath(path) => self.env.system.reveal_path(&path, cx),
             MenuAction::PreviewMarkdown(path) => self.preview_markdown(&path, cx),
+            MenuAction::InitGit(path) => self.init_git(path, cx),
             MenuAction::DismissUpdate => {
                 if let Some(file) = self.release_check_file() {
                     let mut check = ReleaseCheck::load(&file);
@@ -2967,6 +3067,14 @@ impl WorkspaceView {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        if self.sidebar.read(cx).model.is_folder(&repo) {
+            self.status_line = Some(format!(
+                "{} is a plain folder. Right-click it and pick \"{INIT_GIT}\" to make worktrees.",
+                repo.display()
+            ));
+            cx.notify();
+            return;
+        }
         let suggestion = chda_core::new_branch_name(&repo, |b| self.config.worktree_path(&repo, b));
         let bg = hsla(self.settings.colors.background.unwrap_or_default());
         let fg = hsla(self.settings.colors.foreground.unwrap_or_default());
@@ -3136,7 +3244,8 @@ impl WorkspaceView {
                     .read(cx)
                     .model
                     .repos
-                    .first()
+                    .iter()
+                    .find(|r| !r.folder)
                     .map(|r| r.path.clone())
             });
         if let Some(repo) = repo {
@@ -3256,15 +3365,22 @@ impl WorkspaceView {
         }
         let sidebar = &self.sidebar.read(cx).model;
         for repo in &sidebar.repos {
-            items.push(PaletteItem {
-                label: format!("New worktree in {}", repo.name),
-                detail: repo.path.to_string_lossy().into_owned(),
-                command: PaletteCommand::NewWorktree(repo.path.clone()),
-            });
-            for wt in &repo.worktrees {
-                let branch = wt.branch.clone().unwrap_or_else(|| "(detached)".into());
+            if !repo.folder {
                 items.push(PaletteItem {
-                    label: format!("Go to {}/{branch}", repo.name),
+                    label: format!("New worktree in {}", repo.name),
+                    detail: repo.path.to_string_lossy().into_owned(),
+                    command: PaletteCommand::NewWorktree(repo.path.clone()),
+                });
+            }
+            for wt in &repo.worktrees {
+                // Where the item acts: `repo/branch`, or a folder's name.
+                let place = match (&wt.branch, repo.folder) {
+                    (_, true) => repo.name.clone(),
+                    (Some(branch), false) => format!("{}/{branch}", repo.name),
+                    (None, false) => format!("{}/(detached)", repo.name),
+                };
+                items.push(PaletteItem {
+                    label: format!("Go to {place}"),
                     detail: match &wt.note {
                         // The whole note, so any of its words finds the worktree.
                         Some(note) => format!(
@@ -3278,14 +3394,14 @@ impl WorkspaceView {
                 });
                 for a in self.configured_adapters() {
                     items.push(PaletteItem {
-                        label: format!("Run {} in {}/{branch}", a.display_name(), repo.name),
+                        label: format!("Run {} in {place}", a.display_name()),
                         detail: wt.path.to_string_lossy().into_owned(),
                         command: PaletteCommand::RunAgent(wt.path.clone(), a.id().as_str().into()),
                     });
                 }
                 for p in self.presets() {
                     items.push(PaletteItem {
-                        label: format!("Run {} in {}/{branch}", p.name, repo.name),
+                        label: format!("Run {} in {place}", p.name),
                         detail: std::iter::once(p.agent.as_str())
                             .chain(p.args.iter().map(String::as_str))
                             .collect::<Vec<_>>()
@@ -3296,9 +3412,8 @@ impl WorkspaceView {
                 for s in wt.sessions.iter().take(5) {
                     items.push(PaletteItem {
                         label: format!(
-                            "Resume {} in {}/{branch} ({})",
+                            "Resume {} in {place} ({})",
                             self.agent_name(&s.agent),
-                            repo.name,
                             chda_core::relative_age(now, s.last_active_at)
                         ),
                         detail: s.snippet.clone(),
