@@ -34,10 +34,12 @@ jump between shell prompts, `cmd-b` toggle the sidebar, `cmd-shift-o` add a repo
 ## Packaging (macOS)
 
 ```sh
+rustup target add aarch64-apple-darwin x86_64-apple-darwin
 scripts/bundle-macos.sh 0.1.0
 ```
 
-builds `target/bundle/chda.app` and a zip. Without `CHDA_SIGN_IDENTITY` the
+builds `target/bundle/chda.app` as a universal app (Apple silicon and Intel)
+and a zip. Without `CHDA_SIGN_IDENTITY` the
 app is ad-hoc signed; with it plus `APPLE_ID`, `APPLE_TEAM_ID` and
 `APPLE_APP_PASSWORD` it is signed with hardened runtime and notarized. The
 `Release` workflow does the same for `v*` tags using repository secrets and

@@ -4,12 +4,11 @@ cask "chda" do
   version "__VERSION__"
   sha256 "__SHA256__"
 
-  url "https://github.com/magicsih/chda/releases/download/v#{version}/chda-#{version}-macos-arm64.zip"
+  url "https://github.com/magicsih/chda/releases/download/v#{version}/chda-#{version}-macos-universal.zip"
   name "chda"
   desc "Terminal with a git worktree side panel and a status board for LLM coding agents"
   homepage "https://github.com/magicsih/chda"
 
-  depends_on arch: :arm64
   depends_on macos: :sonoma
 
   app "chda.app"

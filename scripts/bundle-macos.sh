@@ -1,5 +1,7 @@
 #!/usr/bin/env bash
-# Build chda.app from a release binary. Signing and notarization happen
+# Build chda.app from a universal release binary (Apple silicon and Intel;
+# needs `rustup target add aarch64-apple-darwin x86_64-apple-darwin`).
+# Signing and notarization happen
 # only when the Apple variables are set; otherwise the bundle is ad-hoc
 # signed so it still launches locally.
 #
@@ -18,10 +20,17 @@ version="${1:-$(grep -m1 '^version' Cargo.toml | sed -E 's/.*"([^"]+)".*/\1/')}"
 out=target/bundle
 app="$out/chda.app"
 
-cargo build --release -p chda
+targets=(aarch64-apple-darwin x86_64-apple-darwin)
+for target in "${targets[@]}"; do
+  cargo build --release -p chda --target "$target"
+done
 rm -rf "$out"
 mkdir -p "$app/Contents/MacOS" "$app/Contents/Resources"
-cp target/release/chda "$app/Contents/MacOS/chda"
+binaries=()
+for target in "${targets[@]}"; do
+  binaries+=("target/$target/release/chda")
+done
+lipo -create -output "$app/Contents/MacOS/chda" "${binaries[@]}"
 sed "s/__VERSION__/$version/g" resources/Info.plist > "$app/Contents/Info.plist"
 python3 scripts/make-icon.py "$out/icon" >/dev/null
 # Without alpha the Dock shows the rounded tile on a black square.
@@ -44,7 +53,7 @@ else
   echo "ad-hoc signed (set CHDA_SIGN_IDENTITY for Developer ID)" >&2
 fi
 
-zip_path="$out/chda-$version-macos-$(uname -m).zip"
+zip_path="$out/chda-$version-macos-universal.zip"
 ditto -c -k --keepParent "$app" "$zip_path"
 
 notarize=()
