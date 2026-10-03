@@ -11,8 +11,9 @@ use crate::platform;
 /// config turns them on (`font-feature = calt`).
 pub const DEFAULT_FAMILY: &str = "JetBrains Mono";
 
-/// Fallback for Nerd Font icons (private use area) that text fonts lack.
-const SYMBOLS_FAMILY: &str = "Symbols Nerd Font Mono";
+/// Fallback for Nerd Font icons (private use area) that text fonts lack,
+/// and the family the sidebar draws its badge icons in.
+pub(crate) const SYMBOLS_FAMILY: &str = "Symbols Nerd Font Mono";
 
 const TEXT_FONTS: [&[u8]; 4] = [
     include_bytes!("../assets/fonts/JetBrainsMono-Regular.ttf"),
