@@ -94,6 +94,8 @@ pub struct SessionEntry {
     pub last_active_at: u64,
     pub snippet: String,
     pub message_count: usize,
+    /// Tokens used, per model; empty when the transcript has none.
+    pub usage: chda_agents::Usage,
 }
 
 /// How long ago `then` was, for compact lists: `now`, `3m`, `2h`,
@@ -565,6 +567,7 @@ mod tests {
                 last_active_at: 60,
                 snippet: "hi".into(),
                 message_count: 1,
+                usage: Default::default(),
             },
         )]);
         assert_eq!(branches(&sb), vec!["main", "a", "b"]);
@@ -597,6 +600,7 @@ mod tests {
                     last_active_at,
                     snippet: String::new(),
                     message_count: 1,
+                    usage: Default::default(),
                 },
             )
         };

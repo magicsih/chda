@@ -258,6 +258,7 @@ pub fn index_sessions(
                     last_active_at: s.last_active_at,
                     snippet: s.snippet,
                     message_count: s.message_count,
+                    usage: s.usage,
                 },
             )
         })

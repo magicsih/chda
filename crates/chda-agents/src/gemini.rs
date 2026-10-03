@@ -246,6 +246,7 @@ pub fn parse_chat(file: &Path, cwd: &Path) -> Option<AgentSession> {
         last_active_at,
         snippet: snippet(&first, 120),
         message_count: count,
+        usage: Default::default(),
         file: file.to_path_buf(),
     })
 }

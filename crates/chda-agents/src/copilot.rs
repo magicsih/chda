@@ -191,6 +191,7 @@ pub fn parse_events(file: &Path) -> Option<AgentSession> {
         last_active_at,
         snippet: snippet(&first, 120),
         message_count: count,
+        usage: Default::default(),
         file: file.to_path_buf(),
     })
 }

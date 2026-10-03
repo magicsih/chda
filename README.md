@@ -101,7 +101,7 @@ document do not run. Mermaid blocks inside Markdown become diagrams too.
 | Title bar | Open the focused worktree in Finder, VS Code, Cursor, Zed, Xcode, a git client or another installed app: pick the app once, then one click on ▶ (also "Open in ..." in the palette) |
 | Sidebar | Repositories, worktrees, dirty / ahead / behind / conflict badges, lines added and removed against the default branch (click for a read-only diff tab), pull request state via `gh`, `glab` or `tea`, open-tab counts, an ACTIVE list sorted by last activity; every badge explains itself on hover |
 | Worktrees | Create from a new or existing branch, delete with a safety check, merge-and-clean, bulk cleanup of merged branches, update a branch from its upstream when it is clean and no agent works in it (fast-forward; a diverged branch asks before a rebase or merge and never rewrites pushed commits); a note per branch saying what the task is (right-click "Edit note...", or `chda note <text>` inside the worktree), shown as the row's label and searchable in the palette |
-| Agents | Claude Code, Codex, Gemini CLI, GitHub Copilot CLI and OpenCode status from their own hooks on tabs, the ACTIVE list, worktree rows and the Dock badge; notifications that open the agent's pane; jump to the agent that waits (`cmd-shift-a`); session list ordered by the last message, with one-click resume; cmd-click several sessions to resume them side by side in one tab |
+| Agents | Claude Code, Codex, Gemini CLI, GitHub Copilot CLI and OpenCode status from their own hooks on tabs, the ACTIVE list, worktree rows and the Dock badge; notifications that open the agent's pane; jump to the agent that waits (`cmd-shift-a`); session list ordered by the last message, with token usage and one-click resume; cmd-click several sessions to resume them side by side in one tab |
 | Palette | `cmd-shift-p`: every action, worktree, agent launch and session in one fuzzy list |
 | Config | Reads your Ghostty font, colors and padding; chda's own settings in one TOML file; edits apply without a restart |
 
@@ -126,6 +126,12 @@ transcripts are never stored. None of the agents' own settings files
 
 Past sessions are listed under each worktree for Claude Code, Codex, Gemini CLI
 and Copilot CLI. OpenCode keeps its sessions in a database chda does not read.
+
+Claude Code and Codex sessions show the tokens they used. The tooltip breaks
+them down (input, cache writes, cache reads, output, subagents included) and
+estimates what the same work would cost at API list prices; subscriptions are
+not billed per token, so read it as a measure of size, not a bill. Codex
+sessions also show how much of the plan's rate limit was used at the last turn.
 
 ## Agents can drive chda (MCP)
 
