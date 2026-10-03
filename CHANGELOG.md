@@ -4,6 +4,13 @@ All notable changes to chda. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); entries are
 generated from conventional commit messages by release-plz.
 
+## [0.1.10](https://github.com/magicsih/chda/compare/v0.1.9...v0.1.10) - 2026-10-03
+
+### Added
+
+- tell when a newer chda release is out ([#91](https://github.com/magicsih/chda/pull/91))
+- *(sidebar)* show each agent session's token usage and its API-equivalent cost ([#88](https://github.com/magicsih/chda/pull/88))
+
 ## [0.1.9](https://github.com/magicsih/chda/compare/v0.1.8...v0.1.9) - 2026-10-03
 
 ### Added
