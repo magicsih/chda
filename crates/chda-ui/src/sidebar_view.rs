@@ -161,7 +161,8 @@ impl SidebarView {
         cx.notify();
     }
 
-    fn toggle_expanded(&mut self, path: &PathBuf, cx: &mut Context<Self>) {
+    /// Show or hide a worktree's past sessions.
+    pub(crate) fn toggle_expanded(&mut self, path: &PathBuf, cx: &mut Context<Self>) {
         if let Some(i) = self.expanded.iter().position(|p| p == path) {
             self.expanded.remove(i);
         } else {
@@ -749,24 +750,38 @@ impl SidebarView {
                     .text_ellipsis()
                     .child(session.snippet.clone()),
             )
+            // Hover swaps the count and age for "Resume". Only visibility
+            // changes: hover is decided separately in prepaint and paint, and
+            // a child that appears between the two (display none to block)
+            // is painted without being prepainted, which panics in GPUI.
             .child(
                 div()
-                    .flex()
-                    .flex_row()
-                    .gap_1()
+                    .relative()
                     .flex_shrink_0()
-                    .text_color(fg.opacity(0.5))
-                    .group_hover(group.clone(), |s| s.hidden())
-                    .child(format!("{}", session.message_count))
-                    .child(relative_age(now, session.last_active_at)),
-            )
-            .child(
-                div()
-                    .hidden()
-                    .flex_shrink_0()
-                    .text_color(fg)
-                    .group_hover(group, |s| s.block())
-                    .child("Resume"),
+                    .child(
+                        div()
+                            .flex()
+                            .flex_row()
+                            .gap_1()
+                            .text_color(fg.opacity(0.5))
+                            .group_hover(group.clone(), |s| s.invisible())
+                            .child(format!("{}", session.message_count))
+                            .child(relative_age(now, session.last_active_at)),
+                    )
+                    .child(
+                        div()
+                            .absolute()
+                            .top_0()
+                            .right_0()
+                            .pl_1()
+                            .invisible()
+                            .text_color(fg)
+                            // The hovered row's color, so a short age does
+                            // not let the prompt show through.
+                            .bg(crate::workspace_view::blend(self.bg, fg, 0.08))
+                            .group_hover(group, |s| s.visible())
+                            .child("Resume"),
+                    ),
             )
             .into_any_element()
     }
