@@ -9,6 +9,7 @@ generated from conventional commit messages by release-plz.
 ### Added
 
 - tell when a newer chda release is out ([#91](https://github.com/magicsih/chda/pull/91))
+- run on Intel Macs with a universal macOS app ([#90](https://github.com/magicsih/chda/pull/90))
 - *(sidebar)* show each agent session's token usage and its API-equivalent cost ([#88](https://github.com/magicsih/chda/pull/88))
 
 ## [0.1.9](https://github.com/magicsih/chda/compare/v0.1.8...v0.1.9) - 2026-10-03
