@@ -4,6 +4,16 @@ All notable changes to chda. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); entries are
 generated from conventional commit messages by release-plz.
 
+## [0.1.9](https://github.com/magicsih/chda/compare/v0.1.8...v0.1.9) - 2026-10-03
+
+### Added
+
+- *(ui)* open the focused worktree in Finder, VS Code or another app from the title bar ([#82](https://github.com/magicsih/chda/pull/82))
+
+### Fixed
+
+- *(term)* show GitHub alert titles and tidy footnotes in Markdown previews ([#78](https://github.com/magicsih/chda/pull/78))
+
 ## [0.1.8](https://github.com/magicsih/chda/compare/v0.1.7...v0.1.8) - 2026-10-03
 
 ### Added
