@@ -37,6 +37,9 @@ jobs:
           security create-keychain -p ci build.keychain
           security default-keychain -s build.keychain
           security unlock-keychain -p ci build.keychain
+          # A new keychain locks after 5 idle minutes; the build takes longer,
+          # and codesign would then wait for a password nobody can type.
+          security set-keychain-settings build.keychain
           security import cert.p12 -k build.keychain -P "$APPLE_CERTIFICATE_PASSWORD" -T /usr/bin/codesign
           security set-key-partition-list -S apple-tool:,apple: -s -k ci build.keychain
           rm cert.p12
@@ -48,6 +51,7 @@ jobs:
           mkdir -p "$RUNNER_TEMP/keys"
           printf '%s' "$APPLE_API_KEY_P8" > "$RUNNER_TEMP/keys/AuthKey.p8"
       - name: Bundle, sign and notarize
+        timeout-minutes: 45
         env:
           CHDA_SIGN_IDENTITY: ${{ secrets.CHDA_SIGN_IDENTITY }}
           APPLE_API_KEY_P8: ${{ secrets.APPLE_API_KEY_P8 != '' && format('{0}/keys/AuthKey.p8', runner.temp) || '' }}
