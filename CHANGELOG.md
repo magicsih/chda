@@ -4,6 +4,12 @@ All notable changes to chda. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); entries are
 generated from conventional commit messages by release-plz.
 
+## [0.1.8](https://github.com/magicsih/chda/compare/v0.1.7...v0.1.8) - 2026-10-03
+
+### Added
+
+- *(term)* preview Markdown files in the browser from a right-clicked path or the palette ([#77](https://github.com/magicsih/chda/pull/77))
+
 ## [0.1.7](https://github.com/magicsih/chda/compare/v0.1.6...v0.1.7) - 2026-10-03
 
 ### Added
