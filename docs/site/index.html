@@ -69,7 +69,7 @@
    "name": "Does chda read my prompts?",
    "acceptedAnswer": {
     "@type": "Answer",
-    "text": "No. Hooks pass only a session id, directory, event kind and time. Nothing is sent anywhere; the app makes no network requests of its own."
+    "text": "Only on your Mac. Hooks pass a session id, directory, event kind and time; the session list reads the agents’ local transcripts for each session’s first prompt and token usage. Nothing is sent anywhere. The only network request is a daily check for a new chda release, which update-check = false turns off."
    }
   },
   {
@@ -190,7 +190,7 @@ brew install --cask chda</pre>
       <dt>How is chda different from tmux or Ghostty?</dt>
       <dd>Ghostty is the terminal; chda uses its core (libghostty-vt) and adds what parallel agent work needs: a sidebar of worktrees with git and pull request badges, agent status, notifications when an agent waits, and merge-and-clean when a branch is done.</dd>
       <dt>Does chda read my prompts?</dt>
-      <dd>No. Hooks pass only a session id, directory, event kind and time. Nothing is sent anywhere; the app makes no network requests of its own.</dd>
+      <dd>Only on your Mac. Hooks pass a session id, directory, event kind and time; the session list reads the agents’ local transcripts for each session’s first prompt and token usage. Nothing is sent anywhere. The only network request is a daily check for a new chda release, which <code>update-check = false</code> turns off.</dd>
       <dt>Do I have to change my agents' config?</dt>
       <dd>No. chda passes hook settings per launch and leaves your config files alone. Only the optional MCP server is added once per agent, with the agent's own <code>mcp add</code> command.</dd>
       <dt>Linux or Windows?</dt>

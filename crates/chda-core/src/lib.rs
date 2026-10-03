@@ -9,6 +9,7 @@ mod github;
 mod gitlab;
 mod names;
 mod refresh;
+pub mod release;
 mod restore;
 mod sidebar;
 mod update;

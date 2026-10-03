@@ -182,9 +182,19 @@ pub struct Home {
     /// Where the setup may write stand-ins for `gh`, `glab` and `tea`;
     /// without them pull request badges are off.
     pub bin: PathBuf,
+    /// What "GitHub" answers for the latest release; absent: offline.
+    /// Each request adds a line to [`Home::release_requests`].
+    pub latest_release: PathBuf,
 }
 
 impl Home {
+    /// How many times the window asked for the latest release.
+    pub fn release_requests(&self) -> usize {
+        std::fs::read_to_string(self.latest_release.with_extension("requests"))
+            .map(|s| s.lines().count())
+            .unwrap_or(0)
+    }
+
     /// Write a Claude Code transcript for a session that ran in `cwd`.
     pub fn claude_session(&self, cwd: &Path, id: &str, prompt: &str) {
         let dir = self.claude_projects.join("project");
@@ -248,6 +258,7 @@ impl Harness {
             data: root.0.join("data"),
             ghostty: root.0.join("home/.config/ghostty/config"),
             bin: root.0.join("bin"),
+            latest_release: root.0.join("latest-release.json"),
         };
         std::fs::create_dir_all(home.home.join(".config/chda")).unwrap();
         std::fs::create_dir_all(home.home.join(".config/ghostty")).unwrap();
@@ -327,6 +338,19 @@ fn open_window(
                 tea: home.bin.join("tea"),
             },
             system,
+            latest_release: {
+                let file = home.latest_release.clone();
+                Arc::new(move || {
+                    use std::io::Write;
+                    let mut log = std::fs::OpenOptions::new()
+                        .create(true)
+                        .append(true)
+                        .open(file.with_extension("requests"))
+                        .unwrap();
+                    writeln!(log, "request").unwrap();
+                    std::fs::read_to_string(&file).ok()
+                })
+            },
         });
         let ghostty: GhosttyConfig = chda_config::load(&paths, None);
         let window = cx.update(|cx| {
