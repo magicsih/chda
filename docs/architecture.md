@@ -133,6 +133,20 @@ starts the login shell itself, not to agent commands. Shells without
 integration fall back to asking the OS for the foreground process's
 directory (`chda-pty`, macOS only so far).
 
+## Title bar
+
+On macOS the system title bar is transparent and chda draws its own row
+under the window buttons: the active tab's title, and an "open in" control.
+Pressing on the row and moving drags the window; a double-click does what
+the system setting for title bars says (zoom or minimize). The control opens
+the root of the worktree the focused pane is in (else the pane's directory)
+in a GUI app. `chda-ui/platform` looks up a fixed list of apps (Finder,
+editors, IDEs, git clients, terminals) by bundle identifier through
+`NSWorkspace`, draws each installed one's icon into a 64-pixel PNG once
+after the first frame, and opens folders with `open -b <bundle id>`. The
+pick is saved as `open-in` in `config.toml`. On Linux and Windows the system
+title bar stays and no apps are listed yet.
+
 ## Sidebar and agents
 
 `chda-core::Sidebar` holds registered repositories, their worktrees with git

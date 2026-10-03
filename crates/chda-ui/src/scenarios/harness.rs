@@ -12,7 +12,7 @@ use chda_core::agents::{AgentAdapter, AgentId, HookEvent, HookKind, SessionId, a
 use gpui::{App, AppContext, Entity, TestAppContext, VisualTestContext, WindowOptions};
 
 use crate::environment::{Environment, System};
-use crate::platform::NotificationTarget;
+use crate::platform::{FolderApp, NotificationTarget};
 use crate::terminal_view::TerminalView;
 use crate::workspace_view::WorkspaceView;
 
@@ -25,6 +25,8 @@ pub struct Recorded {
     pub click: Option<Box<dyn Fn(NotificationTarget)>>,
     pub opened_files: Vec<PathBuf>,
     pub revealed: Vec<PathBuf>,
+    /// Folders opened from the title bar, with the app's id.
+    pub opened_in: Vec<(String, PathBuf)>,
 }
 
 #[derive(Default)]
@@ -62,6 +64,26 @@ impl System for RecordingSystem {
 
     fn reveal_path(&self, path: &Path, _: &App) {
         self.0.borrow_mut().revealed.push(path.to_path_buf());
+    }
+
+    /// Two apps, as if installed.
+    fn folder_apps(&self) -> Vec<FolderApp> {
+        [("finder", "Finder"), ("vscode", "VS Code")]
+            .into_iter()
+            .map(|(id, name)| FolderApp {
+                id: id.into(),
+                name: name.into(),
+                icon: None,
+            })
+            .collect()
+    }
+
+    fn open_folder_in(&self, id: &str, folder: &Path) -> std::io::Result<()> {
+        self.0
+            .borrow_mut()
+            .opened_in
+            .push((id.into(), folder.to_path_buf()));
+        Ok(())
     }
 }
 

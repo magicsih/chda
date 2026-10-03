@@ -759,3 +759,89 @@ fn branch_notes_show_in_the_sidebar(cx: &mut TestAppContext) {
     assert_eq!(note_of(&repo, "feat"), None);
     assert_eq!(h.read(note_in_sidebar(feat.clone())), None);
 }
+
+/// The title bar opens the focused worktree's root in the picked app, and
+/// the pick is remembered (#81).
+#[gpui::test]
+fn title_bar_opens_the_worktree_in_the_picked_app(cx: &mut TestAppContext) {
+    let mut repo = std::path::PathBuf::new();
+    let mut h = Harness::open(cx, "openin", |home| {
+        repo = home.repo("app");
+        std::fs::create_dir_all(repo.join("src")).unwrap();
+        config_with_repo(home, &repo);
+    });
+    h.wait_prompt();
+    h.run(&format!("cd {}/src", repo.display()), "");
+    h.wait_for("the shell in src/", |v, _| {
+        v.ws.focused_pane()
+            .and_then(|p| v.ws.pane(p))
+            .and_then(|i| i.cwd.as_ref())
+            .is_some_and(|c| c.ends_with("src"))
+    });
+    h.wait_for("the worktree in the sidebar", {
+        let repo = repo.clone();
+        move |v, cx| v.sidebar.read(cx).model.worktree_for_path(&repo).is_some()
+    });
+    let click = |h: &mut Harness, selector: &'static str| {
+        h.cx.run_until_parked();
+        let bounds =
+            h.cx.debug_bounds(selector)
+                .unwrap_or_else(|| panic!("{selector} is drawn"));
+        h.cx.simulate_click(bounds.center(), gpui::Modifiers::none());
+        h.cx.run_until_parked();
+    };
+
+    // The buttons sit on the line through the middle of the window buttons.
+    let middle = crate::platform::WINDOW_BUTTONS_TOP + crate::platform::WINDOW_BUTTONS_HEIGHT / 2.0;
+    for selector in ["open-in-pick", "open-in-go"] {
+        let center = h.cx.debug_bounds(selector).unwrap().center().y;
+        assert!(
+            (f32::from(center) - middle).abs() < 0.6,
+            "{selector} centered at {center:?}, window buttons at {middle}"
+        );
+    }
+
+    // Nothing picked yet: the first installed app, at the worktree root.
+    click(&mut h, "open-in-go");
+    assert_eq!(
+        h.system.0.borrow().opened_in,
+        vec![("finder".to_owned(), repo.clone())]
+    );
+
+    // Pick VS Code from the picker's menu.
+    click(&mut h, "open-in-pick");
+    let pick = h.read(|v, _| {
+        v.context_menu
+            .as_ref()
+            .expect("the app menu is open")
+            .items
+            .iter()
+            .find(|(label, _)| label == "VS Code")
+            .map(|(_, action)| action.clone())
+            .expect("VS Code is offered")
+    });
+    h.cx.update(|window, cx| {
+        h.view
+            .update(cx, |v, cx| v.run_menu_action(pick, window, cx))
+    });
+    click(&mut h, "open-in-go");
+    assert_eq!(
+        h.system.0.borrow().opened_in.last(),
+        Some(&("vscode".to_owned(), repo.clone()))
+    );
+    let saved = std::fs::read_to_string(&h.home.config).unwrap();
+    assert!(saved.contains("open-in = \"vscode\""), "{saved}");
+
+    // The palette offers every installed app for the same folder.
+    let items = h.read(|v, cx| v.palette_items(cx));
+    let open_in: Vec<_> = items
+        .iter()
+        .filter(|i| i.label.starts_with("Open in "))
+        .map(|i| (i.label.as_str(), i.detail.clone()))
+        .collect();
+    let root = repo.to_string_lossy().into_owned();
+    assert_eq!(
+        open_in,
+        [("Open in Finder", root.clone()), ("Open in VS Code", root)]
+    );
+}

@@ -85,6 +85,121 @@ fn write_font(dir: &Path, name: &str, data: &[u8]) -> std::io::Result<PathBuf> {
     Ok(path)
 }
 
+/// Left padding of the window's own title bar: room for the macOS window
+/// buttons, which sit over it.
+pub const TITLE_BAR_INSET: f32 = if cfg!(target_os = "macos") { 78.0 } else { 8.0 };
+
+/// Top of the macOS window buttons, and their height; the title bar's
+/// content is centered on them.
+pub const WINDOW_BUTTONS_TOP: f32 = 10.0;
+pub const WINDOW_BUTTONS_HEIGHT: f32 = 14.0;
+
+/// The title bar options for chda's windows. On macOS the system bar is
+/// transparent and chda draws its own, with the window buttons kept;
+/// elsewhere the system bar stays and chda's sits under it.
+pub fn titlebar(title: &str) -> gpui::TitlebarOptions {
+    gpui::TitlebarOptions {
+        title: Some(title.to_owned().into()),
+        appears_transparent: cfg!(target_os = "macos"),
+        traffic_light_position: cfg!(target_os = "macos")
+            .then(|| gpui::point(gpui::px(12.0), gpui::px(WINDOW_BUTTONS_TOP))),
+    }
+}
+
+/// A GUI app that can open a folder, e.g. an editor or a git client.
+#[derive(Clone, Debug, PartialEq)]
+pub struct FolderApp {
+    /// Stable id, saved as `open-in` in `config.toml`.
+    pub id: String,
+    pub name: String,
+    /// The app's icon (PNG).
+    pub icon: Option<std::sync::Arc<gpui::Image>>,
+}
+
+/// Apps the title bar offers, in menu order: id, name, macOS bundle id.
+const FOLDER_APPS: &[(&str, &str, &str)] = &[
+    ("finder", "Finder", "com.apple.finder"),
+    ("vscode", "VS Code", "com.microsoft.VSCode"),
+    ("cursor", "Cursor", "com.todesktop.230313mzl4w4u92"),
+    ("windsurf", "Windsurf", "com.exafunction.windsurf"),
+    ("zed", "Zed", "dev.zed.Zed"),
+    ("xcode", "Xcode", "com.apple.dt.Xcode"),
+    ("intellij", "IntelliJ IDEA", "com.jetbrains.intellij"),
+    (
+        "intellij-ce",
+        "IntelliJ IDEA CE",
+        "com.jetbrains.intellij.ce",
+    ),
+    (
+        "android-studio",
+        "Android Studio",
+        "com.google.android.studio",
+    ),
+    ("sublime", "Sublime Text", "com.sublimetext.4"),
+    ("fork", "Fork", "com.DanPristupov.Fork"),
+    ("tower", "Tower", "com.fournova.Tower3"),
+    (
+        "github-desktop",
+        "GitHub Desktop",
+        "com.github.GitHubClient",
+    ),
+    ("terminal", "Terminal", "com.apple.Terminal"),
+    ("iterm", "iTerm", "com.googlecode.iterm2"),
+    ("ghostty", "Ghostty", "com.mitchellh.ghostty"),
+];
+
+/// The installed apps from [`FOLDER_APPS`], with their icons. Empty where
+/// apps are not looked up yet (Linux, Windows).
+pub fn folder_apps() -> Vec<FolderApp> {
+    #[cfg(target_os = "macos")]
+    {
+        FOLDER_APPS
+            .iter()
+            .filter_map(|(id, name, bundle)| {
+                let path = macos::app_path(bundle)?;
+                let icon = macos::app_icon_png(&path, 64).map(|png| {
+                    std::sync::Arc::new(gpui::Image::from_bytes(gpui::ImageFormat::Png, png))
+                });
+                Some(FolderApp {
+                    id: (*id).into(),
+                    name: (*name).into(),
+                    icon,
+                })
+            })
+            .collect()
+    }
+    #[cfg(not(target_os = "macos"))]
+    {
+        let _ = FOLDER_APPS;
+        Vec::new()
+    }
+}
+
+/// Open `folder` in the app with `id` from [`FOLDER_APPS`].
+pub fn open_folder_in(id: &str, folder: &std::path::Path) -> std::io::Result<()> {
+    let Some((_, _, bundle)) = FOLDER_APPS.iter().find(|(i, _, _)| *i == id) else {
+        return Err(std::io::Error::other(format!("unknown app {id}")));
+    };
+    #[cfg(target_os = "macos")]
+    {
+        let status = std::process::Command::new("open")
+            .arg("-b")
+            .arg(bundle)
+            .arg(folder)
+            .status()?;
+        if status.success() {
+            Ok(())
+        } else {
+            Err(std::io::Error::other(format!("open -b {bundle} failed")))
+        }
+    }
+    #[cfg(not(target_os = "macos"))]
+    {
+        let _ = (bundle, folder);
+        Err(std::io::Error::other("not supported on this platform yet"))
+    }
+}
+
 /// What the system's file manager is called in menu items.
 pub fn file_manager_name() -> &'static str {
     if cfg!(target_os = "macos") {

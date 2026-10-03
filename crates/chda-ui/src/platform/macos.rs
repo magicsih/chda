@@ -4,11 +4,17 @@ use std::cell::RefCell;
 use std::path::Path;
 
 use block2::{DynBlock, RcBlock};
+use objc2::AllocAnyThread;
 use objc2::rc::Retained;
 use objc2::runtime::{Bool, NSObject, NSObjectProtocol, ProtocolObject};
 use objc2::{MainThreadMarker, MainThreadOnly, define_class, msg_send};
-use objc2_app_kit::NSApplication;
-use objc2_foundation::{NSBundle, NSError, NSLocale, NSString, NSURL};
+use objc2_app_kit::{
+    NSApplication, NSBitmapImageFileType, NSBitmapImageRep, NSCompositingOperation,
+    NSDeviceRGBColorSpace, NSGraphicsContext, NSWorkspace,
+};
+use objc2_foundation::{
+    NSBundle, NSDictionary, NSError, NSLocale, NSPoint, NSRect, NSSize, NSString, NSURL,
+};
 use objc2_user_notifications::{
     UNAuthorizationOptions, UNMutableNotificationContent, UNNotification,
     UNNotificationPresentationOptions, UNNotificationRequest, UNNotificationResponse,
@@ -191,4 +197,49 @@ pub fn set_badge(count: usize) {
     NSApplication::sharedApplication(mtm)
         .dockTile()
         .setBadgeLabel(label.as_deref());
+}
+
+/// Where the app with `bundle_id` is installed, if it is.
+pub fn app_path(bundle_id: &str) -> Option<String> {
+    let url = NSWorkspace::sharedWorkspace()
+        .URLForApplicationWithBundleIdentifier(&NSString::from_str(bundle_id))?;
+    url.path().map(|p| p.to_string())
+}
+
+/// The icon of the app at `path` as a PNG, `size` pixels square.
+pub fn app_icon_png(path: &str, size: isize) -> Option<Vec<u8>> {
+    let icon = NSWorkspace::sharedWorkspace().iconForFile(&NSString::from_str(path));
+    // SAFETY: null planes make the rep allocate its own pixel buffer; the
+    // other arguments describe 8-bit RGBA.
+    let rep = unsafe {
+        NSBitmapImageRep::initWithBitmapDataPlanes_pixelsWide_pixelsHigh_bitsPerSample_samplesPerPixel_hasAlpha_isPlanar_colorSpaceName_bytesPerRow_bitsPerPixel(
+            NSBitmapImageRep::alloc(),
+            std::ptr::null_mut(),
+            size,
+            size,
+            8,
+            4,
+            true,
+            false,
+            NSDeviceRGBColorSpace,
+            0,
+            0,
+        )
+    }?;
+    let context = NSGraphicsContext::graphicsContextWithBitmapImageRep(&rep)?;
+    NSGraphicsContext::saveGraphicsState_class();
+    NSGraphicsContext::setCurrentContext(Some(&context));
+    let side = size as f64;
+    icon.drawInRect_fromRect_operation_fraction(
+        NSRect::new(NSPoint::new(0.0, 0.0), NSSize::new(side, side)),
+        NSRect::ZERO,
+        NSCompositingOperation::SourceOver,
+        1.0,
+    );
+    NSGraphicsContext::restoreGraphicsState_class();
+    // SAFETY: an empty dictionary is a valid set of PNG properties.
+    let data = unsafe {
+        rep.representationUsingType_properties(NSBitmapImageFileType::PNG, &NSDictionary::new())
+    }?;
+    Some(data.to_vec())
 }

@@ -19,9 +19,9 @@ use chda_core::{
 use futures::StreamExt;
 use futures::channel::mpsc::unbounded;
 use gpui::{
-    AnyElement, App, Context, Entity, FocusHandle, Focusable, Hsla, MouseButton, PathPromptOptions,
-    Pixels, Point, Render, Subscription, Window, actions, anchored, deferred, div, prelude::*, px,
-    relative,
+    AnyElement, App, Context, Entity, FocusHandle, Focusable, Hsla, MouseButton, MouseDownEvent,
+    PathPromptOptions, Pixels, Point, Render, Subscription, Window, actions, anchored, deferred,
+    div, img, point, prelude::*, px, relative,
 };
 
 use crate::palette::{Palette, PaletteCommand, PaletteEvent, PaletteItem};
@@ -86,6 +86,11 @@ actions!(
 
 /// Fraction of the tab a keyboard resize moves the divider by.
 const RESIZE_STEP: f32 = 0.05;
+/// Height of the window's own title bar, bottom border included. Its
+/// content is centered on the macOS window buttons.
+pub(crate) const TITLE_BAR_HEIGHT: f32 = 2.0
+    * (crate::platform::WINDOW_BUTTONS_TOP + crate::platform::WINDOW_BUTTONS_HEIGHT / 2.0)
+    + 1.0;
 /// Font size bounds and step for the runtime font size actions (Ghostty's).
 const FONT_SIZE_STEP: f32 = 1.0;
 const FONT_SIZE_MIN: f32 = 4.0;
@@ -165,6 +170,8 @@ pub(crate) enum MenuAction {
     RevealPath(PathBuf),
     /// Render a Markdown file and open it in the browser.
     PreviewMarkdown(PathBuf),
+    /// Make this app (a `FolderApp` id) the title bar's choice.
+    PickFolderApp(String),
     /// Open with the system's default application (a folder: the file manager).
     OpenWithSystem(PathBuf),
     /// Type `cd <dir>` at the shell prompt of `pane`.
@@ -227,6 +234,11 @@ pub struct WorkspaceView {
     watcher: Option<RepoWatcher>,
     watch_events: Option<mpsc::Receiver<PathBuf>>,
     pub(crate) context_menu: Option<ContextMenu>,
+    /// Installed apps the title bar can open the worktree in.
+    pub(crate) folder_apps: Vec<crate::platform::FolderApp>,
+    /// The left button went down on the title bar: the next move drags
+    /// the window.
+    title_drag: bool,
     sheet: Option<NewWorktreeSheet>,
     note_sheet: Option<NoteSheet>,
     pub(crate) confirm: Option<ConfirmSheet>,
@@ -321,6 +333,8 @@ impl WorkspaceView {
             watcher,
             watch_events,
             context_menu: None,
+            folder_apps: Vec::new(),
+            title_drag: false,
             sheet: None,
             note_sheet: None,
             confirm: None,
@@ -393,6 +407,15 @@ impl WorkspaceView {
         this.refresh_all(cx);
         this.refresh_sessions(cx);
         Self::schedule_refreshes(window, cx);
+        // Looking up apps and drawing their icons takes tens of milliseconds
+        // on a cold start; do it after the first frame.
+        cx.spawn(async move |this, cx| {
+            let _ = this.update(cx, |view, cx| {
+                view.folder_apps = view.env.system.folder_apps();
+                cx.notify();
+            });
+        })
+        .detach();
         this
     }
 
@@ -1581,6 +1604,173 @@ impl WorkspaceView {
         }
     }
 
+    /// The folder the title bar opens: the root of the worktree the focused
+    /// pane is in, else that pane's directory.
+    pub(crate) fn open_in_folder(&self, cx: &App) -> Option<PathBuf> {
+        let cwd = self.focused_cwd()?;
+        let root = self
+            .sidebar
+            .read(cx)
+            .model
+            .worktree_for_path(&cwd)
+            .map(|(_, w)| w.path.clone());
+        Some(root.unwrap_or(cwd))
+    }
+
+    /// The title bar's app: the one picked last, else the first installed.
+    pub(crate) fn folder_app(&self) -> Option<&crate::platform::FolderApp> {
+        self.config
+            .open_in
+            .as_deref()
+            .and_then(|id| self.folder_apps.iter().find(|a| a.id == id))
+            .or_else(|| self.folder_apps.first())
+    }
+
+    /// Open the focused worktree in the app with `id` and remember the app.
+    pub(crate) fn open_folder_in(&mut self, id: &str, cx: &mut Context<Self>) {
+        let Some(folder) = self.open_in_folder(cx) else {
+            self.status_line = Some("No folder to open: the focused pane has no directory".into());
+            cx.notify();
+            return;
+        };
+        if let Err(e) = self.env.system.open_folder_in(id, &folder) {
+            self.status_line = Some(format!("Could not open {}: {e}", folder.display()));
+        }
+        if self.config.open_in.as_deref() != Some(id) {
+            self.config.open_in = Some(id.to_owned());
+            self.save_config();
+        }
+        cx.notify();
+    }
+
+    /// The window's own title bar: drag area, title, and the "open in" app
+    /// picker and button.
+    fn render_title_bar(&self, window: &Window, cx: &mut Context<Self>) -> AnyElement {
+        let bg = hsla(self.settings.colors.background.unwrap_or_default());
+        let fg = hsla(self.settings.colors.foreground.unwrap_or_default());
+        let title = self
+            .ws
+            .active_tab()
+            .map(|t| self.ws.tab_title(t))
+            .unwrap_or_else(|| "chda".into());
+        let inset = if window.is_fullscreen() {
+            8.0
+        } else {
+            crate::platform::TITLE_BAR_INSET
+        };
+        let stop = |_: &MouseDownEvent, _: &mut Window, cx: &mut App| cx.stop_propagation();
+        let mut bar = div()
+            .id("title-bar")
+            .window_control_area(gpui::WindowControlArea::Drag)
+            .flex_shrink_0()
+            .h(px(TITLE_BAR_HEIGHT))
+            .w_full()
+            .flex()
+            .flex_row()
+            .items_center()
+            .pl(px(inset))
+            .pr_2()
+            .gap_2()
+            .bg(blend(bg, fg, 0.05))
+            .border_b_1()
+            .border_color(fg.opacity(0.12))
+            .text_sm()
+            .text_color(fg.opacity(0.75))
+            .on_mouse_down(
+                MouseButton::Left,
+                cx.listener(|this, _, _, _| this.title_drag = true),
+            )
+            .on_mouse_up(
+                MouseButton::Left,
+                cx.listener(|this, _, _, _| this.title_drag = false),
+            )
+            .on_mouse_move(cx.listener(|this, _, window, _| {
+                if this.title_drag {
+                    this.title_drag = false;
+                    window.start_window_move();
+                }
+            }))
+            .on_click(|event, window, _| {
+                if event.click_count() == 2 {
+                    window.titlebar_double_click();
+                }
+            })
+            .child(
+                div()
+                    .flex_1()
+                    .min_w_0()
+                    .overflow_hidden()
+                    .whitespace_nowrap()
+                    .text_ellipsis()
+                    .flex()
+                    .justify_center()
+                    .child(optical(title)),
+            );
+        if let Some(app) = self.folder_app() {
+            let folder = self.open_in_folder(cx);
+            let folder_name = folder
+                .as_ref()
+                .and_then(|f| f.file_name())
+                .map(|n| n.to_string_lossy().into_owned());
+            let (id, name, icon) = (app.id.clone(), app.name.clone(), app.icon.clone());
+            let button = |id: &'static str| {
+                div()
+                    .id(id)
+                    .h(px(22.0))
+                    .px_2()
+                    .flex()
+                    .flex_row()
+                    .items_center()
+                    .gap_1()
+                    .rounded_md()
+                    .border_1()
+                    .border_color(fg.opacity(0.18))
+                    .text_color(fg)
+                    .cursor_pointer()
+                    .hover(|s| s.bg(fg.opacity(0.1)))
+                    .on_mouse_down(MouseButton::Left, stop)
+            };
+            let picker = button("open-in-pick")
+                .debug_selector(|| "open-in-pick".into())
+                .tooltip(crate::tooltip::text(
+                    "Choose the app the button opens the worktree in",
+                ))
+                .on_click(cx.listener(|this, _, window, cx| {
+                    let items = this
+                        .folder_apps
+                        .iter()
+                        .map(|a| (a.name.clone(), MenuAction::PickFolderApp(a.id.clone())))
+                        .collect();
+                    let width = window.viewport_size().width;
+                    this.context_menu = Some(ContextMenu {
+                        position: point(width - px(230.0), px(TITLE_BAR_HEIGHT)),
+                        items,
+                    });
+                    cx.notify();
+                }))
+                .children(icon.map(|i| img(i).size(px(16.0)).flex_shrink_0()))
+                .child(optical(name.clone()))
+                .child(
+                    div()
+                        .text_xs()
+                        .text_color(fg.opacity(0.6))
+                        .child("\u{25be}"),
+                );
+            let tip = match &folder_name {
+                Some(f) => format!("Open {f} in {name}"),
+                None => format!("Open the focused worktree in {name}"),
+            };
+            let go = button("open-in-go")
+                .debug_selector(|| "open-in-go".into())
+                .tooltip(crate::tooltip::text(tip))
+                .when(folder.is_none(), |d| d.opacity(0.5))
+                .on_click(cx.listener(move |this, _, _, cx| this.open_folder_in(&id, cx)))
+                .child(optical("\u{25b6}"));
+            bar = bar.child(div().flex().flex_row().gap_1().child(picker).child(go));
+        }
+        bar.into_any_element()
+    }
+
     /// Render a Markdown file to a local page and open it in the browser.
     fn preview_markdown(&mut self, file: &Path, cx: &mut Context<Self>) {
         let Some(dir) = self.env.data_dir.as_ref().map(|d| d.join("diagrams")) else {
@@ -2619,6 +2809,13 @@ impl WorkspaceView {
             }
             MenuAction::RevealPath(path) => self.env.system.reveal_path(&path, cx),
             MenuAction::PreviewMarkdown(path) => self.preview_markdown(&path, cx),
+            MenuAction::PickFolderApp(id) => {
+                if self.config.open_in.as_deref() != Some(id.as_str()) {
+                    self.config.open_in = Some(id);
+                    self.save_config();
+                }
+                cx.notify();
+            }
             MenuAction::OpenWithSystem(path) => self.env.system.open_file(&path, cx),
             MenuAction::CdHere { pane, dir } => {
                 if let Some((view, _)) = self.panes.get(&pane) {
@@ -2914,6 +3111,15 @@ impl WorkspaceView {
             .duration_since(std::time::UNIX_EPOCH)
             .map(|d| d.as_millis() as u64)
             .unwrap_or(0);
+        if let Some(folder) = self.open_in_folder(cx) {
+            for app in &self.folder_apps {
+                items.push(PaletteItem {
+                    label: format!("Open in {}", app.name),
+                    detail: folder.to_string_lossy().into_owned(),
+                    command: PaletteCommand::OpenFolderIn(app.id.clone()),
+                });
+            }
+        }
         if let Some(cwd) = self.focused_cwd() {
             for file in markdown_files(&cwd) {
                 items.push(PaletteItem {
@@ -3215,6 +3421,10 @@ impl WorkspaceView {
                 }
             }
             PaletteCommand::NewWorktree(repo) => self.open_sheet(repo, window, cx),
+            PaletteCommand::OpenFolderIn(id) => {
+                self.open_folder_in(&id, cx);
+                self.focus_active(window, cx);
+            }
             PaletteCommand::PreviewMarkdown(file) => {
                 self.preview_markdown(&file, cx);
                 self.focus_active(window, cx);
@@ -3449,6 +3659,25 @@ impl WorkspaceView {
                         .text_color(fg.opacity(0.45))
                         .child(label)
                         .child(div().text_xs().child(reason)),
+                    MenuAction::PickFolderApp(ref id) => {
+                        let app = self.folder_apps.iter().find(|a| &a.id == id);
+                        let current = self.folder_app().is_some_and(|a| &a.id == id);
+                        item.flex()
+                            .flex_row()
+                            .items_center()
+                            .gap_2()
+                            .cursor_pointer()
+                            .hover(|s| s.bg(fg.opacity(0.12)))
+                            .on_click(cx.listener(move |this, _, window, cx| {
+                                this.run_menu_action(action.clone(), window, cx)
+                            }))
+                            .children(
+                                app.and_then(|a| a.icon.clone())
+                                    .map(|i| img(i).size(px(16.0)).flex_shrink_0()),
+                            )
+                            .child(div().flex_1().child(label))
+                            .when(current, |d| d.child("\u{2713}"))
+                    }
                     action => item
                         .cursor_pointer()
                         .hover(|s| s.bg(fg.opacity(0.12)))
@@ -3714,6 +3943,13 @@ impl WorkspaceView {
 }
 
 /// Mix `a` towards `b` by `t`.
+/// Text in the title bar, nudged down so its ink, not its line box, sits on
+/// the window buttons' center line: the UI font's ascent is taller than its
+/// descent, which leaves centered text about a point high.
+fn optical(text: impl IntoElement) -> gpui::Div {
+    div().relative().top(px(1.0)).child(text)
+}
+
 /// Markdown files directly in `dir`, sorted, at most 20: the palette offers
 /// to preview them.
 fn markdown_files(dir: &Path) -> Vec<PathBuf> {
@@ -3771,7 +4007,7 @@ impl Focusable for WorkspaceView {
 }
 
 impl Render for WorkspaceView {
-    fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let bg = hsla(self.settings.colors.background.unwrap_or_default());
         let fg = hsla(self.settings.colors.foreground.unwrap_or_default());
         let divider = blend(bg, fg, 0.2);
@@ -3800,11 +4036,12 @@ impl Render for WorkspaceView {
             .children(self.render_tab_bar(cx))
             .child(div().flex_1().min_h_0().w_full().child(content))
             .children(main_status);
+        let title_bar = self.render_title_bar(window, cx);
         div()
             .size_full()
             .relative()
             .flex()
-            .flex_row()
+            .flex_col()
             .bg(bg)
             .key_context("Workspace")
             .track_focus(&self.focus_handle)
@@ -3912,21 +4149,30 @@ impl Render for WorkspaceView {
                 this.ws.toggle_zoom();
                 this.focus_active(w, cx);
             }))
-            .when(self.sidebar_visible, |d| {
-                d.child(
-                    div()
-                        .w(sidebar_width)
-                        .h_full()
-                        .flex_shrink_0()
-                        .flex()
-                        .flex_col()
-                        .border_r_1()
-                        .border_color(divider)
-                        .child(div().flex_1().min_h_0().child(self.sidebar.clone()))
-                        .children(status),
-                )
-            })
-            .child(main)
+            .child(title_bar)
+            .child(
+                div()
+                    .flex_1()
+                    .min_h_0()
+                    .w_full()
+                    .flex()
+                    .flex_row()
+                    .when(self.sidebar_visible, |d| {
+                        d.child(
+                            div()
+                                .w(sidebar_width)
+                                .h_full()
+                                .flex_shrink_0()
+                                .flex()
+                                .flex_col()
+                                .border_r_1()
+                                .border_color(divider)
+                                .child(div().flex_1().min_h_0().child(self.sidebar.clone()))
+                                .children(status),
+                        )
+                    })
+                    .child(main),
+            )
             .children(self.render_context_menu(cx))
             .children(self.render_sheet(cx))
             .children(self.render_note_sheet())
