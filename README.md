@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="docs/media/hero.png" alt="chda: a git worktree sidebar with notes, diff badges, merged and open-tab icons and agent status next to a terminal showing a Mermaid diagram" width="880">
+  <img src="docs/media/hero.png" alt="chda: a git worktree sidebar with notes, diff badges, merged and open-tab icons and agent status, next to an agent's Mermaid architecture diagram with its View diagram button" width="880">
 </p>
 
 <h1 align="center">chda</h1>
@@ -47,7 +47,7 @@ and adds pull request badges. On a managed Mac where Homebrew cannot write to
 ## Sixty-second tour
 
 <p align="center">
-  <img src="docs/media/demo.gif" alt="Agents report working and waiting in the sidebar, an agent creates a worktree with a note through chda mcp, a Mermaid diagram gets a View diagram button and an image shows inline" width="880">
+  <img src="docs/media/demo.gif" alt="Agents report working and waiting in the sidebar; an agent creates a worktree through chda mcp and prints an architecture diagram, which opens rendered in the browser; a Markdown design doc is previewed with its sequence diagram" width="880">
 </p>
 
 1. Press `cmd-shift-o` (or click "+ repo") and pick a git repository. It appears in
@@ -74,6 +74,23 @@ and adds pull request badges. On a managed Mac where Homebrew cannot write to
    then right-click it and choose "Merge into main and clean up". chda merges,
    removes the worktree and deletes the branch, and refuses when there are
    uncommitted changes, unpushed commits or an open pull request.
+
+## Diagrams and Markdown, rendered offline
+
+Agents answer with Mermaid diagrams and write design docs in Markdown. chda
+finds Mermaid in a pane's output ("View diagram" on the block, or "View last
+diagram" in the palette) and previews Markdown files (right-click a `.md` path,
+or "Preview Markdown" in the palette). Both open as local pages in your
+browser: nothing is uploaded, remote content is blocked and scripts in the
+document do not run. Mermaid blocks inside Markdown become diagrams too.
+
+<p align="center">
+  <img src="docs/media/diagram.png" alt="An architecture flowchart with five subgraphs, from clients through the API gateway and acme-api to Postgres, OpenSearch, Redis and a background indexer, rendered from an agent's output" width="880">
+</p>
+<p align="center">
+  <img src="docs/media/markdown.png" alt="A Markdown design doc previewed in the browser: title, status table, summary with a Note alert and a task list" width="434">
+  <img src="docs/media/markdown-flow.png" alt="The same doc's request flow: a Mermaid sequence diagram with a cache hit and miss branch" width="434">
+</p>
 
 ## Features
 
