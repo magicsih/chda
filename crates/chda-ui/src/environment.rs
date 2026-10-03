@@ -94,6 +94,9 @@ pub struct Environment {
     /// The forge CLIs (`gh`, `glab`, `tea`) to ask for pull request state.
     pub forge_clis: ForgeClis,
     pub system: Rc<dyn System>,
+    /// Asks GitHub for the latest release: the API's JSON, or `None` when
+    /// it cannot be reached. Runs off the main thread.
+    pub latest_release: Arc<dyn Fn() -> Option<String> + Send + Sync>,
 }
 
 impl Environment {
@@ -108,6 +111,7 @@ impl Environment {
             adapters: Arc::new(adapters()),
             forge_clis: ForgeClis::default(),
             system: Rc::new(NativeSystem),
+            latest_release: Arc::new(fetch_latest_release),
         }
     }
 
@@ -118,4 +122,28 @@ impl Environment {
             .and_then(|p| ChdaConfig::load(p).ok())
             .unwrap_or_default()
     }
+}
+
+/// One `curl` request to the GitHub API, with curl's own user agent; no
+/// other data goes with it.
+fn fetch_latest_release() -> Option<String> {
+    let out = std::process::Command::new("curl")
+        .args([
+            "--fail",
+            "--silent",
+            "--location",
+            "--max-time",
+            "20",
+            "--header",
+            "Accept: application/vnd.github+json",
+            chda_core::release::LATEST_RELEASE_URL,
+        ])
+        .stdin(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .output()
+        .ok()?;
+    out.status
+        .success()
+        .then(|| String::from_utf8(out.stdout).ok())
+        .flatten()
 }

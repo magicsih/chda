@@ -12,6 +12,7 @@ use chda_config::{ChdaConfig, GhosttyConfig, Paths, PullStrategy, TabTitle};
 use crate::environment::Environment;
 use chda_core::agents::control::{Incoming, Reply, Request};
 use chda_core::agents::{AgentAdapter, AgentId, HookEvent, HookKind, SessionCache, SessionId, ipc};
+use chda_core::release::{Release, ReleaseCheck, UPDATE_COMMAND, parse_latest};
 use chda_core::{
     ActiveTab, AgentEvent, AgentSessionRef, AgentStatus, Axis, Direction, FileWatcher, Node,
     PaneId, RepoWatcher, SavedBounds, SavedWindow, TabId, TitleMode, Workspace,
@@ -29,7 +30,7 @@ use crate::platform;
 use crate::settings::Settings;
 use crate::sidebar_view::{AgentLabel, SessionPick, SidebarEvent, SidebarView};
 use crate::terminal_element::hsla;
-use crate::terminal_view::{TerminalEvent, TerminalView};
+use crate::terminal_view::{TerminalEvent, TerminalView, now_ms};
 use crate::text_input::{TextInput, TextInputEvent};
 
 actions!(
@@ -100,6 +101,8 @@ const FONT_SIZE_MAX: f32 = 255.0;
 const STATUS_REFRESH: Duration = Duration::from_secs(60);
 /// How often session transcripts are re-indexed while the window is active.
 const SESSION_REFRESH: Duration = Duration::from_secs(120);
+/// How often to see whether the daily release check is due.
+const RELEASE_CHECK: Duration = Duration::from_secs(60 * 60);
 /// Step of the "working" dot pulse; the timer only runs while an agent works.
 const PULSE_STEP: Duration = Duration::from_millis(250);
 const PULSE_STEPS: u8 = 8;
@@ -172,6 +175,8 @@ pub(crate) enum MenuAction {
     PreviewMarkdown(PathBuf),
     /// Make this app (a `FolderApp` id) the title bar's choice.
     PickFolderApp(String),
+    /// Hide the new-version notice until the next release.
+    DismissUpdate,
     /// Open with the system's default application (a folder: the file manager).
     OpenWithSystem(PathBuf),
     /// Type `cd <dir>` at the shell prompt of `pane`.
@@ -236,6 +241,8 @@ pub struct WorkspaceView {
     pub(crate) context_menu: Option<ContextMenu>,
     /// Installed apps the title bar can open the worktree in.
     pub(crate) folder_apps: Vec<crate::platform::FolderApp>,
+    /// A newer release than the running one, until dismissed.
+    pub(crate) release_notice: Option<Release>,
     /// The left button went down on the title bar: the next move drags
     /// the window.
     title_drag: bool,
@@ -334,6 +341,7 @@ impl WorkspaceView {
             watch_events,
             context_menu: None,
             folder_apps: Vec::new(),
+            release_notice: None,
             title_drag: false,
             sheet: None,
             note_sheet: None,
@@ -407,6 +415,7 @@ impl WorkspaceView {
         this.refresh_all(cx);
         this.refresh_sessions(cx);
         Self::schedule_refreshes(window, cx);
+        Self::schedule_release_checks(window, cx);
         // Looking up apps and drawing their icons takes tens of milliseconds
         // on a cold start; do it after the first frame.
         cx.spawn(async move |this, cx| {
@@ -1104,6 +1113,65 @@ impl WorkspaceView {
         .detach();
     }
 
+    /// Look for a newer release now and every hour; GitHub is asked at
+    /// most once a day (`release-check.json` remembers when), and never
+    /// with `update-check = false`.
+    fn schedule_release_checks(window: &mut Window, cx: &mut Context<Self>) {
+        cx.spawn_in(window, async move |this, cx| {
+            loop {
+                let Ok(Some((file, fetch))) = this.update(cx, |view, cx| {
+                    let file = view
+                        .release_check_file()
+                        .filter(|_| view.config.update_check);
+                    let Some(file) = file else {
+                        view.release_notice = None;
+                        return None;
+                    };
+                    let check = ReleaseCheck::load(&file);
+                    view.set_release_notice(&check, cx);
+                    check
+                        .due(now_ms())
+                        .then(|| (file, view.env.latest_release.clone()))
+                }) else {
+                    if this.upgrade().is_none() {
+                        break;
+                    }
+                    cx.background_executor().timer(RELEASE_CHECK).await;
+                    continue;
+                };
+                let latest = cx
+                    .background_spawn(async move { fetch().as_deref().and_then(parse_latest) })
+                    .await;
+                if let Some(latest) = latest {
+                    let mut check = ReleaseCheck::load(&file);
+                    check.record(now_ms(), latest);
+                    let _ = check.save(&file);
+                    let alive = this.update(cx, |view, cx| view.set_release_notice(&check, cx));
+                    if alive.is_err() {
+                        break;
+                    }
+                }
+                cx.background_executor().timer(RELEASE_CHECK).await;
+            }
+        })
+        .detach();
+    }
+
+    fn release_check_file(&self) -> Option<PathBuf> {
+        self.env
+            .data_dir
+            .as_ref()
+            .map(|d| d.join("release-check.json"))
+    }
+
+    fn set_release_notice(&mut self, check: &ReleaseCheck, cx: &mut Context<Self>) {
+        let notice = check.notice(env!("CARGO_PKG_VERSION")).cloned();
+        if notice != self.release_notice {
+            self.release_notice = notice;
+            cx.notify();
+        }
+    }
+
     fn refresh_all(&mut self, cx: &mut Context<Self>) {
         let repos: Vec<PathBuf> = self
             .sidebar
@@ -1706,6 +1774,49 @@ impl WorkspaceView {
                     .justify_center()
                     .child(optical(title)),
             );
+        if let Some(release) = &self.release_notice {
+            let version = release.version.clone();
+            let url = release.url.clone();
+            bar = bar.child(
+                div()
+                    .id("update-notice")
+                    .debug_selector(|| "update-notice".into())
+                    .h(px(22.0))
+                    .px_2()
+                    .flex()
+                    .items_center()
+                    .rounded_md()
+                    .bg(fg.opacity(0.1))
+                    .text_color(fg)
+                    .cursor_pointer()
+                    .hover(|s| s.bg(fg.opacity(0.18)))
+                    .on_mouse_down(MouseButton::Left, stop)
+                    .tooltip(crate::tooltip::text(format!(
+                        "chda {version} is out; this is {}. Click for the release notes \
+                         and the update command.",
+                        env!("CARGO_PKG_VERSION")
+                    )))
+                    .on_click(cx.listener(move |this, _, window, cx| {
+                        let width = window.viewport_size().width;
+                        this.context_menu = Some(ContextMenu {
+                            position: point(width - px(330.0), px(TITLE_BAR_HEIGHT)),
+                            items: vec![
+                                ("Release notes".into(), MenuAction::OpenUrl(url.clone())),
+                                (
+                                    format!("Copy \"{UPDATE_COMMAND}\""),
+                                    MenuAction::Copy(UPDATE_COMMAND.into()),
+                                ),
+                                (
+                                    "Dismiss until the next release".into(),
+                                    MenuAction::DismissUpdate,
+                                ),
+                            ],
+                        });
+                        cx.notify();
+                    }))
+                    .child(optical(format!("Update to {}", release.version))),
+            );
+        }
         if let Some(app) = self.folder_app() {
             let folder = self.open_in_folder(cx);
             let folder_name = folder
@@ -2809,6 +2920,17 @@ impl WorkspaceView {
             }
             MenuAction::RevealPath(path) => self.env.system.reveal_path(&path, cx),
             MenuAction::PreviewMarkdown(path) => self.preview_markdown(&path, cx),
+            MenuAction::DismissUpdate => {
+                if let Some(file) = self.release_check_file() {
+                    let mut check = ReleaseCheck::load(&file);
+                    check.dismiss();
+                    if let Err(e) = check.save(&file) {
+                        self.status_line = Some(format!("Could not save the dismissal: {e}"));
+                    }
+                }
+                self.release_notice = None;
+                cx.notify();
+            }
             MenuAction::PickFolderApp(id) => {
                 if self.config.open_in.as_deref() != Some(id.as_str()) {
                     self.config.open_in = Some(id);

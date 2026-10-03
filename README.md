@@ -124,6 +124,13 @@ transcripts are never stored. None of the agents' own settings files
 (`~/.claude/settings.json`, `~/.codex/config.toml`, `~/.gemini/settings.json`,
 `~/.copilot`, `~/.config/opencode`) are modified.
 
+chda makes one network request of its own: at most once a day it asks the
+GitHub API for the latest release (`api.github.com/repos/magicsih/chda/releases/latest`,
+nothing else attached) and, when it is newer, shows "Update to x.y.z" in the
+title bar with the release notes and `brew upgrade --cask chda`. Dismiss it
+and it stays away until the next release; `update-check = false` turns the
+check off.
+
 Past sessions are listed under each worktree for Claude Code, Codex, Gemini CLI
 and Copilot CLI. OpenCode keeps its sessions in a database chda does not read.
 
@@ -186,6 +193,7 @@ editor = "zed {file}:{line}:{column}"  # opens cmd-clicked paths; unset: default
 theme = "Catppuccin Mocha"    # replaces the Ghostty config's theme; unset: follow it
 pull = "ff-only"              # ff-only | rebase | merge: "Update branch" on a diverged branch
 open-in = "vscode"            # the title bar's app; set by picking one there
+update-check = true           # ask GitHub once a day whether a newer release is out
 
 [repo-hosts]                  # pull request host when the remote does not say
 "/path/to/repo" = "github.example.com"

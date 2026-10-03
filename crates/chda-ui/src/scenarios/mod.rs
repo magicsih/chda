@@ -14,6 +14,7 @@ mod menus;
 mod palette;
 mod paths;
 mod pull_requests;
+mod release;
 mod restore;
 mod search;
 mod workspace;

@@ -113,6 +113,8 @@ pub struct ChdaConfig {
     /// The app the title bar's open button uses, e.g. `vscode`; picked in
     /// the title bar and saved here.
     pub open_in: Option<String>,
+    /// Ask GitHub once a day whether a newer release is out.
+    pub update_check: bool,
 }
 
 impl Default for ChdaConfig {
@@ -134,6 +136,7 @@ impl Default for ChdaConfig {
             pull: PullStrategy::FfOnly,
             agent_presets: Vec::new(),
             open_in: None,
+            update_check: true,
         }
     }
 }
