@@ -18,5 +18,6 @@ mod pull_requests;
 mod release;
 mod restore;
 mod search;
+mod sidebar;
 mod workspace;
 mod worktrees;

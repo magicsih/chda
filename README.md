@@ -186,7 +186,7 @@ worktree-path-template = "{repo_parent}/{repo_name}.worktrees/{branch}"
 default-action = "terminal"   # terminal | claude | codex | gemini | copilot | opencode
 tab-title = "branch"          # branch | path
 agents = ["claude", "codex"]  # offered in menus; add "gemini", "copilot", "opencode"
-sidebar-width = 280
+sidebar-width = 280           # also set by dragging the sidebar's border; double-click resets
 sidebar-visible = true
 notifications = true
 restore-session = true        # reopen the last tabs, splits and directories
@@ -237,7 +237,7 @@ value Ghostty would reject keeps the previous settings and shows a message.
 | right-click a path | open, reveal in Finder, open a tab or `cd` there, copy the absolute or relative path, preview a Markdown file (`cmd-shift-click` in apps that read the mouse) |
 | `cmd-=` / `cmd--` / `cmd-0` | bigger / smaller / configured font size |
 | `cmd-shift-a` | go to the agent that waits for input, then to finished turns |
-| `cmd-b` | toggle the sidebar |
+| `cmd-b` | toggle the sidebar (also the button next to the window buttons) |
 | `cmd-shift-o` | add a repository |
 | `cmd-n` | new worktree |
 | `cmd-shift-p` | command palette |
