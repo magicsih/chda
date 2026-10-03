@@ -48,6 +48,7 @@ Three layers, all run by `cargo test --workspace` (CI: the macOS job).
 | Branch notes: sheet, new worktree sheet, external change, palette | `worktrees::branch_notes_show_in_the_sidebar`, `chda` `tests/note.rs` | #36 |
 | GitLab and Gitea badges through `glab` and `tea` | `pull_requests::gitlab_and_gitea_repositories_get_badges` | #21 |
 | Worktree change size and read-only diff tab | `diff::diff_summary_and_diff_tab` | #15 |
+| Hovering session rows does not crash the window | `worktrees::hovering_session_rows_does_not_crash` | |
 | Missing worktree folders | `worktrees::missing_worktree_is_marked_and_pruned` | #42 |
 | IME composition with a hidden cursor | `input::ime_composition_is_placed_even_when_the_app_hides_the_cursor` | #37 |
 | Shells get a UTF-8 locale | `input::shells_get_the_locale` | #38 |

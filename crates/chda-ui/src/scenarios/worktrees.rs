@@ -214,6 +214,45 @@ fn worktree_lists_its_agent_sessions(cx: &mut TestAppContext) {
     assert!(h.read(|v, cx| v.sidebar.read(cx).sessions_loaded));
 }
 
+/// Moving the mouse over a session row swaps its age for "Resume" without
+/// crashing the window: the swap must not change what is laid out between
+/// prepaint and paint ("must call prepaint before paint").
+#[gpui::test]
+fn hovering_session_rows_does_not_crash(cx: &mut TestAppContext) {
+    let mut repo = std::path::PathBuf::new();
+    let mut h = Harness::open(cx, "hover", |home| {
+        repo = home.repo("app");
+        config_with_repo(home, &repo);
+        for id in ["h1", "h2", "h3"] {
+            home.claude_session(&repo, id, &format!("task {id}"));
+        }
+    });
+    h.wait_for("the sessions", {
+        let repo = repo.clone();
+        move |v, cx| {
+            v.sidebar
+                .read(cx)
+                .model
+                .worktree_for_path(&repo)
+                .is_some_and(|(_, w)| w.sessions.len() == 3)
+        }
+    });
+    let sidebar = h.read(|v, _| v.sidebar.clone());
+    sidebar.update(&mut h.cx, |s, cx| s.toggle_expanded(&repo, cx));
+    h.cx.run_until_parked();
+    // Sweep down the sidebar and back up, a frame per step, entering and
+    // leaving every row.
+    let ys: Vec<f32> = (0..120).map(|i| i as f32 * 3.0).collect();
+    for y in ys.iter().chain(ys.iter().rev()) {
+        h.cx.simulate_mouse_move(
+            gpui::point(gpui::px(120.0), gpui::px(*y)),
+            None,
+            gpui::Modifiers::none(),
+        );
+        h.cx.run_until_parked();
+    }
+}
+
 /// S3: sessions are listed by their last message; picking three resumes
 /// them in one tab, a pane each.
 #[gpui::test]
