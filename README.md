@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="docs/media/hero.png" alt="chda: a git worktree sidebar with notes, diff badges, merged and open-tab icons and agent status, next to an agent's Mermaid architecture diagram with its View diagram button" width="880">
+  <img src="docs/media/hero.png" alt="chda: a title bar with an Open in VS Code button, a git worktree sidebar with notes, diff badges, merged and open-tab icons and agent status, next to an agent's Mermaid architecture diagram with its View diagram button" width="880">
 </p>
 
 <h1 align="center">chda</h1>
