@@ -58,6 +58,19 @@ fn tab_close_confirms_inactive_working_splits_and_preserves_cancelled_processes(
     let working = focused(&h);
     let target = h.read(|view, _| view.ws.active_tab().unwrap().id);
     let first_pid = shell_pid(&mut h, "first");
+    // A foreground child stands in for the agent CLI, without a paid request.
+    let child_file = h.home.home.join("working-child.pid");
+    h.type_text(&format!(
+        r#"sh -c 'echo $$ > "{}"; exec sleep 600'"#,
+        child_file.display()
+    ));
+    h.keys("enter");
+    h.wait_for("foreground child", |_, _| child_file.exists());
+    let child_pid: u32 = std::fs::read_to_string(child_file)
+        .unwrap()
+        .trim()
+        .parse()
+        .unwrap();
     h.keys("cmd-d");
     let waiting = focused(&h);
     let second_pid = shell_pid(&mut h, "second");
@@ -132,7 +145,7 @@ fn tab_close_confirms_inactive_working_splits_and_preserves_cancelled_processes(
         std::fs::read_to_string(focus_file).unwrap().trim(),
         survivor_pid.to_string()
     );
-    for pid in [first_pid, second_pid, third_pid, survivor_pid] {
+    for pid in [first_pid, child_pid, second_pid, third_pid, survivor_pid] {
         assert!(alive(pid));
     }
     click(&mut h, "tab-close-0", 1);
@@ -146,7 +159,7 @@ fn tab_close_confirms_inactive_working_splits_and_preserves_cancelled_processes(
         view.ws.tabs().len() == 1 && view.panes.len() == 1
     });
     h.wait_for("target shells stopped", |_, _| {
-        [first_pid, second_pid, third_pid]
+        [first_pid, child_pid, second_pid, third_pid]
             .iter()
             .all(|pid| !alive(*pid))
     });
