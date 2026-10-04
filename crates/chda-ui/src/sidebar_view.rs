@@ -4,7 +4,7 @@ use std::path::PathBuf;
 
 use chda_core::{
     AgentStatus, CheckState, DiffSummary, GitBadges, PrInfo, PrState, RepoEntry, SessionEntry,
-    Sidebar, WorktreeEntry, relative_age,
+    Sidebar, WorktreeEntry, activity_age, relative_age,
 };
 use gpui::{
     AnyElement, App, ClickEvent, Context, ElementId, EventEmitter, FocusHandle, Focusable, Hsla,
@@ -31,6 +31,7 @@ pub enum SidebarEvent {
     OpenUrl(String),
     /// Focus an open tab from the activity list.
     FocusTab(chda_core::TabId),
+    ToggleActiveLabel,
     /// The status dot of a worktree was clicked: go to its agent's pane.
     JumpToAgent(PathBuf),
     /// Open a read-only tab with the worktree's diff against its base.
@@ -143,6 +144,7 @@ fn busy_tooltip(busy: &str) -> String {
 
 pub struct SidebarView {
     pub model: Sidebar,
+    pub active_label: chda_config::ActiveLabel,
     /// The first session index has finished.
     pub sessions_loaded: bool,
     /// Labels and names of the agents chda knows.
@@ -174,6 +176,7 @@ impl SidebarView {
     pub fn new(fg: Hsla, bg: Hsla, agents: Vec<AgentLabel>, cx: &mut Context<Self>) -> Self {
         Self {
             model: Sidebar::new(),
+            active_label: Default::default(),
             sessions_loaded: false,
             agents,
             picked: Vec::new(),
@@ -886,6 +889,10 @@ impl Render for SidebarView {
             .map(|r| self.render_repo(r, cx))
             .collect();
         let empty = self.model.repos.is_empty();
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_millis() as u64;
         let active: Vec<AnyElement> = self
             .model
             .active_tabs
@@ -902,6 +909,9 @@ impl Render for SidebarView {
                     .cursor_pointer()
                     .hover(|s| s.bg(fg.opacity(0.08)))
                     .on_click(cx.listener(move |_, _, _, cx| cx.emit(SidebarEvent::FocusTab(id))))
+                    .when_some(t.branch.clone(), |d, branch| {
+                        d.tooltip(crate::tooltip::text(branch))
+                    })
                     .child(
                         div()
                             .flex_shrink_0()
@@ -924,8 +934,26 @@ impl Render for SidebarView {
                     .child(
                         div()
                             .text_xs()
+                            .flex_shrink_0()
+                            .max_w(gpui::px(70.0))
+                            .overflow_hidden()
+                            .whitespace_nowrap()
+                            .text_ellipsis()
                             .text_color(fg.opacity(0.5))
                             .child(t.repo.clone().unwrap_or_else(|| "\u{2014}".into())),
+                    )
+                    .child(
+                        div()
+                            .id(ElementId::Name(format!("activity-age:{:?}", t.tab).into()))
+                            .w(gpui::px(38.0))
+                            .flex_shrink_0()
+                            .text_right()
+                            .text_xs()
+                            .text_color(fg.opacity(0.5))
+                            .tooltip(crate::tooltip::text(
+                                "Time since the last terminal output or screen update",
+                            ))
+                            .child(activity_age(now, t.last_activity)),
                     )
                     .into_any_element()
             })
@@ -963,12 +991,33 @@ impl Render for SidebarView {
             .when(!active.is_empty(), |d| {
                 d.child(
                     div()
+                        .flex()
+                        .flex_row()
+                        .items_center()
                         .px_2()
                         .pt_2()
                         .pb_1()
                         .text_xs()
                         .text_color(fg.opacity(0.6))
-                        .child("ACTIVE"),
+                        .child(div().flex_1().child("ACTIVE"))
+                        .child(
+                            div()
+                                .id("active-label-toggle")
+                                .debug_selector(|| "active-label-toggle".into())
+                                .px_1()
+                                .cursor_pointer()
+                                .hover(|s| s.bg(fg.opacity(0.08)))
+                                .tooltip(crate::tooltip::text(
+                                    "Switch ACTIVE labels between branch aliases and branch names",
+                                ))
+                                .on_click(cx.listener(|_, _, _, cx| {
+                                    cx.emit(SidebarEvent::ToggleActiveLabel)
+                                }))
+                                .child(match self.active_label {
+                                    chda_config::ActiveLabel::Alias => "Alias",
+                                    chda_config::ActiveLabel::Branch => "Branch",
+                                }),
+                        ),
                 )
                 .children(active)
                 .child(div().h(gpui::px(6.0)))

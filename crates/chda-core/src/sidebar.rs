@@ -114,6 +114,20 @@ pub fn relative_age(now: u64, then: u64) -> String {
     }
 }
 
+/// Time since terminal activity, rather than agent progress. Zero is unknown.
+pub fn activity_age(now: u64, then: u64) -> String {
+    if then == 0 {
+        return "\u{2014}".into();
+    }
+    let seconds = now.saturating_sub(then) / 1000;
+    match seconds {
+        0..60 => format!("{seconds}s"),
+        60..3600 => format!("{}m", seconds / 60),
+        3600..86400 => format!("{}h", seconds / 3600),
+        _ => format!("{}d", seconds / 86400),
+    }
+}
+
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct WorktreeEntry {
     pub path: PathBuf,
@@ -212,6 +226,8 @@ pub enum SortOrder {
 /// A tab as the sidebar's activity list shows it.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct ActiveTab {
+    /// Actual branch name, available when the label is an alias.
+    pub branch: Option<String>,
     pub tab: crate::TabId,
     /// Most urgent agent status among the tab's panes.
     pub status: AgentStatus,
@@ -488,6 +504,27 @@ pub enum AgentEvent {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn terminal_activity_ages_cover_boundaries_and_unknown_times() {
+        let then = 1000;
+        for (delta, expected) in [
+            (0, "0s"),
+            (999, "0s"),
+            (1000, "1s"),
+            (59999, "59s"),
+            (60000, "1m"),
+            (3599999, "59m"),
+            (3600000, "1h"),
+            (86399999, "23h"),
+            (86400000, "1d"),
+            (172800000, "2d"),
+        ] {
+            assert_eq!(activity_age(then + delta, then), expected);
+        }
+        assert_eq!(activity_age(1000, 0), "\u{2014}");
+        assert_eq!(activity_age(1000, 2000), "0s");
+    }
 
     #[test]
     fn merged_pull_request_counts_as_merged() {

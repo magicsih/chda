@@ -440,6 +440,7 @@ impl WorkspaceView {
         this.refresh_all(cx);
         this.refresh_sessions(cx);
         Self::schedule_refreshes(window, cx);
+        Self::schedule_activity_ages(cx);
         Self::schedule_release_checks(window, cx);
         // Looking up apps and drawing their icons takes tens of milliseconds
         // on a cold start; do it after the first frame.
@@ -1114,6 +1115,30 @@ impl WorkspaceView {
             .and_then(|i| i.cwd.clone())
     }
 
+    /// Repaint ages without syncing panes, writing sessions or polling git.
+    fn schedule_activity_ages(cx: &mut Context<Self>) {
+        cx.spawn(async move |this, cx| {
+            loop {
+                cx.background_executor().timer(Duration::from_secs(1)).await;
+                if this
+                    .update(cx, |view, cx| {
+                        if view.sidebar_visible {
+                            view.sidebar.update(cx, |s, cx| {
+                                if !s.model.active_tabs.is_empty() {
+                                    cx.notify();
+                                }
+                            });
+                        }
+                    })
+                    .is_err()
+                {
+                    break;
+                }
+            }
+        })
+        .detach();
+    }
+
     fn schedule_refreshes(window: &mut Window, cx: &mut Context<Self>) {
         cx.spawn_in(window, async move |this, cx| {
             let mut ticks: u64 = 0;
@@ -1543,33 +1568,47 @@ impl WorkspaceView {
         let active_tabs: Vec<ActiveTab> = {
             let model = &self.sidebar.read(cx).model;
             self.ws
-                .tabs_by_activity()
+                .tabs_with_activity()
                 .into_iter()
-                .map(|(tab, title, repo, last_activity)| ActiveTab {
-                    status: self
-                        .ws
-                        .tabs()
-                        .iter()
-                        .find(|t| t.id == tab)
-                        .and_then(|t| self.ws.tab_agent(t))
-                        .map(|a| a.status)
-                        .unwrap_or_default(),
-                    tab,
-                    title,
-                    repo: repo.and_then(|r| {
-                        model
-                            .repos
-                            .iter()
-                            .find(|e| e.path == r)
-                            .map(|e| e.name.clone())
-                    }),
-                    last_activity,
+                .map(|(tab, title, repo, last_activity)| {
+                    let tab_ref = self.ws.tabs().iter().find(|t| t.id == tab);
+                    let pane = tab_ref.and_then(|t| self.ws.pane(t.focused));
+                    let branch = pane.and_then(|p| p.branch.clone());
+                    let alias = pane
+                        .and_then(|p| p.cwd.as_ref())
+                        .and_then(|cwd| model.worktree_for_path(cwd))
+                        .and_then(|(_, wt)| wt.note_title());
+                    let title = match self.config.active_label {
+                        chda_config::ActiveLabel::Alias => alias
+                            .map(str::to_owned)
+                            .or_else(|| branch.clone())
+                            .unwrap_or(title),
+                        chda_config::ActiveLabel::Branch => branch.clone().unwrap_or(title),
+                    };
+                    ActiveTab {
+                        branch,
+                        status: tab_ref
+                            .and_then(|t| self.ws.tab_agent(t))
+                            .map(|a| a.status)
+                            .unwrap_or_default(),
+                        tab,
+                        title,
+                        repo: repo.and_then(|r| {
+                            model
+                                .repos
+                                .iter()
+                                .find(|e| e.path == r)
+                                .map(|e| e.name.clone())
+                        }),
+                        last_activity,
+                    }
                 })
                 .collect()
         };
         self.sidebar.update(cx, |s, cx| {
             s.model.set_panes(&panes);
             s.model.active_tabs = active_tabs;
+            s.active_label = self.config.active_label;
             cx.notify();
         });
         self.save_session();
@@ -2485,6 +2524,14 @@ impl WorkspaceView {
             SidebarEvent::OpenUrl(url) => cx.open_url(&url),
             SidebarEvent::JumpToAgent(path) => self.jump_to_worktree_agent(&path, window, cx),
             SidebarEvent::OpenDiff(path) => self.open_diff(&path, window, cx),
+            SidebarEvent::ToggleActiveLabel => {
+                self.config.active_label = match self.config.active_label {
+                    chda_config::ActiveLabel::Alias => chda_config::ActiveLabel::Branch,
+                    chda_config::ActiveLabel::Branch => chda_config::ActiveLabel::Alias,
+                };
+                self.save_config();
+                self.sync_panes(cx);
+            }
             SidebarEvent::FocusTab(tab) => {
                 if self.ws.activate_tab_id(tab) {
                     self.focus_active(window, cx);

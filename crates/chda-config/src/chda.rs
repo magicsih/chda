@@ -21,6 +21,16 @@ pub enum TabTitle {
     Path,
 }
 
+/// Labels used by the ACTIVE sidebar list, independent of tab titles.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum ActiveLabel {
+    /// First line of the branch note, falling back to the branch name.
+    #[default]
+    Alias,
+    Branch,
+}
+
 /// What to run in the terminal opened for a new worktree.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "kebab-case")]
@@ -86,6 +96,7 @@ pub struct ChdaConfig {
     pub worktree_path_template: String,
     pub default_action: DefaultAction,
     pub tab_title: TabTitle,
+    pub active_label: ActiveLabel,
     /// Agents offered in the sidebar and the palette, by id (`claude`,
     /// `codex`, `gemini`, `copilot`, `opencode`).
     pub agents: Vec<String>,
@@ -124,6 +135,7 @@ impl Default for ChdaConfig {
             worktree_path_template: DEFAULT_WORKTREE_TEMPLATE.into(),
             default_action: DefaultAction::Terminal,
             tab_title: TabTitle::Branch,
+            active_label: ActiveLabel::Alias,
             agents: vec!["claude".into(), "codex".into()],
             sidebar_width: 280,
             sidebar_visible: true,
@@ -221,6 +233,7 @@ mod tests {
         assert_eq!(c, ChdaConfig::default());
         c.repos.push("/src/app".into());
         c.default_action = DefaultAction::Claude;
+        c.active_label = ActiveLabel::Branch;
         c.save(&path).unwrap();
         let text = fs::read_to_string(&path).unwrap();
         assert!(text.contains("default-action = \"claude\""), "{text}");
@@ -236,6 +249,7 @@ mod tests {
         .unwrap();
         let c = ChdaConfig::load(&path).unwrap();
         assert_eq!(c.sidebar_width, 320);
+        assert_eq!(c.active_label, ActiveLabel::Alias);
         assert_eq!(
             c.repo_hosts.get(Path::new("/src/app")).map(String::as_str),
             Some("github.example.com")
