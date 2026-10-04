@@ -62,7 +62,9 @@ and adds pull request badges. On a managed Mac where Homebrew cannot write to
 3. Right-click the worktree and choose "Run Claude Code" or "Run Codex". The agent
    starts in that worktree with chda's hooks attached. Gemini CLI, Copilot CLI
    and OpenCode join the menu through `agents` in `config.toml`, and your usual
-   flags through `[[agent-presets]]`.
+   flags through `[[agent-presets]]`. You can also type `codex` directly in a
+   chda zsh, bash or fish terminal with shell integration enabled; its status
+   is tracked too.
 4. Watch the dot next to the branch:
 
    | Dot | Meaning |
@@ -106,6 +108,13 @@ document do not run. Mermaid blocks inside Markdown become diagrams too.
 | Agents | Claude Code, Codex, Gemini CLI, GitHub Copilot CLI and OpenCode status from their own hooks on tabs, the ACTIVE list, worktree rows and the Dock badge; notifications that open the agent's pane; jump to the agent that waits (`cmd-shift-a`); session list ordered by the last message, with token usage and one-click resume; cmd-click several sessions to resume them side by side in one tab |
 | Palette | `cmd-shift-p`: every action, worktree, agent launch and session in one fuzzy list |
 | Config | Reads your Ghostty font, colors and padding; chda's own settings in one TOML file; edits apply without a restart |
+
+ACTIVE keeps open tabs in tab order, so concurrent output does not move rows.
+The right edge shows time since the latest terminal activity (`1s`, `1m`, `1h`,
+`1d`; `—` when unknown). This measures output or screen updates, not whether
+an agent is thinking. Click **Alias** / **Branch** in the ACTIVE header to switch
+between each branch note's first line and its branch name. Missing notes fall
+back to branch names; the choice is saved, and hovering shows the branch name.
 
 ## How agent status works
 
