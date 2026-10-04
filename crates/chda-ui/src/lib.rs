@@ -4,6 +4,7 @@ mod diagram;
 mod environment;
 mod external_drop;
 mod fonts;
+mod git_graph;
 mod link_menu;
 mod markdown_preview;
 mod menus;

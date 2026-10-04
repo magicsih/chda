@@ -214,38 +214,79 @@ impl Node {
     }
 }
 
-/// A tab holds one split tree.
+/// A tab is either a terminal split tree or a read-only repository graph.
 #[derive(Clone, Debug, PartialEq)]
 pub struct Tab {
     pub id: TabId,
-    pub root: Node,
-    pub focused: PaneId,
-    /// A pane that is temporarily shown alone.
-    pub zoomed: Option<PaneId>,
+    pub content: TabContent,
     /// Title the user typed; overrides the automatic one.
     pub custom_title: Option<String>,
 }
 
+#[derive(Clone, Debug, PartialEq)]
+pub enum TabContent {
+    Terminal(TerminalTab),
+    GitGraph { repo: PathBuf },
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub struct TerminalTab {
+    pub root: Node,
+    pub focused: PaneId,
+    /// A pane that is temporarily shown alone.
+    pub zoomed: Option<PaneId>,
+}
+
 impl Tab {
+    pub fn terminal(&self) -> Option<&TerminalTab> {
+        match &self.content {
+            TabContent::Terminal(terminal) => Some(terminal),
+            TabContent::GitGraph { .. } => None,
+        }
+    }
+
+    fn terminal_mut(&mut self) -> Option<&mut TerminalTab> {
+        match &mut self.content {
+            TabContent::Terminal(terminal) => Some(terminal),
+            TabContent::GitGraph { .. } => None,
+        }
+    }
+
+    pub fn focused_pane(&self) -> Option<PaneId> {
+        self.terminal().map(|terminal| terminal.focused)
+    }
+
+    pub fn graph_repo(&self) -> Option<&Path> {
+        match &self.content {
+            TabContent::GitGraph { repo } => Some(repo),
+            TabContent::Terminal(_) => None,
+        }
+    }
+
     pub fn panes(&self) -> Vec<PaneId> {
         let mut out = Vec::new();
-        self.root.leaves(&mut out);
+        if let Some(terminal) = self.terminal() {
+            terminal.root.leaves(&mut out);
+        }
         out
     }
 
     /// Pane rectangles in the unit square, honoring zoom.
     pub fn layout(&self) -> Vec<(PaneId, Rect)> {
+        let Some(terminal) = self.terminal() else {
+            return Vec::new();
+        };
         let full = Rect {
             x: 0.0,
             y: 0.0,
             w: 1.0,
             h: 1.0,
         };
-        if let Some(z) = self.zoomed {
+        if let Some(z) = terminal.zoomed {
             return vec![(z, full)];
         }
         let mut out = Vec::new();
-        self.root.layout(full, &mut out);
+        terminal.root.layout(full, &mut out);
         out
     }
 }
@@ -342,7 +383,7 @@ impl Workspace {
 
     /// The focused pane of the active tab.
     pub fn focused_pane(&self) -> Option<PaneId> {
-        self.active_tab().map(|t| t.focused)
+        self.active_tab().and_then(Tab::focused_pane)
     }
 
     pub fn pane(&self, pane: PaneId) -> Option<&PaneInfo> {
@@ -363,7 +404,13 @@ impl Workspace {
         if let Some(t) = &tab.custom_title {
             return t.clone();
         }
-        let Some(info) = self.panes.get(&tab.focused) else {
+        if let Some(repo) = tab.graph_repo() {
+            return format!(
+                "Git tree · {}",
+                repo.file_name().unwrap_or_default().to_string_lossy()
+            );
+        }
+        let Some(info) = tab.focused_pane().and_then(|pane| self.panes.get(&pane)) else {
             return "shell".into();
         };
         let dir = info
@@ -381,7 +428,11 @@ impl Workspace {
 
     /// Repository (main worktree path) a tab belongs to, from its focused pane.
     pub fn tab_repo(&self, tab: &Tab) -> Option<PathBuf> {
-        self.panes.get(&tab.focused).and_then(|i| i.repo.clone())
+        tab.graph_repo().map(Path::to_path_buf).or_else(|| {
+            tab.focused_pane()
+                .and_then(|pane| self.panes.get(&pane))
+                .and_then(|i| i.repo.clone())
+        })
     }
 
     /// Tabs whose focused pane is in `repo` (`None`: outside any repository).
@@ -552,14 +603,62 @@ impl Workspace {
             at,
             Tab {
                 id: tab,
-                root: Node::Leaf(pane),
-                focused: pane,
-                zoomed: None,
+                content: TabContent::Terminal(TerminalTab {
+                    root: Node::Leaf(pane),
+                    focused: pane,
+                    zoomed: None,
+                }),
                 custom_title: None,
             },
         );
         self.active = Some(tab);
         (tab, pane)
+    }
+
+    /// Open a graph after the active tab, or activate the existing graph.
+    pub fn open_graph(&mut self, repo: PathBuf) -> TabId {
+        if let Some(tab) = self
+            .tabs
+            .iter()
+            .find(|tab| tab.graph_repo() == Some(repo.as_path()))
+        {
+            let id = tab.id;
+            self.activate_tab_id(id);
+            return id;
+        }
+        let id = TabId(self.next());
+        let at = self
+            .active_index()
+            .map(|i| i + 1)
+            .unwrap_or(self.tabs.len());
+        self.tabs.insert(
+            at,
+            Tab {
+                id,
+                content: TabContent::GitGraph { repo },
+                custom_title: None,
+            },
+        );
+        self.active = Some(id);
+        id
+    }
+
+    /// Remove a complete tab and all its domain panes.
+    pub fn close_tab(&mut self, id: TabId) -> bool {
+        let Some(index) = self.tabs.iter().position(|tab| tab.id == id) else {
+            return false;
+        };
+        for pane in self.tabs[index].panes() {
+            self.panes.remove(&pane);
+        }
+        self.tabs.remove(index);
+        if self.active == Some(id) {
+            self.active = self
+                .tabs
+                .get(index.min(self.tabs.len().saturating_sub(1)))
+                .map(|tab| tab.id);
+        }
+        true
     }
 
     /// Register a pane that is not in any tab yet (restore builds trees).
@@ -580,9 +679,11 @@ impl Workspace {
         let id = TabId(self.next());
         self.tabs.push(Tab {
             id,
-            root,
-            focused,
-            zoomed,
+            content: TabContent::Terminal(TerminalTab {
+                root,
+                focused,
+                zoomed,
+            }),
             custom_title,
         });
         self.active.get_or_insert(id);
@@ -634,7 +735,7 @@ impl Workspace {
     /// Split the focused pane; the new pane takes focus.
     pub fn split(&mut self, axis: Axis) -> Option<PaneId> {
         let new = PaneId(self.next());
-        let tab = self.active_tab_mut()?;
+        let tab = self.active_tab_mut()?.terminal_mut()?;
         tab.zoomed = None;
         if !tab.root.split(tab.focused, axis, new) {
             return None;
@@ -664,7 +765,7 @@ impl Workspace {
         } else {
             Axis::Vertical
         };
-        self.active_tab_mut()?.focused = pane;
+        self.active_tab_mut()?.terminal_mut()?.focused = pane;
         self.split(axis)
     }
 
@@ -672,8 +773,8 @@ impl Workspace {
     /// tab that was closed, if any.
     pub fn close_pane(&mut self, pane: PaneId) -> Option<TabId> {
         self.panes.remove(&pane);
-        let idx = self.tabs.iter().position(|t| t.root.contains(pane))?;
-        let tab = &mut self.tabs[idx];
+        let idx = self.tabs.iter().position(|t| t.panes().contains(&pane))?;
+        let tab = self.tabs[idx].terminal_mut()?;
         if tab.zoomed == Some(pane) {
             tab.zoomed = None;
         }
@@ -694,10 +795,13 @@ impl Workspace {
     }
 
     pub fn focus_pane(&mut self, pane: PaneId) -> bool {
-        let Some(idx) = self.tabs.iter().position(|t| t.root.contains(pane)) else {
+        let Some(idx) = self.tabs.iter().position(|t| t.panes().contains(&pane)) else {
             return false;
         };
-        self.tabs[idx].focused = pane;
+        self.tabs[idx]
+            .terminal_mut()
+            .expect("pane belongs to a terminal")
+            .focused = pane;
         self.active = Some(self.tabs[idx].id);
         self.clear_bell();
         true
@@ -707,12 +811,14 @@ impl Workspace {
     pub fn focus_direction(&mut self, direction: Direction) -> Option<PaneId> {
         let tab = self.active_tab()?;
         let layout = tab.layout();
-        let (_, from) = layout.iter().find(|(p, _)| *p == tab.focused)?;
+        let (_, from) = layout
+            .iter()
+            .find(|(p, _)| Some(*p) == tab.focused_pane())?;
         let (fcx, fcy) = (from.x + from.w / 2.0, from.y + from.h / 2.0);
         let eps = 1e-3;
         let candidate = layout
             .iter()
-            .filter(|(p, _)| *p != tab.focused)
+            .filter(|(p, _)| Some(*p) != tab.focused_pane())
             .filter(|(_, r)| match direction {
                 Direction::Left => (r.x + r.w - from.x).abs() < eps,
                 Direction::Right => (r.x - (from.x + from.w)).abs() < eps,
@@ -737,7 +843,7 @@ impl Workspace {
     pub fn cycle_pane(&mut self, forward: bool) -> Option<PaneId> {
         let tab = self.active_tab()?;
         let panes = tab.panes();
-        let i = panes.iter().position(|p| *p == tab.focused)?;
+        let i = panes.iter().position(|p| Some(*p) == tab.focused_pane())?;
         let n = panes.len();
         let j = if forward {
             (i + 1) % n
@@ -751,23 +857,23 @@ impl Workspace {
 
     /// Grow the focused pane towards `direction` by `delta` of the tab.
     pub fn resize(&mut self, direction: Direction, delta: f32) -> bool {
-        let Some(tab) = self.active_tab_mut() else {
+        let Some(tab) = self.active_tab_mut().and_then(Tab::terminal_mut) else {
             return false;
         };
         tab.root.resize(tab.focused, direction, delta)
     }
 
     pub fn equalize(&mut self) {
-        if let Some(tab) = self.active_tab_mut() {
+        if let Some(tab) = self.active_tab_mut().and_then(Tab::terminal_mut) {
             tab.root.equalize();
         }
     }
 
     pub fn toggle_zoom(&mut self) {
-        if let Some(tab) = self.active_tab_mut() {
+        if let Some(tab) = self.active_tab_mut().and_then(Tab::terminal_mut) {
             tab.zoomed = match tab.zoomed {
                 Some(_) => None,
-                None if tab.panes().len() > 1 => Some(tab.focused),
+                None if !matches!(tab.root, Node::Leaf(_)) => Some(tab.focused),
                 None => None,
             };
         }
@@ -1010,5 +1116,25 @@ mod tests {
         assert!(ws.set_agent_status(c, "claude", AgentStatus::Idle, 5));
         assert!(ws.attention_panes().is_empty());
         assert_eq!(ws.pane(c).unwrap().agent, None);
+    }
+    #[test]
+    fn graphs_have_no_panes_and_terminal_commands_do_not_affect_them() {
+        let mut ws = Workspace::new();
+        let (terminal, pane) = ws.new_tab();
+        let graph = ws.open_graph(PathBuf::from("/repo"));
+        assert_eq!(ws.focused_pane(), None);
+        assert!(ws.active_tab().unwrap().panes().is_empty());
+        assert_eq!(ws.split(Axis::Horizontal), None);
+        assert_eq!(ws.split_largest(1.0), None);
+        assert_eq!(ws.focus_direction(Direction::Left), None);
+        assert_eq!(ws.cycle_pane(true), None);
+        assert!(!ws.resize(Direction::Left, 0.1));
+        ws.toggle_zoom();
+        ws.equalize();
+        assert_eq!(ws.open_graph(PathBuf::from("/repo")), graph);
+        assert_eq!(ws.tabs().len(), 2);
+        assert!(ws.close_tab(graph));
+        assert_eq!(ws.active_tab().unwrap().id, terminal);
+        assert_eq!(ws.focused_pane(), Some(pane));
     }
 }

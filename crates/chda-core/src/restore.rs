@@ -39,12 +39,24 @@ pub struct SavedTab {
     /// Name the user gave the tab.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub title: Option<String>,
-    pub root: SavedNode,
-    /// Leaf index (in tree order) of the focused pane.
-    pub focused: usize,
-    /// Leaf index of the zoomed pane.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub zoomed: Option<usize>,
+    #[serde(flatten)]
+    pub content: SavedTabContent,
+}
+
+/// Terminal fields retain their original JSON shape, so old sessions load.
+/// Graph tabs store only their repository; history is always queried afresh.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(untagged)]
+pub enum SavedTabContent {
+    Terminal {
+        root: SavedNode,
+        focused: usize,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        zoomed: Option<usize>,
+    },
+    GitGraph {
+        graph: PathBuf,
+    },
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
@@ -133,11 +145,19 @@ impl Workspace {
             .map(|tab| {
                 let leaves = tab.panes();
                 let index = |p: PaneId| leaves.iter().position(|l| *l == p);
+                let content = match &tab.content {
+                    crate::TabContent::Terminal(terminal) => SavedTabContent::Terminal {
+                        root: self.save_node(&terminal.root),
+                        focused: index(terminal.focused).unwrap_or(0),
+                        zoomed: terminal.zoomed.and_then(index),
+                    },
+                    crate::TabContent::GitGraph { repo } => SavedTabContent::GitGraph {
+                        graph: repo.clone(),
+                    },
+                };
                 SavedTab {
                     title: tab.custom_title.clone(),
-                    root: self.save_node(&tab.root),
-                    focused: index(tab.focused).unwrap_or(0),
-                    zoomed: tab.zoomed.and_then(index),
+                    content,
                 }
             })
             .collect();
@@ -181,16 +201,31 @@ impl Workspace {
         let mut panes = Vec::new();
         let mut report = RestoreReport::default();
         for tab in &saved.tabs {
-            let mut leaves = Vec::new();
-            let root = self.restore_node(&tab.root, &mut leaves, &mut report);
-            let ids: Vec<PaneId> = leaves.iter().map(|p| p.pane).collect();
-            let focused = ids.get(tab.focused).or(ids.first()).copied();
-            let Some(focused) = focused else {
-                continue;
-            };
-            let zoomed = tab.zoomed.and_then(|i| ids.get(i).copied());
-            self.push_tab(root, focused, zoomed, tab.title.clone());
-            panes.extend(leaves);
+            match &tab.content {
+                SavedTabContent::GitGraph { graph } => {
+                    let id = self.open_graph(graph.clone());
+                    if let Some(title) = &tab.title {
+                        self.rename_tab(id, title);
+                    }
+                }
+                SavedTabContent::Terminal {
+                    root,
+                    focused,
+                    zoomed,
+                } => {
+                    let mut leaves = Vec::new();
+                    let root = self.restore_node(root, &mut leaves, &mut report);
+                    let ids: Vec<PaneId> = leaves.iter().map(|p| p.pane).collect();
+                    let focused = ids.get(*focused).or(ids.first()).copied();
+                    let Some(focused) = focused else {
+                        continue;
+                    };
+                    let zoomed = zoomed.and_then(|i| ids.get(i).copied());
+                    self.push_tab(root, focused, zoomed, tab.title.clone());
+                    panes.extend(leaves);
+                }
+            }
+            self.activate_tab(self.tabs().len().saturating_sub(1));
         }
         self.activate_tab(saved.active.min(self.tabs().len().saturating_sub(1)));
         (panes, report)
@@ -283,7 +318,7 @@ mod tests {
 
         let Node::Split {
             ratio: saved_ratio, ..
-        } = ws.tabs()[0].root
+        } = ws.tabs()[0].terminal().unwrap().root
         else {
             panic!("split expected");
         };
@@ -304,8 +339,8 @@ mod tests {
         assert_eq!(fresh.active_index(), Some(0));
         let first = fresh.tabs()[0].clone();
         assert_eq!(first.custom_title.as_deref(), Some("work"));
-        assert_eq!(first.focused, first.panes()[1]);
-        let Node::Split { axis, ratio, .. } = first.root else {
+        assert_eq!(first.focused_pane(), Some(first.panes()[1]));
+        let Node::Split { axis, ratio, .. } = first.terminal().unwrap().root else {
             panic!("split expected");
         };
         assert_eq!(axis, Axis::Vertical);
@@ -339,5 +374,28 @@ mod tests {
         assert!(SavedWindow::load(&tmp).is_none());
         assert!(!SavedWindow::path(&tmp).exists());
         fs::remove_dir_all(&tmp).unwrap();
+    }
+    #[test]
+    fn mixed_tab_types_order_names_and_active_position_round_trip() {
+        let mut ws = Workspace::new();
+        ws.new_tab();
+        let graph = ws.open_graph(PathBuf::from("/repo/a"));
+        ws.rename_tab(graph, "History A");
+        ws.new_tab();
+        ws.open_graph(PathBuf::from("/repo/b"));
+        ws.activate_tab(1);
+        let saved = ws.snapshot();
+        let text = serde_json::to_string(&saved).unwrap();
+        assert!(text.contains("\"graph\":\"/repo/a\""));
+        let loaded = serde_json::from_str(&text).unwrap();
+        let mut restored = Workspace::new();
+        let (panes, _) = restored.restore(&loaded);
+        assert_eq!(panes.len(), 2);
+        assert_eq!(restored.snapshot(), saved);
+        assert_eq!(
+            restored.tabs()[1].custom_title.as_deref(),
+            Some("History A")
+        );
+        assert_eq!(restored.active_index(), Some(1));
     }
 }
