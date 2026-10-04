@@ -71,6 +71,8 @@ Three layers, all run by `cargo test --workspace` (CI: the macOS job).
 | Codex session resume with a minimal GUI PATH and a shell-configured install | `menus::codex_sessions_resume_with_the_login_shell_path` | |
 | Codex typed directly in a worktree terminal | `agents::directly_typed_codex_tracks_each_turn_and_exits` | |
 | Agent launch presets from the palette and the worktree menu | `menus::agent_presets_start_from_the_palette_and_the_sidebar_menu` | #16 |
+| Close buttons on single/inactive tabs; working/waiting splits, Cancel/Esc focus, real process shutdown and surviving tabs | `closing::tab_close_confirms_inactive_working_splits_and_preserves_cancelled_processes` | #108 |
+| Pane-only shortcut, completed/idle/shell immediate close, graph close, stable target ids and final restore cleanup | `closing::shortcut_closes_only_the_focused_pane_and_review_does_not_confirm`, `closing::immediate_tab_close_covers_shell_review_idle_and_graphs`, `closing::confirmed_close_never_targets_a_replacement_tab`, `closing::last_graph_shortcut_removes_restore_data` | #108 |
 
 Not covered by scenarios: anything visual (colors, layout, rendering), since
 the test platform draws no pixels; launching real agents (a stand-in

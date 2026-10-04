@@ -4,6 +4,7 @@
 //! docs/testing.md for the list and what each covers.
 
 mod agents;
+mod closing;
 mod config;
 mod diagrams;
 mod diff;
