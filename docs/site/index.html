@@ -54,7 +54,7 @@
    "name": "Which coding agents does chda work with?",
    "acceptedAnswer": {
     "@type": "Answer",
-    "text": "Claude Code, Codex, Gemini CLI, GitHub Copilot CLI and OpenCode. chda attaches to each through the agent's own hooks or plugins, per launch, so their status shows in the sidebar, on tabs and on the Dock icon."
+    "text": "Claude Code, Codex, Gemini CLI, GitHub Copilot CLI and OpenCode. Their status shows in the sidebar, on tabs and on the Dock icon. Codex is also tracked when you type codex directly in a chda zsh, bash or fish terminal with shell integration enabled."
    }
   },
   {
@@ -87,6 +87,22 @@
    "acceptedAnswer": {
     "@type": "Answer",
     "text": "They build in CI and are the next milestone. Today it is macOS only, on Apple silicon or Intel."
+   }
+  },
+  {
+   "@type": "Question",
+   "name": "Can I just type codex in a terminal?",
+   "acceptedAnswer": {
+    "@type": "Answer",
+    "text": "Yes. In chda's zsh, bash and fish terminals, typing codex tracks working, waiting for input and finished turns with shell integration enabled. Existing aliases and functions are kept. If your own wrapper bypasses the helper, use Run Codex from the worktree menu. See the README for Codex terminal-title requirements."
+   }
+  },
+  {
+   "@type": "Question",
+   "name": "Can I launch Homebrew-installed agents from the Dock?",
+   "acceptedAnswer": {
+    "@type": "Answer",
+    "text": "Yes. chda reads PATH from your login shell's startup files and uses it to find and run agents, including Homebrew and version-manager installations. Restart chda after changing your shell's PATH. If startup files cannot report PATH within two seconds, chda keeps the inherited PATH."
    }
   }
  ]
@@ -146,11 +162,11 @@
   <section>
     <h2>Why a worktree terminal</h2>
     <div class="cols">
-      <div class="col"><h3>One worktree per task</h3><p>Create a worktree from the sidebar, from any branch, with a note saying what the task is. Work in it, read its diff, open it in your editor from the title bar, merge it back and clean it up.</p></div>
-      <div class="col"><h3>Agents you can see</h3><p>Claude Code, Codex, Gemini CLI, Copilot CLI and OpenCode report through chda's hooks. A dot tells you who is working, who is waiting for you, and who is done.</p></div>
+      <div class="col"><h3>One worktree per task</h3><p>Create a worktree from the sidebar, from any branch, with a note saying what the task is. Work in it, read its diff, open it in your editor from the title bar, merge it back and clean it up. ACTIVE stays in tab order, shows time since last terminal activity, and switches between branch notes and branch names.</p></div>
+      <div class="col"><h3>Agents you can see</h3><p>See who is working, waiting for you, or done across Claude Code, Codex, Gemini CLI, Copilot CLI and OpenCode. You can also type <code>codex</code> directly in a chda terminal and follow its state.</p></div>
       <div class="col"><h3>Ghostty inside</h3><p>The VT core is libghostty-vt, so escapes, Unicode and keys behave like Ghostty. Your Ghostty font, colors and ligatures carry over.</p></div>
       <div class="col"><h3>Agents can drive it</h3><p><code>chda mcp</code> lets an agent create a worktree, open a tab or report its status. New worktrees show up in the sidebar at once.</p></div>
-      <div class="col"><h3>Pick up where you left off</h3><p>After a restart, tabs, splits and directories come back, and panes that ran an agent reopen its conversation. Past sessions show the tokens they used and resume side by side.</p></div>
+      <div class="col"><h3>Pick up where you left off</h3><p>After a restart, tabs, splits and directories come back, and panes that ran an agent reopen its conversation. Past sessions show the tokens they used and resume side by side. Agents installed through Homebrew or a version manager are found using your login shell's PATH, even when chda starts from the Dock.</p></div>
       <div class="col"><h3>More than text</h3><p>Images through the Kitty graphics protocol, Mermaid diagrams and Markdown files rendered offline in your browser, and right-click actions on every file path in the output.</p></div>
     </div>
   </section>
@@ -187,13 +203,17 @@ brew install --cask chda</pre>
       <dt>How do I run several Claude Code agents in parallel?</dt>
       <dd>Give each task its own git worktree and run one agent in each. chda creates the worktree from the sidebar (or from the agent, through chda mcp), opens a tab in it, and shows every agent's state next to its branch: working, waiting for you, or done.</dd>
       <dt>Which coding agents does chda work with?</dt>
-      <dd>Claude Code, Codex, Gemini CLI, GitHub Copilot CLI and OpenCode. chda attaches to each through the agent's own hooks or plugins, per launch, so their status shows in the sidebar, on tabs and on the Dock icon.</dd>
+      <dd>Claude Code, Codex, Gemini CLI, GitHub Copilot CLI and OpenCode. Their status shows in the sidebar, on tabs and on the Dock icon. Codex is also tracked when you type codex directly in a chda zsh, bash or fish terminal with shell integration enabled.</dd>
       <dt>How is chda different from tmux or Ghostty?</dt>
       <dd>Ghostty is the terminal; chda uses its core (libghostty-vt) and adds what parallel agent work needs: a sidebar of worktrees with git and pull request badges, agent status, notifications when an agent waits, and merge-and-clean when a branch is done.</dd>
       <dt>Does chda read my prompts?</dt>
       <dd>Only on your Mac. Hooks pass a session id, directory, event kind and time; the session list reads the agents’ local transcripts for each session’s first prompt and token usage. Nothing is sent anywhere. The only network request is a daily check for a new chda release, which <code>update-check = false</code> turns off.</dd>
       <dt>Do I have to change my agents' config?</dt>
       <dd>No. chda passes hook settings per launch and leaves your config files alone. Only the optional MCP server is added once per agent, with the agent's own <code>mcp add</code> command.</dd>
+      <dt>Can I just type codex in a terminal?</dt>
+      <dd>Yes. In chda's zsh, bash and fish terminals, typing codex tracks working, waiting for input and finished turns with shell integration enabled. Existing aliases and functions are kept. If your own wrapper bypasses the helper, use Run Codex from the worktree menu. See the README for Codex terminal-title requirements.</dd>
+      <dt>Can I launch Homebrew-installed agents from the Dock?</dt>
+      <dd>Yes. chda reads PATH from your login shell's startup files and uses it to find and run agents, including Homebrew and version-manager installations. Restart chda after changing your shell's PATH. If startup files cannot report PATH within two seconds, chda keeps the inherited PATH.</dd>
       <dt>Linux or Windows?</dt>
       <dd>They build in CI and are the next milestone. Today it is macOS only, on Apple silicon or Intel.</dd>
     </dl>
