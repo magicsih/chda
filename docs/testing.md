@@ -53,6 +53,7 @@ Three layers, all run by `cargo test --workspace` (CI: the macOS job).
 | Markdown preview from a right-clicked path and the palette | `paths::markdown_path_previews_in_the_browser` | |
 | Title bar opens the worktree root in the picked app, pick remembered | `worktrees::title_bar_opens_the_worktree_in_the_picked_app` | #81 |
 | Missing worktree folders | `worktrees::missing_worktree_is_marked_and_pruned` | #42 |
+| Esc reaches a working agent; an open palette consumes Esc first | `input::escape_reaches_a_working_agent_but_closes_the_palette_first` | |
 | IME composition with a hidden cursor | `input::ime_composition_is_placed_even_when_the_app_hides_the_cursor` | #37 |
 | Shells get a UTF-8 locale | `input::shells_get_the_locale` | #38 |
 | cmd-hover and cmd-click on a URL | `input::cmd_hover_underlines_a_url_and_cmd_click_opens_it` | #7 |

@@ -72,3 +72,51 @@ fn cmd_hover_underlines_a_url_and_cmd_click_opens_it(cx: &mut TestAppContext) {
     h.cx.simulate_click(at, cmd);
     assert_eq!(h.cx.opened_url().as_deref(), Some("https://example.com/x"));
 }
+
+#[gpui::test]
+fn escape_reaches_a_working_agent_but_closes_the_palette_first(cx: &mut TestAppContext) {
+    use chda_core::{AgentStatus, agents::HookKind};
+
+    for open_palette in [false, true] {
+        let mut h = Harness::open(
+            cx,
+            if open_palette {
+                "esc-menu"
+            } else {
+                "esc-agent"
+            },
+            |_| {},
+        );
+        h.wait_prompt();
+        let pane = h.read(|v, _| v.ws.focused_pane().unwrap());
+        let home = h.home.home.clone();
+        h.hook(Some(pane.raw()), &home, HookKind::PromptSubmitted);
+        h.wait_for("the agent to work", move |v, _| {
+            v.ws.pane(pane)
+                .and_then(|p| p.agent.as_ref())
+                .is_some_and(|a| a.status == AgentStatus::Working)
+        });
+        // A stand-in reads one raw byte, just as a TUI receives Esc to cancel.
+        // Wait for an output row so the typed command cannot satisfy readiness.
+        h.type_text(r"stty -icanon -echo; printf '\nESC_READY\n'; dd bs=1 count=1 2>/dev/null | od -An -tu1; stty sane; printf '\nESC_DONE\n'");
+        h.keys("enter");
+        let term = h.focused_terminal();
+        h.wait_for("the raw input reader", |_, cx| {
+            let frame = term.read(cx).frame();
+            (0..frame.size.rows).any(|y| frame.row_text(y).trim() == "ESC_READY")
+        });
+        if open_palette {
+            h.keys("cmd-shift-p escape");
+            assert!(h.read(|v, _| v.palette.is_none()));
+            h.read(|_, cx| {
+                let frame = term.read(cx).frame();
+                assert!(!(0..frame.size.rows).any(|y| frame.row_text(y).trim() == "27"));
+            });
+        }
+        h.keys("escape");
+        h.wait_for("Esc byte 27 in the agent's PTY", |_, cx| {
+            let frame = term.read(cx).frame();
+            (0..frame.size.rows).any(|y| frame.row_text(y).trim() == "27")
+        });
+    }
+}
