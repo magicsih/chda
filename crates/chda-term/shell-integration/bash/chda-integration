@@ -114,3 +114,12 @@ $_chda_debug_trap" DEBUG
     fi
     builtin unset _chda_debug_trap
 fi
+
+# Keep the user's existing Codex aliases/functions; otherwise attach status
+# reporting only in interactive chda shells.
+if [[ $- == *i* && -n "${CHDA_CODEX_TITLE_CONFIG-}" ]]; then
+    case $(builtin type -t codex) in
+        alias|function) ;;
+        *) function codex { command codex -c "$CHDA_CODEX_TITLE_CONFIG" "$@"; } ;;
+    esac
+fi

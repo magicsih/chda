@@ -198,6 +198,10 @@ impl TerminalView {
                 .push(("SHELL".to_owned(), shell.to_string_lossy().into_owned()));
         }
         options.env.extend(env.pane_env.iter().cloned());
+        options.env.push((
+            chda_core::agents::CODEX_TITLE_ENV.into(),
+            chda_core::agents::CODEX_TITLE_CONFIG.into(),
+        ));
         // Agents started in this pane report it back with their hook events.
         options
             .env
