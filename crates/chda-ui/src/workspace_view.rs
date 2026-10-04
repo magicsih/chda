@@ -1571,12 +1571,8 @@ impl WorkspaceView {
                 .tabs_with_activity()
                 .into_iter()
                 .map(|(tab, title, repo, last_activity)| {
-                    let pane = self
-                        .ws
-                        .tabs()
-                        .iter()
-                        .find(|t| t.id == tab)
-                        .and_then(|t| self.ws.pane(t.focused));
+                    let tab_ref = self.ws.tabs().iter().find(|t| t.id == tab);
+                    let pane = tab_ref.and_then(|t| self.ws.pane(t.focused));
                     let branch = pane.and_then(|p| p.branch.clone());
                     let alias = pane
                         .and_then(|p| p.cwd.as_ref())
@@ -1591,11 +1587,7 @@ impl WorkspaceView {
                     };
                     ActiveTab {
                         branch,
-                        status: self
-                            .ws
-                            .tabs()
-                            .iter()
-                            .find(|t| t.id == tab)
+                        status: tab_ref
                             .and_then(|t| self.ws.tab_agent(t))
                             .map(|a| a.status)
                             .unwrap_or_default(),
