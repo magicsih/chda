@@ -426,10 +426,9 @@ impl Workspace {
         self.activate_tab_id(ids[j]);
     }
 
-    /// Every tab with its title, repository and last activity, newest first.
-    pub fn tabs_by_activity(&self) -> Vec<(TabId, String, Option<PathBuf>, u64)> {
-        let mut out: Vec<_> = self
-            .tabs
+    /// Every tab with its title, repository and last activity, in tab order.
+    pub fn tabs_with_activity(&self) -> Vec<(TabId, String, Option<PathBuf>, u64)> {
+        self.tabs
             .iter()
             .map(|t| {
                 let activity = t
@@ -441,9 +440,7 @@ impl Workspace {
                     .unwrap_or(0);
                 (t.id, self.tab_title(t), self.tab_repo(t), activity)
             })
-            .collect();
-        out.sort_by_key(|(_, _, _, a)| std::cmp::Reverse(*a));
-        out
+            .collect()
     }
 
     /// The pane an agent reported through `CHDA_PANE_ID`.
@@ -912,13 +909,49 @@ mod tests {
         assert_eq!(ws.tabs_in(None).len(), 1);
         assert_eq!(ws.active_index_in(Some(Path::new("/tmp/project"))), Some(0));
         ws.pane_mut(p1).unwrap().last_activity = 5;
-        assert_eq!(ws.tabs_by_activity()[0].1, "feat/x");
+        assert_eq!(ws.tabs_with_activity()[0].1, "feat/x");
         assert!(ws.rename_tab(tab.id, "  build  "));
         let tab = ws.active_tab().unwrap().clone();
         assert_eq!(ws.tab_title(&tab), "build");
         ws.rename_tab(tab.id, "");
         let tab = ws.active_tab().unwrap().clone();
         assert_eq!(ws.tab_title(&tab), "feat/x");
+    }
+
+    #[test]
+    fn activity_changes_preserve_tab_order_and_include_unfocused_splits() {
+        let mut ws = Workspace::new();
+        let (first, p1) = ws.new_tab();
+        let split = ws.split(Axis::Horizontal).unwrap();
+        let (second, p2) = ws.new_tab();
+        for (pane, at) in [(p1, 100), (p2, 200), (split, 300), (p2, 400)] {
+            ws.pane_mut(pane).unwrap().last_activity = at;
+            let rows = ws.tabs_with_activity();
+            assert_eq!(
+                rows.iter().map(|r| r.0).collect::<Vec<_>>(),
+                vec![first, second]
+            );
+        }
+        ws.activate_tab_id(first);
+        assert_eq!(ws.tabs_with_activity()[0].3, 300);
+        assert_eq!(ws.tabs_with_activity()[1].3, 400);
+        // Creating after the focused tab and closing follow the actual tab order.
+        let (third, p3) = ws.new_tab();
+        assert_eq!(
+            ws.tabs_with_activity()
+                .iter()
+                .map(|r| r.0)
+                .collect::<Vec<_>>(),
+            vec![first, third, second]
+        );
+        ws.close_pane(p3);
+        assert_eq!(
+            ws.tabs_with_activity()
+                .iter()
+                .map(|r| r.0)
+                .collect::<Vec<_>>(),
+            vec![first, second]
+        );
     }
 
     #[test]
