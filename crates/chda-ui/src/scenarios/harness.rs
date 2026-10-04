@@ -118,16 +118,21 @@ impl AgentAdapter for TestAdapter {
         resume: Option<&SessionId>,
         hook_bin: &Path,
     ) -> std::process::Command {
+        if self.inner.id() == AgentId::Codex && self.bin.is_some() {
+            // Exercise bare-name PTY lookup without reading the real user's
+            // Codex config (the notify hook is outside this PATH scenario).
+            let mut cmd = std::process::Command::new("codex");
+            cmd.current_dir(cwd);
+            if let Some(session) = resume {
+                cmd.arg("resume").arg(&session.0);
+            }
+            return cmd;
+        }
         let real = self.inner.launch_command(cwd, resume, hook_bin);
         let Some(bin) = &self.bin else {
             return real;
         };
-        let program = if self.inner.id() == AgentId::Codex {
-            Path::new("codex")
-        } else {
-            bin
-        };
-        let mut cmd = std::process::Command::new(program);
+        let mut cmd = std::process::Command::new(bin);
         cmd.args(real.get_args()).current_dir(cwd);
         cmd
     }
