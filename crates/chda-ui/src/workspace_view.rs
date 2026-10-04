@@ -141,6 +141,7 @@ pub(crate) enum MenuAction {
     OpenTerminal(PathBuf),
     /// A read-only tab with the worktree's diff against its base.
     ViewDiff(PathBuf),
+    ViewGitTree(PathBuf),
     RunAgent(PathBuf, AgentId),
     /// Run the `agent-presets` entry with this name.
     RunPreset(PathBuf, String),
@@ -252,6 +253,7 @@ pub struct WorkspaceView {
     pub(crate) config: ChdaConfig,
     pub(crate) ws: Workspace,
     pub(crate) panes: HashMap<PaneId, (Entity<TerminalView>, Subscription)>,
+    pub(crate) graphs: HashMap<TabId, Entity<crate::git_graph::GitGraphView>>,
     focus_handle: FocusHandle,
     pub(crate) sidebar: Entity<SidebarView>,
     _sidebar_sub: Subscription,
@@ -352,6 +354,7 @@ impl WorkspaceView {
             config,
             ws,
             panes: HashMap::new(),
+            graphs: HashMap::new(),
             focus_handle: cx.focus_handle(),
             sidebar,
             _sidebar_sub: sidebar_sub,
@@ -632,6 +635,13 @@ impl WorkspaceView {
         for (view, _) in self.panes.values() {
             let settings = settings.clone();
             view.update(cx, |view, cx| view.apply_settings(settings, cx));
+        }
+        for graph in self.graphs.values() {
+            graph.update(cx, |graph, cx| {
+                graph.background = bg;
+                graph.foreground = fg;
+                cx.notify();
+            });
         }
         self.settings = settings;
     }
@@ -1521,6 +1531,15 @@ impl WorkspaceView {
             }
             self.open_pane(p.pane, p.cwd, command, window, cx);
         }
+        let graphs: Vec<_> = self
+            .ws
+            .tabs()
+            .iter()
+            .filter_map(|tab| tab.graph_repo().map(|repo| (tab.id, repo.to_path_buf())))
+            .collect();
+        for (id, repo) in graphs {
+            self.create_graph_view(id, repo, cx);
+        }
         if self.ws.is_empty() {
             self.new_tab(&NewTab, window, cx);
             return;
@@ -1631,7 +1650,9 @@ impl WorkspaceView {
                 .into_iter()
                 .map(|(tab, title, repo, last_activity)| {
                     let tab_ref = self.ws.tabs().iter().find(|t| t.id == tab);
-                    let pane = tab_ref.and_then(|t| self.ws.pane(t.focused));
+                    let pane = tab_ref
+                        .and_then(|t| t.focused_pane())
+                        .and_then(|p| self.ws.pane(p));
                     let branch = pane.and_then(|p| p.branch.clone());
                     let alias = pane
                         .and_then(|p| p.cwd.as_ref())
@@ -1684,6 +1705,7 @@ impl WorkspaceView {
     /// Directory new panes start in: the focused pane's.
     fn inherited_cwd(&self) -> Option<PathBuf> {
         self.focused_cwd()
+            .or_else(|| self.ws.active_tab()?.graph_repo().map(Path::to_path_buf))
     }
 
     fn open_pane(
@@ -1880,6 +1902,9 @@ impl WorkspaceView {
     /// The folder the title bar opens: the root of the worktree the focused
     /// pane is in, else that pane's directory.
     pub(crate) fn open_in_folder(&self, cx: &App) -> Option<PathBuf> {
+        if let Some(repo) = self.ws.active_tab().and_then(|tab| tab.graph_repo()) {
+            return Some(repo.to_path_buf());
+        }
         let cwd = self.focused_cwd()?;
         let root = self
             .sidebar
@@ -1956,9 +1981,9 @@ impl WorkspaceView {
             return ("chda".into(), "chda".into());
         };
         let fallback = self.ws.tab_title(tab);
-        let worktree = self
-            .ws
-            .pane(tab.focused)
+        let worktree = tab
+            .focused_pane()
+            .and_then(|pane| self.ws.pane(pane))
             .and_then(|info| info.cwd.as_deref())
             .and_then(|cwd| self.sidebar.read(cx).model.worktree_for_path(cwd))
             .map(|(_, worktree)| worktree);
@@ -2247,6 +2272,8 @@ impl WorkspaceView {
         {
             let handle = view.read(cx).focus_handle(cx);
             window.focus(&handle, cx);
+        } else {
+            window.focus(&self.focus_handle, cx);
         }
         if let Some(active) = self.ws.active_tab() {
             self.tab_group = self.ws.tab_repo(active);
@@ -2324,6 +2351,23 @@ impl WorkspaceView {
             || self.context_menu.take().is_some()
         {
             self.focus_active(window, cx);
+            return;
+        }
+        if let Some(tab) = self
+            .ws
+            .active_tab()
+            .filter(|tab| tab.graph_repo().is_some())
+            .map(|tab| tab.id)
+        {
+            self.ws.close_tab(tab);
+            self.graphs.remove(&tab);
+            self.save_session();
+            if self.ws.is_empty() {
+                cx.quit();
+            } else {
+                self.focus_active(window, cx);
+                self.sync_panes(cx);
+            }
             return;
         }
         let Some(pane) = self.ws.focused_pane() else {
@@ -2676,6 +2720,10 @@ impl WorkspaceView {
                             "Clean up merged worktrees...".into(),
                             MenuAction::CleanStale(repo.clone()),
                         ),
+                        (
+                            "View Git tree".into(),
+                            MenuAction::ViewGitTree(repo.clone()),
+                        ),
                         ("Refresh".into(), MenuAction::RefreshRepo(repo.clone())),
                         ("Remove from sidebar".into(), MenuAction::RemoveRepo(repo)),
                     ],
@@ -2979,9 +3027,30 @@ impl WorkspaceView {
         width / f32::from(size.height).max(1.0)
     }
 
-    /// Open a tab that pages the worktree's diff against the commit it
-    /// branched from, uncommitted edits included. Quitting the pager closes
-    /// the tab.
+    /// Select the existing graph for this repository or open one without a PTY.
+    pub(crate) fn open_git_graph(
+        &mut self,
+        repo: PathBuf,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let repo = repo.canonicalize().unwrap_or(repo);
+        let id = self.ws.open_graph(repo.clone());
+        if !self.graphs.contains_key(&id) {
+            self.create_graph_view(id, repo, cx);
+        }
+        self.focus_active(window, cx);
+        self.sync_panes(cx);
+    }
+
+    fn create_graph_view(&mut self, id: TabId, repo: PathBuf, cx: &mut Context<Self>) {
+        let bg = hsla(self.settings.colors.background.unwrap_or_default());
+        let fg = hsla(self.settings.colors.foreground.unwrap_or_default());
+        let view = cx.new(|cx| crate::git_graph::GitGraphView::new(repo, bg, fg, cx));
+        self.graphs.insert(id, view);
+    }
+
+    /// Page the worktree's diff against its base, including uncommitted edits.
     pub(crate) fn open_diff(
         &mut self,
         worktree: &Path,
@@ -3012,6 +3081,7 @@ impl WorkspaceView {
         match action {
             MenuAction::OpenTerminal(path) => self.open_tab_at(Some(path), None, window, cx),
             MenuAction::ViewDiff(path) => self.open_diff(&path, window, cx),
+            MenuAction::ViewGitTree(repo) => self.open_git_graph(repo, window, cx),
             MenuAction::RunAgent(path, agent) => self.run_agent(&path, agent, None, window, cx),
             MenuAction::RunPreset(path, name) => self.run_preset(&path, &name, window, cx),
             MenuAction::NewWorktree(repo) => self.open_sheet(repo, window, cx),
@@ -4091,7 +4161,10 @@ impl WorkspaceView {
             .text_color(fg)
             .children(tabs.into_iter().enumerate().map(|(i, tab)| {
                 let title = self.ws.tab_title(tab);
-                let bell = self.ws.pane(tab.focused).is_some_and(|p| p.bell);
+                let bell = tab
+                    .focused_pane()
+                    .and_then(|pane| self.ws.pane(pane))
+                    .is_some_and(|p| p.bell);
                 let is_active = active == Some(i);
                 if let Some((id, input, _)) = &self.renaming
                     && *id == tab.id
@@ -4584,9 +4657,16 @@ impl Render for WorkspaceView {
         let fg = hsla(self.settings.colors.foreground.unwrap_or_default());
         let divider = blend(bg, fg, 0.2);
         let content = match self.ws.active_tab() {
-            Some(tab) => match tab.zoomed {
-                Some(pane) => self.render_node(&Node::Leaf(pane), divider),
-                None => self.render_node(&tab.root, divider),
+            Some(tab) => match &tab.content {
+                chda_core::TabContent::Terminal(terminal) => match terminal.zoomed {
+                    Some(pane) => self.render_node(&Node::Leaf(pane), divider),
+                    None => self.render_node(&terminal.root, divider),
+                },
+                chda_core::TabContent::GitGraph { .. } => self
+                    .graphs
+                    .get(&tab.id)
+                    .map(|graph| graph.clone().into_any_element())
+                    .unwrap_or_else(|| div().into_any_element()),
             },
             None => div().into_any_element(),
         };

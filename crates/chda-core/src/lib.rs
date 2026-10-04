@@ -7,6 +7,8 @@ mod forge;
 mod gitea;
 mod github;
 mod gitlab;
+mod graph;
+pub use graph::*;
 mod names;
 mod refresh;
 pub mod release;

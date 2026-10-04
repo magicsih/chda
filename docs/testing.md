@@ -48,6 +48,7 @@ Three layers, all run by `cargo test --workspace` (CI: the macOS job).
 | New worktree from a branch, random name, collisions | `worktrees::new_worktree_from_a_branch_with_a_random_name` | #27 |
 | Branch notes: sheet, new worktree sheet, external change, palette | `worktrees::branch_notes_show_in_the_sidebar`, `chda` `tests/note.rs` | #36 |
 | GitLab and Gitea badges through `glab` and `tea` | `pull_requests::gitlab_and_gitea_repositories_get_badges` | #21 |
+| Read-only commit graph: repository menu, merge connections, refs, refresh, mixed restore, paging and retry | `git_graph::graph_menu_merges_refs_refresh_and_mixed_restore`, `git_graph::graph_pages_keep_connections_and_queries_can_retry` | #107 |
 | Worktree change size and read-only diff tab | `diff::diff_summary_and_diff_tab` | #15 |
 | Hovering session rows does not crash the window | `worktrees::hovering_session_rows_does_not_crash` | |
 | Markdown preview from a right-clicked path and the palette | `paths::markdown_path_previews_in_the_browser` | |

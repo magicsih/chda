@@ -8,6 +8,7 @@ mod config;
 mod diagrams;
 mod diff;
 mod folders;
+mod git_graph;
 mod harness;
 mod input;
 mod mcp;

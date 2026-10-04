@@ -2,6 +2,8 @@
 //! for writes (worktree add/remove, merge, branch delete).
 
 mod cli;
+mod history;
+pub use history::{CommitHistory, CommitInfo, CommitRef, CommitRefKind, HistoryPage};
 mod read;
 
 pub use cli::{

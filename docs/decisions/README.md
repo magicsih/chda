@@ -12,3 +12,4 @@ new record rather than editing an accepted one.
 | 0005 | Name `chda`, MIT license, personal public repository |
 | 0006 | `chda mcp` is a stateless MCP server relaying to the running app over the hook socket |
 | 0007 | Proposed: directly typed Codex reports per-pane activity through runtime OSC titles |
+| 0008 | Terminal and read-only Git graph tabs have explicit content types; history is queried in the background and rendered incrementally |
