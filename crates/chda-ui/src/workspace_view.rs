@@ -793,7 +793,7 @@ impl WorkspaceView {
         else {
             return Err(Reply::err(format!("unknown agent {id}")));
         };
-        if !adapter.is_installed() {
+        if !adapter.is_installed(&self.env.search_path()) {
             return Err(Reply::err(format!(
                 "{} is not on PATH",
                 adapter.display_name()
@@ -1488,7 +1488,7 @@ impl WorkspaceView {
             ));
         };
         let name = adapter.display_name();
-        if !adapter.is_installed() {
+        if !adapter.is_installed(&self.env.search_path()) {
             return Err(format!(
                 "{name} is not on PATH, opened a shell in {}",
                 cwd.display()
@@ -2712,7 +2712,7 @@ impl WorkspaceView {
         let Some(adapter) = self.adapters.iter().find(|a| a.id() == agent) else {
             return;
         };
-        if !adapter.is_installed() {
+        if !adapter.is_installed(&self.env.search_path()) {
             self.status_line = Some(format!("{} is not on PATH", adapter.display_name()));
             cx.notify();
             return;
@@ -2733,7 +2733,7 @@ impl WorkspaceView {
             cx.notify();
             return;
         };
-        if !adapter.is_installed() {
+        if !adapter.is_installed(&self.env.search_path()) {
             self.status_line = Some(format!("{} is not on PATH", adapter.display_name()));
             cx.notify();
             return;
@@ -2768,7 +2768,7 @@ impl WorkspaceView {
             let Some(adapter) = adapter else {
                 continue;
             };
-            if !adapter.is_installed() {
+            if !adapter.is_installed(&self.env.search_path()) {
                 missing.push(adapter.display_name().to_owned());
                 continue;
             }

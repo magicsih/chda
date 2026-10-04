@@ -99,13 +99,13 @@ fn key_bindings() -> Vec<KeyBinding> {
 /// Start the application and open the main window with the user's Ghostty
 /// config.
 pub fn run(ghostty: chda_config::GhosttyConfig) {
-    gpui_platform::application().run(|cx: &mut App| {
+    let env = std::rc::Rc::new(environment::Environment::for_user());
+    gpui_platform::application().run(move |cx: &mut App| {
         fonts::register(cx);
         cx.bind_keys(key_bindings());
         cx.on_action(|_: &Quit, cx| cx.quit());
         menus::install(cx);
 
-        let env = std::rc::Rc::new(environment::Environment::for_user());
         let config = env.load_config();
         let saved = config
             .restore_session

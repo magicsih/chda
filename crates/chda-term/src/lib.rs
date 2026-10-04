@@ -24,3 +24,6 @@ pub use shell_integration::{
     ShellIntegration, ShellLaunch, default_data_dir, launch_for, login_shell,
 };
 pub use vt::{Effects, Error, Result, Terminal};
+
+/// Login-shell PATH capture lives with platform process handling.
+pub use chda_pty::shell_path;

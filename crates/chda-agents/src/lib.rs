@@ -90,8 +90,8 @@ pub trait AgentAdapter: Send + Sync {
             .collect::<String>()
             .to_uppercase()
     }
-    /// Whether the agent's binary is on `PATH`.
-    fn is_installed(&self) -> bool;
+    /// Whether the agent's binary is on the launch environment's `PATH`.
+    fn is_installed(&self, path: &std::ffi::OsStr) -> bool;
     /// Command that runs the agent in `cwd`, optionally resuming a session.
     /// `hook_bin` is the chda executable the agent should call for hooks.
     fn launch_command(&self, cwd: &Path, resume: Option<&SessionId>, hook_bin: &Path) -> Command;
@@ -184,9 +184,8 @@ pub(crate) fn write_if_changed(path: &Path, text: &str) -> std::io::Result<()> {
 }
 
 /// Find an executable on `PATH`.
-pub fn which(name: &str) -> Option<PathBuf> {
-    let path = std::env::var_os("PATH")?;
-    std::env::split_paths(&path)
+pub fn which(name: &str, path: &std::ffi::OsStr) -> Option<PathBuf> {
+    std::env::split_paths(path)
         .map(|dir| dir.join(name))
         .find(|p| p.is_file())
 }

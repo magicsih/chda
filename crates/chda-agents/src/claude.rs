@@ -58,8 +58,8 @@ impl AgentAdapter for ClaudeAdapter {
         "CC".into()
     }
 
-    fn is_installed(&self) -> bool {
-        which("claude").is_some()
+    fn is_installed(&self, path: &std::ffi::OsStr) -> bool {
+        which("claude", path).is_some()
     }
 
     fn launch_command(&self, cwd: &Path, resume: Option<&SessionId>, hook_bin: &Path) -> Command {

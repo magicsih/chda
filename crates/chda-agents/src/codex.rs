@@ -68,8 +68,8 @@ impl AgentAdapter for CodexAdapter {
         "CX".into()
     }
 
-    fn is_installed(&self) -> bool {
-        which("codex").is_some()
+    fn is_installed(&self, path: &std::ffi::OsStr) -> bool {
+        which("codex", path).is_some()
     }
 
     fn launch_command(&self, cwd: &Path, resume: Option<&SessionId>, hook_bin: &Path) -> Command {
