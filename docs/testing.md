@@ -65,11 +65,21 @@ Three layers, all run by `cargo test --workspace` (CI: the macOS job).
 | Palette arrow keys choose a later entry | `palette::arrow_keys_choose_a_later_entry` | |
 | Theme picker: preview, restore on escape, save on enter | `palette::theme_picker_previews_restores_and_saves` | |
 | Menu actions: Settings opens config.toml, agent items explain themselves | `menus::settings_writes_a_missing_config_file`, `menus::agent_items_explain_why_nothing_ran` | |
+| Codex typed directly in a worktree terminal | `agents::directly_typed_codex_tracks_each_turn_and_exits` | |
 | Agent launch presets from the palette and the worktree menu | `menus::agent_presets_start_from_the_palette_and_the_sidebar_menu` | #16 |
 
 Not covered by scenarios: anything visual (colors, layout, rendering), since
 the test platform draws no pixels; launching real agents (a stand-in
 `claude` script takes their place); macOS notifications and the Dock themselves.
+
+The directly typed Codex scenario uses a stand-in CLI emitting the exact
+Codex 0.160.0 OSC titles, through a real zsh shell. It verifies argument
+forwarding, startup idle, consecutive turns, background work, user input,
+completion, notification deduplication, two Codex panes in one branch, title
+clearing and return to the shell. Shell-level
+tests cover bash 3.2, installed newer bash, zsh and fish, including user aliases
+or functions and nonzero CLI exit codes. These do not execute a paid model
+request or prove the layout emitted by every Codex version.
 
 ## Measurements
 

@@ -361,6 +361,72 @@ mod tests {
         }
     }
 
+    #[test]
+    fn typed_codex_preserves_arguments_exit_status_and_user_definitions() {
+        use std::os::unix::fs::PermissionsExt;
+        let mut shells = bashes();
+        shells.push(PathBuf::from("/bin/zsh"));
+        shells.extend(fish());
+        for (index, shell) in shells.iter().enumerate() {
+            let name = shell.file_name().unwrap().to_str().unwrap();
+            for user_definition in [false, true] {
+                let home = temp_home(&format!("codex-shell-{index}-{user_definition}"));
+                let bin = home.join("bin");
+                fs::create_dir_all(&bin).unwrap();
+                let script = bin.join("codex");
+                fs::write(&script, "#!/bin/sh\nprintf '<%s>\\n' \"$@\"\nexit 7\n").unwrap();
+                fs::set_permissions(script, fs::Permissions::from_mode(0o755)).unwrap();
+                if user_definition {
+                    let (file, definition) = match name {
+                        "zsh" => (home.join(".zshrc"), "alias codex='echo user-codex'\n"),
+                        "bash" => (home.join(".bash_profile"), "codex() { echo user-codex; }\n"),
+                        "fish" => (
+                            home.join(".config/fish/config.fish"),
+                            "function codex; echo user-codex; end\n",
+                        ),
+                        _ => unreachable!(),
+                    };
+                    fs::create_dir_all(file.parent().unwrap()).unwrap();
+                    fs::write(file, definition).unwrap();
+                }
+                let mut launch = launch_for(ShellIntegration::Detect, shell, &home).unwrap();
+                launch.env.extend([
+                    ("PATH".into(), format!("{}:/usr/bin:/bin", bin.display())),
+                    (
+                        "CHDA_CODEX_TITLE_CONFIG".into(),
+                        "tui.terminal_title=[\"activity\",\"app-name\",\"run-state\"]".into(),
+                    ),
+                    (
+                        "CHDA_ZSH_ZDOTDIR".into(),
+                        home.to_string_lossy().into_owned(),
+                    ),
+                ]);
+                let mut command = vec![shell.to_string_lossy().into_owned()];
+                command.extend(launch.args.clone());
+                command.push("-i".into());
+                let mut t = Transcript::spawn(&command, &home, &launch);
+                t.wait_for("\x1b]133;A", 1);
+                if user_definition {
+                    t.send("codex resume 'argument with spaces'\n");
+                    t.wait_for("user-codex", 1);
+                } else {
+                    let status = if name == "fish" { "$status" } else { "$?" };
+                    t.send(&format!(
+                        "codex resume 'argument with spaces'; printf 'exit-code:%s\\n' {status}\n"
+                    ));
+                    t.wait_for(
+                        "<tui.terminal_title=[\"activity\",\"app-name\",\"run-state\"]>",
+                        1,
+                    );
+                    t.wait_for("<argument with spaces>", 1);
+                    t.wait_for("exit-code:7", 1);
+                }
+                t.finish();
+                fs::remove_dir_all(home).unwrap();
+            }
+        }
+    }
+
     fn bash_version(bash: &Path) -> (u32, u32) {
         let out = std::process::Command::new(bash)
             .args(["-c", "echo ${BASH_VERSINFO[0]} ${BASH_VERSINFO[1]}"])

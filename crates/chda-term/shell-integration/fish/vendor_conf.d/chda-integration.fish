@@ -47,3 +47,10 @@ if status is-interactive; and not status test-feature mark-prompt 2>/dev/null
         printf '\e]133;D;%s\a' $status
     end
 end
+
+# This also runs on fish 4, whose own prompt marking needs no integration.
+if status is-interactive; and set -q CHDA_CODEX_TITLE_CONFIG; and not functions -q codex
+    function codex --wraps codex
+        command codex -c "$CHDA_CODEX_TITLE_CONFIG" $argv
+    end
+end

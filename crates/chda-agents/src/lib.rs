@@ -20,7 +20,9 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 
 pub use claude::ClaudeAdapter;
-pub use codex::CodexAdapter;
+pub use codex::{
+    CODEX_TITLE_CONFIG, CODEX_TITLE_ENV, CodexAdapter, CodexRunState, parse_codex_title,
+};
 pub use copilot::CopilotAdapter;
 pub use gemini::GeminiAdapter;
 pub use hook::{HookEvent, HookKind, PANE_ENV, hook_main};
