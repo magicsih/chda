@@ -4029,6 +4029,10 @@ impl WorkspaceView {
             self.restore_theme(cx);
             self.focus_active(window, cx);
             cx.notify();
+        } else {
+            // No overlay handled Esc: let the focused terminal encode and
+            // deliver it to the running application (for example, cancel a turn).
+            cx.propagate();
         }
     }
 
