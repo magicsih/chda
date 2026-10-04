@@ -113,7 +113,14 @@ chda is the hook. When it launches Claude Code it passes a per-session
 `--settings` file that registers `chda hook claude` for session start, prompt
 submit, permission requests, stop and session end. Codex gets `-c notify=[...]`
 pointing at `chda hook codex`; if you already use a notify program, chda runs it
-after its own. Gemini CLI gets `GEMINI_CLI_SYSTEM_DEFAULTS_PATH` pointing at a
+after its own. Codex status also comes from its terminal title, with a
+per-launch `tui.terminal_title` override. In chda's zsh, bash and fish shells,
+typing `codex` directly gets that title override too: each turn shows working,
+requests for user input show waiting, and returning to the shell clears the
+status. Existing `codex` aliases/functions are kept; shell integration must
+be enabled, and `command codex` or an absolute CLI path bypasses the helper.
+The title format is verified against Codex 0.160.0; a CLI without these title
+items cannot report this way. Gemini CLI gets `GEMINI_CLI_SYSTEM_DEFAULTS_PATH` pointing at a
 copy of your machine's system defaults with chda's hooks added (Gemini CLI
 concatenates hooks from all settings layers). GitHub Copilot CLI gets
 `--plugin-dir` with a local plugin whose hooks call `chda hook copilot`.

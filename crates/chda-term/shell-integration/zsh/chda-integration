@@ -39,3 +39,11 @@ _chda_preexec() {
 'builtin' 'typeset' '-gi' _chda_in_command=0
 add-zsh-hook precmd _chda_precmd
 add-zsh-hook preexec _chda_preexec
+
+# Attach status reporting to a directly typed Codex command in chda only.
+# Respect functions and aliases the user already defined in their dotfiles.
+if [[ -n "${CHDA_CODEX_TITLE_CONFIG-}" ]] && (( ! $+functions[codex] && ! $+aliases[codex] )); then
+    function codex {
+        'command' codex -c "$CHDA_CODEX_TITLE_CONFIG" "$@"
+    }
+fi

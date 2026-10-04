@@ -1,5 +1,5 @@
-//! Codex: `codex` CLI, `~/.codex/sessions` rollouts, status through the
-//! `notify` hook passed per launch with `-c`.
+//! Codex: CLI session rollouts, runtime status through OSC titles, and
+//! menu-launch notify hooks supplying the conversation ID for restore.
 
 use std::fs;
 use std::io;
@@ -55,6 +55,43 @@ pub fn notify_override(hook_bin: &Path, existing: Option<&[String]>) -> String {
     format!("notify=[{}]", quoted.join(","))
 }
 
+/// Per-launch title format, shared by menu launches and interactive shells.
+/// No user config or notify command is changed.
+pub const CODEX_TITLE_CONFIG: &str = "tui.terminal_title=[\"activity\",\"app-name\",\"run-state\"]";
+pub const CODEX_TITLE_ENV: &str = "CHDA_CODEX_TITLE_CONFIG";
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum CodexRunState {
+    Ready,
+    Working,
+    WaitingInput,
+}
+
+/// Only the title format chda requests is recognized. In Codex, `Waiting`
+/// means a background terminal is running, not a request for user input.
+pub fn parse_codex_title(title: &str) -> Option<CodexRunState> {
+    let title = title.trim();
+    if matches!(
+        title,
+        "[ ! ] Action Required | codex" | "[ . ] Action Required | codex"
+    ) {
+        return Some(CodexRunState::WaitingInput);
+    }
+    let title = match title.split_once(' ') {
+        Some((
+            "⠋" | "⠙" | "⠹" | "⠸" | "⠼" | "⠴" | "⠦" | "⠧" | "⠇" | "⠏" | "|" | "/" | "-" | "\\",
+            rest,
+        )) => rest,
+        _ => title,
+    };
+    let state = match title.strip_prefix("codex | ")? {
+        "Ready" | "Starting" => CodexRunState::Ready,
+        "Working" | "Thinking" | "Waiting" => CodexRunState::Working,
+        _ => return None,
+    };
+    Some(state)
+}
+
 impl AgentAdapter for CodexAdapter {
     fn id(&self) -> AgentId {
         AgentId::Codex
@@ -79,7 +116,9 @@ impl AgentAdapter for CodexAdapter {
             .and_then(|h| fs::read_to_string(h.join("config.toml")).ok())
             .and_then(|t| existing_notify(&t));
         cmd.arg("-c")
-            .arg(notify_override(hook_bin, existing.as_deref()));
+            .arg(notify_override(hook_bin, existing.as_deref()))
+            .arg("-c")
+            .arg(CODEX_TITLE_CONFIG);
         if let Some(id) = resume {
             cmd.arg("resume").arg(&id.0);
         }
@@ -102,7 +141,8 @@ impl AgentAdapter for CodexAdapter {
         Ok(HookInstallReport {
             file: None,
             note: Some(
-                "status comes from Codex's notify hook, which only reports turn completion".into(),
+                "status comes from Codex terminal titles; notify keeps the session ID for restore"
+                    .into(),
             ),
         })
     }
@@ -259,6 +299,51 @@ pub fn parse_rollout(file: &Path) -> Option<AgentSession> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn runtime_titles_distinguish_work_user_input_and_background_waiting() {
+        for state in ["Working", "Thinking", "Waiting"] {
+            for prefix in ["", "⠋ ", "⠏ ", "| "] {
+                assert_eq!(
+                    parse_codex_title(&format!("{prefix}codex | {state}")),
+                    Some(CodexRunState::Working)
+                );
+            }
+        }
+        for prefix in ["[ ! ]", "[ . ]"] {
+            assert_eq!(
+                parse_codex_title(&format!("{prefix} Action Required | codex")),
+                Some(CodexRunState::WaitingInput)
+            );
+        }
+        assert_eq!(
+            parse_codex_title("codex | Ready"),
+            Some(CodexRunState::Ready)
+        );
+        for title in [
+            "",
+            "Working",
+            "codex | unknown",
+            "editor | Working",
+            "codex | Ready | notes",
+        ] {
+            assert_eq!(parse_codex_title(title), None);
+        }
+    }
+
+    #[test]
+    fn menu_and_resume_launches_include_status_titles() {
+        let cmd = CodexAdapter.launch_command(
+            Path::new("/work"),
+            Some(&SessionId("thread".into())),
+            Path::new("/bin/chda"),
+        );
+        let args: Vec<_> = cmd
+            .get_args()
+            .map(|s| s.to_string_lossy().into_owned())
+            .collect();
+        assert_eq!(&args[2..], ["-c", CODEX_TITLE_CONFIG, "resume", "thread"]);
+    }
 
     #[test]
     fn rollout_usage_follows_running_totals_per_model() {

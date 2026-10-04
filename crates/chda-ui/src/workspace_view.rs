@@ -11,7 +11,10 @@ use chda_config::{ChdaConfig, GhosttyConfig, Paths, PullStrategy, TabTitle};
 
 use crate::environment::Environment;
 use chda_core::agents::control::{Incoming, Reply, Request};
-use chda_core::agents::{AgentAdapter, AgentId, HookEvent, HookKind, SessionCache, SessionId, ipc};
+use chda_core::agents::{
+    AgentAdapter, AgentId, CodexRunState, HookEvent, HookKind, SessionCache, SessionId, ipc,
+    parse_codex_title,
+};
 use chda_core::release::{Release, ReleaseCheck, UPDATE_COMMAND, parse_latest};
 use chda_core::{
     ActiveTab, AgentEvent, AgentSessionRef, AgentStatus, Axis, Direction, FileWatcher, Listing,
@@ -814,6 +817,26 @@ impl WorkspaceView {
     }
 
     fn apply_hook_event(&mut self, ev: HookEvent, window: &mut Window, cx: &mut Context<Self>) {
+        if ev.agent == "codex"
+            && ev.kind == HookKind::Stopped
+            && !ev.session_id.is_empty()
+            && let Some(p) = ev.pane.and_then(|raw| self.ws.pane_by_raw(raw))
+            && self
+                .ws
+                .pane(p)
+                .is_some_and(|i| parse_codex_title(&i.title) == Some(CodexRunState::Ready))
+        {
+            if self.ws.set_agent_session(
+                p,
+                Some(AgentSessionRef {
+                    agent: ev.agent,
+                    session: ev.session_id,
+                }),
+            ) {
+                self.save_session();
+            }
+            return;
+        }
         let event = match ev.kind {
             HookKind::SessionStart => AgentEvent::SessionStart,
             HookKind::PromptSubmitted => AgentEvent::PromptSubmitted,
@@ -838,7 +861,9 @@ impl WorkspaceView {
         });
         let pane = self.pane_for_event(&ev, cx);
         // Only a pane the hook named itself is sure to hold the conversation.
-        if let Some(p) = ev.pane.and_then(|raw| self.ws.pane_by_raw(raw)) {
+        if let Some(p) = ev.pane.and_then(|raw| self.ws.pane_by_raw(raw))
+            && (!ev.session_id.is_empty() || event == AgentEvent::SessionEnd)
+        {
             let conversation = (event != AgentEvent::SessionEnd).then(|| AgentSessionRef {
                 agent: ev.agent.clone(),
                 session: ev.session_id.clone(),
@@ -900,6 +925,9 @@ impl WorkspaceView {
         if looking {
             self.reviewed_focused(cx);
         }
+        if ev.agent == "codex" && ev.pane.is_some() {
+            self.sync_codex_worktree_status(&ev.cwd, cx);
+        }
         if worktree_changed.is_some()
             && matches!(event, AgentEvent::Stopped | AgentEvent::SessionEnd)
         {
@@ -907,6 +935,37 @@ impl WorkspaceView {
             self.refresh_sessions(cx);
         }
         self.sync_attention(cx);
+    }
+
+    /// Two Codex panes in the same branch must not clear each other's dot.
+    fn sync_codex_worktree_status(&mut self, cwd: &Path, cx: &mut Context<Self>) {
+        let model = &self.sidebar.read(cx).model;
+        let Some((_, worktree)) = model.worktree_for_path(cwd) else {
+            return;
+        };
+        let root = worktree.path.clone();
+        let status = self
+            .ws
+            .tabs()
+            .iter()
+            .flat_map(|t| t.panes())
+            .filter_map(|p| self.ws.pane(p))
+            .filter(|p| {
+                p.cwd
+                    .as_ref()
+                    .and_then(|cwd| model.worktree_for_path(cwd))
+                    .is_some_and(|(_, w)| w.path == root)
+            })
+            .filter_map(|p| p.agent.as_ref().filter(|a| a.agent == "codex"))
+            .map(|a| a.status)
+            .max_by_key(|s| s.urgency())
+            .unwrap_or_default();
+        self.sidebar.update(cx, |s, cx| {
+            if let Some(w) = s.model.worktree_mut(&root) {
+                w.agents.insert("codex".into(), status);
+            }
+            cx.notify();
+        });
     }
 
     /// The pane an agent event belongs to: the one its hook named through
@@ -1647,6 +1706,77 @@ impl WorkspaceView {
         self.sync_panes(cx);
     }
 
+    /// Codex reports its runtime state in the OSC title chda
+    /// requests. Route it through the same path as hooks, tied to this pane.
+    fn apply_codex_terminal_event(
+        &mut self,
+        pane: PaneId,
+        event: &TerminalEvent,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(info) = self.ws.pane(pane) else {
+            return;
+        };
+        let previous = parse_codex_title(&info.title);
+        let ending = matches!(event, TerminalEvent::Prompt | TerminalEvent::Exited)
+            || matches!(event, TerminalEvent::Title(t) if t.is_empty());
+        let kind = if ending {
+            if previous.is_none()
+                && !info.agent.as_ref().is_some_and(|a| a.agent == "codex")
+                && !info
+                    .agent_session
+                    .as_ref()
+                    .is_some_and(|s| s.agent == "codex")
+            {
+                return;
+            }
+            HookKind::SessionEnd
+        } else if let TerminalEvent::Title(title) = event {
+            let Some(state) = parse_codex_title(title) else {
+                return;
+            };
+            if previous == Some(state) {
+                return;
+            }
+            match state {
+                CodexRunState::Working => HookKind::PromptSubmitted,
+                CodexRunState::WaitingInput => HookKind::WaitingInput,
+                CodexRunState::Ready => {
+                    if !previous.is_some_and(|p| p != CodexRunState::Ready)
+                        || !info.agent.as_ref().is_some_and(|a| {
+                            a.agent == "codex"
+                                && matches!(
+                                    a.status,
+                                    AgentStatus::Working | AgentStatus::WaitingInput
+                                )
+                        })
+                    {
+                        return;
+                    }
+                    HookKind::Stopped
+                }
+            }
+        } else {
+            return;
+        };
+        let Some(cwd) = self.ws.pane(pane).and_then(|p| p.cwd.clone()) else {
+            return;
+        };
+        self.apply_hook_event(
+            HookEvent {
+                agent: "codex".into(),
+                session_id: String::new(),
+                cwd,
+                kind,
+                timestamp: now_ms(),
+                pane: Some(pane.raw()),
+            },
+            window,
+            cx,
+        );
+    }
+
     fn on_pane_event(
         &mut self,
         pane: PaneId,
@@ -1654,6 +1784,7 @@ impl WorkspaceView {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        self.apply_codex_terminal_event(pane, event, window, cx);
         match event {
             TerminalEvent::Exited => {
                 self.ws.close_pane(pane);
