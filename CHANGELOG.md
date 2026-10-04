@@ -4,6 +4,17 @@ All notable changes to chda. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); entries are
 generated from conventional commit messages by release-plz.
 
+## [0.1.12](https://github.com/magicsih/chda/compare/v0.1.11...v0.1.12) - 2026-10-04
+
+### Added
+
+- *(sidebar)* keep active tabs stable with activity ages and branch labels ([#101](https://github.com/magicsih/chda/pull/101))
+
+### Fixed
+
+- *(agents)* find installed agents using the login shell PATH ([#103](https://github.com/magicsih/chda/pull/103))
+- *(agents)* track Codex started from a terminal prompt ([#99](https://github.com/magicsih/chda/pull/99))
+
 ## [0.1.11](https://github.com/magicsih/chda/compare/v0.1.10...v0.1.11) - 2026-10-03
 
 ### Added
