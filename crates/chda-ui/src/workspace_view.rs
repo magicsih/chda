@@ -1671,6 +1671,8 @@ impl WorkspaceView {
             cx.notify();
         });
         self.save_session();
+        // The title bar also depends on refreshed worktree metadata.
+        cx.notify();
     }
 
     fn save_config(&self) {
@@ -1947,14 +1949,44 @@ impl WorkspaceView {
             .into_any_element()
     }
 
+    /// The active worktree's note describes the task even with the sidebar hidden.
+    /// A name assigned by the user still takes precedence.
+    pub(crate) fn title_bar_text(&self, cx: &App) -> (String, String) {
+        let Some(tab) = self.ws.active_tab() else {
+            return ("chda".into(), "chda".into());
+        };
+        let fallback = self.ws.tab_title(tab);
+        let worktree = self
+            .ws
+            .pane(tab.focused)
+            .and_then(|info| info.cwd.as_deref())
+            .and_then(|cwd| self.sidebar.read(cx).model.worktree_for_path(cwd))
+            .map(|(_, worktree)| worktree);
+        let Some(worktree) = worktree else {
+            return (fallback.clone(), fallback);
+        };
+        let title = if tab.custom_title.is_some() {
+            fallback
+        } else {
+            worktree.note_title().map(str::to_owned).unwrap_or(fallback)
+        };
+        let branch = worktree.branch.as_deref().unwrap_or("detached HEAD");
+        let tooltip = match worktree
+            .note
+            .as_deref()
+            .filter(|note| !note.trim().is_empty())
+        {
+            Some(note) => format!("{note}\nBranch: {branch}"),
+            None => format!("{title}\nBranch: {branch}"),
+        };
+        (title, tooltip)
+    }
+
     fn render_title_bar(&self, window: &Window, cx: &mut Context<Self>) -> AnyElement {
         let bg = hsla(self.settings.colors.background.unwrap_or_default());
         let fg = hsla(self.settings.colors.foreground.unwrap_or_default());
-        let title = self
-            .ws
-            .active_tab()
-            .map(|t| self.ws.tab_title(t))
-            .unwrap_or_else(|| "chda".into());
+        let (title, tooltip) = self.title_bar_text(cx);
+        let title_selector = format!("title-text:{title}");
         let inset = if window.is_fullscreen() {
             8.0
         } else {
@@ -2028,14 +2060,19 @@ impl WorkspaceView {
             )
             .child(
                 div()
+                    .id("active-title")
+                    .debug_selector(|| "active-title".into())
                     .flex_1()
                     .min_w_0()
-                    .overflow_hidden()
-                    .whitespace_nowrap()
-                    .text_ellipsis()
-                    .flex()
-                    .justify_center()
-                    .child(optical(title)),
+                    .text_center()
+                    .tooltip(crate::tooltip::text(tooltip))
+                    .child(
+                        optical(title)
+                            .debug_selector(move || title_selector.clone())
+                            .overflow_hidden()
+                            .whitespace_nowrap()
+                            .text_ellipsis(),
+                    ),
             );
         if let Some(release) = &self.release_notice {
             let version = release.version.clone();

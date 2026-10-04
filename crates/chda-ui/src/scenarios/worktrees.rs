@@ -845,3 +845,129 @@ fn title_bar_opens_the_worktree_in_the_picked_app(cx: &mut TestAppContext) {
         [("Open in Finder", root.clone()), ("Open in VS Code", root)]
     );
 }
+
+/// Notes follow the focused worktree, while explicit tab names win (#106).
+#[gpui::test]
+fn title_bar_follows_branch_notes_and_split_focus(cx: &mut TestAppContext) {
+    let mut repo = std::path::PathBuf::new();
+    let mut feat = std::path::PathBuf::new();
+    let mut h = Harness::open(cx, "title-note", |home| {
+        repo = home.repo("app");
+        feat = repo.parent().unwrap().join("feature");
+        git(
+            &repo,
+            &[
+                "worktree",
+                "add",
+                "-q",
+                "-b",
+                "feat",
+                feat.to_str().unwrap(),
+            ],
+        );
+        git(
+            &repo,
+            &["config", "branch.main.description", "\n Main task\nDetails"],
+        );
+        git(
+            &repo,
+            &["config", "branch.feat.description", "Feature task"],
+        );
+        config_with_repo(home, &repo);
+    });
+    h.wait_prompt();
+    h.run(&format!("cd {}", repo.display()), "");
+    h.wait_for("main note in the title", |v, cx| {
+        v.title_bar_text(cx).0 == "Main task"
+    });
+    assert_eq!(
+        h.read(|v, cx| v.title_bar_text(cx).1),
+        "\n Main task\nDetails\nBranch: main"
+    );
+    assert_eq!(h.read(|v, cx| v.open_in_folder(cx)), Some(repo.clone()));
+
+    h.keys("cmd-d");
+    h.wait_prompt();
+    h.run(&format!("cd {}", feat.display()), "");
+    h.wait_for("split note", |v, cx| {
+        v.title_bar_text(cx).0 == "Feature task"
+    });
+    h.keys("cmd-alt-left");
+    assert_eq!(h.read(|v, cx| v.title_bar_text(cx).0), "Main task");
+    h.keys("cmd-alt-right");
+    assert_eq!(h.read(|v, cx| v.title_bar_text(cx).0), "Feature task");
+
+    h.keys("cmd-t");
+    h.wait_prompt();
+    h.run(&format!("cd {}", repo.display()), "");
+    h.wait_for("second tab note", |v, cx| {
+        v.title_bar_text(cx).0 == "Main task"
+    });
+    h.keys("cmd-1");
+    assert_eq!(h.read(|v, cx| v.title_bar_text(cx).0), "Feature task");
+
+    let edit = MenuAction::EditNote {
+        repo: repo.clone(),
+        branch: "feat".into(),
+    };
+    h.cx.update(|window, cx| {
+        h.view
+            .update(cx, |v, cx| v.run_menu_action(edit, window, cx))
+    });
+    for _ in 0.."Feature task".len() {
+        h.keys("backspace");
+    }
+    h.type_text("Updated task");
+    h.keys("enter");
+    assert_eq!(h.read(|v, cx| v.title_bar_text(cx).0), "Updated task");
+    git(
+        &repo,
+        &[
+            "config",
+            "branch.feat.description",
+            "External task\nFull note",
+        ],
+    );
+    h.wait_for("external edit", |v, cx| {
+        v.title_bar_text(cx).0 == "External task"
+    });
+    h.cx.run_until_parked();
+    assert!(
+        h.cx.debug_bounds("title-text:External task").is_some(),
+        "external notes redraw the title"
+    );
+    let tab = h.read(|v, _| v.ws.active_tab().unwrap().id);
+    h.cx.update(|window, cx| {
+        h.view.update(cx, |v, cx| {
+            v.ws.rename_tab(tab, "My task");
+            v.focus(window, cx);
+        })
+    });
+    assert_eq!(h.read(|v, cx| v.title_bar_text(cx).0), "My task");
+    assert!(
+        h.read(|v, cx| v.title_bar_text(cx).1)
+            .contains("Full note\nBranch: feat")
+    );
+    h.cx.update(|window, cx| {
+        h.view.update(cx, |v, cx| {
+            v.ws.rename_tab(tab, "");
+            v.focus(window, cx);
+        })
+    });
+    git(&repo, &["config", "branch.feat.description", " \n\t"]);
+    h.wait_for("whitespace fallback", |v, cx| {
+        v.title_bar_text(cx).0 == "feat"
+    });
+    git(&repo, &["config", "--unset", "branch.feat.description"]);
+    h.wait_for("removed note", |v, cx| {
+        v.sidebar
+            .read(cx)
+            .model
+            .worktree_for_path(&feat)
+            .unwrap()
+            .1
+            .note
+            .is_none()
+    });
+    assert_eq!(h.read(|v, cx| v.title_bar_text(cx).0), "feat");
+}
