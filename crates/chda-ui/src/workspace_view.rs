@@ -136,8 +136,25 @@ pub(crate) struct ContextMenu {
     pub(crate) items: Vec<(String, MenuAction)>,
 }
 
+/// Stable identities for the two distinct close operations.
+#[derive(Clone, Copy, Debug)]
+pub(crate) enum CloseTarget {
+    Tab(TabId),
+    Pane(PaneId),
+}
+
+#[derive(Clone, Copy, Debug)]
+pub(crate) struct CloseFocus {
+    tab: TabId,
+    pane: Option<PaneId>,
+}
+
 #[derive(Clone, Debug)]
 pub(crate) enum MenuAction {
+    StopAndClose {
+        target: CloseTarget,
+        focus: CloseFocus,
+    },
     OpenTerminal(PathBuf),
     /// A read-only tab with the worktree's diff against its base.
     ViewDiff(PathBuf),
@@ -2267,7 +2284,13 @@ impl WorkspaceView {
 
     /// Give keyboard focus to the workspace's focused pane.
     fn focus_active(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        if let Some(pane) = self.ws.focused_pane()
+        if self
+            .confirm
+            .as_ref()
+            .is_some_and(|confirm| matches!(confirm.action, MenuAction::StopAndClose { .. }))
+        {
+            window.focus(&self.focus_handle, cx);
+        } else if let Some(pane) = self.ws.focused_pane()
             && let Some((view, _)) = self.panes.get(&pane)
         {
             let handle = view.read(cx).focus_handle(cx);
@@ -2346,6 +2369,9 @@ impl WorkspaceView {
     }
 
     fn close_surface(&mut self, _: &CloseSurface, window: &mut Window, cx: &mut Context<Self>) {
+        if self.confirm.is_some() {
+            return;
+        }
         if self.sheet.take().is_some()
             || self.note_sheet.take().is_some()
             || self.context_menu.take().is_some()
@@ -2353,36 +2379,145 @@ impl WorkspaceView {
             self.focus_active(window, cx);
             return;
         }
-        if let Some(tab) = self
-            .ws
-            .active_tab()
-            .filter(|tab| tab.graph_repo().is_some())
-            .map(|tab| tab.id)
-        {
-            self.ws.close_tab(tab);
-            self.graphs.remove(&tab);
-            self.save_session();
-            if self.ws.is_empty() {
-                cx.quit();
-            } else {
-                self.focus_active(window, cx);
-                self.sync_panes(cx);
-            }
-            return;
-        }
-        let Some(pane) = self.ws.focused_pane() else {
+        let target = if let Some(pane) = self.ws.focused_pane() {
+            CloseTarget::Pane(pane)
+        } else if let Some(tab) = self.ws.active_tab() {
+            CloseTarget::Tab(tab.id)
+        } else {
             return;
         };
-        self.ws.close_pane(pane);
-        self.panes.remove(&pane);
+        self.request_close(target, window, cx);
+    }
+
+    pub(crate) fn request_close(
+        &mut self,
+        target: CloseTarget,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if self.confirm.is_some() {
+            return;
+        }
+        let Some(tab) = self.ws.tabs().iter().find(|tab| match target {
+            CloseTarget::Tab(id) => tab.id == id,
+            CloseTarget::Pane(id) => tab.panes().contains(&id),
+        }) else {
+            return;
+        };
+        let title = self.ws.tab_title(tab);
+        let panes = match target {
+            CloseTarget::Tab(_) => tab.panes(),
+            CloseTarget::Pane(pane) => vec![pane],
+        };
+        let lines: Vec<_> = panes
+            .iter()
+            .filter_map(|pane| {
+                let info = self.ws.pane(*pane)?;
+                let agent = info.agent.as_ref()?;
+                let status = match agent.status {
+                    AgentStatus::Working => "working",
+                    AgentStatus::WaitingInput => "waiting for input",
+                    AgentStatus::Review | AgentStatus::Idle => return None,
+                };
+                let session = info
+                    .agent_session
+                    .as_ref()
+                    .map(|session| session.session.as_str())
+                    .unwrap_or("session unavailable");
+                Some(format!(
+                    "{} · {status} · pane {} · {session}",
+                    self.agent_name(&agent.agent),
+                    pane.raw()
+                ))
+            })
+            .collect();
+        if lines.is_empty() {
+            self.finish_close(target, window, cx);
+            return;
+        }
+        let Some(active) = self.ws.active_tab() else {
+            return;
+        };
+        self.confirm = Some(ConfirmSheet {
+            title: format!("Stop sessions and close “{title}”?"),
+            lines,
+            action: MenuAction::StopAndClose {
+                target,
+                focus: CloseFocus {
+                    tab: active.id,
+                    pane: active.focused_pane(),
+                },
+            },
+        });
+        // The confirmation owns keyboard focus: Esc must never reach an agent.
+        window.focus(&self.focus_handle, cx);
+        cx.notify();
+    }
+
+    fn finish_close(&mut self, target: CloseTarget, window: &mut Window, cx: &mut Context<Self>) {
+        match target {
+            CloseTarget::Tab(id) => {
+                let Some(tab) = self.ws.tabs().iter().find(|tab| tab.id == id) else {
+                    return;
+                };
+                let panes = tab.panes();
+                self.ws.close_tab(id);
+                self.graphs.remove(&id);
+                for pane in panes {
+                    self.panes.remove(&pane);
+                }
+            }
+            CloseTarget::Pane(pane) => {
+                if self.ws.pane(pane).is_none() {
+                    return;
+                }
+                self.ws.close_pane(pane);
+                self.panes.remove(&pane);
+            }
+        }
+        if self
+            .renaming
+            .as_ref()
+            .is_some_and(|(id, _, _)| !self.ws.tabs().iter().any(|tab| tab.id == *id))
+        {
+            self.renaming = None;
+        }
         if self.ws.is_empty() {
-            // Nothing left to restore: this removes the saved session.
             self.save_session();
             cx.quit();
             return;
         }
         self.focus_active(window, cx);
-        self.sync_panes(cx);
+        self.sync_attention(cx);
+    }
+
+    fn restore_close_focus(
+        &mut self,
+        focus: CloseFocus,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if let Some(pane) = focus.pane {
+            if !self.ws.focus_pane(pane) {
+                self.ws.activate_tab_id(focus.tab);
+            }
+        } else {
+            self.ws.activate_tab_id(focus.tab);
+        }
+        self.focus_active(window, cx);
+    }
+
+    fn cancel_confirm(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if let Some(ConfirmSheet {
+            action: MenuAction::StopAndClose { focus, .. },
+            ..
+        }) = self.confirm.take()
+        {
+            self.restore_close_focus(focus, window, cx);
+        } else {
+            self.focus_active(window, cx);
+        }
+        cx.notify();
     }
 
     /// Close `panes`; an emptied window gets a fresh tab instead of quitting.
@@ -3079,6 +3214,11 @@ impl WorkspaceView {
     ) {
         self.context_menu = None;
         match action {
+            MenuAction::StopAndClose { target, focus } => {
+                // Restore the original selection if the target disappeared meanwhile.
+                self.restore_close_focus(focus, window, cx);
+                self.finish_close(target, window, cx);
+            }
             MenuAction::OpenTerminal(path) => self.open_tab_at(Some(path), None, window, cx),
             MenuAction::ViewDiff(path) => self.open_diff(&path, window, cx),
             MenuAction::ViewGitTree(repo) => self.open_git_graph(repo, window, cx),
@@ -4126,9 +4266,12 @@ impl WorkspaceView {
     }
 
     fn dismiss(&mut self, _: &Dismiss, window: &mut Window, cx: &mut Context<Self>) {
+        if self.confirm.is_some() {
+            self.cancel_confirm(window, cx);
+            return;
+        }
         if self.sheet.take().is_some()
             || self.note_sheet.take().is_some()
-            || self.confirm.take().is_some()
             || self.palette.take().is_some()
             || self.context_menu.take().is_some()
             || self.status_line.take().is_some()
@@ -4145,7 +4288,7 @@ impl WorkspaceView {
 
     fn render_tab_bar(&self, cx: &mut Context<Self>) -> Option<AnyElement> {
         let tabs = self.ws.tabs_in(self.tab_group.as_deref());
-        if tabs.len() < 2 {
+        if tabs.is_empty() {
             return None;
         }
         let bg = hsla(self.settings.colors.background.unwrap_or_default());
@@ -4166,6 +4309,25 @@ impl WorkspaceView {
                     .and_then(|pane| self.ws.pane(pane))
                     .is_some_and(|p| p.bell);
                 let is_active = active == Some(i);
+                let tab_id = tab.id;
+                let close = div()
+                    .id(("tab-close", i))
+                    .debug_selector(move || format!("tab-close-{i}"))
+                    .size(px(20.0))
+                    .flex_shrink_0()
+                    .flex()
+                    .items_center()
+                    .justify_center()
+                    .rounded_sm()
+                    .cursor_pointer()
+                    .hover(|style| style.bg(fg.opacity(0.15)))
+                    .tooltip(crate::tooltip::text(format!("Close {title}")))
+                    .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
+                    .on_click(cx.listener(move |this, _, window, cx| {
+                        cx.stop_propagation();
+                        this.request_close(CloseTarget::Tab(tab_id), window, cx);
+                    }))
+                    .child("×");
                 if let Some((id, input, _)) = &self.renaming
                     && *id == tab.id
                 {
@@ -4174,10 +4336,13 @@ impl WorkspaceView {
                         .px_2()
                         .min_w_0()
                         .flex_1()
+                        .flex()
+                        .items_center()
+                        .gap_1()
                         .bg(bg)
-                        .child(input.clone());
+                        .child(div().flex_1().min_w_0().child(input.clone()))
+                        .child(close);
                 }
-                let tab_id = tab.id;
                 let agent = self.ws.tab_agent(tab).cloned();
                 let tip = agent.as_ref().map(|a| {
                     let name = self.agent_name(&a.agent);
@@ -4221,6 +4386,7 @@ impl WorkspaceView {
                     .children(dot)
                     .child(
                         div()
+                            .flex_1()
                             .min_w_0()
                             .overflow_hidden()
                             .text_ellipsis()
@@ -4231,6 +4397,7 @@ impl WorkspaceView {
                                 title
                             )),
                     )
+                    .child(close)
             }));
         Some(bar.into_any_element())
     }
@@ -4400,9 +4567,15 @@ impl WorkspaceView {
                                     .font_weight(gpui::FontWeight::BOLD)
                                     .child(confirm.title.clone()),
                             )
-                            .children(confirm.lines.iter().map(|l| {
-                                div().text_xs().text_color(fg.opacity(0.8)).child(l.clone())
-                            }))
+                            .child(
+                                div()
+                                    .id("confirm-sessions")
+                                    .max_h(px(200.0))
+                                    .overflow_y_scroll()
+                                    .children(confirm.lines.iter().map(|l| {
+                                        div().text_xs().text_color(fg.opacity(0.8)).child(l.clone())
+                                    })),
+                            )
                             .child(
                                 div()
                                     .flex()
@@ -4412,20 +4585,21 @@ impl WorkspaceView {
                                     .child(
                                         div()
                                             .id("confirm-cancel")
+                                            .debug_selector(|| "confirm-cancel".into())
                                             .px_3()
                                             .py_1()
                                             .rounded_sm()
                                             .bg(fg.opacity(0.1))
                                             .cursor_pointer()
                                             .on_click(cx.listener(|this, _, window, cx| {
-                                                this.confirm = None;
-                                                this.focus_active(window, cx);
+                                                this.cancel_confirm(window, cx);
                                             }))
                                             .child("Cancel"),
                                     )
                                     .child(
                                         div()
                                             .id("confirm-ok")
+                                            .debug_selector(|| "confirm-ok".into())
                                             .px_3()
                                             .py_1()
                                             .rounded_sm()
@@ -4434,7 +4608,16 @@ impl WorkspaceView {
                                             .on_click(cx.listener(|this, _, window, cx| {
                                                 this.confirm_action(window, cx)
                                             }))
-                                            .child("Proceed"),
+                                            .child(
+                                                if matches!(
+                                                    confirm.action,
+                                                    MenuAction::StopAndClose { .. }
+                                                ) {
+                                                    "Stop and close"
+                                                } else {
+                                                    "Proceed"
+                                                },
+                                            ),
                                     ),
                             ),
                     ),
