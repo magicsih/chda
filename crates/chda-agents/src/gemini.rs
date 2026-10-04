@@ -107,8 +107,8 @@ impl AgentAdapter for GeminiAdapter {
         "GM".into()
     }
 
-    fn is_installed(&self) -> bool {
-        which("gemini").is_some()
+    fn is_installed(&self, path: &std::ffi::OsStr) -> bool {
+        which("gemini", path).is_some()
     }
 
     fn launch_command(&self, cwd: &Path, resume: Option<&SessionId>, _: &Path) -> Command {

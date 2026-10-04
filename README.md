@@ -282,6 +282,12 @@ other host goes to whichever of the three is logged in to it. SSH aliases from
 `~/.ssh/config` are resolved with `ssh -G`. A repository whose host is not
 logged in shows the command to run instead of badges.
 
+**Agents missing when launched from the Dock?** chda reads the PATH from your
+login shell's startup files once at launch and uses it for both agent detection
+and terminal processes. This includes Homebrew, npm and version-manager
+locations configured in zsh, bash or fish. Restart chda after changing that PATH.
+If the shell cannot report it within two seconds, the inherited PATH is kept.
+
 **Other shells?** Status, directory tracking and prompt jumping come from shell
 integration for zsh, bash and fish. Other shells fall back to polling the
 shell's working directory; prompt marks are missing there.

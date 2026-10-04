@@ -81,3 +81,49 @@ fn agent_presets_start_from_the_palette_and_the_sidebar_menu(cx: &mut TestAppCon
         v.ws.tabs().len() == 3 && v.focused_text(cx).contains("--model opus")
     });
 }
+
+#[gpui::test]
+fn codex_sessions_resume_with_the_login_shell_path(cx: &mut TestAppContext) {
+    use crate::sidebar_view::{SessionPick, SidebarEvent};
+    use std::os::unix::fs::PermissionsExt;
+    let mut h = Harness::open(cx, "codex-path", |home| {
+        let bin = home.bin.join("codex");
+        std::fs::create_dir_all(&home.bin).unwrap();
+        std::fs::write(
+            &bin,
+            "#!/usr/bin/env sh\nprintf 'fake-codex %s\\n' \"$*\"\nexec /bin/cat >/dev/null\n",
+        )
+        .unwrap();
+        std::fs::set_permissions(&bin, std::fs::Permissions::from_mode(0o700)).unwrap();
+        std::fs::write(home.home.join("gui-path"), "/usr/bin:/bin:/usr/sbin:/sbin").unwrap();
+        std::fs::write(
+            home.home.join(".zprofile"),
+            format!("export PATH='{}':$PATH\n", home.bin.display()),
+        )
+        .unwrap();
+    });
+    h.wait_prompt();
+    let cwd = h.home.home.clone();
+    h.cx.update(|window, cx| {
+        h.view.update(cx, |v, cx| {
+            v.on_sidebar_event(
+                SidebarEvent::ResumeSessions(vec![SessionPick {
+                    worktree: cwd,
+                    agent: "codex".into(),
+                    session: "saved-session".into(),
+                }]),
+                window,
+                cx,
+            );
+        })
+    });
+    h.wait_for("Codex to resume through the imported PATH", |v, cx| {
+        v.ws.tabs().len() == 2 && v.focused_text(cx).contains("resume saved-session")
+    });
+    assert!(h.read(|v, _| {
+        v.status_line
+            .as_deref()
+            .is_none_or(|s| !s.contains("not on PATH"))
+    }));
+    assert!(h.read(|v, cx| v.focused_text(cx)).contains("fake-codex"));
+}

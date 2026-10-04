@@ -75,8 +75,8 @@ impl AgentAdapter for CopilotAdapter {
         "CP".into()
     }
 
-    fn is_installed(&self) -> bool {
-        which("copilot").is_some()
+    fn is_installed(&self, path: &std::ffi::OsStr) -> bool {
+        which("copilot", path).is_some()
     }
 
     fn launch_command(&self, cwd: &Path, resume: Option<&SessionId>, _: &Path) -> Command {

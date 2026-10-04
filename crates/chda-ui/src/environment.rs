@@ -99,20 +99,51 @@ pub struct Environment {
     pub latest_release: Arc<dyn Fn() -> Option<String> + Send + Sync>,
 }
 
+/// PATH for panes and agent discovery, captured once from the login shell.
+/// A failed probe preserves the inherited environment.
+pub(crate) fn shell_path_env(
+    shell: &Path,
+    home: &Path,
+    env: &[(String, String)],
+) -> Vec<(String, String)> {
+    let pairs: Vec<_> = env.iter().map(|(k, v)| (k.as_str(), v.as_str())).collect();
+    match chda_term::shell_path(shell, home, &pairs, std::time::Duration::from_secs(2)) {
+        Ok(path) => vec![("PATH".into(), path)],
+        Err(_) => Vec::new(),
+    }
+}
+
 impl Environment {
     /// The current user's locations and the real OS.
     pub fn for_user() -> Self {
+        let shell = chda_term::login_shell();
+        let pane_env = shell
+            .as_deref()
+            .zip(std::env::var_os("HOME"))
+            .map(|(shell, home)| shell_path_env(shell, Path::new(&home), &[]))
+            .unwrap_or_default();
         Self {
             config_path: ChdaConfig::default_path(),
             data_dir: data_dir(),
             ghostty: Paths::default_for_user(),
-            shell: chda_term::login_shell(),
-            pane_env: Vec::new(),
+            shell,
+            pane_env,
             adapters: Arc::new(adapters()),
             forge_clis: ForgeClis::default(),
             system: Rc::new(NativeSystem),
             latest_release: Arc::new(fetch_latest_release),
         }
+    }
+
+    /// Exactly the PATH inherited by a PTY launched with `pane_env`.
+    pub fn search_path(&self) -> std::ffi::OsString {
+        self.pane_env
+            .iter()
+            .rev()
+            .find(|(k, _)| k == "PATH")
+            .map(|(_, v)| v.into())
+            .or_else(|| std::env::var_os("PATH"))
+            .unwrap_or_default()
     }
 
     /// `config.toml`, or the defaults when it is missing or broken.

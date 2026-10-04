@@ -96,8 +96,8 @@ impl AgentAdapter for OpenCodeAdapter {
         "OC".into()
     }
 
-    fn is_installed(&self) -> bool {
-        which("opencode").is_some()
+    fn is_installed(&self, path: &std::ffi::OsStr) -> bool {
+        which("opencode", path).is_some()
     }
 
     fn launch_command(&self, cwd: &Path, resume: Option<&SessionId>, _: &Path) -> Command {

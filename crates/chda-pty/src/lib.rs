@@ -2,6 +2,9 @@
 //!
 //! Platform-specific code for the PTY lives here.
 
+mod shell_path;
+pub use shell_path::shell_path;
+
 use std::ffi::OsStr;
 use std::io::{self, Read, Write};
 use std::path::{Path, PathBuf};

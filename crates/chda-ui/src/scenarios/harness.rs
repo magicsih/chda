@@ -90,7 +90,8 @@ impl System for RecordingSystem {
 /// A real adapter that reads transcripts only from the test home: Claude
 /// Code's from a test folder, the others' not at all. Claude Code counts as
 /// installed when the home has a fake `claude` script ([`Home::fake_claude`]),
-/// which then runs in its place; the others are never installed.
+/// which then runs in its place. Codex can use a stand-in on the pane PATH;
+/// the other agents are never installed.
 struct TestAdapter {
     inner: Box<dyn AgentAdapter>,
     projects: Option<PathBuf>,
@@ -107,8 +108,9 @@ impl AgentAdapter for TestAdapter {
     fn short_label(&self) -> String {
         self.inner.short_label()
     }
-    fn is_installed(&self) -> bool {
+    fn is_installed(&self, path: &std::ffi::OsStr) -> bool {
         self.bin.as_ref().is_some_and(|b| b.is_file())
+            && (self.inner.id() != AgentId::Codex || self.inner.is_installed(path))
     }
     fn launch_command(
         &self,
@@ -116,6 +118,16 @@ impl AgentAdapter for TestAdapter {
         resume: Option<&SessionId>,
         hook_bin: &Path,
     ) -> std::process::Command {
+        if self.inner.id() == AgentId::Codex && self.bin.is_some() {
+            // Exercise bare-name PTY lookup without reading the real user's
+            // Codex config (the notify hook is outside this PATH scenario).
+            let mut cmd = std::process::Command::new("codex");
+            cmd.current_dir(cwd);
+            if let Some(session) = resume {
+                cmd.arg("resume").arg(&session.0);
+            }
+            return cmd;
+        }
         let real = self.inner.launch_command(cwd, resume, hook_bin);
         let Some(bin) = &self.bin else {
             return real;
@@ -179,7 +191,7 @@ pub struct Home {
     pub config: PathBuf,
     pub data: PathBuf,
     pub ghostty: PathBuf,
-    /// Where the setup may write stand-ins for `gh`, `glab` and `tea`;
+    /// Where the setup may write stand-ins for `gh`, `glab`, `tea` and `codex`;
     /// without them pull request badges are off.
     pub bin: PathBuf,
     /// What "GitHub" answers for the latest release; absent: offline.
@@ -310,24 +322,41 @@ fn open_window(
                 .config_files,
             theme_dirs: Vec::new(),
         };
+        let mut pane_env = vec![
+            ("HOME".into(), home.home.to_string_lossy().into_owned()),
+            ("ZDOTDIR".into(), home.home.to_string_lossy().into_owned()),
+        ];
+        // Tests may model a Dock launch without mutating the test process PATH.
+        if let Ok(path) = std::fs::read_to_string(home.home.join("gui-path")) {
+            pane_env.push(("PATH".into(), path));
+            pane_env.extend(crate::environment::shell_path_env(
+                Path::new("/bin/zsh"),
+                &home.home,
+                &pane_env,
+            ));
+        }
         let env = Rc::new(Environment {
             config_path: Some(home.config.clone()),
             data_dir: Some(home.data.clone()),
             ghostty: paths.clone(),
             shell: Some(PathBuf::from("/bin/zsh")),
-            pane_env: vec![
-                ("HOME".into(), home.home.to_string_lossy().into_owned()),
-                ("ZDOTDIR".into(), home.home.to_string_lossy().into_owned()),
-            ],
+            pane_env,
             adapters: Arc::new(
                 adapters()
                     .into_iter()
                     .map(|inner| {
                         let claude = inner.id() == AgentId::Claude;
+                        let codex = inner.id() == AgentId::Codex;
                         Box::new(TestAdapter {
                             inner,
                             projects: claude.then(|| home.claude_projects.clone()),
-                            bin: claude.then(|| home.claude_bin.clone()),
+                            bin: if claude {
+                                Some(home.claude_bin.clone())
+                            } else if codex {
+                                Some(home.bin.join("codex"))
+                            } else {
+                                None
+                            },
                         }) as Box<dyn AgentAdapter>
                     })
                     .collect(),
