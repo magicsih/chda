@@ -23,5 +23,6 @@ mod release;
 mod restore;
 mod search;
 mod sidebar;
+mod starred;
 mod workspace;
 mod worktrees;

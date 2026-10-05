@@ -263,6 +263,8 @@ pub struct Sidebar {
     pub active_tabs: Vec<ActiveTab>,
     /// Live idle panes in workspace tab/pane order.
     pub idle_agents: Vec<IdleAgent>,
+    /// The STARRED list, as saved in the config.
+    pub starred: Vec<chda_config::StarredBranch>,
 }
 
 impl Sidebar {
@@ -359,6 +361,21 @@ impl Sidebar {
         for repo in &mut self.repos {
             repo.worktrees.retain(|w| w.path != path);
         }
+    }
+
+    /// The worktree that has `branch` checked out in the repository at
+    /// `repo`; `None` when the repository or the worktree is gone.
+    pub fn branch_worktree(
+        &self,
+        repo: &Path,
+        branch: &str,
+    ) -> Option<(&RepoEntry, &WorktreeEntry)> {
+        let r = self.repos.iter().find(|r| r.path == repo && !r.folder)?;
+        let w = r
+            .worktrees
+            .iter()
+            .find(|w| w.branch.as_deref() == Some(branch))?;
+        Some((r, w))
     }
 
     /// The worktree whose path contains `cwd`, longest match wins.
@@ -709,5 +726,29 @@ mod tests {
         .map(|ago| relative_age(now, now - ago))
         .collect();
         assert_eq!(ages, vec!["now", "now", "3m", "2h", "yesterday", "5d"]);
+    }
+
+    #[test]
+    fn starred_branches_resolve_within_their_own_repository() {
+        let mut s = Sidebar::new();
+        s.add_repo("/src/a".into());
+        s.add_repo("/src/b".into());
+        s.set_worktrees(
+            Path::new("/src/a"),
+            vec![
+                wt("/src/a", "main", true),
+                wt("/src/a.wt/x", "feat/x", false),
+            ],
+        );
+        s.set_worktrees(Path::new("/src/b"), vec![wt("/src/b", "main", true)]);
+        let path = |repo: &str, branch: &str| {
+            s.branch_worktree(Path::new(repo), branch)
+                .map(|(_, w)| w.path.clone())
+        };
+        assert_eq!(path("/src/a", "main"), Some(PathBuf::from("/src/a")));
+        assert_eq!(path("/src/b", "main"), Some(PathBuf::from("/src/b")));
+        assert_eq!(path("/src/a", "feat/x"), Some(PathBuf::from("/src/a.wt/x")));
+        assert_eq!(path("/src/b", "feat/x"), None, "never another repository's");
+        assert_eq!(path("/src/gone", "main"), None);
     }
 }

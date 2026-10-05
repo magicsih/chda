@@ -39,6 +39,16 @@ pub enum SidebarEvent {
     JumpToAgent(PathBuf),
     /// Open a read-only tab with the worktree's diff against its base.
     OpenDiff(PathBuf),
+    /// Go to a STARRED branch's worktree.
+    OpenStarred {
+        repo: PathBuf,
+        branch: String,
+    },
+    /// The star of a STARRED row was clicked: take the branch out.
+    Unstar {
+        repo: PathBuf,
+        branch: String,
+    },
 }
 
 /// A past agent session to resume, and the worktree it belongs to.
@@ -354,6 +364,131 @@ impl SidebarView {
         col.into_any_element()
     }
 
+    /// A worktree's status dot color and tooltip: gray when no agent runs
+    /// there, yellow for a live idle agent.
+    fn status_dot(&self, wt: &WorktreeEntry) -> (Hsla, String) {
+        let status = wt.status();
+        let live_idle = self.model.idle_agents.iter().any(|i| {
+            i.cwd
+                .as_ref()
+                .and_then(|cwd| self.model.worktree_for_path(cwd))
+                .is_some_and(|(_, w)| w.path == wt.path)
+        });
+        match status {
+            AgentStatus::Idle if live_idle => (
+                status_color(status),
+                "A live agent is idle here, ready for another task. Click to go there.".into(),
+            ),
+            AgentStatus::Idle => (no_agent_color(), status_tooltip(wt, &self.agents)),
+            _ => (status_color(status), status_tooltip(wt, &self.agents)),
+        }
+    }
+
+    /// One STARRED row: the star (click to unstar), status dot, alias or
+    /// branch name and repository. A branch without a worktree stays listed,
+    /// dimmed, and does not navigate.
+    fn render_starred(
+        &self,
+        index: usize,
+        starred: &chda_config::StarredBranch,
+        cx: &mut Context<Self>,
+    ) -> AnyElement {
+        let fg = self.fg;
+        let found = self.model.branch_worktree(&starred.repo, &starred.branch);
+        let repo_name = found.map(|(r, _)| r.name.clone()).unwrap_or_else(|| {
+            starred
+                .repo
+                .file_name()
+                .map(|n| n.to_string_lossy().into_owned())
+                .unwrap_or_else(|| starred.repo.display().to_string())
+        });
+        let worktree = found.map(|(_, w)| w).filter(|w| !w.missing);
+        let label = worktree
+            .and_then(|w| match self.active_label {
+                chda_config::ActiveLabel::Alias => w.note_title(),
+                chda_config::ActiveLabel::Branch => None,
+            })
+            .unwrap_or(&starred.branch)
+            .to_owned();
+        let (dot, mut tip) = match worktree {
+            Some(w) => self.status_dot(w),
+            None => (
+                no_agent_color(),
+                "No worktree has this branch checked out.".to_owned(),
+            ),
+        };
+        tip = format!("{}\n{repo_name} \u{2022} {}\n{tip}", label, starred.branch);
+        let (repo, branch) = (starred.repo.clone(), starred.branch.clone());
+        div()
+            .id(ElementId::Name(format!("starred:{index}").into()))
+            .debug_selector(move || format!("starred-{index}"))
+            .flex()
+            .flex_row()
+            .items_center()
+            .gap_1()
+            .px_2()
+            .py_0p5()
+            .cursor_pointer()
+            .when(worktree.is_none(), |d| d.opacity(0.55))
+            .when(
+                worktree.is_some_and(|w| self.selected.as_ref() == Some(&w.path)),
+                |d| d.bg(fg.opacity(0.14)),
+            )
+            .hover(|s| s.bg(fg.opacity(0.08)))
+            .tooltip(crate::tooltip::text(tip))
+            .on_click({
+                let (repo, branch) = (repo.clone(), branch.clone());
+                cx.listener(move |_, _, _, cx| {
+                    cx.emit(SidebarEvent::OpenStarred {
+                        repo: repo.clone(),
+                        branch: branch.clone(),
+                    })
+                })
+            })
+            .child(
+                div()
+                    .id(ElementId::Name(format!("unstar:{index}").into()))
+                    .debug_selector(move || format!("unstar-{index}"))
+                    .flex_shrink_0()
+                    .px_0p5()
+                    .rounded_sm()
+                    .text_color(gpui::rgb(0xf9e2af))
+                    .hover(|s| s.bg(fg.opacity(0.15)))
+                    .tooltip(crate::tooltip::text("Unstar branch"))
+                    .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
+                    .on_click(cx.listener(move |_, _, _, cx| {
+                        cx.stop_propagation();
+                        cx.emit(SidebarEvent::Unstar {
+                            repo: repo.clone(),
+                            branch: branch.clone(),
+                        });
+                    }))
+                    .child("\u{2605}"),
+            )
+            .child(div().flex_shrink_0().text_color(dot).child("\u{25cf}"))
+            .child(
+                div()
+                    .flex_1()
+                    .min_w_0()
+                    .overflow_hidden()
+                    .whitespace_nowrap()
+                    .text_ellipsis()
+                    .child(label),
+            )
+            .child(
+                div()
+                    .text_xs()
+                    .flex_shrink_0()
+                    .max_w(gpui::px(70.0))
+                    .overflow_hidden()
+                    .whitespace_nowrap()
+                    .text_ellipsis()
+                    .text_color(fg.opacity(0.5))
+                    .child(repo_name),
+            )
+            .into_any_element()
+    }
+
     /// A worktree's row; `folder` for the one row of a plain folder.
     fn render_worktree(
         &self,
@@ -364,18 +499,7 @@ impl SidebarView {
         let fg = self.fg;
         let path = wt.path.clone();
         let expanded = self.expanded.contains(&wt.path);
-        let status = wt.status();
-        let live_idle = self.model.idle_agents.iter().any(|i| {
-            i.cwd
-                .as_ref()
-                .and_then(|cwd| self.model.worktree_for_path(cwd))
-                .is_some_and(|(_, w)| w.path == wt.path)
-        });
-        let status_tip = if status == AgentStatus::Idle && live_idle {
-            "A live agent is idle here, ready for another task. Click to go there.".into()
-        } else {
-            status_tooltip(wt, &self.agents)
-        };
+        let (dot_color, status_tip) = self.status_dot(wt);
         let name = match &wt.branch {
             _ if folder => "(no git)".to_owned(),
             Some(branch) => branch.clone(),
@@ -599,11 +723,7 @@ impl SidebarView {
                         format!("wt-dot:{}", wt.path.display()).into(),
                     ))
                     .flex_shrink_0()
-                    .text_color(if status == AgentStatus::Idle && !live_idle {
-                        no_agent_color()
-                    } else {
-                        status_color(status)
-                    })
+                    .text_color(dot_color)
                     .tooltip(crate::tooltip::text(status_tip))
                     .on_click({
                         let path = path.clone();
@@ -1069,6 +1189,13 @@ impl Render for SidebarView {
                     .into_any_element()
             })
             .collect();
+        let starred: Vec<AnyElement> = self
+            .model
+            .starred
+            .iter()
+            .enumerate()
+            .map(|(i, s)| self.render_starred(i, s, cx))
+            .collect();
         let idle: Vec<AnyElement> = self
             .model
             .idle_agents
@@ -1240,6 +1367,19 @@ impl Render for SidebarView {
                             .child("+ repo"),
                     ),
             )
+            .when(!starred.is_empty(), |d| {
+                d.child(
+                    div()
+                        .px_2()
+                        .pt_2()
+                        .pb_1()
+                        .text_xs()
+                        .text_color(fg.opacity(0.6))
+                        .child("STARRED"),
+                )
+                .children(starred)
+                .child(div().h(gpui::px(6.0)))
+            })
             .when(!active.is_empty(), |d| {
                 d.child(
                     div()
