@@ -4125,6 +4125,9 @@ impl WorkspaceView {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        if self.sheet.as_ref().is_some_and(|sheet| sheet.busy) {
+            return;
+        }
         if self.sidebar.read(cx).model.is_folder(&repo) {
             self.status_line = Some(format!(
                 "{} is a plain folder. Right-click it and pick \"{INIT_GIT}\" to make worktrees.",
@@ -5298,7 +5301,7 @@ impl WorkspaceView {
                     .cursor_pointer()
                     .when(busy, |d| d.opacity(0.4))
                     .on_click(cx.listener(move |this, _, window, cx| {
-                        if !busy {
+                        if !busy && this.sheet.as_ref().is_none_or(|sheet| !sheet.busy) {
                             if note {
                                 this.note_sheet = None;
                             } else {
@@ -5323,7 +5326,7 @@ impl WorkspaceView {
                     .hover(|s| s.bg(fg.opacity(0.2)))
                     .when(busy, |d| d.opacity(0.5))
                     .on_click(cx.listener(move |this, _, window, cx| {
-                        if !busy {
+                        if !busy && this.sheet.as_ref().is_none_or(|sheet| !sheet.busy) {
                             if note {
                                 if let Some(sheet) = &this.note_sheet {
                                     let text = sheet.input.read(cx).text().to_owned();

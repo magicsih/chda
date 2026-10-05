@@ -301,4 +301,3 @@ mod tests {
         assert!(codex_quota(&json!({}), &json!({"account":{"type":"apiKey"}}), 0).is_none());
     }
 }
-

@@ -365,6 +365,17 @@ impl SidebarView {
         let path = wt.path.clone();
         let expanded = self.expanded.contains(&wt.path);
         let status = wt.status();
+        let live_idle = self.model.idle_agents.iter().any(|i| {
+            i.cwd
+                .as_ref()
+                .and_then(|cwd| self.model.worktree_for_path(cwd))
+                .is_some_and(|(_, w)| w.path == wt.path)
+        });
+        let status_tip = if status == AgentStatus::Idle && live_idle {
+            "A live agent is idle here, ready for another task. Click to go there.".into()
+        } else {
+            status_tooltip(wt, &self.agents)
+        };
         let name = match &wt.branch {
             _ if folder => "(no git)".to_owned(),
             Some(branch) => branch.clone(),
@@ -589,20 +600,13 @@ impl SidebarView {
                     ))
                     .flex_shrink_0()
                     .text_color(
-                        if status == AgentStatus::Idle
-                            && !self.model.idle_agents.iter().any(|i| {
-                                i.cwd
-                                    .as_ref()
-                                    .and_then(|cwd| self.model.worktree_for_path(cwd))
-                                    .is_some_and(|(_, w)| w.path == wt.path)
-                            })
-                        {
+                        if status == AgentStatus::Idle && !live_idle                        {
                             no_agent_color()
                         } else {
                             status_color(status)
                         },
                     )
-                    .tooltip(crate::tooltip::text(status_tooltip(wt, &self.agents)))
+                    .tooltip(crate::tooltip::text(status_tip))
                     .on_click({
                         let path = path.clone();
                         cx.listener(move |_, _, _, cx| {
