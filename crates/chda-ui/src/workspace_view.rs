@@ -2393,8 +2393,8 @@ impl WorkspaceView {
             .into_any_element()
     }
 
-    /// The active worktree's note describes the task even with the sidebar hidden.
-    /// A name assigned by the user still takes precedence.
+    /// Repository and worktree task context remain visible independently of
+    /// a custom name assigned to the tab.
     pub(crate) fn title_bar_text(&self, cx: &App) -> (String, String) {
         let Some(tab) = self.ws.active_tab() else {
             return ("chda".into(), "chda".into());

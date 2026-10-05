@@ -239,6 +239,14 @@ fn markdown_path_previews_in_the_browser(cx: &mut gpui::TestAppContext) {
     });
     h.wait_prompt();
     h.run("cd docs; clear; ls", "notes.md");
+    // Resolving a relative path requires the shell's cwd report. Output can
+    // arrive before the following prompt/OSC 7 notification.
+    h.wait_for("the shell to report docs/", |v, _| {
+        v.ws.focused_pane()
+            .and_then(|p| v.ws.pane(p))
+            .and_then(|i| i.cwd.as_ref())
+            .is_some_and(|c| c.ends_with("docs"))
+    });
     let term = h.focused_terminal();
     let at = find_on_screen(&mut h, &term, |t| t.contains("notes.md"), "notes");
     right_click(&mut h, at);
@@ -256,12 +264,6 @@ fn markdown_path_previews_in_the_browser(cx: &mut gpui::TestAppContext) {
     assert!(html.contains("<h1>Release notes</h1>") && html.contains("<table>"));
 
     // The palette offers the folder's Markdown files.
-    h.wait_for("the shell to report docs/", |v, _| {
-        v.ws.focused_pane()
-            .and_then(|p| v.ws.pane(p))
-            .and_then(|i| i.cwd.as_ref())
-            .is_some_and(|c| c.ends_with("docs"))
-    });
     let items = h.read(|v, cx| v.palette_items(cx));
     assert!(
         items
