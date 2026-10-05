@@ -4,6 +4,8 @@
 
 <h1 align="center">chda</h1>
 
+<p align="center"><i>chda</i> is pronounced <b>CHE-DA</b> (IPA: <b>/ˈtʃɛ.dɑː/</b>): "ch" as in <i>chair</i>, "e" as in <i>bed</i>, then "dah".</p>
+
 <p align="center"><b>Checkout · Hack · Deliver · Again.</b><br>
 A terminal with a git worktree sidebar and a live status board for coding agents:<br>
 Claude Code, Codex, Gemini CLI, GitHub Copilot CLI and OpenCode.</p>
