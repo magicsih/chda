@@ -82,6 +82,18 @@ impl std::fmt::Debug for Pty {
     }
 }
 
+/// Variables chda sets for its panes that this process inherited, e.g. when
+/// chda (or a test) starts from a chda pane. A new pane must not report to
+/// that other pane or use its agent settings, so they are dropped and only
+/// the caller's `env` applies.
+fn inherited_chda_vars(
+    vars: impl Iterator<Item = (std::ffi::OsString, std::ffi::OsString)>,
+) -> Vec<std::ffi::OsString> {
+    vars.map(|(key, _)| key)
+        .filter(|key| key.to_string_lossy().starts_with("CHDA_"))
+        .collect()
+}
+
 impl Pty {
     /// Open a PTY of the given size and spawn the child in it.
     pub fn spawn(size: PtySize, opts: SpawnOptions<'_>) -> io::Result<Self> {
@@ -99,6 +111,9 @@ impl Pty {
         };
         if let Some(cwd) = opts.cwd {
             cmd.cwd(cwd);
+        }
+        for key in inherited_chda_vars(std::env::vars_os()) {
+            cmd.env_remove(key);
         }
         for (key, value) in opts.env {
             cmd.env(OsStr::new(key), OsStr::new(value));
@@ -278,6 +293,22 @@ mod tests {
         pty.write_all(b"\n").unwrap();
         assert!(pty.wait().unwrap().success());
         drain.join().unwrap();
+    }
+
+    #[test]
+    fn inherited_chda_variables_are_dropped() {
+        let vars = [
+            ("CHDA_PANE_ID", "31"),
+            ("CHDA_CODEX_NOTIFY_CONFIG", "notify=[...]"),
+            ("PATH", "/bin"),
+            ("MY_CHDA_NOTE", "kept"),
+        ]
+        .into_iter()
+        .map(|(k, v)| (k.into(), v.into()));
+        assert_eq!(
+            inherited_chda_vars(vars),
+            ["CHDA_PANE_ID", "CHDA_CODEX_NOTIFY_CONFIG"]
+        );
     }
 
     #[test]
