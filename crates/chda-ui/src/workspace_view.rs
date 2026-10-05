@@ -128,6 +128,9 @@ const INIT_GIT: &str = "Initialize git";
 const ADD_AS_FOLDER: &str = "Add as folder";
 /// How often to see whether the daily release check is due.
 const RELEASE_CHECK: Duration = Duration::from_secs(60 * 60);
+/// How long terminal activity waits before it is saved for the next launch.
+const ACTIVITY_SAVE_DELAY: Duration = Duration::from_secs(5);
+
 /// Step of the "working" dot pulse; the timer only runs while an agent works.
 const PULSE_STEP: Duration = Duration::from_millis(250);
 const PULSE_STEPS: u8 = 8;
@@ -318,6 +321,8 @@ pub struct WorkspaceView {
     pub(crate) status_line: Option<String>,
     /// The title last given to the OS window.
     window_title: String,
+    /// A session save for new terminal activity is scheduled.
+    activity_save_pending: bool,
     /// Where the Ghostty config lives, and the files the last load read.
     ghostty_paths: Paths,
     ghostty_sources: Vec<PathBuf>,
@@ -439,6 +444,7 @@ impl WorkspaceView {
             base_fetched: HashMap::new(),
             status_line: None,
             window_title: String::new(),
+            activity_save_pending: false,
             ghostty_paths: env.ghostty.clone(),
             ghostty_sources: ghostty.sources,
             config_watcher: None,
@@ -2362,7 +2368,19 @@ impl WorkspaceView {
                     }
                 });
                 // The next launch shows this as the previous working time.
-                self.save_session();
+                // Output saves at most once per delay, off the hot path;
+                // quitting saves at once.
+                if !self.activity_save_pending {
+                    self.activity_save_pending = true;
+                    cx.spawn(async move |this, cx| {
+                        cx.background_executor().timer(ACTIVITY_SAVE_DELAY).await;
+                        let _ = this.update(cx, |view, _| {
+                            view.activity_save_pending = false;
+                            view.save_session();
+                        });
+                    })
+                    .detach();
+                }
                 return;
             }
         }

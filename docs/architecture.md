@@ -112,7 +112,8 @@ reuses their last frame unless they notified. A pane's output notifies only
 its own view. Its title (agents such as Codex animate it while working) and
 its once-a-second activity time do not redraw the window unless a tab label
 or agent status changes; ACTIVE ages pick up the time on their own
-one-second tick. The OS window title is set only when its text changes.
+one-second tick, and the session file saves it at most once every five
+seconds (and on quit). The OS window title is set only when its text changes.
 
 ## Shell integration
 

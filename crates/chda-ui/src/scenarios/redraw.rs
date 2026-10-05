@@ -44,10 +44,17 @@ fn background_title_spinners_and_output_do_not_redraw_the_window(cx: &mut TestAp
     // Its spinner frames and output do not.
     let (w, s) = (workspace.get(), sidebar.get());
     for frame in ["⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"] {
-        emit(&mut h, TerminalEvent::Title(format!("{frame} codex | Working")));
+        emit(
+            &mut h,
+            TerminalEvent::Title(format!("{frame} codex | Working")),
+        );
         emit(&mut h, TerminalEvent::Activity(now_ms()));
     }
-    assert_eq!(workspace.get(), w, "spinner and output redrew the workspace");
+    assert_eq!(
+        workspace.get(),
+        w,
+        "spinner and output redrew the workspace"
+    );
     assert_eq!(sidebar.get(), s, "spinner and output redrew the sidebar");
     assert_eq!(h.read(|v, _| v.ws.tab_title(&v.ws.tabs()[0])), tab_title);
 
