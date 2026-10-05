@@ -105,6 +105,9 @@ navigation::* covers recent-pane reuse, exact sidebar identity, manual
 collapse under background output, Unicode clipboard insertion, previous
 working activity and multi-window IPC/navigation/persistence. The wrapped
 path scenario activates every row of a three-row path whose prefix exists.
+Terminal tests retain the full target after resizing and scrolling back,
+and keep hard-newline file entries separate. Old hook events cannot mark a
+newly restored pane as live.
 A macOS integration test binds a real localhost listener and verifies its
 owning process, listener removal and unknown initial CPU. Quota parsing tests
 cover missing windows, multiple limits and account/session scope.

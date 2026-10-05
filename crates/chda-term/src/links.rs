@@ -496,6 +496,51 @@ mod terminal_wrap_regression {
     use super::*;
     use crate::{Size, Terminal};
     #[test]
+    fn wrapped_paths_survive_resize_and_scrollback_without_joining_hard_newlines() {
+        let path = "/tmp/prefix/long-directory/another-directory/file.rs:12:5";
+        let expected = LinkTarget::Path {
+            path: "/tmp/prefix/long-directory/another-directory/file.rs".into(),
+            line: Some(12),
+            column: Some(5),
+        };
+        let mut terminal = Terminal::new(Size { cols: 30, rows: 8 }, 1_000_000).unwrap();
+        terminal.feed(path.as_bytes());
+        let frame = terminal.frame().unwrap();
+        assert_eq!(links_at(&frame, 4, 1)[0].target, expected);
+        assert_eq!(links_at(&frame, 4, 1)[0].cells.len(), 2);
+        terminal.resize(Size { cols: 20, rows: 8 }, 8, 16).unwrap();
+        let frame = terminal.frame().unwrap();
+        for row in 0..3 {
+            assert_eq!(links_at(&frame, 4, row)[0].target, expected);
+        }
+        terminal.feed(b"\r\nnext\r\nnext\r\nnext\r\nnext\r\nnext\r\nnext\r\nnext");
+        terminal.scroll(-100);
+        let frame = terminal.frame().unwrap();
+        for row in 0..3 {
+            assert_eq!(links_at(&frame, 4, row)[0].target, expected);
+        }
+        let mut separate = Terminal::new(Size { cols: 40, rows: 8 }, 1_000_000).unwrap();
+        separate.feed(b"/tmp/one.rs:1\r\n/tmp/two.rs:2");
+        let frame = separate.frame().unwrap();
+        assert_eq!(
+            links_at(&frame, 4, 0)[0].target,
+            LinkTarget::Path {
+                path: "/tmp/one.rs".into(),
+                line: Some(1),
+                column: None
+            }
+        );
+        assert_eq!(
+            links_at(&frame, 4, 1)[0].target,
+            LinkTarget::Path {
+                path: "/tmp/two.rs".into(),
+                line: Some(2),
+                column: None
+            }
+        );
+    }
+
+    #[test]
     fn real_terminal_frames_preserve_complete_wrapped_paths() {
         let path = "/tmp/prefix/long-directory/another-directory/file.rs:12:5";
         let mut terminal = Terminal::new(Size { cols: 20, rows: 8 }, 1_000_000).unwrap();

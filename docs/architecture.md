@@ -160,7 +160,7 @@ hooks per launch, never in the user's own config:
 | Agent | Hooks | Transcripts |
 |---|---|---|
 | Claude Code | `--settings` file | `~/.claude/projects/<dir>/*.jsonl` |
-| Codex | Runtime OSC titles and per-launch `-c notify=[...]` for directly typed and menu launches; uses `-c notify=[...]` for session restore, chaining the user's notify program | `~/.codex/sessions/**/*.jsonl` |
+| Codex | Runtime OSC titles and per-launch `-c notify=[...]` for directly typed and menu launches, preserving session IDs for restore and chaining the user's notify program | `~/.codex/sessions/**/*.jsonl` |
 | Gemini CLI | `GEMINI_CLI_SYSTEM_DEFAULTS_PATH`: the machine's system defaults plus chda's hooks | `~/.gemini/tmp/<project>/chats/*.jsonl` |
 | Copilot CLI | `--plugin-dir` with a plugin whose hooks pass the event name as an argument | `~/.copilot/session-state/<id>/events.jsonl` |
 | OpenCode | `OPENCODE_CONFIG_DIR` with a JavaScript plugin that maps bus events to hook kinds | none (SQLite) |
