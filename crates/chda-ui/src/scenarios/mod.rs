@@ -20,6 +20,7 @@ mod palette;
 mod paths;
 mod pull_requests;
 mod release;
+mod reorder;
 mod restore;
 mod search;
 mod sidebar;

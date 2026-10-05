@@ -162,10 +162,6 @@ fn drop_files(h: &mut Harness, at: Point<Pixels>, paths: &[std::path::PathBuf]) 
         position: at,
         paths: ExternalPaths(paths.iter().cloned().collect()),
     });
-    eprintln!(
-        "DEBUG active after enter: {}",
-        h.cx.update(|_, cx| cx.has_active_drag())
-    );
     h.cx.simulate_event(FileDropEvent::Pending { position: at });
     h.cx.simulate_event(FileDropEvent::Submit { position: at });
     h.cx.run_until_parked();

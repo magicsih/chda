@@ -49,7 +49,47 @@ pub enum SidebarEvent {
         repo: PathBuf,
         branch: String,
     },
+    /// A repository header was dropped on another repository: show `from`
+    /// where `to` is.
+    MoveRepo {
+        from: PathBuf,
+        to: PathBuf,
+    },
 }
+
+/// A repository header being dragged to a new place in the list.
+#[derive(Clone)]
+pub(crate) struct RepoDrag {
+    path: PathBuf,
+    index: usize,
+}
+
+/// What follows the mouse while a repository header is dragged.
+struct RepoDragPreview {
+    name: String,
+    fg: Hsla,
+    bg: Hsla,
+}
+
+impl Render for RepoDragPreview {
+    fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+        div()
+            .px_2()
+            .py_1()
+            .rounded_sm()
+            .bg(self.bg)
+            .border_1()
+            .border_color(self.fg.opacity(0.3))
+            .text_sm()
+            .font_weight(gpui::FontWeight::BOLD)
+            .text_color(self.fg)
+            .shadow_md()
+            .child(self.name.clone())
+    }
+}
+
+/// Distance from the list's top or bottom edge that scrolls while dragging.
+const DRAG_SCROLL_EDGE: f32 = 32.0;
 
 /// A past agent session to resume, and the worktree it belongs to.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -263,6 +303,27 @@ impl SidebarView {
         cx.notify();
     }
 
+    /// Scroll the list when a dragged repository header nears its top or
+    /// bottom edge, so a target outside the visible part can be reached.
+    fn scroll_while_dragging(&mut self, e: &gpui::DragMoveEvent<RepoDrag>, cx: &mut Context<Self>) {
+        let y = e.event.position.y;
+        let edge = gpui::px(DRAG_SCROLL_EDGE);
+        let step = if y < e.bounds.top() + edge {
+            gpui::px(12.0)
+        } else if y > e.bounds.bottom() - edge {
+            gpui::px(-12.0)
+        } else {
+            return;
+        };
+        let mut offset = self.scroll.offset();
+        let max = self.scroll.max_offset().y;
+        offset.y = (offset.y + step).clamp(-max, gpui::px(0.0));
+        if offset != self.scroll.offset() {
+            self.scroll.set_offset(offset);
+            cx.notify();
+        }
+    }
+
     /// Show or hide a worktree's past sessions.
     pub(crate) fn toggle_expanded(&mut self, path: &PathBuf, cx: &mut Context<Self>) {
         if let Some(i) = self.expanded.iter().position(|p| p == path) {
@@ -273,14 +334,30 @@ impl SidebarView {
         cx.notify();
     }
 
-    fn render_repo(&self, repo: &RepoEntry, cx: &mut Context<Self>) -> AnyElement {
+    fn render_repo(&self, index: usize, repo: &RepoEntry, cx: &mut Context<Self>) -> AnyElement {
         let fg = self.fg;
         let path = repo.path.clone();
         let collapsed = repo.collapsed;
+        let drag = RepoDrag {
+            path: path.clone(),
+            index,
+        };
         let header = div()
             .id(ElementId::Name(
                 format!("repo:{}", repo.path.display()).into(),
             ))
+            .debug_selector(move || format!("repo-{index}"))
+            .on_drag(drag, {
+                let (name, fg, bg) = (repo.name.clone(), fg, self.bg);
+                move |_, _, _, cx| {
+                    crate::external_drop::start_internal(cx);
+                    cx.new(|_| RepoDragPreview {
+                        name: name.clone(),
+                        fg,
+                        bg: crate::workspace_view::blend(bg, fg, 0.12),
+                    })
+                }
+            })
             .flex()
             .flex_row()
             .items_center()
@@ -337,7 +414,29 @@ impl SidebarView {
                         .child("+"),
                 )
             });
-        let mut col = div().flex().flex_col().child(header);
+        // Dropping a header on this group moves that repository here; the
+        // line shows which side it lands on.
+        let marker = status_color(AgentStatus::Working);
+        let mut col = div()
+            .flex()
+            .flex_col()
+            .drag_over::<RepoDrag>(move |style, drag, _, _| match drag.index.cmp(&index) {
+                std::cmp::Ordering::Greater => style.border_t_2().border_color(marker),
+                std::cmp::Ordering::Less => style.border_b_2().border_color(marker),
+                std::cmp::Ordering::Equal => style,
+            })
+            .on_drop(cx.listener({
+                let path = path.clone();
+                move |_, drag: &RepoDrag, _, cx| {
+                    if drag.path != path {
+                        cx.emit(SidebarEvent::MoveRepo {
+                            from: drag.path.clone(),
+                            to: path.clone(),
+                        });
+                    }
+                }
+            }))
+            .child(header);
         if let Some(err) = &repo.error {
             col = col.child(
                 div()
@@ -1108,7 +1207,8 @@ impl Render for SidebarView {
             .model
             .repos
             .iter()
-            .map(|r| self.render_repo(r, cx))
+            .enumerate()
+            .map(|(i, r)| self.render_repo(i, r, cx))
             .collect();
         let empty = self.model.repos.is_empty();
         let now = std::time::SystemTime::now()
@@ -1341,6 +1441,9 @@ impl Render for SidebarView {
             .text_sm()
             .overflow_y_scroll()
             .track_scroll(&self.scroll)
+            .on_drag_move(cx.listener(|this, e: &gpui::DragMoveEvent<RepoDrag>, _, cx| {
+                this.scroll_while_dragging(e, cx)
+            }))
             .child(
                 div()
                     .flex()

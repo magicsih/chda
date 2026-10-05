@@ -297,6 +297,34 @@ impl Sidebar {
         self.repos.len() != before
     }
 
+    /// Move the repository `from` to where `to` is: before it when moving
+    /// up, after it when moving down. Display order only.
+    pub fn move_repo(&mut self, from: &Path, to: &Path) -> bool {
+        let (Some(f), Some(t)) = (
+            self.repos.iter().position(|r| r.path == from),
+            self.repos.iter().position(|r| r.path == to),
+        ) else {
+            return false;
+        };
+        if f == t {
+            return false;
+        }
+        let repo = self.repos.remove(f);
+        self.repos.insert(t, repo);
+        true
+    }
+
+    /// Put the repositories in the order of `order` (the config's list);
+    /// ones it does not name keep their relative order at the end.
+    pub fn order_repos(&mut self, order: &[PathBuf]) {
+        self.repos.sort_by_key(|r| {
+            order
+                .iter()
+                .position(|p| *p == r.path)
+                .unwrap_or(usize::MAX)
+        });
+    }
+
     pub fn repo_mut(&mut self, path: &Path) -> Option<&mut RepoEntry> {
         self.repos.iter_mut().find(|r| r.path == path)
     }
@@ -750,5 +778,31 @@ mod tests {
         assert_eq!(path("/src/a", "feat/x"), Some(PathBuf::from("/src/a.wt/x")));
         assert_eq!(path("/src/b", "feat/x"), None, "never another repository's");
         assert_eq!(path("/src/gone", "main"), None);
+    }
+
+    #[test]
+    fn repositories_move_before_or_after_their_target_and_follow_the_config() {
+        let mut s = Sidebar::new();
+        for r in ["/a", "/b", "/c", "/d"] {
+            s.add_repo(r.into());
+        }
+        let order =
+            |s: &Sidebar| -> Vec<String> { s.repos.iter().map(|r| r.name.clone()).collect() };
+        s.repo_mut(Path::new("/a")).unwrap().collapsed = true;
+        assert!(
+            s.move_repo(Path::new("/a"), Path::new("/c")),
+            "down: after the target"
+        );
+        assert_eq!(order(&s), ["b", "c", "a", "d"]);
+        assert!(s.repos[2].collapsed, "the group keeps its state");
+        assert!(
+            s.move_repo(Path::new("/d"), Path::new("/b")),
+            "up: before the target"
+        );
+        assert_eq!(order(&s), ["d", "b", "c", "a"]);
+        assert!(!s.move_repo(Path::new("/d"), Path::new("/d")));
+        assert!(!s.move_repo(Path::new("/gone"), Path::new("/d")));
+        s.order_repos(&["/c".into(), "/a".into()]);
+        assert_eq!(order(&s), ["c", "a", "d", "b"]);
     }
 }
