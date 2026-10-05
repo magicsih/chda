@@ -4,6 +4,15 @@ All notable changes to chda. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); entries are
 generated from conventional commit messages by release-plz.
 
+## [0.1.14](https://github.com/magicsih/chda/compare/v0.1.13...v0.1.14) - 2026-10-05
+
+### Added
+
+- *(sidebar)* show live idle agent sessions separately ([#115](https://github.com/magicsih/chda/pull/115))
+- *(tabs)* confirm closing active agent sessions ([#114](https://github.com/magicsih/chda/pull/114))
+- *(git)* view commit ancestry in a read-only tab ([#113](https://github.com/magicsih/chda/pull/113))
+- *(titlebar)* show the focused branch note ([#110](https://github.com/magicsih/chda/pull/110))
+
 ## [0.1.13](https://github.com/magicsih/chda/compare/v0.1.12...v0.1.13) - 2026-10-04
 
 ### Fixed
