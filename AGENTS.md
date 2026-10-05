@@ -28,6 +28,18 @@ Workspace crates: `chda` (binary), `chda-ui`, `chda-core`, `chda-term`, `chda-pt
 - Remove dead code and compatibility shims when you replace them.
 - A bug fix comes with a test that fails without the fix; user-facing flows get a scenario test. See `docs/testing.md`.
 
+## Product documentation
+
+- Every user-facing feature or behavior change must update the relevant entry
+  in `docs/product-features.json` in the same PR. Keep the README and GitHub
+  Pages current even when documentation was not explicitly requested.
+- Run `python3 scripts/sync-product-docs.py` to generate both feature sections
+  and copy their screenshots from `docs/media` to Pages. Edit the catalog,
+  not the generated sections. Commit the generated files with the change.
+- CI checks the generated files; Pages regenerates them before deploying.
+  Installation and release links always point to the latest published release.
+- Verify new screenshots and the Pages layout at desktop and narrow widths.
+
 ## Local overrides
 
 Agents may keep private notes in `CLAUDE.local.md`, `AGENTS.local.md`, or `.agents/local/`. These are gitignored.
