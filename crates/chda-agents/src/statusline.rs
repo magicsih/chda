@@ -35,7 +35,7 @@ fn existing_command(home: &Path, cwd: &Path) -> Option<String> {
                 .then(|| status.get("command")?.as_str().map(str::to_owned))
                 .flatten()
         })
-        .last()
+        .next_back()
 }
 
 pub fn launch_settings(

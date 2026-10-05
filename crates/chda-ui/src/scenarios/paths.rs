@@ -280,7 +280,11 @@ fn wrapped_path_actions_use_the_full_target_instead_of_an_existing_prefix(
     h.wait_prompt();
     let term = h.focused_terminal();
     let cols = h.read(|_, cx| term.read(cx).frame().size.cols as usize);
-    let prefix = format!("{}{}", "d/".repeat(cols / 2), if cols % 2 == 1 { "d" } else { "" });
+    let prefix = format!(
+        "{}{}",
+        "d/".repeat(cols / 2),
+        if cols % 2 == 1 { "d" } else { "" }
+    );
     let printed = format!("{}/{}file.rs", prefix, "e/".repeat(cols / 2));
     let full = h.home.home.join(&printed);
     std::fs::create_dir_all(full.parent().unwrap()).unwrap();

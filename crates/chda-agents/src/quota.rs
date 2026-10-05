@@ -185,47 +185,6 @@ pub fn reset_text(reset: Option<u64>, now_ms: u64) -> String {
     }
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use serde_json::json;
-    #[test]
-    fn claude_keeps_windows_missing_data_and_session_scope() {
-        let report = claude_quota(&json!({"session_id":"s", "rate_limits":{"five_hour":{"used_percentage":90.4,"resets_at":1000},"seven_day":{"used_percentage":100,"resets_at":2000}}}), Some(5), 100).unwrap();
-        assert_eq!(report.windows.len(), 2);
-        assert_eq!(report.representative().unwrap().used_percent, 100.0);
-        assert!(!report.account_known);
-        assert_eq!(report.pane, Some(5));
-        assert!(
-            claude_quota(&json!({"session_id":"s"}), None, 0)
-                .unwrap()
-                .windows
-                .is_empty()
-        );
-        assert!(
-            claude_quota(
-                &json!({"session_id":"s","rate_limits":{"five_hour":{"used_percentage":-1}}}),
-                None,
-                0
-            )
-            .unwrap()
-            .windows
-            .is_empty()
-        );
-    }
-    #[test]
-    fn codex_keeps_account_and_multiple_buckets_without_adding_percentages() {
-        let quota = codex_quota(&json!({"rateLimitsByLimitId":{"codex":{"primary":{"usedPercent":1,"windowDurationMins":300,"resetsAt":1000},"secondary":{"usedPercent":90,"windowDurationMins":10080,"resetsAt":2000}}}}), &json!({"account":{"type":"chatgpt","email":"test@example.test"}}), 100).unwrap();
-        assert_eq!(quota.windows.len(), 2);
-        assert_eq!(quota.representative().unwrap().used_percent, 90.0);
-        assert_eq!(quota.scope, "test@example.test");
-        assert!(quota.stale(300101));
-        assert_eq!(reset_text(Some(0), 1000), "awaiting a new quota report");
-        assert_eq!(reset_text(None, 1000), "reset time unavailable");
-        assert!(codex_quota(&json!({}), &json!({"account":{"type":"apiKey"}}), 0).is_none());
-    }
-}
-
 /// Read the local CLI account through the supported protocol; no token files,
 /// private provider endpoint, login, thread creation or model request.
 pub fn read_codex(executable: &std::path::Path, now: u64) -> Result<QuotaSnapshot, String> {
@@ -250,7 +209,10 @@ pub fn read_codex(executable: &std::path::Path, now: u64) -> Result<QuotaSnapsho
             loop {
                 let mut line = String::new();
                 let count = reader.by_ref().take(1_048_577).read_line(&mut line);
-                if !matches!(count, Ok(n) if n > 0) || line.len() > 1_048_576 || tx.send(line).is_err() {
+                if !matches!(count, Ok(n) if n > 0)
+                    || line.len() > 1_048_576
+                    || tx.send(line).is_err()
+                {
                     break;
                 }
             }
@@ -298,3 +260,45 @@ pub fn read_codex(executable: &std::path::Path, now: u64) -> Result<QuotaSnapsho
     });
     result.map_err(|e| e.to_string())
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json::json;
+    #[test]
+    fn claude_keeps_windows_missing_data_and_session_scope() {
+        let report = claude_quota(&json!({"session_id":"s", "rate_limits":{"five_hour":{"used_percentage":90.4,"resets_at":1000},"seven_day":{"used_percentage":100,"resets_at":2000}}}), Some(5), 100).unwrap();
+        assert_eq!(report.windows.len(), 2);
+        assert_eq!(report.representative().unwrap().used_percent, 100.0);
+        assert!(!report.account_known);
+        assert_eq!(report.pane, Some(5));
+        assert!(
+            claude_quota(&json!({"session_id":"s"}), None, 0)
+                .unwrap()
+                .windows
+                .is_empty()
+        );
+        assert!(
+            claude_quota(
+                &json!({"session_id":"s","rate_limits":{"five_hour":{"used_percentage":-1}}}),
+                None,
+                0
+            )
+            .unwrap()
+            .windows
+            .is_empty()
+        );
+    }
+    #[test]
+    fn codex_keeps_account_and_multiple_buckets_without_adding_percentages() {
+        let quota = codex_quota(&json!({"rateLimitsByLimitId":{"codex":{"primary":{"usedPercent":1,"windowDurationMins":300,"resetsAt":1000},"secondary":{"usedPercent":90,"windowDurationMins":10080,"resetsAt":2000}}}}), &json!({"account":{"type":"chatgpt","email":"test@example.test"}}), 100).unwrap();
+        assert_eq!(quota.windows.len(), 2);
+        assert_eq!(quota.representative().unwrap().used_percent, 90.0);
+        assert_eq!(quota.scope, "test@example.test");
+        assert!(quota.stale(300101));
+        assert_eq!(reset_text(Some(0), 1000), "awaiting a new quota report");
+        assert_eq!(reset_text(None, 1000), "reset time unavailable");
+        assert!(codex_quota(&json!({}), &json!({"account":{"type":"apiKey"}}), 0).is_none());
+    }
+}
+
