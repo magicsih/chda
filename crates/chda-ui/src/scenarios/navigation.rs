@@ -147,6 +147,11 @@ fn restart_retains_work_time_without_restoring_runtime_liveness(cx: &mut TestApp
     h.cx.update(|_, cx| {
         terminal.update(cx, |_, cx| cx.emit(TerminalEvent::Activity(before)));
     });
+    // Activity is saved after a short delay rather than on every output.
+    h.cx.run_until_parked();
+    h.cx.executor()
+        .advance_clock(std::time::Duration::from_secs(5));
+    h.cx.run_until_parked();
     let (mut cx2, view2) = h.reopen();
     wait_until(&mut cx2, &view2, "the restored shell", |v, cx| {
         v.focused_text(cx).contains("test%")

@@ -19,6 +19,7 @@ mod navigation;
 mod palette;
 mod paths;
 mod pull_requests;
+mod redraw;
 mod release;
 mod reorder;
 mod restore;
