@@ -5231,11 +5231,14 @@ impl WorkspaceView {
             }));
         Some(
             deferred(
+                // Blocks what is under the menu, so hovered rows show no
+                // tooltip over it and a click outside only dismisses it.
                 div()
                     .absolute()
                     .size_full()
                     .top_0()
                     .left_0()
+                    .occlude()
                     .on_mouse_down(
                         MouseButton::Left,
                         cx.listener(|this, _, _, cx| {
@@ -5369,12 +5372,15 @@ impl WorkspaceView {
                     )
                     .child(sheet.input.clone()),
             )
-            .child(
-                div()
-                    .text_xs()
-                    .text_color(fg.opacity(0.6))
-                    .child(format!("Leave blank to use {branch}")),
-            )
+            .when(typed.is_empty(), |d| {
+                d.child(
+                    div()
+                        .debug_selector(|| "branch-hint".into())
+                        .text_xs()
+                        .text_color(fg.opacity(0.6))
+                        .child(format!("Leave blank to use {}", sheet.suggestion)),
+                )
+            })
             .children(sheet.error.clone().map(|e| {
                 div()
                     .id("branch-error")

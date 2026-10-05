@@ -75,6 +75,18 @@ fn idle_rows_follow_live_panes_and_preserve_mixed_state_attention(cx: &mut TestA
         f32::from(name.size.width) > 40.0,
         "idle name remains readable at minimum width: {name:?}"
     );
+    // The dot and the agent name share one line.
+    let bounds = |h: &mut Harness, kind: &str| {
+        h.cx.debug_bounds(Box::leak(
+            format!("idle-{kind}-{}", first.raw()).into_boxed_str(),
+        ))
+        .unwrap()
+    };
+    let (dot, label) = (bounds(&mut h, "dot"), bounds(&mut h, "label"));
+    assert!(
+        dot.top() < label.bottom() && label.top() < dot.bottom() && dot.right() <= label.left(),
+        "dot {dot:?} sits left of the name {label:?}"
+    );
     h.read(|v, cx| {
         let r = &v.sidebar.read(cx).model.idle_agents[0];
         assert_eq!(r.agent, "claude");

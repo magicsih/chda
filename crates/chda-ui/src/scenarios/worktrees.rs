@@ -607,7 +607,17 @@ fn new_worktree_from_a_branch_with_a_random_name(cx: &mut TestAppContext) {
         h.view
             .update(cx, |v, cx| v.run_menu_action(from_a, window, cx))
     });
+    h.cx.run_until_parked();
+    assert!(
+        h.cx.debug_bounds("branch-hint").is_some(),
+        "an empty name explains the random one"
+    );
     h.type_text("feat/a");
+    h.cx.run_until_parked();
+    assert!(
+        h.cx.debug_bounds("branch-hint").is_none(),
+        "a typed name is not left blank"
+    );
     h.keys("enter");
     assert!(
         h.read(|v, _| v
@@ -630,6 +640,29 @@ fn new_worktree_from_a_branch_with_a_random_name(cx: &mut TestAppContext) {
         "path collision shown in the sheet"
     );
     assert_eq!(count(&h), before + 1);
+    h.keys("escape");
+
+    // An open context menu blocks the rows under it: a right-click on
+    // another row only dismisses it, and hovered rows show no tooltip over it.
+    let row = |h: &mut Harness, path: &std::path::Path| {
+        h.cx.run_until_parked();
+        h.cx.debug_bounds(Box::leak(format!("wt:{}", path.display()).into_boxed_str()))
+            .unwrap()
+            .center()
+    };
+    let at = row(&mut h, &repo);
+    h.cx.simulate_mouse_down(at, gpui::MouseButton::Right, gpui::Modifiers::none());
+    h.cx.simulate_mouse_up(at, gpui::MouseButton::Right, gpui::Modifiers::none());
+    h.cx.run_until_parked();
+    assert!(h.read(|v, _| v.context_menu.is_some()));
+    let other = row(&mut h, &feat);
+    h.cx.simulate_mouse_down(other, gpui::MouseButton::Right, gpui::Modifiers::none());
+    h.cx.simulate_mouse_up(other, gpui::MouseButton::Right, gpui::Modifiers::none());
+    h.cx.run_until_parked();
+    assert!(
+        h.read(|v, _| v.context_menu.is_none()),
+        "the row under the menu did not get the click"
+    );
 }
 
 fn note_of(dir: &std::path::Path, branch: &str) -> Option<String> {

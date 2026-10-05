@@ -1347,15 +1347,29 @@ impl Render for SidebarView {
                                     .debug_selector(move || format!("idle-name-{}", pane.raw()))
                                     .flex_1()
                                     .min_w_0()
-                                    .overflow_hidden()
-                                    .whitespace_nowrap()
-                                    .text_ellipsis()
+                                    .flex()
+                                    .items_center()
+                                    .gap_1()
                                     .child(
                                         div()
+                                            .debug_selector(move || {
+                                                format!("idle-dot-{}", pane.raw())
+                                            })
+                                            .flex_shrink_0()
                                             .text_color(status_color(AgentStatus::Idle))
                                             .child("●"),
                                     )
-                                    .child(name),
+                                    .child(
+                                        div()
+                                            .debug_selector(move || {
+                                                format!("idle-label-{}", pane.raw())
+                                            })
+                                            .min_w_0()
+                                            .overflow_hidden()
+                                            .whitespace_nowrap()
+                                            .text_ellipsis()
+                                            .child(name),
+                                    ),
                             )
                             .child(
                                 div()
