@@ -106,6 +106,14 @@ knows nothing about views. `chda-ui`'s `WorkspaceView` maps pane ids to
 `TerminalView` entities, renders the tab bar and split tree, and turns
 terminal events (exit, title, cwd, bell, focus) into model updates.
 
+Redraws stay local. Terminal panes and the sidebar are cached views: a
+window redraw (the working-dot pulse in the tab bar, a status bar tick)
+reuses their last frame unless they notified. A pane's output notifies only
+its own view. Its title (agents such as Codex animate it while working) and
+its once-a-second activity time do not redraw the window unless a tab label
+or agent status changes; ACTIVE ages pick up the time on their own
+one-second tick. The OS window title is set only when its text changes.
+
 ## Shell integration
 
 `chda-term` ships its own scripts for zsh, bash and fish

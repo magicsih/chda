@@ -37,6 +37,7 @@ Three layers, all run by `cargo test --workspace` (CI: the macOS job).
 | ACTIVE rows stay in tab order, activity ages and saved alias/branch toggle | `sidebar::active_tabs_stay_in_place_and_labels_toggle_persistently`, `sidebar::activity_ages_refresh_without_output_or_session_writes` | #100 |
 | Repository drag reordering: down/up, collapsed groups, no click on drag, drops outside or on itself, external folder drop afterwards, refresh and restart | `reorder::dragging_repository_headers_reorders_and_persists` | #130 |
 | STARRED branches: menu starring without duplicates, same branch name in two repositories, navigation and tab reuse, one-click unstar, missing worktree, restart | `starred::starred_branches_navigate_unstar_in_one_click_and_persist` | #129 |
+| Background panes: agent title spinners and output redraw neither the workspace nor the sidebar; status changes still do | `redraw::background_title_spinners_and_output_do_not_redraw_the_window` | #134 |
 | Live idle agents: pane focus, mixed-state splits, targeted process cleanup, exit and restored-history exclusion | `idle_agents::*`, `agents::directly_typed_codex_tracks_each_turn_and_exits` | #112 |
 | S5 Plain terminal: tabs, splits, focus | `workspace::new_tab_split_and_close` | |
 | Font size shortcuts | `workspace::font_size_shortcuts_apply_to_every_pane` | #8 |
@@ -97,6 +98,9 @@ request or prove the layout emitted by every Codex version.
 cargo test --release -p chda-term echo_latency -- --ignored --nocapture
 # Session indexing over the real ~/.claude and ~/.codex (#41)
 CHDA_REAL=1 cargo test --release -p chda-agents index_real_sessions -- --ignored --nocapture
+# Window redraw cost with 16 busy background panes, macOS (#134); compare
+# a release build with the previous release under similar host load
+scripts/measure-background-panes.sh target/release/chda
 # Parse and frame throughput
 CHDA_BENCH_FILE=/path/to/big.log cargo test --release -p chda-term bench -- --ignored --nocapture
 ```

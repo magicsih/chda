@@ -23,9 +23,10 @@ use chda_core::{
 use futures::StreamExt;
 use futures::channel::mpsc::unbounded;
 use gpui::{
-    AnyElement, App, Context, Entity, FocusHandle, Focusable, Hsla, MouseButton, MouseDownEvent,
-    MouseMoveEvent, PathPromptOptions, Pixels, Point, PromptLevel, Render, Subscription, Window,
-    actions, anchored, deferred, div, img, point, prelude::*, px, relative,
+    AnyElement, AnyView, App, Context, Entity, FocusHandle, Focusable, Hsla, MouseButton,
+    MouseDownEvent, MouseMoveEvent, PathPromptOptions, Pixels, Point, PromptLevel, Render,
+    StyleRefinement, Subscription, Window, actions, anchored, deferred, div, img, point,
+    prelude::*, px, relative,
 };
 
 use crate::palette::{Palette, PaletteCommand, PaletteEvent, PaletteItem};
@@ -315,6 +316,8 @@ pub struct WorkspaceView {
     base_fetched: HashMap<PathBuf, std::time::Instant>,
     /// Message shown briefly at the bottom of the sidebar.
     pub(crate) status_line: Option<String>,
+    /// The title last given to the OS window.
+    window_title: String,
     /// Where the Ghostty config lives, and the files the last load read.
     ghostty_paths: Paths,
     ghostty_sources: Vec<PathBuf>,
@@ -435,6 +438,7 @@ impl WorkspaceView {
             pr_fetched: HashMap::new(),
             base_fetched: HashMap::new(),
             status_line: None,
+            window_title: String::new(),
             ghostty_paths: env.ghostty.clone(),
             ghostty_sources: ghostty.sources,
             config_watcher: None,
@@ -2269,8 +2273,15 @@ impl WorkspaceView {
                 self.sync_panes(cx);
             }
             TerminalEvent::Title(title) => {
+                // Agents such as Codex animate their title while working. A
+                // pane title only shows as its tab's fallback label (and the
+                // title bar's, for the active tab); otherwise nothing redraws.
+                let before = self.pane_tab_title(pane);
                 if let Some(info) = self.ws.pane_mut(pane) {
                     info.title = title.clone();
+                }
+                if self.pane_tab_title(pane) == before {
+                    return;
                 }
             }
             TerminalEvent::Cwd(cwd) => {
@@ -2340,7 +2351,19 @@ impl WorkspaceView {
                 if let Some(info) = self.ws.pane_mut(pane) {
                     info.last_activity = *at;
                 }
-                self.sync_panes(cx);
+                // Only ACTIVE's ages show this, and their once-a-second timer
+                // redraws the sidebar; output alone redraws nothing else.
+                let activity = self.ws.tabs_with_activity();
+                self.sidebar.update(cx, |s, _| {
+                    for tab in &mut s.model.active_tabs {
+                        if let Some((.., at)) = activity.iter().find(|(id, ..)| *id == tab.tab) {
+                            tab.last_activity = *at;
+                        }
+                    }
+                });
+                // The next launch shows this as the previous working time.
+                self.save_session();
+                return;
             }
         }
         self.sync_title(window, cx);
@@ -2790,9 +2813,20 @@ impl WorkspaceView {
         cx.notify();
     }
 
-    fn sync_title(&self, window: &mut Window, cx: &App) {
+    /// The label of the tab that holds `pane`.
+    fn pane_tab_title(&self, pane: PaneId) -> Option<String> {
+        let tab = self.ws.tabs().iter().find(|t| t.panes().contains(&pane))?;
+        Some(self.ws.tab_title(tab))
+    }
+
+    /// Setting the macOS window title relayouts the title bar, so only a
+    /// changed title is set.
+    fn sync_title(&mut self, window: &mut Window, cx: &App) {
         let (title, _) = self.title_bar_text(cx);
-        window.set_window_title(&title);
+        if title != self.window_title {
+            window.set_window_title(&title);
+            self.window_title = title;
+        }
     }
 
     pub fn focus(&mut self, window: &mut Window, cx: &mut Context<Self>) {
@@ -5076,7 +5110,14 @@ impl WorkspaceView {
     fn render_node(&self, node: &Node, divider: Hsla) -> AnyElement {
         match node {
             Node::Leaf(pane) => match self.panes.get(pane) {
-                Some((view, _)) => div().size_full().child(view.clone()).into_any_element(),
+                // Cached: redrawing the window (tab bar pulse, another
+                // pane's output) reuses a pane's last frame unless it changed.
+                Some((view, _)) => div()
+                    .size_full()
+                    .child(
+                        AnyView::from(view.clone()).cached(StyleRefinement::default().size_full()),
+                    )
+                    .into_any_element(),
                 None => div().size_full().into_any_element(),
             },
             Node::Split {
@@ -5789,7 +5830,12 @@ impl Render for WorkspaceView {
                                 .flex_col()
                                 .border_r_1()
                                 .border_color(divider)
-                                .child(div().flex_1().min_h_0().child(self.sidebar.clone()))
+                                .child(
+                                    div().flex_1().min_h_0().child(
+                                        AnyView::from(self.sidebar.clone())
+                                            .cached(StyleRefinement::default().size_full()),
+                                    ),
+                                )
                                 .children(status)
                                 .child(self.render_sidebar_grip(divider, cx)),
                         )
