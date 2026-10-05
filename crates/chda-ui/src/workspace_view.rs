@@ -532,6 +532,12 @@ impl WorkspaceView {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        // Pane IDs belong to this process. A fallback hook log from an earlier
+        // launch must not make a newly restored pane appear to have a live agent.
+        env.windows
+            .borrow_mut()
+            .started_at
+            .get_or_insert_with(now_ms);
         let (wake_tx, mut wake_rx) = unbounded::<()>();
         let wake = env.windows.borrow().wake.clone();
         wake.lock().unwrap().push(wake_tx.clone());
@@ -801,6 +807,17 @@ impl WorkspaceView {
     }
 
     fn receive_hook(&mut self, item: Incoming, window: &mut Window, cx: &mut Context<Self>) {
+        let observed_at = match &item {
+            Incoming::Event(event) => Some(event.timestamp),
+            Incoming::Quota(report) => Some(report.observed_at),
+            Incoming::Request(..) => None,
+        };
+        if let (Some(observed_at), Some(started_at)) =
+            (observed_at, self.env.windows.borrow().started_at)
+            && observed_at < started_at
+        {
+            return;
+        }
         match item {
             Incoming::Quota(report) => {
                 if let Some(raw) = report.pane
@@ -1411,7 +1428,7 @@ impl WorkspaceView {
                             sampler
                                 .lock()
                                 .map_err(|_| "Resource sampler is unavailable".to_owned())?
-                                .sample(pid, now_ms(), tick % 3 == 0)
+                                .sample(pid, now_ms(), tick.is_multiple_of(3))
                         })
                 });
                 let result = task.await;
@@ -2387,8 +2404,7 @@ impl WorkspaceView {
             .focused_pane()
             .and_then(|pane| self.ws.pane(pane))
             .and_then(|info| info.cwd.as_deref())
-            .and_then(|cwd| self.sidebar.read(cx).model.worktree_for_path(cwd))
-            .map(|(repo, worktree)| (repo, worktree));
+            .and_then(|cwd| self.sidebar.read(cx).model.worktree_for_path(cwd));
         let Some((repo, worktree)) = worktree else {
             return (fallback.clone(), fallback);
         };

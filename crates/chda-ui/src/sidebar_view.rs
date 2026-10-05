@@ -224,14 +224,14 @@ impl SidebarView {
             self.pending_navigation = true;
         }
         self.selected = found.as_ref().map(|(_, path)| path.clone());
-        if let Some((repo, path)) = found {
-            if self.pending_navigation {
-                if let Some(r) = self.model.repo_mut(&repo) {
-                    r.collapsed = false;
-                }
-                self.reveal = Some(path);
-                self.pending_navigation = false;
+        if let Some((repo, path)) = found
+            && self.pending_navigation
+        {
+            if let Some(r) = self.model.repo_mut(&repo) {
+                r.collapsed = false;
             }
+            self.reveal = Some(path);
+            self.pending_navigation = false;
         }
         cx.notify();
     }
@@ -599,13 +599,11 @@ impl SidebarView {
                         format!("wt-dot:{}", wt.path.display()).into(),
                     ))
                     .flex_shrink_0()
-                    .text_color(
-                        if status == AgentStatus::Idle && !live_idle                        {
-                            no_agent_color()
-                        } else {
-                            status_color(status)
-                        },
-                    )
+                    .text_color(if status == AgentStatus::Idle && !live_idle {
+                        no_agent_color()
+                    } else {
+                        status_color(status)
+                    })
                     .tooltip(crate::tooltip::text(status_tip))
                     .on_click({
                         let path = path.clone();

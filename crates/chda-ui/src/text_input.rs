@@ -115,10 +115,10 @@ impl TextInput {
     }
 
     fn paste(&mut self, _: &crate::terminal_view::Paste, _: &mut Window, cx: &mut Context<Self>) {
-        if let Some(text) = cx.read_from_clipboard().and_then(|c| c.text()) {
-            if !text.is_empty() {
-                self.insert(&text, cx);
-            }
+        if let Some(text) = cx.read_from_clipboard().and_then(|c| c.text())
+            && !text.is_empty()
+        {
+            self.insert(&text, cx);
         }
         cx.stop_propagation();
     }
@@ -543,4 +543,41 @@ fn text_char_byte(text: &str, index: usize) -> usize {
         .nth(index)
         .map(|(i, _)| i)
         .unwrap_or(text.len())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[gpui::test]
+    fn composition_replaces_the_selected_unicode_range_and_commits_once(
+        cx: &mut gpui::TestAppContext,
+    ) {
+        let handle =
+            cx.add_window(|_, cx| TextInput::new("Note", gpui::white(), gpui::black(), cx));
+        handle
+            .update(cx, |input, window, cx| {
+                input.multiline = true;
+                input.set_text("A🧭Z", cx);
+                input.replace_and_mark_text_in_range(Some(1..3), "ㅎ", Some(1..1), window, cx);
+                assert_eq!(input.text(), "AㅎZ");
+                assert_eq!(input.marked_text_range(window, cx), Some(1..2));
+                input.replace_and_mark_text_in_range(None, "한", Some(1..1), window, cx);
+                assert_eq!(
+                    input.text(),
+                    "A한Z",
+                    "composition replaces, never duplicates, its old text"
+                );
+                input.replace_text_in_range(None, "한국", window, cx);
+                assert_eq!(input.text(), "A한국Z");
+                assert_eq!(input.marked_text_range(window, cx), None);
+                assert_eq!(
+                    input.selected_text_range(false, window, cx).unwrap().range,
+                    3..3
+                );
+                input.replace_text_in_range(Some(1..3), "🧭\nNote", window, cx);
+                assert_eq!(input.text(), "A🧭\nNoteZ");
+            })
+            .unwrap();
+    }
 }

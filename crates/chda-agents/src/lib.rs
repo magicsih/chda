@@ -198,7 +198,7 @@ pub(crate) fn write_if_changed(path: &Path, text: &str) -> std::io::Result<()> {
 pub fn which(name: &str, path: &std::ffi::OsStr) -> Option<PathBuf> {
     std::env::split_paths(path)
         .map(|dir| dir.join(name))
-        .find(|p| chda_pty::is_executable(p))
+        .find(|p| crate::ipc::is_executable(p))
         .and_then(|p| p.canonicalize().ok())
 }
 

@@ -163,6 +163,50 @@ fn restart_retains_work_time_without_restoring_runtime_liveness(cx: &mut TestApp
 }
 
 #[gpui::test]
+fn old_hook_events_do_not_make_restored_panes_live(cx: &mut TestAppContext) {
+    use chda_core::agents::{HookEvent, HookKind, control::Request, ipc};
+    let mut h = Harness::open(cx, "old-hooks", |_| {});
+    h.wait_prompt();
+    let pane = h.read(|v, _| v.ws.focused_pane().unwrap());
+    let event = HookEvent {
+        agent: "claude".into(),
+        session_id: "old-process".into(),
+        cwd: h.home.home.clone(),
+        kind: HookKind::SessionStart,
+        timestamp: 1,
+        pane: Some(pane.raw()),
+    };
+    ipc::send(&ipc::socket_path(&h.home.data), &event).unwrap();
+    // A subsequent request is a barrier: the serial socket receiver and the
+    // window have processed the old event when its reply arrives.
+    let cwd = h.home.home.clone();
+    super::mcp::ask(&mut h, Request::ListWorktrees { cwd });
+    assert!(h.read(|v, _| !v.ws.pane(pane).unwrap().agent_live));
+    assert!(h.read(|v, _| v.ws.pane(pane).unwrap().agent_session.is_none()));
+    h.hook_session(
+        Some(pane.raw()),
+        &h.home.home,
+        HookKind::SessionStart,
+        "fresh-process",
+    );
+    h.wait_for("the current process agent", |v, _| {
+        v.ws.pane(pane).unwrap().agent_live
+    });
+    assert_eq!(
+        h.read(|v, _| v
+            .ws
+            .pane(pane)
+            .unwrap()
+            .agent_session
+            .as_ref()
+            .unwrap()
+            .session
+            .to_string()),
+        "fresh-process"
+    );
+}
+
+#[gpui::test]
 fn multiple_windows_share_navigation_routes_and_restore_each_layout(cx: &mut TestAppContext) {
     use chda_core::{
         SavedSession,

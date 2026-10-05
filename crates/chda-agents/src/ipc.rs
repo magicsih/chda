@@ -3,6 +3,9 @@
 //! hook events, one JSON line each, or one request (`{"request": ...}`)
 //! after which the client closes its writing half and reads one reply line.
 
+mod process;
+pub use process::{capture_command, is_executable, with_process};
+
 use std::path::{Path, PathBuf};
 
 pub fn socket_path(data_dir: &Path) -> PathBuf {

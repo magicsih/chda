@@ -294,6 +294,13 @@ fn wrapped_path_actions_use_the_full_target_instead_of_an_existing_prefix(
         &format!("clear; printf '\\n%s\\n' '{printed}:12:5'"),
         "file.rs",
     );
+    h.wait_for("the printed wrapped path after clearing the command", {
+        let term = term.clone();
+        move |_, cx| {
+            let frame = term.read(cx).frame();
+            (0..frame.size.rows).any(|r| frame.row_text(r).starts_with("d/d/d/"))
+        }
+    });
     let segments = h.read(|_, cx| {
         let t = term.read(cx);
         let frame = t.frame();

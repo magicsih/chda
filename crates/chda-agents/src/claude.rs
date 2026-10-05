@@ -61,7 +61,7 @@ impl AgentAdapter for ClaudeAdapter {
     fn executable(&self, home: &Path, path: &std::ffi::OsStr) -> Option<PathBuf> {
         which("claude", path).or_else(|| {
             let native = home.join(".local/bin/claude");
-            chda_pty::is_executable(&native)
+            crate::ipc::is_executable(&native)
                 .then(|| native.canonicalize().ok())
                 .flatten()
         })

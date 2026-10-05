@@ -200,7 +200,7 @@ pub fn read_codex(executable: &std::path::Path, now: u64) -> Result<QuotaSnapsho
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
         .stderr(Stdio::null());
-    let result = chda_pty::with_process(&mut command, |child| {
+    let result = crate::ipc::with_process(&mut command, |child| {
         let mut stdin = child.stdin.take().unwrap();
         let stdout = child.stdout.take().unwrap();
         let (tx, rx) = mpsc::sync_channel(16);

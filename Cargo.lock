@@ -860,7 +860,7 @@ dependencies = [
 name = "chda-agents"
 version = "0.1.14"
 dependencies = [
- "chda-pty",
+ "libc",
  "memchr",
  "serde",
  "serde_json",
@@ -918,7 +918,6 @@ dependencies = [
  "block2 0.6.2",
  "chda-config",
  "chda-core",
- "chda-pty",
  "chda-term",
  "futures",
  "gpui",

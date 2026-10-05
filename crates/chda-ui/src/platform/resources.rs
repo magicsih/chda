@@ -76,7 +76,12 @@ impl Sampler {
             let ids = ids.iter().map(u32::to_string).collect::<Vec<_>>().join(",");
             let mut command = Command::new("/usr/sbin/lsof");
             command.args(["-nP", "-a", "-p", &ids, "-FpcfPnT"]);
-            match chda_pty::capture_command(&mut command, None, Duration::from_secs(1), 1_048_576) {
+            match chda_core::agents::ipc::capture_command(
+                &mut command,
+                None,
+                Duration::from_secs(1),
+                1_048_576,
+            ) {
                 Ok(output) => {
                     self.ports = Some((now, parse_ports(&String::from_utf8_lossy(&output)), None))
                 }
