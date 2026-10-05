@@ -4,6 +4,21 @@ All notable changes to chda. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); entries are
 generated from conventional commit messages by release-plz.
 
+## [0.1.16](https://github.com/magicsih/chda/compare/v0.1.15...v0.1.16) - 2026-10-05
+
+### Added
+
+- *(sidebar)* reorder repositories by dragging their headers ([#139](https://github.com/magicsih/chda/pull/139))
+- *(sidebar)* star branches above ACTIVE for quick access ([#136](https://github.com/magicsih/chda/pull/136))
+
+### Fixed
+
+- *(sidebar)* keep idle rows, menus and new panes clean ([#138](https://github.com/magicsih/chda/pull/138))
+
+### Changed
+
+- *(workspace)* keep busy background panes from redrawing the window ([#137](https://github.com/magicsih/chda/pull/137))
+
 ## [0.1.15](https://github.com/magicsih/chda/compare/v0.1.14...v0.1.15) - 2026-10-05
 
 ### Added
