@@ -55,7 +55,13 @@ fn hook_events_drive_status_badge_jump_and_notification_click(cx: &mut TestAppCo
     let click = h.system.0.borrow_mut().click.take().unwrap();
     click(target);
     h.wait_for("the notification to focus the second pane", move |v, _| {
-        v.ws.focused_pane() == Some(second) && v.ws.pane(second).unwrap().agent.is_none()
+        v.ws.focused_pane() == Some(second)
+            && v.ws
+                .pane(second)
+                .unwrap()
+                .agent
+                .as_ref()
+                .is_some_and(|a| a.status == AgentStatus::Idle)
     });
 }
 
@@ -90,6 +96,31 @@ fn gemini_copilot_and_opencode_report_like_claude_code(cx: &mut TestAppContext) 
         });
         let title = h.system.0.borrow().notifications.last().unwrap().0.clone();
         assert_eq!(title, format!("{name} is waiting"));
+        h.hook_from(agent, Some(pane.raw()), &home, HookKind::Stopped, "s");
+        h.wait_for("the completed agent awaits review", move |v, _| {
+            v.ws.pane(pane)
+                .unwrap()
+                .agent
+                .as_ref()
+                .is_some_and(|a| a.status == AgentStatus::Review)
+        });
+        h.cx.update(|window, cx| {
+            h.view.update(cx, |v, cx| {
+                v.on_sidebar_event(
+                    crate::sidebar_view::SidebarEvent::FocusPane(pane),
+                    window,
+                    cx,
+                );
+            })
+        });
+        h.wait_for("the live agent becomes idle after review", move |v, cx| {
+            v.sidebar
+                .read(cx)
+                .model
+                .idle_agents
+                .iter()
+                .any(|r| r.pane == pane && r.agent == agent)
+        });
         h.hook_from(agent, Some(pane.raw()), &home, HookKind::SessionEnd, "s");
         h.wait_for("the session to end", move |v, _| {
             v.ws.pane(pane).is_some_and(|p| p.agent.is_none())
@@ -161,7 +192,13 @@ done
     });
     h.run("codex resume 'argument with spaces'", "fake-codex-ready");
     let pane = h.read(|v, _| v.ws.focused_pane().unwrap());
-    assert!(h.read(|v, _| v.ws.pane(pane).unwrap().agent.is_none()));
+    assert!(h.read(|v, _| {
+        v.ws.pane(pane)
+            .unwrap()
+            .agent
+            .as_ref()
+            .is_some_and(|a| a.status == AgentStatus::Idle)
+    }));
     h.keys("cmd-t");
     h.wait_prompt();
     for (step, status) in [

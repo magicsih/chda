@@ -308,6 +308,9 @@ pub struct PaneInfo {
     pub last_activity: u64,
     /// The coding agent running in the pane, as its hooks report it.
     pub agent: Option<PaneAgent>,
+    /// A runtime event explicitly named this pane; saved conversations and
+    /// worktree-only events do not establish a live agent here.
+    pub agent_live: bool,
     /// The conversation of the agent running in the pane, kept until the
     /// agent ends so a restored session can reopen it.
     pub agent_session: Option<AgentSessionRef>,
@@ -326,9 +329,10 @@ pub struct AgentSessionRef {
 pub struct PaneAgent {
     /// Agent id, e.g. `claude` or `codex`.
     pub agent: String,
-    /// Never `Idle`: an idle agent is no agent.
+    /// Idle remains a live session until an exit signal.
     pub status: AgentStatus,
-    /// Milliseconds since the epoch when the status last changed.
+    /// Runtime state timestamp in epoch milliseconds. Review and idle share
+    /// the completion/ready time; zero means that time is unavailable.
     pub since: u64,
     /// The user has looked at the pane since it started waiting.
     pub seen: bool,
@@ -499,7 +503,7 @@ impl Workspace {
         self.panes.keys().copied().find(|p| p.0 == raw)
     }
 
-    /// Record an agent's status in a pane; `Idle` clears it. Returns whether
+    /// Record an agent's status in a pane, including live idle. Returns whether
     /// anything changed.
     pub fn set_agent_status(
         &mut self,
@@ -511,7 +515,7 @@ impl Workspace {
         let Some(info) = self.panes.get_mut(&pane) else {
             return false;
         };
-        let next = (status != AgentStatus::Idle).then(|| match &info.agent {
+        let next = Some(match &info.agent {
             Some(a) if a.status == status && a.agent == agent => a.clone(),
             _ => PaneAgent {
                 agent: agent.to_owned(),
@@ -536,7 +540,17 @@ impl Workspace {
         changed
     }
 
-    /// The user looked at a pane: a finished turn is reviewed (cleared) and
+    /// End runtime tracking without confusing a saved conversation with life.
+    pub fn end_agent(&mut self, pane: PaneId) -> bool {
+        let Some(info) = self.panes.get_mut(&pane) else {
+            return false;
+        };
+        let changed = info.agent.take().is_some() || info.agent_live;
+        info.agent_live = false;
+        changed
+    }
+
+    /// The user looked at a pane: a finished turn becomes idle and
     /// a waiting agent counts as seen. Returns whether anything changed.
     pub fn mark_seen(&mut self, pane: PaneId) -> bool {
         let Some(info) = self.panes.get_mut(&pane) else {
@@ -544,7 +558,7 @@ impl Workspace {
         };
         match &mut info.agent {
             Some(a) if a.status == AgentStatus::Review => {
-                info.agent = None;
+                a.status = AgentStatus::Idle;
                 true
             }
             Some(a) if a.status == AgentStatus::WaitingInput && !a.seen => {
@@ -1115,6 +1129,11 @@ mod tests {
         assert_eq!(ws.attention_panes(), vec![c]);
         assert!(ws.set_agent_status(c, "claude", AgentStatus::Idle, 5));
         assert!(ws.attention_panes().is_empty());
+        assert_eq!(
+            ws.pane(c).unwrap().agent.as_ref().unwrap().status,
+            AgentStatus::Idle
+        );
+        assert!(ws.end_agent(c));
         assert_eq!(ws.pane(c).unwrap().agent, None);
     }
     #[test]

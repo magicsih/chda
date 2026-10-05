@@ -11,6 +11,7 @@ mod diff;
 mod folders;
 mod git_graph;
 mod harness;
+mod idle_agents;
 mod input;
 mod mcp;
 mod menus;

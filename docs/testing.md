@@ -35,6 +35,7 @@ Three layers, all run by `cargo test --workspace` (CI: the macOS job).
 | S3 Resuming several sessions side by side, newest message first | `worktrees::picked_sessions_resume_in_one_tab` | #30 |
 | S4 Finishing: merge into main and clean up | `worktrees::merge_into_main_and_clean_up` | |
 | ACTIVE rows stay in tab order, activity ages and saved alias/branch toggle | `sidebar::active_tabs_stay_in_place_and_labels_toggle_persistently`, `sidebar::activity_ages_refresh_without_output_or_session_writes` | #100 |
+| Live idle agents: pane focus, mixed-state splits, targeted process cleanup, exit and restored-history exclusion | `idle_agents::*`, `agents::directly_typed_codex_tracks_each_turn_and_exits` | #112 |
 | S5 Plain terminal: tabs, splits, focus | `workspace::new_tab_split_and_close` | |
 | Font size shortcuts | `workspace::font_size_shortcuts_apply_to_every_pane` | #8 |
 | Scrollback search | `search::search_finds_steps_and_closes` | #6 |

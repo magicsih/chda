@@ -17,8 +17,8 @@ use chda_core::agents::{
 };
 use chda_core::release::{Release, ReleaseCheck, UPDATE_COMMAND, parse_latest};
 use chda_core::{
-    ActiveTab, AgentEvent, AgentSessionRef, AgentStatus, Axis, Direction, FileWatcher, Listing,
-    Node, PaneId, RepoWatcher, SavedBounds, SavedWindow, TabId, TitleMode, Workspace,
+    ActiveTab, AgentEvent, AgentSessionRef, AgentStatus, Axis, Direction, FileWatcher, IdleAgent,
+    Listing, Node, PaneId, RepoWatcher, SavedBounds, SavedWindow, TabId, TitleMode, Workspace,
 };
 use futures::StreamExt;
 use futures::channel::mpsc::unbounded;
@@ -844,6 +844,51 @@ impl WorkspaceView {
     }
 
     fn apply_hook_event(&mut self, ev: HookEvent, window: &mut Window, cx: &mut Context<Self>) {
+        // An old pane ID must never fall back to a replacement shell in its worktree.
+        if ev
+            .pane
+            .is_some_and(|raw| self.ws.pane_by_raw(raw).is_none())
+        {
+            return;
+        }
+        if ev.kind == HookKind::SessionEnd
+            && let Some(info) = ev
+                .pane
+                .and_then(|raw| self.ws.pane_by_raw(raw))
+                .and_then(|p| self.ws.pane(p))
+            && (info.agent.as_ref().is_some_and(|a| a.agent != ev.agent)
+                || info
+                    .agent_session
+                    .as_ref()
+                    .is_some_and(|s| !ev.session_id.is_empty() && s.session != ev.session_id))
+        {
+            return;
+        }
+        // SessionStart also fires on compaction/resume within a running
+        // conversation. It must not turn an existing busy session idle.
+        let continuing_session = ev.kind == HookKind::SessionStart
+            && ev
+                .pane
+                .and_then(|raw| self.ws.pane_by_raw(raw))
+                .and_then(|p| self.ws.pane(p))
+                .is_some_and(|info| {
+                    info.agent_live
+                        && info.agent.as_ref().is_some_and(|a| a.agent == ev.agent)
+                        && info
+                            .agent_session
+                            .as_ref()
+                            .is_some_and(|s| s.agent == ev.agent && s.session == ev.session_id)
+                });
+        if ev.kind == HookKind::SessionStart
+            && let Some(pane) = ev.pane.and_then(|raw| self.ws.pane_by_raw(raw))
+            && self
+                .ws
+                .pane(pane)
+                .and_then(|i| i.agent_session.as_ref())
+                .is_some_and(|s| s.agent != ev.agent || s.session != ev.session_id)
+        {
+            self.ws.end_agent(pane);
+        }
         if ev.agent == "codex"
             && ev.kind == HookKind::Stopped
             && !ev.session_id.is_empty()
@@ -865,6 +910,7 @@ impl WorkspaceView {
             return;
         }
         let event = match ev.kind {
+            HookKind::Idle => AgentEvent::Idle,
             HookKind::SessionStart => AgentEvent::SessionStart,
             HookKind::PromptSubmitted => AgentEvent::PromptSubmitted,
             HookKind::WaitingInput => AgentEvent::WaitingInput,
@@ -872,7 +918,8 @@ impl WorkspaceView {
             HookKind::SessionEnd => AgentEvent::SessionEnd,
         };
         let status = match event {
-            AgentEvent::SessionStart | AgentEvent::PromptSubmitted => AgentStatus::Working,
+            AgentEvent::SessionStart | AgentEvent::Idle => AgentStatus::Idle,
+            AgentEvent::PromptSubmitted => AgentStatus::Working,
             AgentEvent::WaitingInput => AgentStatus::WaitingInput,
             AgentEvent::Stopped => AgentStatus::Review,
             AgentEvent::SessionEnd => AgentStatus::Idle,
@@ -899,8 +946,44 @@ impl WorkspaceView {
                 self.save_session();
             }
         }
-        let pane_changed =
-            pane.is_some_and(|p| self.ws.set_agent_status(p, &ev.agent, status, ev.timestamp));
+        let pane_changed = pane.is_some_and(|p| {
+            if continuing_session {
+                return false;
+            }
+            if event == AgentEvent::SessionEnd {
+                self.ws.end_agent(p)
+            } else {
+                let prior = self.ws.pane(p).and_then(|i| i.agent.as_ref());
+                // A delayed idle notification must not dismiss unread output or
+                // reset its known completion time.
+                if event == AgentEvent::Idle
+                    && prior.is_some_and(|a| {
+                        a.agent == ev.agent
+                            && matches!(a.status, AgentStatus::Review | AgentStatus::Idle)
+                    })
+                {
+                    let info = self.ws.pane_mut(p).unwrap();
+                    let changed = ev.pane.is_some() && !info.agent_live;
+                    info.agent_live |= ev.pane.is_some();
+                    return changed;
+                }
+                let mut changed = self.ws.set_agent_status(
+                    p,
+                    &ev.agent,
+                    status,
+                    if status == AgentStatus::Idle {
+                        0
+                    } else {
+                        ev.timestamp
+                    },
+                );
+                if let Some(info) = self.ws.pane_mut(p) {
+                    changed |= info.agent_live != ev.pane.is_some();
+                    info.agent_live = ev.pane.is_some();
+                }
+                changed
+            }
+        });
         if worktree_changed.is_none() && !pane_changed {
             return;
         }
@@ -952,8 +1035,8 @@ impl WorkspaceView {
         if looking {
             self.reviewed_focused(cx);
         }
-        if ev.agent == "codex" && ev.pane.is_some() {
-            self.sync_codex_worktree_status(&ev.cwd, cx);
+        if ev.pane.is_some() {
+            self.sync_worktree_agent_status(&ev.agent, &ev.cwd, cx);
         }
         if worktree_changed.is_some()
             && matches!(event, AgentEvent::Stopped | AgentEvent::SessionEnd)
@@ -964,8 +1047,8 @@ impl WorkspaceView {
         self.sync_attention(cx);
     }
 
-    /// Two Codex panes in the same branch must not clear each other's dot.
-    fn sync_codex_worktree_status(&mut self, cwd: &Path, cx: &mut Context<Self>) {
+    /// Same-agent panes in one branch must not clear each other's dot.
+    fn sync_worktree_agent_status(&mut self, agent: &str, cwd: &Path, cx: &mut Context<Self>) {
         let model = &self.sidebar.read(cx).model;
         let Some((_, worktree)) = model.worktree_for_path(cwd) else {
             return;
@@ -983,13 +1066,13 @@ impl WorkspaceView {
                     .and_then(|cwd| model.worktree_for_path(cwd))
                     .is_some_and(|(_, w)| w.path == root)
             })
-            .filter_map(|p| p.agent.as_ref().filter(|a| a.agent == "codex"))
+            .filter_map(|p| p.agent.as_ref().filter(|a| a.agent == agent))
             .map(|a| a.status)
             .max_by_key(|s| s.urgency())
             .unwrap_or_default();
         self.sidebar.update(cx, |s, cx| {
             if let Some(w) = s.model.worktree_mut(&root) {
-                w.agents.insert("codex".into(), status);
+                w.agents.insert(agent.into(), status);
             }
             cx.notify();
         });
@@ -1702,9 +1785,54 @@ impl WorkspaceView {
                 })
                 .collect()
         };
+        let idle_agents = self
+            .ws
+            .tabs()
+            .iter()
+            .flat_map(|tab| {
+                tab.panes()
+                    .into_iter()
+                    .enumerate()
+                    .filter_map(|(index, pane)| {
+                        let info = self.ws.pane(pane)?;
+                        let agent = info.agent.as_ref()?;
+                        if !info.agent_live || agent.status != AgentStatus::Idle {
+                            return None;
+                        }
+                        let context = info
+                            .cwd
+                            .as_ref()
+                            .and_then(|cwd| self.sidebar.read(cx).model.worktree_for_path(cwd));
+                        let location = context
+                            .map(|(repo, wt)| {
+                                format!(
+                                    "{} / {}",
+                                    repo.name,
+                                    wt.branch.as_deref().unwrap_or("detached HEAD")
+                                )
+                            })
+                            .unwrap_or_else(|| {
+                                info.cwd
+                                    .as_ref()
+                                    .map(|p| p.to_string_lossy().into_owned())
+                                    .unwrap_or_else(|| "Directory unavailable".into())
+                            });
+                        Some(IdleAgent {
+                            pane,
+                            agent: agent.agent.clone(),
+                            tab: self.ws.tab_title(tab),
+                            pane_index: index + 1,
+                            location,
+                            cwd: info.cwd.clone(),
+                            since: agent.since,
+                        })
+                    })
+            })
+            .collect();
         self.sidebar.update(cx, |s, cx| {
             s.model.set_panes(&panes);
             s.model.active_tabs = active_tabs;
+            s.model.idle_agents = idle_agents;
             s.active_label = self.config.active_label;
             cx.notify();
         });
@@ -1793,6 +1921,12 @@ impl WorkspaceView {
                                 )
                         })
                     {
+                        self.ws
+                            .set_agent_status(pane, "codex", AgentStatus::Idle, now_ms());
+                        if let Some(info) = self.ws.pane_mut(pane) {
+                            info.agent_live = true;
+                        }
+                        self.sync_attention(cx);
                         return;
                     }
                     HookKind::Stopped
@@ -1866,6 +2000,19 @@ impl WorkspaceView {
             }
             TerminalEvent::Prompt => {
                 // A shell prompt after an agent ran means the agent exited.
+                let agent = self
+                    .ws
+                    .pane(pane)
+                    .and_then(|i| i.agent.as_ref())
+                    .map(|a| a.agent.clone());
+                if self.ws.end_agent(pane) {
+                    if let Some(cwd) = self.ws.pane(pane).and_then(|i| i.cwd.clone())
+                        && let Some(agent) = agent
+                    {
+                        self.sync_worktree_agent_status(&agent, &cwd, cx);
+                    }
+                    self.sync_attention(cx);
+                }
                 if self.ws.set_agent_session(pane, None) {
                     self.save_session();
                 }
@@ -2265,10 +2412,16 @@ impl WorkspaceView {
         }
     }
 
-    /// Looking at a pane clears "review" for it and its worktree, and marks
+    /// Looking at a pane clears "review" for it, and marks
     /// a waiting agent there as seen (which clears the Dock badge).
     fn reviewed_focused(&mut self, cx: &mut Context<Self>) {
-        if let Some(cwd) = self.focused_cwd() {
+        if self
+            .ws
+            .focused_pane()
+            .and_then(|p| self.ws.pane(p))
+            .is_none_or(|i| i.agent.is_none())
+            && let Some(cwd) = self.focused_cwd()
+        {
             self.sidebar.update(cx, |s, cx| {
                 if s.model.mark_reviewed(&cwd) {
                     cx.notify();
@@ -2278,6 +2431,13 @@ impl WorkspaceView {
         if let Some(pane) = self.ws.focused_pane()
             && self.ws.mark_seen(pane)
         {
+            if let Some(info) = self.ws.pane(pane)
+                && let (Some(agent), Some(cwd)) = (info.agent.as_ref(), info.cwd.as_ref())
+            {
+                let agent = agent.agent.clone();
+                let cwd = cwd.clone();
+                self.sync_worktree_agent_status(&agent, &cwd, cx);
+            }
             self.sync_attention(cx);
         }
     }
@@ -2887,6 +3047,10 @@ impl WorkspaceView {
                 if self.ws.activate_tab_id(tab) {
                     self.focus_active(window, cx);
                 }
+            }
+            SidebarEvent::FocusPane(pane) => self.jump_to_pane(pane, window, cx),
+            SidebarEvent::ClosePane(pane) => {
+                self.request_close(CloseTarget::Pane(pane), window, cx)
             }
         }
         cx.notify();
