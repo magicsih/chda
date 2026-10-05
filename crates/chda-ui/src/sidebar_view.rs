@@ -31,6 +31,8 @@ pub enum SidebarEvent {
     OpenUrl(String),
     /// Focus an open tab from the activity list.
     FocusTab(chda_core::TabId),
+    FocusPane(chda_core::PaneId),
+    ClosePane(chda_core::PaneId),
     ToggleActiveLabel,
     /// The status dot of a worktree was clicked: go to its agent's pane.
     JumpToAgent(PathBuf),
@@ -958,6 +960,136 @@ impl Render for SidebarView {
                     .into_any_element()
             })
             .collect();
+        let idle: Vec<AnyElement> = self
+            .model
+            .idle_agents
+            .iter()
+            .map(|entry| {
+                let pane = entry.pane;
+                let name = self
+                    .agents
+                    .iter()
+                    .find(|a| a.id == entry.agent)
+                    .map(|a| a.name.clone())
+                    .unwrap_or_else(|| entry.agent.clone());
+                let context = format!("{} · pane {}", entry.tab, entry.pane_index);
+                let tooltip = format!(
+                    "{}\n{}\n{}",
+                    name,
+                    context,
+                    entry
+                        .cwd
+                        .as_ref()
+                        .map(|p| p.to_string_lossy().into_owned())
+                        .unwrap_or_else(|| entry.location.clone())
+                );
+                div()
+                    .id(ElementId::Name(format!("idle:{}", pane.raw()).into()))
+                    .debug_selector(move || format!("idle-{}", pane.raw()))
+                    .flex()
+                    .flex_col()
+                    .w_full()
+                    .min_w_0()
+                    .px_2()
+                    .py_1()
+                    .cursor_pointer()
+                    .hover(|s| s.bg(fg.opacity(0.08)))
+                    .tooltip(crate::tooltip::text(tooltip))
+                    .on_click(
+                        cx.listener(move |_, _, _, cx| cx.emit(SidebarEvent::FocusPane(pane))),
+                    )
+                    .child(
+                        div()
+                            .flex()
+                            .w_full()
+                            .min_w_0()
+                            .items_center()
+                            .gap_1()
+                            .child(
+                                div()
+                                    .id(ElementId::Name(format!("idle-name:{}", pane.raw()).into()))
+                                    .debug_selector(move || format!("idle-name-{}", pane.raw()))
+                                    .flex_1()
+                                    .min_w_0()
+                                    .overflow_hidden()
+                                    .whitespace_nowrap()
+                                    .text_ellipsis()
+                                    .child(name),
+                            )
+                            .child(
+                                div()
+                                    .id(ElementId::Name(format!("idle-age:{}", pane.raw()).into()))
+                                    .flex_shrink_0()
+                                    .text_xs()
+                                    .text_color(fg.opacity(0.6))
+                                    .tooltip(crate::tooltip::text(if entry.since == 0 {
+                                        "Idle start time is unavailable"
+                                    } else {
+                                        "Time since this session became ready for another task"
+                                    }))
+                                    .child(if entry.since == 0 {
+                                        "—".into()
+                                    } else {
+                                        format!("{} idle", activity_age(now, entry.since))
+                                    }),
+                            )
+                            .child(
+                                div()
+                                    .id(ElementId::Name(
+                                        format!("idle-close:{}", pane.raw()).into(),
+                                    ))
+                                    .debug_selector(move || format!("idle-close-{}", pane.raw()))
+                                    .px_1()
+                                    .rounded_sm()
+                                    .hover(|s| s.bg(fg.opacity(0.15)))
+                                    .tooltip(crate::tooltip::text("Close this pane"))
+                                    .on_mouse_down(MouseButton::Left, |_, _, cx| {
+                                        cx.stop_propagation()
+                                    })
+                                    .on_click(cx.listener(move |_, _, _, cx| {
+                                        cx.stop_propagation();
+                                        cx.emit(SidebarEvent::ClosePane(pane));
+                                    }))
+                                    .child("×"),
+                            ),
+                    )
+                    .child(
+                        div()
+                            .w_full()
+                            .min_w_0()
+                            .text_xs()
+                            .text_color(fg.opacity(0.7))
+                            .overflow_hidden()
+                            .whitespace_nowrap()
+                            .text_ellipsis()
+                            .child(entry.location.clone()),
+                    )
+                    .child(
+                        div()
+                            .w_full()
+                            .min_w_0()
+                            .text_xs()
+                            .text_color(fg.opacity(0.5))
+                            .flex()
+                            .gap_1()
+                            .child(
+                                div()
+                                    .flex_1()
+                                    .min_w_0()
+                                    .overflow_hidden()
+                                    .whitespace_nowrap()
+                                    .text_ellipsis()
+                                    .child(entry.tab.clone()),
+                            )
+                            .child(
+                                div()
+                                    .flex_shrink_0()
+                                    .child(format!("pane {}", entry.pane_index)),
+                            ),
+                    )
+                    .into_any_element()
+            })
+            .collect();
         let list = div()
             .id("sidebar")
             .flex()
@@ -1021,6 +1153,11 @@ impl Render for SidebarView {
                 )
                 .children(active)
                 .child(div().h(gpui::px(6.0)))
+            })
+            .when(!idle.is_empty(), |d| {
+                d.child(div().px_2().pt_2().pb_1().text_xs()
+                    .text_color(fg.opacity(0.6)).child("Idle agents"))
+                    .children(idle)
             })
             .when(!self.picked.is_empty(), |d| {
                 let count = self.picked.len();

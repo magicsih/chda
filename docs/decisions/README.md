@@ -13,3 +13,4 @@ new record rather than editing an accepted one.
 | 0006 | `chda mcp` is a stateless MCP server relaying to the running app over the hook socket |
 | 0007 | Proposed: directly typed Codex reports per-pane activity through runtime OSC titles |
 | 0008 | Terminal and read-only Git graph tabs have explicit content types; history is queried in the background and rendered incrementally |
+| 0009 | Keep live idle panes separate from shells and saved conversations; focus and close by pane ID |

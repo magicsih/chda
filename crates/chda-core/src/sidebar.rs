@@ -10,7 +10,7 @@ pub enum AgentStatus {
     #[default]
     Idle,
     Working,
-    /// The agent asked the user something (permission, idle prompt).
+    /// The agent asked the user something (permission, approval).
     WaitingInput,
     /// The agent finished and the output has not been looked at yet.
     Review,
@@ -237,13 +237,29 @@ pub struct ActiveTab {
     pub last_activity: u64,
 }
 
+/// A pane-bound live idle session, separate from historical session entries.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct IdleAgent {
+    pub pane: crate::PaneId,
+    pub agent: String,
+    pub tab: String,
+    pub pane_index: usize,
+    /// Repository and worktree context, including directories outside repos.
+    pub location: String,
+    pub cwd: Option<PathBuf>,
+    /// Known completion timestamp; zero means the idle start is unavailable.
+    pub since: u64,
+}
+
 #[derive(Clone, Debug, Default)]
 pub struct Sidebar {
     pub repos: Vec<RepoEntry>,
     pub sort: SortOrder,
     pub visible: bool,
-    /// Open tabs, most recently active first.
+    /// Open tabs in workspace order.
     pub active_tabs: Vec<ActiveTab>,
+    /// Live idle panes in workspace tab/pane order.
+    pub idle_agents: Vec<IdleAgent>,
 }
 
 impl Sidebar {
@@ -381,7 +397,9 @@ impl Sidebar {
         let w = self.worktree_mut_for_path(cwd)?;
         let current = w.agents.get(agent).copied().unwrap_or_default();
         let next = match (current, event) {
-            (_, AgentEvent::SessionStart) => AgentStatus::Working,
+            (_, AgentEvent::SessionStart) => AgentStatus::Idle,
+            (AgentStatus::Review, AgentEvent::Idle) => AgentStatus::Review,
+            (_, AgentEvent::Idle) => AgentStatus::Idle,
             (_, AgentEvent::PromptSubmitted) => AgentStatus::Working,
             (_, AgentEvent::WaitingInput) => AgentStatus::WaitingInput,
             (_, AgentEvent::Stopped) => AgentStatus::Review,
@@ -494,6 +512,7 @@ fn sort_worktrees(worktrees: &mut [WorktreeEntry], sort: SortOrder) {
 /// Agent lifecycle events, as the hook receiver reports them.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum AgentEvent {
+    Idle,
     SessionStart,
     PromptSubmitted,
     WaitingInput,
@@ -584,7 +603,7 @@ mod tests {
         );
         assert_eq!(
             r,
-            Some((PathBuf::from("/src/app.worktrees/b"), AgentStatus::Working))
+            Some((PathBuf::from("/src/app.worktrees/b"), AgentStatus::Idle))
         );
         assert_eq!(branches(&sb), vec!["main", "b", "a"]);
         sb.apply_agent_event(

@@ -16,9 +16,11 @@ use crate::ipc;
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum HookKind {
+    /// A live session is ready for another task, rather than requesting approval.
+    Idle,
     SessionStart,
     PromptSubmitted,
-    /// The agent is waiting for the user (permission or idle prompt).
+    /// The agent is waiting for the user (permission or approval).
     WaitingInput,
     /// The agent finished a turn.
     Stopped,
@@ -83,7 +85,9 @@ pub fn claude_event(payload: &Value) -> Option<HookEvent> {
                 .get("notification_type")
                 .and_then(Value::as_str)
                 .unwrap_or("");
-            if kind.is_empty() || kind.contains("permission") || kind.contains("idle") {
+            if kind == "idle_prompt" {
+                HookKind::Idle
+            } else if kind.is_empty() || kind.contains("permission") {
                 HookKind::WaitingInput
             } else {
                 return None;
@@ -295,6 +299,13 @@ mod tests {
                 .unwrap()
                 .kind,
             HookKind::Stopped
+        );
+        assert_eq!(
+            claude_event(&json!({"session_id": "s", "cwd": "/w",
+            "hook_event_name": "Notification", "notification_type": "idle_prompt"}))
+            .unwrap()
+            .kind,
+            HookKind::Idle
         );
         let c = codex_event(
             &json!({"type": "agent-turn-complete", "thread-id": "t1"}),
