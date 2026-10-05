@@ -3383,9 +3383,12 @@ impl WorkspaceView {
                 match target {
                     Some(path) => self.open_worktree(&path, window, cx),
                     None => {
+                        let name = repo
+                            .file_name()
+                            .map(|n| n.to_string_lossy().into_owned())
+                            .unwrap_or_else(|| repo.display().to_string());
                         self.status_line = Some(format!(
-                            "No worktree has {branch} checked out in {}. Right-click the repository for \"New worktree from branch...\".",
-                            repo.display()
+                            "No worktree has {branch} checked out in {name}. Right-click {name} for \"New worktree from branch...\"."
                         ));
                     }
                 }
