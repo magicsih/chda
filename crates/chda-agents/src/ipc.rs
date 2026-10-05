@@ -3,6 +3,9 @@
 //! hook events, one JSON line each, or one request (`{"request": ...}`)
 //! after which the client closes its writing half and reads one reply line.
 
+mod process;
+pub use process::{capture_command, is_executable, with_process};
+
 use std::path::{Path, PathBuf};
 
 pub fn socket_path(data_dir: &Path) -> PathBuf {
@@ -72,11 +75,20 @@ mod unix {
                     let Ok(mut stream) = stream else { continue };
                     let mut buf = String::new();
                     let _ = stream.set_read_timeout(Some(Duration::from_secs(2)));
-                    if stream.read_to_string(&mut buf).is_err() {
+                    if std::io::Read::by_ref(&mut stream)
+                        .take(1_048_577)
+                        .read_to_string(&mut buf)
+                        .is_err()
+                        || buf.len() > 1_048_576
+                    {
                         continue;
                     }
                     for line in buf.lines() {
-                        let incoming = if let Ok(event) = serde_json::from_str::<HookEvent>(line) {
+                        let incoming = if let Ok(quota) =
+                            serde_json::from_str::<crate::quota::QuotaSnapshot>(line)
+                        {
+                            Incoming::Quota(quota)
+                        } else if let Ok(event) = serde_json::from_str::<HookEvent>(line) {
                             Incoming::Event(event)
                         } else if let Ok(Envelope { request }) = serde_json::from_str(line) {
                             let (reply_tx, reply_rx) = mpsc::channel();
@@ -220,4 +232,21 @@ mod tests {
         assert_eq!(reply.data[0]["branch"], "main");
         std::fs::remove_dir_all(&dir).unwrap();
     }
+}
+
+/// Quota reports use the same private, bounded local transport as hooks.
+#[cfg(unix)]
+pub fn send_quota(path: &Path, snapshot: &crate::quota::QuotaSnapshot) -> std::io::Result<()> {
+    use std::io::Write;
+    let mut stream = std::os::unix::net::UnixStream::connect(path)?;
+    stream.set_write_timeout(Some(std::time::Duration::from_secs(1)))?;
+    stream.write_all(serde_json::to_string(snapshot)?.as_bytes())?;
+    stream.write_all(b"\n")
+}
+#[cfg(not(unix))]
+pub fn send_quota(_: &Path, _: &crate::quota::QuotaSnapshot) -> std::io::Result<()> {
+    Err(std::io::Error::new(
+        std::io::ErrorKind::Unsupported,
+        "quota IPC is unavailable",
+    ))
 }

@@ -239,6 +239,14 @@ fn markdown_path_previews_in_the_browser(cx: &mut gpui::TestAppContext) {
     });
     h.wait_prompt();
     h.run("cd docs; clear; ls", "notes.md");
+    // Resolving a relative path requires the shell's cwd report. Output can
+    // arrive before the following prompt/OSC 7 notification.
+    h.wait_for("the shell to report docs/", |v, _| {
+        v.ws.focused_pane()
+            .and_then(|p| v.ws.pane(p))
+            .and_then(|i| i.cwd.as_ref())
+            .is_some_and(|c| c.ends_with("docs"))
+    });
     let term = h.focused_terminal();
     let at = find_on_screen(&mut h, &term, |t| t.contains("notes.md"), "notes");
     right_click(&mut h, at);
@@ -256,12 +264,6 @@ fn markdown_path_previews_in_the_browser(cx: &mut gpui::TestAppContext) {
     assert!(html.contains("<h1>Release notes</h1>") && html.contains("<table>"));
 
     // The palette offers the folder's Markdown files.
-    h.wait_for("the shell to report docs/", |v, _| {
-        v.ws.focused_pane()
-            .and_then(|p| v.ws.pane(p))
-            .and_then(|i| i.cwd.as_ref())
-            .is_some_and(|c| c.ends_with("docs"))
-    });
     let items = h.read(|v, cx| v.palette_items(cx));
     assert!(
         items
@@ -270,4 +272,57 @@ fn markdown_path_previews_in_the_browser(cx: &mut gpui::TestAppContext) {
         "{:?}",
         items.iter().map(|i| &i.label).collect::<Vec<_>>()
     );
+}
+
+#[gpui::test]
+fn wrapped_path_actions_use_the_full_target_instead_of_an_existing_prefix(
+    cx: &mut gpui::TestAppContext,
+) {
+    let mut h = Harness::open(cx, "wrapped-path", |_| {});
+    h.wait_prompt();
+    let term = h.focused_terminal();
+    let cols = h.read(|_, cx| term.read(cx).frame().size.cols as usize);
+    let prefix = format!(
+        "{}{}",
+        "d/".repeat(cols / 2),
+        if cols % 2 == 1 { "d" } else { "" }
+    );
+    let printed = format!("{}/{}file.rs", prefix, "e/".repeat(cols / 2));
+    let full = h.home.home.join(&printed);
+    std::fs::create_dir_all(full.parent().unwrap()).unwrap();
+    std::fs::write(&full, "example").unwrap();
+    assert!(h.home.home.join(&prefix).is_dir());
+    h.run(
+        &format!("clear; printf '\\n%s\\n' '{printed}:12:5'"),
+        "file.rs",
+    );
+    h.wait_for("the printed wrapped path after clearing the command", {
+        let term = term.clone();
+        move |_, cx| {
+            let frame = term.read(cx).frame();
+            (0..frame.size.rows).any(|r| frame.row_text(r).starts_with("d/d/d/"))
+        }
+    });
+    let segments = h.read(|_, cx| {
+        let t = term.read(cx);
+        let frame = t.frame();
+        let row = (0..frame.size.rows)
+            .find(|r| frame.row_text(*r).starts_with("d/d/d/"))
+            .unwrap();
+        let links = chda_term::links_at(&frame, 3, row);
+        assert_eq!(links[0].cells.len(), 3);
+        links[0].cells.clone()
+    });
+    for (row, start, _) in segments {
+        let at = h.read(|_, cx| {
+            let g = term.read(cx).geometry.unwrap();
+            point(
+                g.origin.x + g.cell_width * (start as f32 + 1.5),
+                g.origin.y + g.line_height * (row as f32 + 0.5),
+            )
+        });
+        right_click(&mut h, at);
+        choose(&mut h, "Reveal in Finder");
+        assert_eq!(h.system.0.borrow().revealed.last(), Some(&full));
+    }
 }

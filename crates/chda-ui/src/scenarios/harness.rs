@@ -112,6 +112,9 @@ impl AgentAdapter for TestAdapter {
         self.bin.as_ref().is_some_and(|b| b.is_file())
             && (self.inner.id() != AgentId::Codex || self.inner.is_installed(path))
     }
+    fn executable(&self, _home: &Path, path: &std::ffi::OsStr) -> Option<PathBuf> {
+        self.is_installed(path).then(|| self.bin.clone()).flatten()
+    }
     fn launch_command(
         &self,
         cwd: &Path,
@@ -323,6 +326,9 @@ fn open_window(
             theme_dirs: Vec::new(),
         };
         let mut pane_env = vec![
+            // Codex's command runner exports GIT_PAGER=cat; scenarios page
+            // diffs like the app does, independently of that host setting.
+            ("GIT_PAGER".into(), "less -+F -R".into()),
             ("HOME".into(), home.home.to_string_lossy().into_owned()),
             ("ZDOTDIR".into(), home.home.to_string_lossy().into_owned()),
         ];
@@ -336,6 +342,8 @@ fn open_window(
             ));
         }
         let env = Rc::new(Environment {
+            collect_telemetry: false,
+            windows: Default::default(),
             config_path: Some(home.config.clone()),
             data_dir: Some(home.data.clone()),
             ghostty: paths.clone(),

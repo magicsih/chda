@@ -44,6 +44,19 @@ add-zsh-hook preexec _chda_preexec
 # Respect functions and aliases the user already defined in their dotfiles.
 if [[ -n "${CHDA_CODEX_TITLE_CONFIG-}" ]] && (( ! $+functions[codex] && ! $+aliases[codex] )); then
     function codex {
-        'command' codex -c "$CHDA_CODEX_TITLE_CONFIG" "$@"
+        if [[ -n "${CHDA_CODEX_NOTIFY_CONFIG-}" ]]; then
+            'command' codex -c "$CHDA_CODEX_TITLE_CONFIG" -c "$CHDA_CODEX_NOTIFY_CONFIG" "$@"
+        else
+            'command' codex -c "$CHDA_CODEX_TITLE_CONFIG" "$@"
+        fi
+    }
+fi
+
+# Per-launch hooks and usage reporting, preserving user definitions and settings.
+if [[ -n "${CHDA_HOOK_BIN-}" && -n "${CHDA_CLAUDE_BINARY-}" ]] && (( ! $+functions[claude] && ! $+aliases[claude] )); then
+    function claude {
+        'builtin' 'local' _chda_settings
+        _chda_settings=$("$CHDA_HOOK_BIN" agent-settings claude) || return $?
+        'command' "$CHDA_CLAUDE_BINARY" --settings "$_chda_settings" "$@"
     }
 fi

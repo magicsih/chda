@@ -160,7 +160,7 @@ hooks per launch, never in the user's own config:
 | Agent | Hooks | Transcripts |
 |---|---|---|
 | Claude Code | `--settings` file | `~/.claude/projects/<dir>/*.jsonl` |
-| Codex | Runtime OSC titles; menu launches also use `-c notify=[...]` for session restore, chaining the user's notify program | `~/.codex/sessions/**/*.jsonl` |
+| Codex | Runtime OSC titles and per-launch `-c notify=[...]` for directly typed and menu launches, preserving session IDs for restore and chaining the user's notify program | `~/.codex/sessions/**/*.jsonl` |
 | Gemini CLI | `GEMINI_CLI_SYSTEM_DEFAULTS_PATH`: the machine's system defaults plus chda's hooks | `~/.gemini/tmp/<project>/chats/*.jsonl` |
 | Copilot CLI | `--plugin-dir` with a plugin whose hooks pass the event name as an argument | `~/.copilot/session-state/<id>/events.jsonl` |
 | OpenCode | `OPENCODE_CONFIG_DIR` with a JavaScript plugin that maps bus events to hook kinds | none (SQLite) |
@@ -179,7 +179,10 @@ have no session ID and never replace the conversation recorded by a notify
 hook. See ADR 0007 for the upstream format and scope.
 
 A pane runs a program and its arguments only, so environment variables an
-adapter sets go in front through `env`.
+adapter sets go in front through `env`. Bounded subprocess probes live in
+`chda-agents::ipc`; the UI reaches them through core and never depends on
+`chda-pty`. Claude status-line and Codex account quota sources and resource
+sampling limits are documented in [status-bar.md](status-bar.md).
 
 `chda mcp` (ADR 0006) is a stdio MCP server for agents. It keeps no state:
 `create_worktree`, `open_tab` and `list_worktrees` become requests on the
@@ -245,9 +248,12 @@ iTerm2-Color-Schemes set `chda-config` embeds (`assets/themes.txt`, packed by
 `scripts/update-themes.sh`). `theme` in `config.toml` replaces the Ghostty
 config's, so picking a theme in chda never edits Ghostty's files.
 
-`chda-core::SavedWindow` is the window's tabs, split tree, ratios, focus,
-zoom, tab names and pane directories, written to `session.json` in the data
-directory whenever they change and read on the next launch.
+`chda-core::SavedSession` contains every window's tabs, split tree, ratios,
+focus, zoom, tab names, pane directories and previous working activity,
+plus the active window. An app-owned registry writes all windows together
+in `session.json`; it also reads the earlier single-window format. Closing a
+window updates only that entry. Hook events from before this app launch cannot
+restore runtime agent liveness. See ADR 0010.
 
 A pane also keeps the agent and session id its hooks last reported (through
 `CHDA_PANE_ID`); a `SessionEnd` or a new shell prompt (the agent exited)

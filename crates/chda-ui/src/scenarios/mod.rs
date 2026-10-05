@@ -15,6 +15,7 @@ mod idle_agents;
 mod input;
 mod mcp;
 mod menus;
+mod navigation;
 mod palette;
 mod paths;
 mod pull_requests;

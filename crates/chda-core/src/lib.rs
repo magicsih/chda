@@ -12,6 +12,7 @@ pub use graph::*;
 mod names;
 mod refresh;
 pub mod release;
+pub mod resources;
 mod restore;
 mod sidebar;
 mod update;
@@ -26,13 +27,14 @@ pub use restore::*;
 
 /// Agent integration surface the UI needs (ADR: the UI talks to core only).
 pub mod agents {
-    pub use chda_agents::control;
     pub use chda_agents::hook::data_dir;
     pub use chda_agents::{
         AgentAdapter, AgentId, AgentSession, CODEX_TITLE_CONFIG, CODEX_TITLE_ENV, CodexRunState,
         HookEvent, HookInstallReport, HookKind, LimitUsage, ModelUsage, PANE_ENV, SessionCache,
-        SessionId, Usage, adapters, command_argv, compact_tokens, ipc, parse_codex_title,
+        SessionId, Usage, adapters, codex_notify_config, command_argv, compact_tokens, ipc,
+        parse_codex_title,
     };
+    pub use chda_agents::{control, quota, statusline, which};
 }
 pub use chda_git::PullMode;
 pub use sidebar::*;

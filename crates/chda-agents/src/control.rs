@@ -74,6 +74,7 @@ impl Reply {
 /// What the app receives on the socket.
 #[derive(Debug)]
 pub enum Incoming {
+    Quota(crate::quota::QuotaSnapshot),
     Event(HookEvent),
     /// A request and where its reply goes; the caller waits for it.
     Request(Request, Sender<Reply>),

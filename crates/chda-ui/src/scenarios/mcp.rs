@@ -11,7 +11,7 @@ use gpui::TestAppContext;
 use super::harness::{Harness, git};
 
 /// Send `request` the way `chda mcp` does and wait for the app's reply.
-fn ask(h: &mut Harness, request: Request) -> Reply {
+pub(super) fn ask(h: &mut Harness, request: Request) -> Reply {
     let socket = ipc::socket_path(&h.home.data);
     let slot = Arc::new(Mutex::new(None));
     let filled = Arc::clone(&slot);

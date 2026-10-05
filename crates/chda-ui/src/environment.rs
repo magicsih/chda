@@ -80,6 +80,8 @@ impl System for NativeSystem {
 }
 
 pub struct Environment {
+    pub collect_telemetry: bool,
+    pub(crate) windows: Rc<std::cell::RefCell<crate::window_registry::WindowRegistry>>,
     /// chda's `config.toml`.
     pub config_path: Option<PathBuf>,
     /// Hook socket, session index, saved session, shell integration scripts.
@@ -123,6 +125,8 @@ impl Environment {
             .map(|(shell, home)| shell_path_env(shell, Path::new(&home), &[]))
             .unwrap_or_default();
         Self {
+            collect_telemetry: true,
+            windows: Default::default(),
             config_path: ChdaConfig::default_path(),
             data_dir: data_dir(),
             ghostty: Paths::default_for_user(),
@@ -133,6 +137,16 @@ impl Environment {
             system: Rc::new(NativeSystem),
             latest_release: Arc::new(fetch_latest_release),
         }
+    }
+
+    pub fn home(&self) -> PathBuf {
+        self.pane_env
+            .iter()
+            .rev()
+            .find(|(k, _)| k == "HOME")
+            .map(|(_, v)| PathBuf::from(v))
+            .or_else(|| std::env::var_os("HOME").map(PathBuf::from))
+            .unwrap_or_default()
     }
 
     /// Exactly the PATH inherited by a PTY launched with `pane_env`.

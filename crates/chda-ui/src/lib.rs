@@ -14,11 +14,13 @@ mod platform;
 mod scenarios;
 mod settings;
 mod sidebar_view;
+mod status_bar;
 mod terminal_element;
 mod terminal_images;
 mod terminal_view;
 mod text_input;
 mod tooltip;
+mod window_registry;
 mod workspace_view;
 
 use gpui::{App, AppContext, Bounds, KeyBinding, WindowBounds, WindowOptions, point, px, size};
@@ -73,6 +75,7 @@ fn key_bindings() -> Vec<KeyBinding> {
         KeyBinding::new("cmd-shift-enter", ToggleZoom, None),
         KeyBinding::new("cmd-b", ToggleSidebar, None),
         KeyBinding::new("cmd-shift-o", AddRepo, None),
+        KeyBinding::new("cmd-shift-n", NewWindow, None),
         KeyBinding::new("cmd-n", NewWorktree, None),
         KeyBinding::new("cmd-shift-p", TogglePalette, None),
         KeyBinding::new("escape", Dismiss, None),
@@ -86,6 +89,9 @@ fn key_bindings() -> Vec<KeyBinding> {
         KeyBinding::new("cmd-m", Minimize, None),
         KeyBinding::new("cmd-h", menus::Hide, None),
         KeyBinding::new("cmd-alt-h", menus::HideOthers, None),
+        KeyBinding::new("cmd-v", Paste, Some("TextInput")),
+        KeyBinding::new("cmd-c", Copy, Some("TextInput")),
+        KeyBinding::new("cmd-a", text_input::SelectAll, Some("TextInput")),
         // Global bindings count as matching at the focused element's depth,
         // so these name the focused field and come last: on equal depth the
         // later binding wins over the global escape (Dismiss).
@@ -113,26 +119,53 @@ pub fn run(ghostty: chda_config::GhosttyConfig) {
             .then(|| {
                 env.data_dir
                     .as_deref()
-                    .and_then(chda_core::SavedWindow::load)
+                    .and_then(chda_core::SavedSession::load)
             })
             .flatten();
-        let bounds = match saved.as_ref().and_then(|s| s.bounds) {
-            Some(b) => Bounds::new(point(px(b.x), px(b.y)), size(px(b.width), px(b.height))),
-            None => Bounds::centered(None, size(px(960.0), px(640.0)), cx),
-        };
-        let window = cx
-            .open_window(
-                WindowOptions {
-                    window_bounds: Some(WindowBounds::Windowed(bounds)),
-                    titlebar: Some(platform::titlebar("chda")),
-                    ..Default::default()
-                },
-                |window, cx| cx.new(|cx| WorkspaceView::new(ghostty, saved, env, window, cx)),
-            )
-            .expect("failed to open main window");
-        window
-            .update(cx, |view, window, cx| view.focus(window, cx))
-            .expect("main window vanished");
+        let active = saved.as_ref().map_or(0, |s| s.active_window);
+        let windows = saved
+            .map(|s| s.windows.into_iter().map(Some).collect::<Vec<_>>())
+            .unwrap_or_else(|| vec![None]);
+        env.windows.borrow_mut().restoring = true;
+        let mut opened = Vec::new();
+        for saved in windows {
+            opened.push(open_workspace_window(
+                ghostty.clone(),
+                saved,
+                env.clone(),
+                cx,
+            ));
+        }
+        env.windows.borrow_mut().restoring = false;
+        if let Some(window) = opened.get(active).or(opened.first()) {
+            window
+                .update(cx, |view, window, cx| {
+                    window.activate_window();
+                    view.focus(window, cx);
+                })
+                .expect("main window vanished");
+        }
         cx.activate(true);
     });
+}
+
+pub(crate) fn open_workspace_window(
+    ghostty: chda_config::GhosttyConfig,
+    saved: Option<chda_core::SavedWindow>,
+    env: std::rc::Rc<environment::Environment>,
+    cx: &mut App,
+) -> gpui::WindowHandle<WorkspaceView> {
+    let bounds = match saved.as_ref().and_then(|s| s.bounds) {
+        Some(b) => Bounds::new(point(px(b.x), px(b.y)), size(px(b.width), px(b.height))),
+        None => Bounds::centered(None, size(px(960.0), px(640.0)), cx),
+    };
+    cx.open_window(
+        WindowOptions {
+            window_bounds: Some(WindowBounds::Windowed(bounds)),
+            titlebar: Some(platform::titlebar("chda")),
+            ..Default::default()
+        },
+        |window, cx| cx.new(|cx| WorkspaceView::new(ghostty, saved, env, window, cx)),
+    )
+    .expect("failed to open workspace window")
 }

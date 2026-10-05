@@ -878,11 +878,14 @@ fn title_bar_follows_branch_notes_and_split_focus(cx: &mut TestAppContext) {
     h.wait_prompt();
     h.run(&format!("cd {}", repo.display()), "");
     h.wait_for("main note in the title", |v, cx| {
-        v.title_bar_text(cx).0 == "Main task"
+        v.title_bar_text(cx).0 == "app - Main task"
     });
     assert_eq!(
         h.read(|v, cx| v.title_bar_text(cx).1),
-        "\n Main task\nDetails\nBranch: main"
+        format!(
+            "Repository: app\n\n Main task\nDetails\nBranch: main\n{}",
+            repo.display()
+        )
     );
     assert_eq!(h.read(|v, cx| v.open_in_folder(cx)), Some(repo.clone()));
 
@@ -890,21 +893,21 @@ fn title_bar_follows_branch_notes_and_split_focus(cx: &mut TestAppContext) {
     h.wait_prompt();
     h.run(&format!("cd {}", feat.display()), "");
     h.wait_for("split note", |v, cx| {
-        v.title_bar_text(cx).0 == "Feature task"
+        v.title_bar_text(cx).0 == "app - Feature task"
     });
     h.keys("cmd-alt-left");
-    assert_eq!(h.read(|v, cx| v.title_bar_text(cx).0), "Main task");
+    assert_eq!(h.read(|v, cx| v.title_bar_text(cx).0), "app - Main task");
     h.keys("cmd-alt-right");
-    assert_eq!(h.read(|v, cx| v.title_bar_text(cx).0), "Feature task");
+    assert_eq!(h.read(|v, cx| v.title_bar_text(cx).0), "app - Feature task");
 
     h.keys("cmd-t");
     h.wait_prompt();
     h.run(&format!("cd {}", repo.display()), "");
     h.wait_for("second tab note", |v, cx| {
-        v.title_bar_text(cx).0 == "Main task"
+        v.title_bar_text(cx).0 == "app - Main task"
     });
     h.keys("cmd-1");
-    assert_eq!(h.read(|v, cx| v.title_bar_text(cx).0), "Feature task");
+    assert_eq!(h.read(|v, cx| v.title_bar_text(cx).0), "app - Feature task");
 
     let edit = MenuAction::EditNote {
         repo: repo.clone(),
@@ -919,7 +922,7 @@ fn title_bar_follows_branch_notes_and_split_focus(cx: &mut TestAppContext) {
     }
     h.type_text("Updated task");
     h.keys("enter");
-    assert_eq!(h.read(|v, cx| v.title_bar_text(cx).0), "Updated task");
+    assert_eq!(h.read(|v, cx| v.title_bar_text(cx).0), "app - Updated task");
     git(
         &repo,
         &[
@@ -929,11 +932,12 @@ fn title_bar_follows_branch_notes_and_split_focus(cx: &mut TestAppContext) {
         ],
     );
     h.wait_for("external edit", |v, cx| {
-        v.title_bar_text(cx).0 == "External task"
+        v.title_bar_text(cx).0 == "app - External task"
     });
     h.cx.run_until_parked();
     assert!(
-        h.cx.debug_bounds("title-text:External task").is_some(),
+        h.cx.debug_bounds("title-text:app - External task")
+            .is_some(),
         "external notes redraw the title"
     );
     let tab = h.read(|v, _| v.ws.active_tab().unwrap().id);
@@ -943,7 +947,10 @@ fn title_bar_follows_branch_notes_and_split_focus(cx: &mut TestAppContext) {
             v.focus(window, cx);
         })
     });
-    assert_eq!(h.read(|v, cx| v.title_bar_text(cx).0), "My task");
+    assert_eq!(
+        h.read(|v, cx| v.title_bar_text(cx).0),
+        "app - External task"
+    );
     assert!(
         h.read(|v, cx| v.title_bar_text(cx).1)
             .contains("Full note\nBranch: feat")
@@ -956,7 +963,7 @@ fn title_bar_follows_branch_notes_and_split_focus(cx: &mut TestAppContext) {
     });
     git(&repo, &["config", "branch.feat.description", " \n\t"]);
     h.wait_for("whitespace fallback", |v, cx| {
-        v.title_bar_text(cx).0 == "feat"
+        v.title_bar_text(cx).0 == "app - feat"
     });
     git(&repo, &["config", "--unset", "branch.feat.description"]);
     h.wait_for("removed note", |v, cx| {
@@ -969,5 +976,5 @@ fn title_bar_follows_branch_notes_and_split_focus(cx: &mut TestAppContext) {
             .note
             .is_none()
     });
-    assert_eq!(h.read(|v, cx| v.title_bar_text(cx).0), "feat");
+    assert_eq!(h.read(|v, cx| v.title_bar_text(cx).0), "app - feat");
 }

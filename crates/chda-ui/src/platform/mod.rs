@@ -337,3 +337,21 @@ mod tests {
         assert_eq!(NotificationTarget::decode("other/1/2/x"), None);
     }
 }
+
+#[cfg(target_os = "macos")]
+pub(crate) mod resources;
+#[cfg(not(target_os = "macos"))]
+pub(crate) mod resources {
+    #[derive(Default)]
+    pub struct Sampler;
+    impl Sampler {
+        pub fn sample(
+            &mut self,
+            _: u32,
+            _: u64,
+            _: bool,
+        ) -> Result<chda_core::resources::Resources, String> {
+            Err("Session-resource sampling is not available on this platform".into())
+        }
+    }
+}

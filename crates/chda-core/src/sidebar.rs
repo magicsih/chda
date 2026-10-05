@@ -146,6 +146,7 @@ pub struct WorktreeEntry {
     pub sessions: Vec<SessionEntry>,
     /// Milliseconds since the epoch of the last agent event or session.
     pub last_activity: u64,
+    pub previous_activity: Option<u64>,
     /// Panes whose cwd is inside this worktree.
     pub panes: Vec<crate::PaneId>,
     /// The folder was deleted outside git; only pruning makes sense.
@@ -226,6 +227,7 @@ pub enum SortOrder {
 /// A tab as the sidebar's activity list shows it.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct ActiveTab {
+    pub agent_live: bool,
     /// Actual branch name, available when the label is an alias.
     pub branch: Option<String>,
     pub tab: crate::TabId,
@@ -235,6 +237,7 @@ pub struct ActiveTab {
     /// Repository name, or `None` outside any repository.
     pub repo: Option<String>,
     pub last_activity: u64,
+    pub previous_activity: Option<u64>,
 }
 
 /// A pane-bound live idle session, separate from historical session entries.

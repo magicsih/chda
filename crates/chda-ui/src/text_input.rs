@@ -5,8 +5,11 @@ use std::ops::Range;
 
 use gpui::{
     App, Bounds, Context, EntityInputHandler, EventEmitter, FocusHandle, Focusable, Hsla,
-    KeyDownEvent, Pixels, Point, Render, UTF16Selection, Window, div, fill, prelude::*, px,
+    KeyDownEvent, MouseButton, Pixels, Point, Render, UTF16Selection, Window, div, fill,
+    prelude::*, px,
 };
+
+gpui::actions!(text_input, [SelectAll]);
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum TextInputEvent {
@@ -18,7 +21,10 @@ pub struct TextInput {
     text: String,
     /// Cursor as a char index.
     cursor: usize,
-    marked: Option<String>,
+    anchor: usize,
+    bounds: Option<Bounds<Pixels>>,
+    scroll_x: Pixels,
+    marked: Option<Range<usize>>,
     focus_handle: FocusHandle,
     pub placeholder: String,
     pub fg: Hsla,
@@ -34,6 +40,9 @@ impl TextInput {
         Self {
             text: String::new(),
             cursor: 0,
+            anchor: 0,
+            bounds: None,
+            scroll_x: px(0.0),
             marked: None,
             focus_handle: cx.focus_handle(),
             placeholder: placeholder.into(),
@@ -51,6 +60,8 @@ impl TextInput {
     pub fn set_text(&mut self, text: &str, cx: &mut Context<Self>) {
         self.text = text.to_owned();
         self.cursor = self.text.chars().count();
+        self.anchor = self.cursor;
+        self.marked = None;
         cx.notify();
     }
 
@@ -62,11 +73,117 @@ impl TextInput {
             .unwrap_or(self.text.len())
     }
 
-    fn insert(&mut self, s: &str, cx: &mut Context<Self>) {
-        let at = self.byte_at(self.cursor);
-        self.text.insert_str(at, s);
-        self.cursor += s.chars().count();
+    fn selection(&self) -> Range<usize> {
+        self.anchor.min(self.cursor)..self.anchor.max(self.cursor)
+    }
+
+    fn char_to_utf16(&self, index: usize) -> usize {
+        self.text.chars().take(index).map(char::len_utf16).sum()
+    }
+
+    fn utf16_to_char(&self, index: usize) -> usize {
+        let mut units = 0;
+        self.text
+            .chars()
+            .take_while(|c| {
+                units += c.len_utf16();
+                units <= index
+            })
+            .count()
+    }
+
+    fn replace(&mut self, range: Range<usize>, text: &str, cx: &mut Context<Self>) {
+        let text = if self.multiline {
+            text.replace("\r\n", "\n").replace('\r', "\n")
+        } else {
+            text.split(['\r', '\n', '\t'])
+                .filter(|s| !s.is_empty())
+                .collect::<Vec<_>>()
+                .join(" ")
+        };
+        let start = self.byte_at(range.start);
+        let end = self.byte_at(range.end);
+        self.text.replace_range(start..end, &text);
+        self.cursor = range.start + text.chars().count();
+        self.anchor = self.cursor;
+        self.marked = None;
         cx.notify();
+    }
+
+    fn insert(&mut self, s: &str, cx: &mut Context<Self>) {
+        self.replace(self.selection(), s, cx);
+    }
+
+    fn paste(&mut self, _: &crate::terminal_view::Paste, _: &mut Window, cx: &mut Context<Self>) {
+        if let Some(text) = cx.read_from_clipboard().and_then(|c| c.text())
+            && !text.is_empty()
+        {
+            self.insert(&text, cx);
+        }
+        cx.stop_propagation();
+    }
+
+    fn copy(&mut self, _: &crate::terminal_view::Copy, _: &mut Window, cx: &mut Context<Self>) {
+        let range = self.selection();
+        if !range.is_empty() {
+            cx.write_to_clipboard(gpui::ClipboardItem::new_string(
+                self.text[self.byte_at(range.start)..self.byte_at(range.end)].into(),
+            ));
+        }
+        cx.stop_propagation();
+    }
+
+    fn select_all(&mut self, _: &SelectAll, _: &mut Window, cx: &mut Context<Self>) {
+        self.anchor = 0;
+        self.cursor = self.text.chars().count();
+        cx.stop_propagation();
+        cx.notify();
+    }
+
+    fn clicked(
+        &mut self,
+        position: Point<Pixels>,
+        shift: bool,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        window.focus(&self.focus_handle, cx);
+        if let Some(bounds) = self.bounds {
+            let row = ((position.y - bounds.top()) / window.line_height())
+                .floor()
+                .max(0.0) as usize;
+            let mut start = 0;
+            for (index, line) in self.text.split('\n').enumerate() {
+                if index == row {
+                    let style = window.text_style();
+                    let run = gpui::TextRun {
+                        len: line.len(),
+                        font: style.font(),
+                        color: self.fg,
+                        background_color: None,
+                        underline: None,
+                        strikethrough: None,
+                    };
+                    let shaped = window.text_system().shape_line(
+                        line.to_owned().into(),
+                        style.font_size.to_pixels(window.rem_size()),
+                        &[run],
+                        None,
+                    );
+                    let byte =
+                        shaped.closest_index_for_x(position.x - bounds.left() + self.scroll_x);
+                    self.cursor = start + line[..byte].chars().count();
+                    break;
+                }
+                start += line.chars().count() + 1;
+            }
+        }
+        if !shift {
+            self.anchor = self.cursor;
+        }
+        self.marked = None;
+        cx.notify();
+        cx.stop_propagation();
     }
 
     fn key_down(&mut self, event: &KeyDownEvent, _: &mut Window, cx: &mut Context<Self>) {
@@ -79,28 +196,32 @@ impl TextInput {
             "enter" => cx.emit(TextInputEvent::Submit(self.text.clone())),
             "escape" => cx.emit(TextInputEvent::Cancel),
             "backspace" => {
-                if self.cursor > 0 {
-                    let end = self.byte_at(self.cursor);
-                    let start = self.byte_at(self.cursor - 1);
-                    self.text.replace_range(start..end, "");
-                    self.cursor -= 1;
-                    cx.notify();
+                let mut range = self.selection();
+                if range.is_empty() && self.cursor > 0 {
+                    range.start -= 1;
                 }
+                self.replace(range, "", cx);
             }
-            "left" => {
-                self.cursor = self.cursor.saturating_sub(1);
-                cx.notify();
+            "delete" => {
+                let mut range = self.selection();
+                if range.is_empty() {
+                    range.end = (range.end + 1).min(self.text.chars().count());
+                }
+                self.replace(range, "", cx);
             }
-            "right" => {
-                self.cursor = (self.cursor + 1).min(self.text.chars().count());
-                cx.notify();
-            }
-            "home" => {
-                self.cursor = 0;
-                cx.notify();
-            }
-            "end" => {
-                self.cursor = self.text.chars().count();
+            "left" | "right" | "home" | "end" => {
+                let selecting = ks.modifiers.shift;
+                self.cursor = match ks.key.as_str() {
+                    "left" if !selecting && !self.selection().is_empty() => self.selection().start,
+                    "right" if !selecting && !self.selection().is_empty() => self.selection().end,
+                    "left" => self.cursor.saturating_sub(1),
+                    "right" => (self.cursor + 1).min(self.text.chars().count()),
+                    "home" => 0,
+                    _ => self.text.chars().count(),
+                };
+                if !selecting {
+                    self.anchor = self.cursor;
+                }
                 cx.notify();
             }
             _ => {
@@ -132,8 +253,8 @@ impl EntityInputHandler for TextInput {
         _: &mut Window,
         _: &mut Context<Self>,
     ) -> Option<String> {
-        let chars: Vec<char> = self.text.chars().collect();
-        Some(chars.get(range)?.iter().collect())
+        let range = self.utf16_to_char(range.start)..self.utf16_to_char(range.end);
+        Some(self.text[self.byte_at(range.start)..self.byte_at(range.end)].to_owned())
     }
 
     fn selected_text_range(
@@ -143,15 +264,16 @@ impl EntityInputHandler for TextInput {
         _: &mut Context<Self>,
     ) -> Option<UTF16Selection> {
         Some(UTF16Selection {
-            range: self.cursor..self.cursor,
-            reversed: false,
+            range: self.char_to_utf16(self.selection().start)
+                ..self.char_to_utf16(self.selection().end),
+            reversed: self.cursor < self.anchor,
         })
     }
 
     fn marked_text_range(&self, _: &mut Window, _: &mut Context<Self>) -> Option<Range<usize>> {
         self.marked
             .as_ref()
-            .map(|m| self.cursor..self.cursor + m.encode_utf16().count())
+            .map(|m| self.char_to_utf16(m.start)..self.char_to_utf16(m.end))
     }
 
     fn unmark_text(&mut self, _: &mut Window, cx: &mut Context<Self>) {
@@ -161,25 +283,37 @@ impl EntityInputHandler for TextInput {
 
     fn replace_text_in_range(
         &mut self,
-        _: Option<Range<usize>>,
+        range: Option<Range<usize>>,
         text: &str,
         _: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        self.marked = None;
-        self.insert(text, cx);
+        let range = range
+            .map(|r| self.utf16_to_char(r.start)..self.utf16_to_char(r.end))
+            .unwrap_or_else(|| self.marked.clone().unwrap_or_else(|| self.selection()));
+        self.replace(range, text, cx);
     }
 
     fn replace_and_mark_text_in_range(
         &mut self,
-        _: Option<Range<usize>>,
+        range: Option<Range<usize>>,
         new_text: &str,
-        _: Option<Range<usize>>,
+        selected: Option<Range<usize>>,
         _: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        self.marked = (!new_text.is_empty()).then(|| new_text.to_owned());
-        cx.notify();
+        let range = range
+            .map(|r| self.utf16_to_char(r.start)..self.utf16_to_char(r.end))
+            .unwrap_or_else(|| self.marked.clone().unwrap_or_else(|| self.selection()));
+        let start = range.start;
+        self.replace(range, new_text, cx);
+        let end = self.cursor;
+        self.marked = (start != end).then_some(start..end);
+        if let Some(selected) = selected {
+            let offset = self.char_to_utf16(start);
+            self.anchor = self.utf16_to_char(offset + selected.start).min(end);
+            self.cursor = self.utf16_to_char(offset + selected.end).min(end);
+        }
     }
 
     fn bounds_for_range(
@@ -241,7 +375,8 @@ impl gpui::Element for Field {
     ) -> (gpui::LayoutId, ()) {
         let lines = {
             let i = self.input.read(cx);
-            i.text.lines().count().max(1) + usize::from(i.text.ends_with('\n'))
+            (i.text.lines().count().max(1) + usize::from(i.text.ends_with('\n')))
+                .max(if i.multiline { 3 } else { 1 })
         };
         let mut style = gpui::Style::default();
         style.size.width = gpui::relative(1.0).into();
@@ -276,38 +411,34 @@ impl gpui::Element for Field {
             gpui::ElementInputHandler::new(bounds, self.input.clone()),
             cx,
         );
-        let (text, cursor, marked, fg, placeholder) = {
+        self.input.update(cx, |i, _| i.bounds = Some(bounds));
+        let (text, cursor, selection, fg, placeholder) = {
             let i = self.input.read(cx);
             (
                 i.text.clone(),
                 i.cursor,
-                i.marked.clone(),
+                i.selection(),
                 i.fg,
                 i.placeholder.clone(),
             )
         };
         let style = window.text_style();
         let font_size = style.font_size.to_pixels(window.rem_size());
-        let mut shown = text.clone();
+        let shown = text.clone();
         let cursor_byte = shown
             .char_indices()
             .nth(cursor)
             .map(|(i, _)| i)
             .unwrap_or(shown.len());
-        if let Some(m) = &marked {
-            shown.insert_str(cursor_byte, m);
-        }
         let empty = shown.is_empty();
         let display = if empty { placeholder } else { shown };
         let color = if empty { fg.opacity(0.4) } else { fg };
         let font = style.font();
         let line_height = window.line_height();
         // Byte offset of the cursor in `display`, after any marked text.
-        let cursor_at = if empty {
-            0
-        } else {
-            cursor_byte + marked.map(|m| m.len()).unwrap_or(0)
-        };
+        let cursor_at = if empty { 0 } else { cursor_byte };
+        let selection_bytes =
+            text_char_byte(&text, selection.start)..text_char_byte(&text, selection.end);
         let mut start = 0;
         let mut cursor_pos = None;
         for (row, text) in display.split('\n').enumerate() {
@@ -323,7 +454,35 @@ impl gpui::Element for Field {
                 window
                     .text_system()
                     .shape_line(text.to_owned().into(), font_size, &[run], None);
-            let origin = gpui::point(bounds.origin.x, bounds.origin.y + line_height * row as f32);
+            let end = start + text.len();
+            if self.focus.is_focused(window) && cursor_at >= start && cursor_at <= end {
+                let caret_x = line.x_for_index(cursor_at - start);
+                self.input.update(cx, |input, _| {
+                    input.scroll_x = input
+                        .scroll_x
+                        .min(caret_x)
+                        .max(caret_x - (bounds.size.width - px(2.0)).max(px(0.0)))
+                        .max(px(0.0));
+                });
+            }
+            let scroll_x = self.input.read(cx).scroll_x;
+            let origin = gpui::point(
+                bounds.origin.x - scroll_x,
+                bounds.origin.y + line_height * row as f32,
+            );
+            if !selection.is_empty() && !empty {
+                let from = selection_bytes.start.saturating_sub(start).min(text.len());
+                let to = selection_bytes.end.saturating_sub(start).min(text.len());
+                if from < to {
+                    window.paint_quad(fill(
+                        Bounds::new(
+                            gpui::point(origin.x + line.x_for_index(from), origin.y),
+                            gpui::size(line.x_for_index(to) - line.x_for_index(from), line_height),
+                        ),
+                        fg.opacity(0.2),
+                    ));
+                }
+            }
             let _ = line.paint(origin, line_height, gpui::TextAlign::Left, None, window, cx);
             let end = start + text.len();
             if cursor_pos.is_none() && cursor_at <= end {
@@ -345,9 +504,10 @@ impl gpui::Element for Field {
 }
 
 impl Render for TextInput {
-    fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+    fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         div()
             .w_full()
+            .overflow_hidden()
             .px_2()
             .py_1()
             .bg(self.bg)
@@ -356,9 +516,68 @@ impl Render for TextInput {
             .track_focus(&self.focus_handle)
             .key_context("TextInput")
             .on_key_down(cx.listener(Self::key_down))
+            .on_action(cx.listener(Self::paste))
+            .on_action(cx.listener(Self::copy))
+            .on_action(cx.listener(Self::select_all))
+            .on_mouse_down(
+                MouseButton::Left,
+                cx.listener(|this, e: &gpui::MouseDownEvent, window, cx| {
+                    this.clicked(e.position, e.modifiers.shift, window, cx)
+                }),
+            )
+            .border_1()
+            .border_color(if self.focus_handle.is_focused(_window) {
+                self.fg.opacity(0.65)
+            } else {
+                self.fg.opacity(0.18)
+            })
             .child(Field {
                 input: cx.entity(),
                 focus: self.focus_handle.clone(),
             })
+    }
+}
+
+fn text_char_byte(text: &str, index: usize) -> usize {
+    text.char_indices()
+        .nth(index)
+        .map(|(i, _)| i)
+        .unwrap_or(text.len())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[gpui::test]
+    fn composition_replaces_the_selected_unicode_range_and_commits_once(
+        cx: &mut gpui::TestAppContext,
+    ) {
+        let handle =
+            cx.add_window(|_, cx| TextInput::new("Note", gpui::white(), gpui::black(), cx));
+        handle
+            .update(cx, |input, window, cx| {
+                input.multiline = true;
+                input.set_text("A🧭Z", cx);
+                input.replace_and_mark_text_in_range(Some(1..3), "ㅎ", Some(1..1), window, cx);
+                assert_eq!(input.text(), "AㅎZ");
+                assert_eq!(input.marked_text_range(window, cx), Some(1..2));
+                input.replace_and_mark_text_in_range(None, "한", Some(1..1), window, cx);
+                assert_eq!(
+                    input.text(),
+                    "A한Z",
+                    "composition replaces, never duplicates, its old text"
+                );
+                input.replace_text_in_range(None, "한국", window, cx);
+                assert_eq!(input.text(), "A한국Z");
+                assert_eq!(input.marked_text_range(window, cx), None);
+                assert_eq!(
+                    input.selected_text_range(false, window, cx).unwrap().range,
+                    3..3
+                );
+                input.replace_text_in_range(Some(1..3), "🧭\nNote", window, cx);
+                assert_eq!(input.text(), "A🧭\nNoteZ");
+            })
+            .unwrap();
     }
 }
