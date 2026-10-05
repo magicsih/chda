@@ -51,6 +51,18 @@ end
 # This also runs on fish 4, whose own prompt marking needs no integration.
 if status is-interactive; and set -q CHDA_CODEX_TITLE_CONFIG; and not functions -q codex
     function codex --wraps codex
-        command codex -c "$CHDA_CODEX_TITLE_CONFIG" $argv
+        if set -q CHDA_CODEX_NOTIFY_CONFIG
+            command codex -c "$CHDA_CODEX_TITLE_CONFIG" -c "$CHDA_CODEX_NOTIFY_CONFIG" $argv
+        else
+            command codex -c "$CHDA_CODEX_TITLE_CONFIG" $argv
+        end
+    end
+end
+
+if status is-interactive; and set -q CHDA_HOOK_BIN; and set -q CHDA_CLAUDE_BINARY; and not functions -q claude
+    function claude --wraps claude
+        set -l _chda_settings ("$CHDA_HOOK_BIN" agent-settings claude)
+        or return $status
+        command "$CHDA_CLAUDE_BINARY" --settings "$_chda_settings" $argv
     end
 end

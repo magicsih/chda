@@ -98,3 +98,16 @@ CHDA_REAL=1 cargo test --release -p chda-agents index_real_sessions -- --ignored
 # Parse and frame throughput
 CHDA_BENCH_FILE=/path/to/big.log cargo test --release -p chda-term bench -- --ignored --nocapture
 ```
+
+## macOS issue release regressions
+
+navigation::* covers recent-pane reuse, exact sidebar identity, manual
+collapse under background output, Unicode clipboard insertion, previous
+working activity and multi-window IPC/navigation/persistence. The wrapped
+path scenario activates every row of a three-row path whose prefix exists.
+A macOS integration test binds a real localhost listener and verifies its
+owning process, listener removal and unknown initial CPU. Quota parsing tests
+cover missing windows, multiple limits and account/session scope.
+
+These tests do not replace native popup, narrow/light-theme, Pages layout
+and real CLI resume verification. Record final release evidence separately.

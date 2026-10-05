@@ -306,6 +306,8 @@ pub struct PaneInfo {
     pub bell: bool,
     /// Milliseconds since the epoch of the last output or input.
     pub last_activity: u64,
+    /// Pre-restart work timestamp, separate from this runtime output.
+    pub previous_activity: Option<u64>,
     /// The coding agent running in the pane, as its hooks report it.
     pub agent: Option<PaneAgent>,
     /// A runtime event explicitly named this pane; saved conversations and
@@ -354,7 +356,6 @@ pub struct Workspace {
     tabs: Vec<Tab>,
     active: Option<TabId>,
     panes: std::collections::BTreeMap<PaneId, PaneInfo>,
-    next_id: u64,
     pub title_mode: TitleMode,
 }
 
@@ -364,8 +365,8 @@ impl Workspace {
     }
 
     fn next(&mut self) -> u64 {
-        self.next_id += 1;
-        self.next_id
+        static NEXT: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(1);
+        NEXT.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
     }
 
     pub fn tabs(&self) -> &[Tab] {

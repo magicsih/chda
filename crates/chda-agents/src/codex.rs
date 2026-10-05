@@ -55,6 +55,14 @@ pub fn notify_override(hook_bin: &Path, existing: Option<&[String]>) -> String {
     format!("notify=[{}]", quoted.join(","))
 }
 
+/// Same notify bridge for menu launches and commands typed in an integrated shell.
+pub fn notify_config(hook_bin: &Path) -> String {
+    let existing = codex_home()
+        .and_then(|h| fs::read_to_string(h.join("config.toml")).ok())
+        .and_then(|t| existing_notify(&t));
+    notify_override(hook_bin, existing.as_deref())
+}
+
 /// Per-launch title format, shared by menu launches and interactive shells.
 /// No user config or notify command is changed.
 pub const CODEX_TITLE_CONFIG: &str = "tui.terminal_title=[\"activity\",\"app-name\",\"run-state\"]";
@@ -112,11 +120,8 @@ impl AgentAdapter for CodexAdapter {
     fn launch_command(&self, cwd: &Path, resume: Option<&SessionId>, hook_bin: &Path) -> Command {
         let mut cmd = Command::new("codex");
         cmd.current_dir(cwd);
-        let existing = codex_home()
-            .and_then(|h| fs::read_to_string(h.join("config.toml")).ok())
-            .and_then(|t| existing_notify(&t));
         cmd.arg("-c")
-            .arg(notify_override(hook_bin, existing.as_deref()))
+            .arg(notify_config(hook_bin))
             .arg("-c")
             .arg(CODEX_TITLE_CONFIG);
         if let Some(id) = resume {

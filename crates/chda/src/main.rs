@@ -6,6 +6,22 @@
 fn main() {
     let args: Vec<String> = std::env::args().skip(1).collect();
     match args.first().map(String::as_str) {
+        Some("agent-settings") if args.get(1).map(String::as_str) == Some("claude") => {
+            let result = std::env::var_os("HOME")
+                .map(std::path::PathBuf::from)
+                .zip(chda_agents::hook::data_dir())
+                .zip(std::env::current_dir().ok())
+                .zip(std::env::current_exe().ok())
+                .ok_or_else(|| std::io::Error::other("agent settings locations unavailable"))
+                .and_then(|(((home, dir), cwd), bin)| {
+                    chda_agents::statusline::launch_settings(&home, &cwd, &dir, &bin)
+                });
+            match result {
+                Ok(path) => println!("{}", path.display()),
+                Err(_) => std::process::exit(1),
+            }
+        }
+        Some("statusline") => std::process::exit(chda_agents::statusline::main(&args[1..])),
         Some("hook") => std::process::exit(chda_agents::hook_main(&args[1..])),
         Some("note") => std::process::exit(chda_core::note_main(&args[1..])),
         Some("mcp") => std::process::exit(chda_agents::mcp_main(&args[1..])),

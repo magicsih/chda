@@ -58,6 +58,15 @@ impl AgentAdapter for ClaudeAdapter {
         "CC".into()
     }
 
+    fn executable(&self, home: &Path, path: &std::ffi::OsStr) -> Option<PathBuf> {
+        which("claude", path).or_else(|| {
+            let native = home.join(".local/bin/claude");
+            chda_pty::is_executable(&native)
+                .then(|| native.canonicalize().ok())
+                .flatten()
+        })
+    }
+
     fn is_installed(&self, path: &std::ffi::OsStr) -> bool {
         which("claude", path).is_some()
     }
@@ -481,5 +490,43 @@ mod tests {
             project_dir_name(Path::new("/src/app.worktrees/feat_x")),
             "-src-app-worktrees-feat-x"
         );
+    }
+}
+
+#[cfg(test)]
+mod executable_tests {
+    use super::*;
+    #[test]
+    fn path_install_wins_and_native_install_is_validated() {
+        let home =
+            std::env::temp_dir().join(format!("chda-claude-executable-{}", std::process::id()));
+        let path = home.join("shell/bin");
+        std::fs::create_dir_all(&path).unwrap();
+        std::fs::create_dir_all(home.join(".local/bin")).unwrap();
+        let adapter = ClaudeAdapter;
+        assert!(
+            adapter
+                .executable(&home, std::ffi::OsStr::new(""))
+                .is_none()
+        );
+        let native = home.join(".local/bin/claude");
+        std::fs::write(&native, "not executable").unwrap();
+        assert!(
+            adapter
+                .executable(&home, std::ffi::OsStr::new(""))
+                .is_none()
+        );
+        std::fs::copy(std::env::current_exe().unwrap(), &native).unwrap();
+        assert_eq!(
+            adapter.executable(&home, std::ffi::OsStr::new("")).unwrap(),
+            native.canonicalize().unwrap()
+        );
+        let shell = path.join("claude");
+        std::fs::copy(std::env::current_exe().unwrap(), &shell).unwrap();
+        assert_eq!(
+            adapter.executable(&home, path.as_os_str()).unwrap(),
+            shell.canonicalize().unwrap()
+        );
+        std::fs::remove_dir_all(home).unwrap();
     }
 }

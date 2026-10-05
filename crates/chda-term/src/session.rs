@@ -130,6 +130,7 @@ enum Msg {
 
 /// Handle to a running session. Dropping it ends the child process.
 pub struct Session {
+    child_pid: Option<u32>,
     tx: Sender<Msg>,
     frame: Arc<Mutex<Arc<Frame>>>,
     thread: Option<thread::JoinHandle<()>>,
@@ -142,6 +143,9 @@ impl std::fmt::Debug for Session {
 }
 
 impl Session {
+    pub fn child_pid(&self) -> Option<u32> {
+        self.child_pid
+    }
     /// Spawn the child and start the threads. `events` receives every
     /// [`Event`]; `wake` is called after each event so an event loop that
     /// cannot block on the channel can poll it.
@@ -173,6 +177,7 @@ impl Session {
                 env: &env,
             },
         )?;
+        let child_pid = pty.pid();
         let reader = pty.reader()?;
 
         let (tx, rx) = mpsc::channel();
@@ -187,6 +192,7 @@ impl Session {
         };
 
         Ok(Self {
+            child_pid,
             tx,
             frame,
             thread: Some(thread),

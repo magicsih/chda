@@ -490,3 +490,21 @@ mod tests {
         assert_eq!(link.cells, vec![(0, 6, 9)]);
     }
 }
+
+#[cfg(test)]
+mod terminal_wrap_regression {
+    use super::*;
+    use crate::{Size, Terminal};
+    #[test]
+    fn real_terminal_frames_preserve_complete_wrapped_paths() {
+        let path = "/tmp/prefix/long-directory/another-directory/file.rs:12:5";
+        let mut terminal = Terminal::new(Size { cols: 20, rows: 8 }, 1_000_000).unwrap();
+        terminal.feed(path.as_bytes());
+        let frame = terminal.frame().unwrap();
+        assert!(frame.rows[0].wrapped, "{:?}", frame.rows);
+        for row in 0..3 {
+            let links = links_at(&frame, 4, row);
+            assert!(links.iter().any(|l| matches!(&l.target, LinkTarget::Path { path, line: Some(12), column: Some(5) } if path == "/tmp/prefix/long-directory/another-directory/file.rs")), "row {row}: {links:?}");
+        }
+    }
+}

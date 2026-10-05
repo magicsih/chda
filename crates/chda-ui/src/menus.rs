@@ -54,6 +54,7 @@ fn menus() -> Vec<Menu> {
             MenuItem::action("Quit chda", Quit),
         ]),
         Menu::new("File").items([
+            MenuItem::action("New Window", NewWindow),
             MenuItem::action("New Tab", NewTab),
             MenuItem::action("New Worktree...", NewWorktree),
             MenuItem::action("Add Repository...", AddRepo),

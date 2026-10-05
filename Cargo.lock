@@ -860,6 +860,7 @@ dependencies = [
 name = "chda-agents"
 version = "0.1.14"
 dependencies = [
+ "chda-pty",
  "memchr",
  "serde",
  "serde_json",
@@ -917,6 +918,7 @@ dependencies = [
  "block2 0.6.2",
  "chda-config",
  "chda-core",
+ "chda-pty",
  "chda-term",
  "futures",
  "gpui",
@@ -928,6 +930,7 @@ dependencies = [
  "objc2-user-notifications",
  "pulldown-cmark",
  "serde_json",
+ "sysinfo",
 ]
 
 [[package]]

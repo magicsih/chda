@@ -120,6 +120,23 @@ fi
 if [[ $- == *i* && -n "${CHDA_CODEX_TITLE_CONFIG-}" ]]; then
     case $(builtin type -t codex) in
         alias|function) ;;
-        *) function codex { command codex -c "$CHDA_CODEX_TITLE_CONFIG" "$@"; } ;;
+        *) function codex {
+            if [[ -n "${CHDA_CODEX_NOTIFY_CONFIG-}" ]]; then
+                command codex -c "$CHDA_CODEX_TITLE_CONFIG" -c "$CHDA_CODEX_NOTIFY_CONFIG" "$@"
+            else
+                command codex -c "$CHDA_CODEX_TITLE_CONFIG" "$@"
+            fi
+        } ;;
+    esac
+fi
+
+if [[ $- == *i* && -n "${CHDA_HOOK_BIN-}" && -n "${CHDA_CLAUDE_BINARY-}" ]]; then
+    case $(builtin type -t claude) in
+        alias|function) ;;
+        *) function claude {
+            local _chda_settings
+            _chda_settings=$("$CHDA_HOOK_BIN" agent-settings claude) || return $?
+            command "$CHDA_CLAUDE_BINARY" --settings "$_chda_settings" "$@"
+        } ;;
     esac
 fi

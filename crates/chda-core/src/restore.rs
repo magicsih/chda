@@ -63,6 +63,8 @@ pub enum SavedTabContent {
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum SavedNode {
     Pane {
+        #[serde(default)]
+        last_activity: u64,
         #[serde(default, skip_serializing_if = "Option::is_none")]
         cwd: Option<PathBuf>,
         /// Main worktree of the repository the pane was in, the fallback
@@ -108,10 +110,12 @@ impl SavedWindow {
 
     /// The saved window, if there is a readable one with at least one tab.
     pub fn load(data_dir: &Path) -> Option<Self> {
-        let text = fs::read_to_string(Self::path(data_dir)).ok()?;
-        serde_json::from_str::<Self>(&text)
-            .ok()
-            .filter(|w| !w.tabs.is_empty())
+        let saved = SavedSession::load(data_dir)?;
+        saved
+            .windows
+            .get(saved.active_window)
+            .or(saved.windows.first())
+            .cloned()
     }
 
     /// Write the window, or remove the file when there are no tabs left (the
@@ -174,6 +178,7 @@ impl Workspace {
                 let info = self.pane(*p);
                 let agent = info.and_then(|i| i.agent_session.clone());
                 SavedNode::Pane {
+                    last_activity: info.map_or(0, |i| i.last_activity),
                     cwd: info.and_then(|i| i.cwd.clone()),
                     repo: info.and_then(|i| i.repo.clone()),
                     agent: agent.as_ref().map(|a| a.agent.clone()),
@@ -239,6 +244,7 @@ impl Workspace {
     ) -> Node {
         match node {
             SavedNode::Pane {
+                last_activity,
                 cwd,
                 repo,
                 agent,
@@ -258,6 +264,8 @@ impl Workspace {
                     .map(|(agent, session)| AgentSessionRef { agent, session });
                 let pane = self.add_pane(PaneInfo {
                     cwd: resolved.clone(),
+                    last_activity: *last_activity,
+                    previous_activity: (*last_activity > 0).then_some(*last_activity),
                     agent_session: agent.clone(),
                     ..Default::default()
                 });
@@ -397,5 +405,43 @@ mod tests {
             Some("History A")
         );
         assert_eq!(restored.active_index(), Some(1));
+    }
+}
+
+/// All open windows, with the active window separate from each active tab.
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
+pub struct SavedSession {
+    pub windows: Vec<SavedWindow>,
+    pub active_window: usize,
+}
+impl SavedSession {
+    pub fn load(data_dir: &Path) -> Option<Self> {
+        let text = fs::read_to_string(SavedWindow::path(data_dir)).ok()?;
+        serde_json::from_str::<Self>(&text)
+            .ok()
+            .filter(|s| !s.windows.is_empty())
+            .or_else(|| {
+                serde_json::from_str::<SavedWindow>(&text)
+                    .ok()
+                    .filter(|w| !w.tabs.is_empty())
+                    .map(|window| Self {
+                        windows: vec![window],
+                        active_window: 0,
+                    })
+            })
+    }
+    pub fn save(&self, data_dir: &Path) -> io::Result<()> {
+        if self.windows.is_empty() {
+            return SavedWindow::default().save(data_dir);
+        }
+        let path = SavedWindow::path(data_dir);
+        let text = serde_json::to_string_pretty(self)?;
+        if fs::read_to_string(&path).ok().as_deref() == Some(text.as_str()) {
+            return Ok(());
+        }
+        fs::create_dir_all(data_dir)?;
+        let tmp = path.with_extension("json.tmp");
+        fs::write(&tmp, text)?;
+        fs::rename(tmp, path)
     }
 }

@@ -170,6 +170,9 @@ pub struct TerminalView {
 impl EventEmitter<TerminalEvent> for TerminalView {}
 
 impl TerminalView {
+    pub(crate) fn child_pid(&self) -> Option<u32> {
+        self.session.child_pid()
+    }
     pub fn new(
         settings: Settings,
         env: &crate::environment::Environment,
@@ -202,6 +205,28 @@ impl TerminalView {
             chda_core::agents::CODEX_TITLE_ENV.into(),
             chda_core::agents::CODEX_TITLE_CONFIG.into(),
         ));
+        if env.collect_telemetry {
+            if let Ok(bin) = std::env::current_exe() {
+                options
+                    .env
+                    .push(("CHDA_HOOK_BIN".into(), bin.to_string_lossy().into_owned()));
+                options.env.push((
+                    "CHDA_CODEX_NOTIFY_CONFIG".into(),
+                    chda_core::agents::codex_notify_config(&bin),
+                ));
+            }
+            if let Some(adapter) = env
+                .adapters
+                .iter()
+                .find(|a| a.id() == chda_core::agents::AgentId::Claude)
+                && let Some(executable) = adapter.executable(&env.home(), &env.search_path())
+            {
+                options.env.push((
+                    "CHDA_CLAUDE_BINARY".into(),
+                    executable.to_string_lossy().into_owned(),
+                ));
+            }
+        }
         // Agents started in this pane report it back with their hook events.
         options
             .env

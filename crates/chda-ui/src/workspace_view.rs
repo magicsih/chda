@@ -40,6 +40,7 @@ actions!(
     workspace,
     [
         NewTab,
+        NewWindow,
         CloseSurface,
         NextTab,
         PrevTab,
@@ -248,6 +249,7 @@ struct NewWorktreeSheet {
     input: Entity<TextInput>,
     /// Optional note: what the branch is for.
     note: Entity<TextInput>,
+    busy: bool,
     _subs: [Subscription; 2],
     error: Option<String>,
 }
@@ -279,7 +281,6 @@ pub struct WorkspaceView {
     sidebar_drag: bool,
     adapters: Arc<Vec<Box<dyn AgentAdapter>>>,
     session_cache: Arc<Mutex<SessionCache>>,
-    hook_events: Option<mpsc::Receiver<Incoming>>,
     refreshing: HashSet<PathBuf>,
     refresh_again: HashSet<PathBuf>,
     watcher: Option<RepoWatcher>,
@@ -327,6 +328,10 @@ pub struct WorkspaceView {
     /// The app is quitting: panes going away must not shrink the saved
     /// session.
     quitting: bool,
+    self_weak: gpui::WeakEntity<Self>,
+    pub(crate) status_bar: crate::status_bar::StatusBar,
+    pane_navigation: HashMap<PaneId, u64>,
+    initializing_panes: HashSet<PaneId>,
 }
 
 impl WorkspaceView {
@@ -352,10 +357,34 @@ impl WorkspaceView {
             this.on_sidebar_event(event.clone(), window, cx)
         });
         let adapters = Arc::clone(&env.adapters);
-        let hook_events = env
-            .data_dir
-            .clone()
-            .and_then(|d| Self::start_hook_receiver(d, window, cx));
+        let window_handle = window.window_handle();
+        env.windows
+            .borrow_mut()
+            .entries
+            .push(crate::window_registry::WindowEntry {
+                window: window_handle,
+                view: cx.entity().downgrade(),
+                saved: SavedWindow::default(),
+                panes: HashMap::new(),
+            });
+        Self::start_hook_receiver(env.clone(), window, cx);
+        if env.windows.borrow().entries.len() == 1 {
+            let registry = env.windows.clone();
+            let directory = env.data_dir.clone();
+            let restore = config.restore_session;
+            cx.on_window_closed(move |cx, _| {
+                let mut registry = registry.borrow_mut();
+                if registry.quitting {
+                    return;
+                }
+                let windows = cx.windows();
+                registry.entries.retain(|e| windows.contains(&e.window));
+                if restore && let Some(dir) = directory.as_deref() {
+                    let _ = registry.snapshot().save(dir);
+                }
+            })
+            .detach();
+        }
         let (watcher, watch_events) = Self::start_watcher(window, cx);
 
         let mut ws = Workspace::new();
@@ -382,7 +411,6 @@ impl WorkspaceView {
                     .map(SessionCache::load)
                     .unwrap_or_default(),
             )),
-            hook_events,
             refreshing: HashSet::new(),
             refresh_again: HashSet::new(),
             watcher,
@@ -411,6 +439,10 @@ impl WorkspaceView {
             last_jump: None,
             bounds: None,
             quitting: false,
+            self_weak: cx.entity().downgrade(),
+            status_bar: Default::default(),
+            pane_navigation: HashMap::new(),
+            initializing_panes: HashSet::new(),
             env,
         };
         this.note_bounds(window);
@@ -422,13 +454,14 @@ impl WorkspaceView {
         cx.on_app_quit(|this, _| {
             this.save_session();
             this.quitting = true;
+            this.env.windows.borrow_mut().quitting = true;
             async {}
         })
         .detach();
         this.start_notification_clicks(window, cx);
         cx.observe_window_activation(window, |this, window, cx| {
             if window.is_window_active() {
-                this.reviewed_focused(cx);
+                this.focus_active(window, cx);
             }
         })
         .detach();
@@ -464,6 +497,9 @@ impl WorkspaceView {
         this.refresh_sessions(cx);
         Self::schedule_refreshes(window, cx);
         Self::schedule_activity_ages(cx);
+        if this.env.collect_telemetry {
+            Self::schedule_telemetry(window, cx);
+        }
         Self::schedule_release_checks(window, cx);
         // Looking up apps and drawing their icons takes tens of milliseconds
         // on a cold start; do it after the first frame.
@@ -492,27 +528,37 @@ impl WorkspaceView {
 
     /// Listen for `chda hook` on the local socket and drain the fallback log.
     fn start_hook_receiver(
-        data_dir: PathBuf,
+        env: std::rc::Rc<Environment>,
         window: &mut Window,
         cx: &mut Context<Self>,
-    ) -> Option<mpsc::Receiver<Incoming>> {
-        let (tx, rx) = mpsc::channel();
+    ) {
         let (wake_tx, mut wake_rx) = unbounded::<()>();
-        let socket = ipc::socket_path(&data_dir);
-        ipc::serve(&socket, tx.clone(), move || {
-            let _ = wake_tx.unbounded_send(());
-        })
-        .ok()?;
-        // Events logged while no app was running.
-        let log = data_dir.join("events.jsonl");
-        if let Ok(text) = std::fs::read_to_string(&log) {
-            for line in text.lines() {
-                if let Ok(ev) = serde_json::from_str::<HookEvent>(line) {
-                    let _ = tx.send(Incoming::Event(ev));
+        let wake = env.windows.borrow().wake.clone();
+        wake.lock().unwrap().push(wake_tx.clone());
+        if env.windows.borrow().events.is_none()
+            && let Some(dir) = env.data_dir.as_ref()
+        {
+            let (tx, rx) = mpsc::channel();
+            if ipc::serve(&ipc::socket_path(dir), tx.clone(), move || {
+                wake.lock()
+                    .unwrap()
+                    .retain(|sender| sender.unbounded_send(()).is_ok());
+            })
+            .is_ok()
+            {
+                let log = dir.join("events.jsonl");
+                if let Ok(text) = std::fs::read_to_string(&log) {
+                    for line in text.lines() {
+                        if let Ok(event) = serde_json::from_str::<HookEvent>(line) {
+                            let _ = tx.send(Incoming::Event(event));
+                        }
+                    }
+                    let _ = std::fs::remove_file(log);
                 }
+                env.windows.borrow_mut().events = Some(rx);
             }
-            let _ = std::fs::remove_file(&log);
         }
+        let _ = wake_tx.unbounded_send(());
         cx.spawn_in(window, async move |this, cx| {
             while wake_rx.next().await.is_some() {
                 if this
@@ -524,7 +570,6 @@ impl WorkspaceView {
             }
         })
         .detach();
-        Some(rx)
     }
 
     /// Watch `.git` directories so ref and worktree changes refresh at once.
@@ -705,7 +750,7 @@ impl WorkspaceView {
             self.refresh_all(cx);
         }
         self.sync_panes(cx);
-        self.sync_title(window);
+        self.sync_title(window, cx);
         self.sidebar.update(cx, |_, cx| cx.notify());
     }
 
@@ -716,16 +761,69 @@ impl WorkspaceView {
     }
 
     fn drain_hook_events(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        let Some(rx) = &self.hook_events else {
-            return;
-        };
-        let incoming: Vec<Incoming> = rx.try_iter().collect();
+        let incoming: Vec<Incoming> = self
+            .env
+            .windows
+            .borrow()
+            .events
+            .as_ref()
+            .map(|rx| rx.try_iter().collect())
+            .unwrap_or_default();
         for item in incoming {
-            match item {
-                Incoming::Event(ev) => self.apply_hook_event(ev, window, cx),
-                Incoming::Request(request, reply) => {
-                    let _ = reply.send(self.handle_request(request, window, cx));
+            let raw = match &item {
+                Incoming::Quota(q) => q.pane,
+                Incoming::Event(e) => e.pane,
+                Incoming::Request(..) => None,
+            };
+            let target = {
+                let registry = self.env.windows.borrow();
+                registry
+                    .entries
+                    .iter()
+                    .find(|entry| match raw {
+                        Some(raw) => entry.panes.keys().any(|p| p.raw() == raw),
+                        None => Some(entry.window.window_id()) == registry.active,
+                    })
+                    .cloned()
+            };
+            if let Some(target) = target
+                && target.window != window.window_handle()
+            {
+                let _ = target.window.update(cx, |_, window, cx| {
+                    let _ = target
+                        .view
+                        .update(cx, |view, cx| view.receive_hook(item, window, cx));
+                });
+            } else {
+                self.receive_hook(item, window, cx);
+            }
+        }
+    }
+
+    fn receive_hook(&mut self, item: Incoming, window: &mut Window, cx: &mut Context<Self>) {
+        match item {
+            Incoming::Quota(report) => {
+                if let Some(raw) = report.pane
+                    && let Some(pane) = self.panes.keys().copied().find(|p| p.raw() == raw)
+                {
+                    if let Some(session) = report.session.clone() {
+                        self.ws.set_agent_session(
+                            pane,
+                            Some(AgentSessionRef {
+                                agent: report.provider.clone(),
+                                session,
+                            }),
+                        );
+                        self.initializing_panes.remove(&pane);
+                    }
+                    self.status_bar.report(report);
+                    self.save_session();
+                    cx.notify();
                 }
+            }
+            Incoming::Event(ev) => self.apply_hook_event(ev, window, cx),
+            Incoming::Request(request, reply) => {
+                let _ = reply.send(self.handle_request(request, window, cx));
             }
         }
     }
@@ -823,7 +921,10 @@ impl WorkspaceView {
         else {
             return Err(Reply::err(format!("unknown agent {id}")));
         };
-        if !adapter.is_installed(&self.env.search_path()) {
+        if !adapter
+            .executable(&self.env.home(), &self.env.search_path())
+            .is_some()
+        {
             return Err(Reply::err(format!(
                 "{} is not on PATH",
                 adapter.display_name()
@@ -863,6 +964,11 @@ impl WorkspaceView {
                     .is_some_and(|s| !ev.session_id.is_empty() && s.session != ev.session_id))
         {
             return;
+        }
+        if matches!(ev.kind, HookKind::SessionStart | HookKind::PromptSubmitted)
+            && let Some(pane) = ev.pane.and_then(|raw| self.ws.pane_by_raw(raw))
+        {
+            self.initializing_panes.remove(&pane);
         }
         // SessionStart also fires on compaction/resume within a running
         // conversation. It must not turn an existing busy session idle.
@@ -1285,12 +1391,103 @@ impl WorkspaceView {
     }
 
     /// Repaint ages without syncing panes, writing sessions or polling git.
+    fn schedule_telemetry(window: &mut Window, cx: &mut Context<Self>) {
+        let sampler = Arc::new(Mutex::new(platform::resources::Sampler::default()));
+        cx.spawn(async move |this, cx| {
+            let mut tick = 0u64;
+            loop {
+                let selection = this.update(cx, |view, cx| {
+                    let pane = view.ws.focused_pane();
+                    let pid = pane.and_then(|p| view.panes.get(&p)?.0.read(cx).child_pid());
+                    (pane, pid)
+                });
+                let Ok((pane, pid)) = selection else {
+                    break;
+                };
+                let sampler = sampler.clone();
+                let task = cx.background_spawn(async move {
+                    pid.ok_or_else(|| "No active PTY process".into())
+                        .and_then(|pid| {
+                            sampler
+                                .lock()
+                                .map_err(|_| "Resource sampler is unavailable".to_owned())?
+                                .sample(pid, now_ms(), tick % 3 == 0)
+                        })
+                });
+                let result = task.await;
+                if this
+                    .update(cx, |view, cx| {
+                        if pane != view.ws.focused_pane() {
+                            return;
+                        }
+                        view.status_bar.resource_pane = pane;
+                        match result {
+                            Ok(resources) => {
+                                view.status_bar.resources = Some(resources);
+                                view.status_bar.resource_error = None;
+                            }
+                            Err(e) => {
+                                view.status_bar.resources = None;
+                                view.status_bar.resource_error = Some(e);
+                            }
+                        }
+                        cx.notify();
+                    })
+                    .is_err()
+                {
+                    break;
+                }
+                tick += 1;
+                cx.background_executor().timer(Duration::from_secs(2)).await;
+            }
+        })
+        .detach();
+        cx.spawn_in(window, async move |this, cx| {
+            loop {
+                let executable = this.update(cx, |view, _| {
+                    chda_core::agents::which("codex", &view.env.search_path())
+                });
+                let Ok(executable) = executable else {
+                    break;
+                };
+                let task = cx.background_spawn(async move {
+                    executable
+                        .ok_or_else(|| "Codex CLI is not installed".into())
+                        .and_then(|path| chda_core::agents::quota::read_codex(&path, now_ms()))
+                });
+                let result = task.await;
+                if this
+                    .update(cx, |view, cx| {
+                        match result {
+                            Ok(quota) => {
+                                view.status_bar.report(quota);
+                                view.status_bar.codex_error = None;
+                            }
+                            Err(e) => view.status_bar.codex_error = Some(e),
+                        }
+                        cx.notify();
+                    })
+                    .is_err()
+                {
+                    break;
+                }
+                cx.background_executor()
+                    .timer(Duration::from_secs(60))
+                    .await;
+            }
+        })
+        .detach();
+    }
+
     fn schedule_activity_ages(cx: &mut Context<Self>) {
         cx.spawn(async move |this, cx| {
             loop {
                 cx.background_executor().timer(Duration::from_secs(1)).await;
                 if this
                     .update(cx, |view, cx| {
+                        if view.env.collect_telemetry {
+                            cx.notify();
+                        }
                         if view.sidebar_visible {
                             view.sidebar.update(cx, |s, cx| {
                                 if !s.model.active_tabs.is_empty() {
@@ -1613,6 +1810,7 @@ impl WorkspaceView {
             })
             .collect();
         for p in panes {
+            self.initializing_panes.insert(p.pane);
             let command = match &p.agent {
                 Some(conversation) if self.config.restore_agents => {
                     let cwd = p.cwd.clone().unwrap_or_default();
@@ -1666,7 +1864,10 @@ impl WorkspaceView {
             ));
         };
         let name = adapter.display_name();
-        if !adapter.is_installed(&self.env.search_path()) {
+        if !adapter
+            .executable(&self.env.home(), &self.env.search_path())
+            .is_some()
+        {
             return Err(format!(
                 "{name} is not on PATH, opened a shell in {}",
                 cwd.display()
@@ -1705,15 +1906,36 @@ impl WorkspaceView {
     /// Save tabs, splits and directories for the next launch. Cheap when
     /// nothing changed: the file is only written when its content differs.
     fn save_session(&self) {
-        if self.quitting || !self.config.restore_session {
+        if self.quitting {
             return;
         }
-        let Some(dir) = self.env.data_dir.as_deref() else {
-            return;
-        };
         let mut saved = self.ws.snapshot();
         saved.bounds = self.bounds;
-        let _ = saved.save(dir);
+        let mut registry = self.env.windows.borrow_mut();
+        if let Some(entry) = registry
+            .entries
+            .iter_mut()
+            .find(|e| e.view == self.self_weak)
+        {
+            entry.saved = saved;
+            entry.panes =
+                self.ws
+                    .tabs()
+                    .iter()
+                    .flat_map(|t| t.panes())
+                    .filter_map(|p| {
+                        self.ws.pane(p)?.cwd.clone().map(|cwd| {
+                            (p, (cwd, self.pane_navigation.get(&p).copied().unwrap_or(0)))
+                        })
+                    })
+                    .collect();
+        }
+        if self.config.restore_session
+            && !registry.restoring
+            && let Some(dir) = self.env.data_dir.as_deref()
+        {
+            let _ = registry.snapshot().save(dir);
+        }
     }
 
     fn sync_panes(&mut self, cx: &mut Context<Self>) {
@@ -1766,6 +1988,11 @@ impl WorkspaceView {
                         chda_config::ActiveLabel::Branch => branch.clone().unwrap_or(title),
                     };
                     ActiveTab {
+                        agent_live: tab_ref.is_some_and(|t| {
+                            t.panes()
+                                .iter()
+                                .any(|p| self.ws.pane(*p).is_some_and(|i| i.agent_live))
+                        }),
                         branch,
                         status: tab_ref
                             .and_then(|t| self.ws.tab_agent(t))
@@ -1779,6 +2006,12 @@ impl WorkspaceView {
                                 .iter()
                                 .find(|e| e.path == r)
                                 .map(|e| e.name.clone())
+                        }),
+                        previous_activity: tab_ref.and_then(|t| {
+                            t.panes()
+                                .iter()
+                                .filter_map(|p| self.ws.pane(*p)?.previous_activity)
+                                .max()
                         }),
                         last_activity,
                     }
@@ -1836,6 +2069,7 @@ impl WorkspaceView {
             s.active_label = self.config.active_label;
             cx.notify();
         });
+        self.sync_sidebar_selection(false, cx);
         self.save_session();
         // The title bar also depends on refreshed worktree metadata.
         cx.notify();
@@ -1967,7 +2201,7 @@ impl WorkspaceView {
                 if self.ws.is_empty() {
                     // Nothing left to restore: this removes the saved session.
                     self.save_session();
-                    cx.quit();
+                    window.remove_window();
                     return;
                 }
                 self.focus_active(window, cx);
@@ -1996,9 +2230,10 @@ impl WorkspaceView {
             TerminalEvent::Focused => {
                 self.ws.focus_pane(pane);
                 self.context_menu = None;
-                self.reviewed_focused(cx);
+                self.focus_active(window, cx);
             }
             TerminalEvent::Prompt => {
+                self.initializing_panes.remove(&pane);
                 // A shell prompt after an agent ran means the agent exited.
                 let agent = self
                     .ws
@@ -2038,13 +2273,16 @@ impl WorkspaceView {
                 });
             }
             TerminalEvent::Activity(at) => {
+                if self.initializing_panes.contains(&pane) {
+                    return;
+                }
                 if let Some(info) = self.ws.pane_mut(pane) {
                     info.last_activity = *at;
                 }
                 self.sync_panes(cx);
             }
         }
-        self.sync_title(window);
+        self.sync_title(window, cx);
         cx.notify();
     }
 
@@ -2150,23 +2388,28 @@ impl WorkspaceView {
             .and_then(|pane| self.ws.pane(pane))
             .and_then(|info| info.cwd.as_deref())
             .and_then(|cwd| self.sidebar.read(cx).model.worktree_for_path(cwd))
-            .map(|(_, worktree)| worktree);
-        let Some(worktree) = worktree else {
+            .map(|(repo, worktree)| (repo, worktree));
+        let Some((repo, worktree)) = worktree else {
             return (fallback.clone(), fallback);
         };
-        let title = if tab.custom_title.is_some() {
-            fallback
-        } else {
-            worktree.note_title().map(str::to_owned).unwrap_or(fallback)
-        };
         let branch = worktree.branch.as_deref().unwrap_or("detached HEAD");
+        let task = worktree.note_title().unwrap_or(branch);
+        let title = if repo.folder {
+            repo.name.clone()
+        } else {
+            format!("{} - {task}", repo.name)
+        };
         let tooltip = match worktree
             .note
             .as_deref()
             .filter(|note| !note.trim().is_empty())
         {
-            Some(note) => format!("{note}\nBranch: {branch}"),
-            None => format!("{title}\nBranch: {branch}"),
+            Some(note) => format!(
+                "Repository: {}\n{note}\nBranch: {branch}\n{}",
+                repo.name,
+                worktree.path.display()
+            ),
+            None => format!("{title}\nBranch: {branch}\n{}", worktree.path.display()),
         };
         (title, tooltip)
     }
@@ -2442,6 +2685,16 @@ impl WorkspaceView {
         }
     }
 
+    fn sync_sidebar_selection(&mut self, navigation: bool, cx: &mut Context<Self>) {
+        let tab = self.ws.active_tab().map(|t| t.id);
+        let cwd = self
+            .focused_cwd()
+            .or_else(|| self.ws.active_tab()?.graph_repo().map(Path::to_path_buf));
+        self.sidebar.update(cx, |s, cx| {
+            s.select_context(tab, cwd.as_deref(), navigation, cx)
+        });
+    }
+
     /// Give keyboard focus to the workspace's focused pane.
     fn focus_active(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         if self
@@ -2461,18 +2714,24 @@ impl WorkspaceView {
         if let Some(active) = self.ws.active_tab() {
             self.tab_group = self.ws.tab_repo(active);
         }
+        let order = {
+            let mut registry = self.env.windows.borrow_mut();
+            registry.navigation += 1;
+            registry.active = Some(window.window_handle().window_id());
+            registry.navigation
+        };
+        if let Some(pane) = self.ws.focused_pane() {
+            self.pane_navigation.insert(pane, order);
+        }
         self.reviewed_focused(cx);
-        self.sync_title(window);
+        self.sync_sidebar_selection(true, cx);
+        self.sync_title(window, cx);
         self.save_session();
         cx.notify();
     }
 
-    fn sync_title(&self, window: &mut Window) {
-        let title = self
-            .ws
-            .active_tab()
-            .map(|t| self.ws.tab_title(t))
-            .unwrap_or_else(|| "chda".into());
+    fn sync_title(&self, window: &mut Window, cx: &App) {
+        let (title, _) = self.title_bar_text(cx);
         window.set_window_title(&title);
     }
 
@@ -2529,7 +2788,7 @@ impl WorkspaceView {
     }
 
     fn close_surface(&mut self, _: &CloseSurface, window: &mut Window, cx: &mut Context<Self>) {
-        if self.confirm.is_some() {
+        if self.confirm.is_some() || self.sheet.as_ref().is_some_and(|sheet| sheet.busy) {
             return;
         }
         if self.sheet.take().is_some()
@@ -2644,7 +2903,7 @@ impl WorkspaceView {
         }
         if self.ws.is_empty() {
             self.save_session();
-            cx.quit();
+            window.remove_window();
             return;
         }
         self.focus_active(window, cx);
@@ -2869,6 +3128,13 @@ impl WorkspaceView {
     ) {
         self.context_menu = None;
         match event {
+            SidebarEvent::RefocusTerminal => {
+                if let Some(pane) = self.ws.focused_pane()
+                    && let Some((terminal, _)) = self.panes.get(&pane)
+                {
+                    window.focus(&terminal.read(cx).focus_handle(cx), cx);
+                }
+            }
             SidebarEvent::OpenWorktree(path) => self.open_worktree(&path, window, cx),
             SidebarEvent::WorktreeMenu(path, position) => {
                 let repo = self
@@ -3094,12 +3360,69 @@ impl WorkspaceView {
             cx.notify();
             return;
         }
-        let existing = self
+        let wanted = self
             .sidebar
             .read(cx)
             .model
             .worktree_for_path(path)
-            .and_then(|(_, w)| w.panes.first().copied());
+            .map(|(_, w)| w.path.clone());
+        let existing = self
+            .ws
+            .tabs()
+            .iter()
+            .flat_map(|t| t.panes())
+            .filter(|p| {
+                self.ws
+                    .pane(*p)
+                    .and_then(|i| i.cwd.as_ref())
+                    .and_then(|cwd| self.sidebar.read(cx).model.worktree_for_path(cwd))
+                    .is_some_and(|(_, w)| Some(&w.path) == wanted.as_ref())
+            })
+            .max_by_key(|p| self.pane_navigation.get(p).copied().unwrap_or(0));
+        let local_order = existing
+            .and_then(|p| self.pane_navigation.get(&p).copied())
+            .unwrap_or(0);
+        let other = {
+            let registry = self.env.windows.borrow();
+            registry
+                .entries
+                .iter()
+                .filter(|e| e.window != window.window_handle())
+                .flat_map(|e| {
+                    e.panes.iter().filter_map(|(pane, (cwd, order))| {
+                        self.sidebar
+                            .read(cx)
+                            .model
+                            .worktree_for_path(cwd)
+                            .filter(|(_, w)| Some(&w.path) == wanted.as_ref())
+                            .map(|_| (e.clone(), *pane, *order))
+                    })
+                })
+                .max_by_key(|(_, _, order)| *order)
+        };
+        if let Some((entry, pane, order)) = other
+            && (existing.is_none() || order > local_order)
+        {
+            let focused = entry
+                .window
+                .update(cx, |_, other_window, cx| {
+                    entry
+                        .view
+                        .update(cx, |view, cx| {
+                            if !view.ws.focus_pane(pane) {
+                                return false;
+                            }
+                            other_window.activate_window();
+                            view.focus_active(other_window, cx);
+                            true
+                        })
+                        .unwrap_or(false)
+                })
+                .unwrap_or(false);
+            if focused {
+                return;
+            }
+        }
         if let Some(pane) = existing
             && self.ws.focus_pane(pane)
         {
@@ -3205,7 +3528,28 @@ impl WorkspaceView {
         resume: Option<&SessionId>,
     ) -> Option<Vec<String>> {
         let adapter = self.adapters.iter().find(|a| a.id() == agent)?;
-        let cmd = adapter.launch_command(cwd, resume, &Self::hook_bin());
+        let executable = adapter.executable(&self.env.home(), &self.env.search_path())?;
+        let original = adapter.launch_command(cwd, resume, &Self::hook_bin());
+        let mut args: Vec<std::ffi::OsString> = original.get_args().map(Into::into).collect();
+        if agent == AgentId::Claude
+            && let Some(dir) = &self.env.data_dir
+            && let Ok(settings) = chda_core::agents::statusline::launch_settings(
+                &self.env.home(),
+                cwd,
+                dir,
+                &Self::hook_bin(),
+            )
+        {
+            if let Some(index) = args.iter().position(|arg| arg == "--settings") {
+                args.drain(index..(index + 2).min(args.len()));
+            }
+            args.push("--settings".into());
+            args.push(settings.into_os_string());
+        }
+        let mut cmd = std::process::Command::new(executable);
+        cmd.args(args)
+            .envs(original.get_envs().filter_map(|(k, v)| v.map(|v| (k, v))))
+            .current_dir(cwd);
         Some(chda_core::agents::command_argv(&cmd))
     }
 
@@ -3227,7 +3571,10 @@ impl WorkspaceView {
         let Some(adapter) = self.adapters.iter().find(|a| a.id() == agent) else {
             return;
         };
-        if !adapter.is_installed(&self.env.search_path()) {
+        if !adapter
+            .executable(&self.env.home(), &self.env.search_path())
+            .is_some()
+        {
             self.status_line = Some(format!("{} is not on PATH", adapter.display_name()));
             cx.notify();
             return;
@@ -3248,7 +3595,10 @@ impl WorkspaceView {
             cx.notify();
             return;
         };
-        if !adapter.is_installed(&self.env.search_path()) {
+        if !adapter
+            .executable(&self.env.home(), &self.env.search_path())
+            .is_some()
+        {
             self.status_line = Some(format!("{} is not on PATH", adapter.display_name()));
             cx.notify();
             return;
@@ -3283,7 +3633,10 @@ impl WorkspaceView {
             let Some(adapter) = adapter else {
                 continue;
             };
-            if !adapter.is_installed(&self.env.search_path()) {
+            if !adapter
+                .executable(&self.env.home(), &self.env.search_path())
+                .is_some()
+            {
                 missing.push(adapter.display_name().to_owned());
                 continue;
             }
@@ -3800,6 +4153,9 @@ impl WorkspaceView {
                         cx: &mut Context<Self>| match event {
             TextInputEvent::Submit(_) => this.create_worktree(window, cx),
             TextInputEvent::Cancel => {
+                if this.sheet.as_ref().is_some_and(|s| s.busy) {
+                    return;
+                }
                 this.sheet = None;
                 this.focus_active(window, cx);
             }
@@ -3820,6 +4176,7 @@ impl WorkspaceView {
             suggestion,
             input,
             note,
+            busy: false,
             _subs: subs,
             error: None,
         });
@@ -3962,6 +4319,11 @@ impl WorkspaceView {
         let Some(sheet) = &mut self.sheet else {
             return;
         };
+        if sheet.busy {
+            return;
+        }
+        sheet.busy = true;
+        sheet.error = None;
         let branch = match sheet.input.read(cx).text().trim() {
             "" => sheet.suggestion.clone(),
             typed => typed.to_owned(),
@@ -3970,25 +4332,48 @@ impl WorkspaceView {
         let repo = sheet.repo.clone();
         let base = sheet.base.clone();
         let path = self.config.worktree_path(&repo, &branch);
-        match chda_core::create_worktree(&repo, &branch, &path, base.as_deref()) {
-            Ok(()) => {
-                self.sheet = None;
-                if !note.is_empty()
-                    && let Err(e) = chda_core::set_note(&repo, &branch, &note)
-                {
-                    self.status_line =
-                        Some(format!("Created {branch}, but saving its note failed: {e}"));
-                }
-                self.refresh_repo(repo, cx);
-                let command = self.default_action_argv(&path);
-                self.open_tab_at(Some(path), command, window, cx);
+        let task = cx.background_spawn({
+            let repo = repo.clone();
+            let branch = branch.clone();
+            let path = path.clone();
+            let note = note.clone();
+            async move {
+                chda_core::create_worktree(&repo, &branch, &path, base.as_deref()).map(|_| {
+                    if note.is_empty() {
+                        None
+                    } else {
+                        chda_core::set_note(&repo, &branch, &note)
+                            .err()
+                            .map(|e| e.to_string())
+                    }
+                })
             }
-            Err(e) => {
-                if let Some(sheet) = &mut self.sheet {
-                    sheet.error = Some(e.to_string());
+        });
+        cx.spawn_in(window, async move |this, cx| {
+            let result = task.await;
+            let _ = this.update_in(cx, |view, window, cx| {
+                match result {
+                    Ok(note_error) => {
+                        view.sheet = None;
+                        if let Some(e) = note_error {
+                            view.status_line =
+                                Some(format!("Created {branch}, but saving its note failed: {e}"));
+                        }
+                        view.refresh_repo(repo, cx);
+                        let command = view.default_action_argv(&path);
+                        view.open_tab_at(Some(path), command, window, cx);
+                    }
+                    Err(e) => {
+                        if let Some(sheet) = &mut view.sheet {
+                            sheet.error = Some(e.to_string());
+                            sheet.busy = false;
+                        }
+                    }
                 }
-            }
-        }
+                cx.notify();
+            });
+        })
+        .detach();
         cx.notify();
     }
 
@@ -4430,6 +4815,9 @@ impl WorkspaceView {
     }
 
     fn dismiss(&mut self, _: &Dismiss, window: &mut Window, cx: &mut Context<Self>) {
+        if self.sheet.as_ref().is_some_and(|sheet| sheet.busy) {
+            return;
+        }
         if self.confirm.is_some() {
             self.cancel_confirm(window, cx);
             return;
@@ -4462,6 +4850,8 @@ impl WorkspaceView {
             .flex()
             .flex_row()
             .w_full()
+            .id("tab-bar")
+            .overflow_x_scroll()
             .flex_shrink_0()
             .bg(blend(bg, fg, 0.06))
             .text_sm()
@@ -4514,7 +4904,7 @@ impl WorkspaceView {
                         AgentStatus::Working => format!("{name} is working"),
                         AgentStatus::WaitingInput => format!("{name} is waiting for input"),
                         AgentStatus::Review => format!("{name} finished; not looked at yet"),
-                        AgentStatus::Idle => name,
+                        AgentStatus::Idle => format!("{name} is idle; ready for another task"),
                     }
                 });
                 let dot = agent.map(|a| {
@@ -4526,13 +4916,16 @@ impl WorkspaceView {
                 });
                 div()
                     .id(("tab", i))
+                    .debug_selector(move || format!("tab-{i}"))
+                    .min_w(px(104.0))
+                    .flex_shrink_0()
                     .flex()
                     .flex_row()
                     .items_center()
                     .gap_1()
                     .px_3()
                     .py_1()
-                    .min_w_0()
+                    .max_w(px(260.0))
                     .flex_1()
                     .overflow_hidden()
                     .whitespace_nowrap()
@@ -4697,158 +5090,259 @@ impl WorkspaceView {
 
     fn render_confirm(&self, cx: &mut Context<Self>) -> Option<AnyElement> {
         let confirm = self.confirm.as_ref()?;
-        let bg = hsla(self.settings.colors.background.unwrap_or_default());
         let fg = hsla(self.settings.colors.foreground.unwrap_or_default());
-        Some(
-            deferred(
+        let destructive = matches!(
+            confirm.action,
+            MenuAction::StopAndClose { .. } | MenuAction::DeleteWorktreeAndBranch { .. }
+        );
+        let body = div()
+            .flex()
+            .flex_col()
+            .gap_4()
+            .child(
                 div()
-                    .absolute()
-                    .size_full()
-                    .top_0()
-                    .left_0()
+                    .id("confirm-sessions")
+                    .max_h(px(200.0))
+                    .overflow_y_scroll()
+                    .children(confirm.lines.iter().map(|line| {
+                        div()
+                            .text_sm()
+                            .text_color(fg.opacity(0.8))
+                            .child(line.clone())
+                    })),
+            )
+            .child(
+                div()
                     .flex()
-                    .items_start()
-                    .justify_center()
-                    .pt_16()
-                    .bg(gpui::black().opacity(0.3))
-                    .occlude()
+                    .gap_2()
+                    .justify_end()
                     .child(
                         div()
-                            .w(px(480.0))
-                            .p_3()
-                            .rounded_md()
-                            .bg(blend(bg, fg, 0.08))
+                            .id("confirm-cancel")
+                            .debug_selector(|| "confirm-cancel".into())
+                            .px_3()
+                            .py_2()
+                            .rounded_sm()
                             .border_1()
                             .border_color(fg.opacity(0.2))
-                            .shadow_lg()
-                            .text_sm()
-                            .text_color(fg)
-                            .flex()
-                            .flex_col()
-                            .gap_2()
-                            .child(
-                                div()
-                                    .font_weight(gpui::FontWeight::BOLD)
-                                    .child(confirm.title.clone()),
+                            .cursor_pointer()
+                            .hover(|s| s.bg(fg.opacity(0.1)))
+                            .on_click(
+                                cx.listener(|this, _, window, cx| this.cancel_confirm(window, cx)),
+                            )
+                            .child("Cancel"),
+                    )
+                    .child(
+                        div()
+                            .id("confirm-ok")
+                            .debug_selector(|| "confirm-ok".into())
+                            .px_3()
+                            .py_2()
+                            .rounded_sm()
+                            .bg(if destructive {
+                                gpui::rgb(0xf38ba8).into()
+                            } else {
+                                fg
+                            })
+                            .text_color(hsla(self.settings.colors.background.unwrap_or_default()))
+                            .font_weight(gpui::FontWeight::SEMIBOLD)
+                            .cursor_pointer()
+                            .on_click(
+                                cx.listener(|this, _, window, cx| this.confirm_action(window, cx)),
                             )
                             .child(
-                                div()
-                                    .id("confirm-sessions")
-                                    .max_h(px(200.0))
-                                    .overflow_y_scroll()
-                                    .children(confirm.lines.iter().map(|l| {
-                                        div().text_xs().text_color(fg.opacity(0.8)).child(l.clone())
-                                    })),
-                            )
-                            .child(
-                                div()
-                                    .flex()
-                                    .flex_row()
-                                    .gap_2()
-                                    .justify_end()
-                                    .child(
-                                        div()
-                                            .id("confirm-cancel")
-                                            .debug_selector(|| "confirm-cancel".into())
-                                            .px_3()
-                                            .py_1()
-                                            .rounded_sm()
-                                            .bg(fg.opacity(0.1))
-                                            .cursor_pointer()
-                                            .on_click(cx.listener(|this, _, window, cx| {
-                                                this.cancel_confirm(window, cx);
-                                            }))
-                                            .child("Cancel"),
-                                    )
-                                    .child(
-                                        div()
-                                            .id("confirm-ok")
-                                            .debug_selector(|| "confirm-ok".into())
-                                            .px_3()
-                                            .py_1()
-                                            .rounded_sm()
-                                            .bg(gpui::rgb(0xf38ba8).opacity(0.6))
-                                            .cursor_pointer()
-                                            .on_click(cx.listener(|this, _, window, cx| {
-                                                this.confirm_action(window, cx)
-                                            }))
-                                            .child(
-                                                if matches!(
-                                                    confirm.action,
-                                                    MenuAction::StopAndClose { .. }
-                                                ) {
-                                                    "Stop and close"
-                                                } else {
-                                                    "Proceed"
-                                                },
-                                            ),
-                                    ),
+                                if matches!(confirm.action, MenuAction::StopAndClose { .. }) {
+                                    "Stop and close"
+                                } else if destructive {
+                                    "Delete worktree"
+                                } else {
+                                    "Proceed"
+                                },
                             ),
                     ),
-            )
-            .into_any_element(),
-        )
+            );
+        Some(self.sheet_frame(confirm.title.clone(), body, None, "Esc cancel"))
     }
 
     fn render_sheet(&self, cx: &mut Context<Self>) -> Option<AnyElement> {
         let sheet = self.sheet.as_ref()?;
         let fg = hsla(self.settings.colors.foreground.unwrap_or_default());
-        let repo_name = sheet
-            .repo
-            .file_name()
-            .map(|n| n.to_string_lossy().into_owned())
-            .unwrap_or_default();
         let typed = sheet.input.read(cx).text().trim();
         let branch = if typed.is_empty() {
-            format!("{} (random)", sheet.suggestion)
+            &sheet.suggestion
         } else {
-            typed.to_owned()
+            typed
         };
-        let path = self.config.worktree_path(
-            &sheet.repo,
-            if typed.is_empty() {
-                &sheet.suggestion
-            } else {
-                typed
-            },
-        );
-        let base = sheet.base.as_deref().unwrap_or("HEAD");
-        let preview = [format!("{branch} from {base}"), path.display().to_string()];
-        let title = match &sheet.base {
-            Some(base) => format!("New worktree in {repo_name} from {base}"),
-            None => format!("New worktree in {repo_name}"),
-        };
+        let path = self.config.worktree_path(&sheet.repo, branch);
+        let repo_name = sheet.repo.file_name().unwrap_or_default().to_string_lossy();
         let body = div()
             .flex()
             .flex_col()
-            .gap_2()
+            .gap_3()
             .on_key_down(cx.listener(Self::sheet_tab))
-            .child(sheet.input.clone())
-            .child(sheet.note.clone())
+            .child(div().text_sm().text_color(fg.opacity(0.65)).child(format!(
+                "{repo_name}  ·  from {}",
+                sheet.base.as_deref().unwrap_or("HEAD")
+            )))
             .child(
                 div()
                     .flex()
                     .flex_col()
+                    .gap_1()
+                    .child(
+                        div()
+                            .font_weight(gpui::FontWeight::MEDIUM)
+                            .child("Branch name"),
+                    )
+                    .child(sheet.input.clone()),
+            )
+            .child(
+                div()
                     .text_xs()
                     .text_color(fg.opacity(0.6))
-                    .children(preview),
-            );
+                    .child(format!("Leave blank to use {branch}")),
+            )
+            .children(sheet.error.clone().map(|e| {
+                div()
+                    .id("branch-error")
+                    .text_xs()
+                    .text_color(gpui::rgb(0xf38ba8))
+                    .child(format!("! {e}"))
+            }))
+            .child(
+                div()
+                    .flex()
+                    .flex_col()
+                    .gap_1()
+                    .child("Note · optional")
+                    .child(div().min_h(px(72.0)).child(sheet.note.clone())),
+            )
+            .child(
+                div()
+                    .p_2()
+                    .rounded_sm()
+                    .bg(fg.opacity(0.05))
+                    .flex()
+                    .flex_col()
+                    .gap_1()
+                    .child(
+                        div()
+                            .text_xs()
+                            .text_color(fg.opacity(0.6))
+                            .child("DESTINATION"),
+                    )
+                    .child(
+                        div()
+                            .text_sm()
+                            .child(path.display().to_string().replace('/', "/\u{200b}")),
+                    ),
+            )
+            .child(self.form_actions(false, sheet.busy, cx));
         Some(self.sheet_frame(
-            title,
+            "New worktree".into(),
             body,
-            sheet.error.clone(),
-            "Leave the name empty for a random one. Tab to the note, shift-enter for a new line. Enter to create, Esc to cancel",
+            None,
+            "↵ Create   ·   Esc Cancel   ·   Tab Next field   ·   Shift ↵ New line",
         ))
     }
 
-    fn render_note_sheet(&self) -> Option<AnyElement> {
+    fn render_note_sheet(&self, cx: &mut Context<Self>) -> Option<AnyElement> {
         let sheet = self.note_sheet.as_ref()?;
-        Some(self.sheet_frame(
-            format!("Note for {}", sheet.branch),
-            div().child(sheet.input.clone()),
-            sheet.error.clone(),
-            "First line is the title shown in the sidebar. Shift-enter for a new line, Enter to save, Esc to cancel",
-        ))
+        Some(
+            self.sheet_frame(
+                "Edit branch note".into(),
+                div()
+                    .flex()
+                    .flex_col()
+                    .gap_3()
+                    .child(div().text_sm().child(format!(
+                        "{}  ·  {}",
+                        sheet.repo.file_name().unwrap_or_default().to_string_lossy(),
+                        sheet.branch
+                    )))
+                    .child(
+                        div()
+                            .flex()
+                            .flex_col()
+                            .gap_1()
+                            .child("Note")
+                            .child(div().min_h(px(100.0)).child(sheet.input.clone())),
+                    )
+                    .child(
+                        div()
+                            .text_xs()
+                            .child("The first nonempty line names this task."),
+                    )
+                    .child(self.form_actions(true, false, cx)),
+                sheet.error.clone(),
+                "↵ Save   ·   Esc Cancel   ·   Shift ↵ New line",
+            ),
+        )
+    }
+
+    fn form_actions(&self, note: bool, busy: bool, cx: &mut Context<Self>) -> AnyElement {
+        let fg = hsla(self.settings.colors.foreground.unwrap_or_default());
+        div()
+            .flex()
+            .gap_2()
+            .justify_end()
+            .pt_2()
+            .child(
+                div()
+                    .id("form-cancel")
+                    .debug_selector(|| "form-cancel".into())
+                    .px_3()
+                    .py_2()
+                    .rounded_sm()
+                    .bg(fg.opacity(0.08))
+                    .cursor_pointer()
+                    .when(busy, |d| d.opacity(0.4))
+                    .on_click(cx.listener(move |this, _, window, cx| {
+                        if !busy {
+                            if note {
+                                this.note_sheet = None;
+                            } else {
+                                this.sheet = None;
+                            }
+                            this.focus_active(window, cx);
+                        }
+                    }))
+                    .child("Cancel"),
+            )
+            .child(
+                div()
+                    .id("form-submit")
+                    .debug_selector(|| "form-submit".into())
+                    .px_3()
+                    .py_2()
+                    .rounded_sm()
+                    .border_1()
+                    .border_color(fg.opacity(0.45))
+                    .bg(fg.opacity(0.12))
+                    .cursor_pointer()
+                    .hover(|s| s.bg(fg.opacity(0.2)))
+                    .when(busy, |d| d.opacity(0.5))
+                    .on_click(cx.listener(move |this, _, window, cx| {
+                        if !busy {
+                            if note {
+                                if let Some(sheet) = &this.note_sheet {
+                                    let text = sheet.input.read(cx).text().to_owned();
+                                    this.save_note(text, window, cx);
+                                }
+                            } else {
+                                this.create_worktree(window, cx);
+                            }
+                        }
+                    }))
+                    .child(if busy {
+                        "Creating…"
+                    } else if note {
+                        "Save note"
+                    } else {
+                        "Create worktree"
+                    }),
+            )
+            .into_any_element()
     }
 
     /// A modal panel near the top of the window.
@@ -4868,15 +5362,20 @@ impl WorkspaceView {
                 .top_0()
                 .left_0()
                 .flex()
-                .items_start()
+                .items_center()
                 .justify_center()
-                .pt_16()
+                .p_4()
                 .bg(gpui::black().opacity(0.3))
                 .occlude()
                 .child(
                     div()
-                        .w(px(420.0))
-                        .p_3()
+                        .id("form-panel")
+                        .debug_selector(|| "form-panel".into())
+                        .w(px(480.0))
+                        .max_w(relative(1.0))
+                        .max_h(relative(0.9))
+                        .overflow_y_scroll()
+                        .p_4()
                         .rounded_md()
                         .bg(blend(bg, fg, 0.08))
                         .border_1()
@@ -4887,7 +5386,12 @@ impl WorkspaceView {
                         .flex()
                         .flex_col()
                         .gap_2()
-                        .child(title)
+                        .child(
+                            div()
+                                .text_lg()
+                                .font_weight(gpui::FontWeight::BOLD)
+                                .child(title),
+                        )
                         .child(body)
                         .children(
                             error.map(|e| div().text_xs().text_color(gpui::rgb(0xf38ba8)).child(e)),
@@ -5045,6 +5549,10 @@ impl Render for WorkspaceView {
             .key_context("Workspace")
             .track_focus(&self.focus_handle)
             .on_action(cx.listener(Self::new_tab))
+            .on_action(cx.listener(|this, _: &NewWindow, _, cx| {
+                let ghostty = chda_config::load(&this.env.ghostty, this.config.theme.as_deref());
+                crate::open_workspace_window(ghostty, None, this.env.clone(), cx);
+            }))
             .on_action(cx.listener(Self::close_surface))
             .on_action(cx.listener(Self::toggle_sidebar))
             .on_action(cx.listener(Self::add_repo))
@@ -5192,8 +5700,10 @@ impl Render for WorkspaceView {
                 )
             })
             .children(self.render_context_menu(cx))
+            .child(self.status_bar.render(self, window, cx))
+            .children(self.status_bar.details(self, cx))
             .children(self.render_sheet(cx))
-            .children(self.render_note_sheet())
+            .children(self.render_note_sheet(cx))
             .children(self.render_confirm(cx))
             .children(self.render_palette())
     }

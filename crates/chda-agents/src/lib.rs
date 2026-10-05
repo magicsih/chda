@@ -13,7 +13,9 @@ pub mod ipc;
 mod mcp;
 mod opencode;
 mod pricing;
+pub mod quota;
 mod session;
+pub mod statusline;
 mod usage;
 
 use std::path::{Path, PathBuf};
@@ -21,7 +23,8 @@ use std::process::Command;
 
 pub use claude::ClaudeAdapter;
 pub use codex::{
-    CODEX_TITLE_CONFIG, CODEX_TITLE_ENV, CodexAdapter, CodexRunState, parse_codex_title,
+    CODEX_TITLE_CONFIG, CODEX_TITLE_ENV, CodexAdapter, CodexRunState,
+    notify_config as codex_notify_config, parse_codex_title,
 };
 pub use copilot::CopilotAdapter;
 pub use gemini::GeminiAdapter;
@@ -94,6 +97,12 @@ pub trait AgentAdapter: Send + Sync {
     }
     /// Whether the agent's binary is on the launch environment's `PATH`.
     fn is_installed(&self, path: &std::ffi::OsStr) -> bool;
+    /// Validated executable for detection and every launch route.
+    fn executable(&self, _home: &Path, path: &std::ffi::OsStr) -> Option<PathBuf> {
+        self.is_installed(path)
+            .then(|| which(self.id().as_str(), path))
+            .flatten()
+    }
     /// Command that runs the agent in `cwd`, optionally resuming a session.
     /// `hook_bin` is the chda executable the agent should call for hooks.
     fn launch_command(&self, cwd: &Path, resume: Option<&SessionId>, hook_bin: &Path) -> Command;
@@ -189,7 +198,8 @@ pub(crate) fn write_if_changed(path: &Path, text: &str) -> std::io::Result<()> {
 pub fn which(name: &str, path: &std::ffi::OsStr) -> Option<PathBuf> {
     std::env::split_paths(path)
         .map(|dir| dir.join(name))
-        .find(|p| p.is_file())
+        .find(|p| chda_pty::is_executable(p))
+        .and_then(|p| p.canonicalize().ok())
 }
 
 /// Index the sessions that ran inside `worktrees`, most recently active

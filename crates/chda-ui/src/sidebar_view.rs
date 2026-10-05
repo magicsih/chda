@@ -25,6 +25,7 @@ pub enum SidebarEvent {
     /// pane each.
     ResumeSessions(Vec<SessionPick>),
     AddRepo,
+    RefocusTerminal,
     /// Folders were dropped on the sidebar: add them as repositories.
     AddRepos(Vec<PathBuf>),
     /// Open a URL (a pull request badge was clicked).
@@ -155,7 +156,11 @@ pub struct SidebarView {
     pub picked: Vec<SessionPick>,
     expanded: Vec<PathBuf>,
     /// Highlighted worktree (e.g. after a notification for a closed pane).
-    selected: Option<PathBuf>,
+    pub(crate) selected: Option<PathBuf>,
+    pub(crate) active_tab: Option<chda_core::TabId>,
+    pub(crate) scroll: gpui::ScrollHandle,
+    reveal: Option<PathBuf>,
+    pending_navigation: bool,
     focus_handle: FocusHandle,
     fg: Hsla,
     bg: Hsla,
@@ -165,9 +170,13 @@ pub struct SidebarView {
 
 impl EventEmitter<SidebarEvent> for SidebarView {}
 
+pub(crate) fn no_agent_color() -> Hsla {
+    gpui::rgb(0x6c7086).into()
+}
+
 pub fn status_color(status: AgentStatus) -> Hsla {
     match status {
-        AgentStatus::Idle => gpui::rgb(0x6c7086).into(),
+        AgentStatus::Idle => gpui::rgb(0xf9e2af).into(),
         AgentStatus::Working => gpui::rgb(0x89b4fa).into(),
         AgentStatus::WaitingInput => gpui::rgb(0xfab387).into(),
         AgentStatus::Review => gpui::rgb(0xa6e3a1).into(),
@@ -184,6 +193,10 @@ impl SidebarView {
             picked: Vec::new(),
             expanded: Vec::new(),
             selected: None,
+            active_tab: None,
+            scroll: gpui::ScrollHandle::new(),
+            reveal: None,
+            pending_navigation: false,
             focus_handle: cx.focus_handle(),
             fg,
             bg,
@@ -191,19 +204,46 @@ impl SidebarView {
         }
     }
 
-    /// Highlight a worktree and make sure its repository is expanded.
+    /// Navigation reveals its target once; background refreshes only update identity.
     pub fn select(&mut self, worktree: &std::path::Path, cx: &mut Context<Self>) {
-        let found = self
-            .model
-            .worktree_for_path(worktree)
+        self.select_context(self.active_tab, Some(worktree), true, cx);
+    }
+
+    pub(crate) fn select_context(
+        &mut self,
+        tab: Option<chda_core::TabId>,
+        cwd: Option<&std::path::Path>,
+        navigation: bool,
+        cx: &mut Context<Self>,
+    ) {
+        let found = cwd
+            .and_then(|cwd| self.model.worktree_for_path(cwd))
             .map(|(r, w)| (r.path.clone(), w.path.clone()));
-        if let Some((repo, path)) = found {
-            if let Some(r) = self.model.repo_mut(&repo) {
-                r.collapsed = false;
-            }
-            self.selected = Some(path);
-            cx.notify();
+        self.active_tab = tab;
+        if navigation {
+            self.pending_navigation = true;
         }
+        self.selected = found.as_ref().map(|(_, path)| path.clone());
+        if let Some((repo, path)) = found {
+            if self.pending_navigation {
+                if let Some(r) = self.model.repo_mut(&repo) {
+                    r.collapsed = false;
+                }
+                self.reveal = Some(path);
+                self.pending_navigation = false;
+            }
+        }
+        cx.notify();
+    }
+
+    fn collapse_all(&mut self, collapsed: bool, cx: &mut Context<Self>) {
+        for repo in &mut self.model.repos {
+            repo.collapsed = collapsed;
+        }
+        self.reveal = None;
+        self.pending_navigation = false;
+        cx.emit(SidebarEvent::RefocusTerminal);
+        cx.notify();
     }
 
     /// New colors after a config reload.
@@ -490,6 +530,10 @@ impl SidebarView {
         }
         let row = div()
             .id(ElementId::Name(format!("wt:{}", wt.path.display()).into()))
+            .debug_selector({
+                let p = wt.path.clone();
+                move || format!("wt:{}", p.display())
+            })
             .flex()
             .flex_row()
             .items_center()
@@ -544,7 +588,20 @@ impl SidebarView {
                         format!("wt-dot:{}", wt.path.display()).into(),
                     ))
                     .flex_shrink_0()
-                    .text_color(status_color(status))
+                    .text_color(
+                        if status == AgentStatus::Idle
+                            && !self.model.idle_agents.iter().any(|i| {
+                                i.cwd
+                                    .as_ref()
+                                    .and_then(|cwd| self.model.worktree_for_path(cwd))
+                                    .is_some_and(|(_, w)| w.path == wt.path)
+                            })
+                        {
+                            no_agent_color()
+                        } else {
+                            status_color(status)
+                        },
+                    )
                     .tooltip(crate::tooltip::text(status_tooltip(wt, &self.agents)))
                     .on_click({
                         let path = path.clone();
@@ -591,6 +648,47 @@ impl SidebarView {
             .when_some(wt.note.clone(), |d, note| {
                 d.tooltip(crate::tooltip::text(format!("{note}\n\n{name}")))
             });
+        let reveal = self.reveal.as_ref() == Some(&wt.path);
+        let row = if reveal {
+            let scroll = self.scroll.clone();
+            let path = wt.path.clone();
+            let this = cx.entity().downgrade();
+            div()
+                .child(row)
+                .on_children_prepainted(move |bounds, window, _| {
+                    let Some(target) = bounds.first().copied() else {
+                        return;
+                    };
+                    let viewport = scroll.bounds();
+                    let delta = if target.top() < viewport.top() {
+                        viewport.top() - target.top()
+                    } else if target.bottom() > viewport.bottom() {
+                        viewport.bottom() - target.bottom()
+                    } else {
+                        gpui::px(0.0)
+                    };
+                    let scroll = scroll.clone();
+                    let path = path.clone();
+                    let this = this.clone();
+                    window.on_next_frame(move |_, cx| {
+                        let _ = this.update(cx, |s, cx| {
+                            if s.reveal.as_ref() != Some(&path) {
+                                return;
+                            }
+                            s.reveal = None;
+                            if delta != gpui::px(0.0) {
+                                let mut offset = scroll.offset();
+                                offset.y += delta;
+                                scroll.set_offset(offset);
+                                cx.notify();
+                            }
+                        });
+                    });
+                })
+                .into_any_element()
+        } else {
+            row.into_any_element()
+        };
         let mut col = div().flex().flex_col().child(row);
         if let Some(err) = &wt.error {
             col = col.child(
@@ -903,6 +1001,8 @@ impl Render for SidebarView {
                 let id = t.tab;
                 div()
                     .id(ElementId::Name(format!("active:{:?}", t.tab).into()))
+                    .debug_selector(move || format!("active-{id:?}"))
+                    .when(self.active_tab == Some(id), |d| d.bg(fg.opacity(0.14)))
                     .flex()
                     .flex_row()
                     .gap_1()
@@ -917,8 +1017,8 @@ impl Render for SidebarView {
                     .child(
                         div()
                             .flex_shrink_0()
-                            .text_color(if t.status == AgentStatus::Idle {
-                                gpui::transparent_black()
+                            .text_color(if t.status == AgentStatus::Idle && !t.agent_live {
+                                no_agent_color()
                             } else {
                                 status_color(t.status)
                             })
@@ -952,9 +1052,16 @@ impl Render for SidebarView {
                             .text_right()
                             .text_xs()
                             .text_color(fg.opacity(0.5))
-                            .tooltip(crate::tooltip::text(
-                                "Time since the last terminal output or screen update",
-                            ))
+                            .tooltip(crate::tooltip::text(match t.previous_activity {
+                                Some(at) => format!(
+                                    "Last output: {} ago\nPrevious work before restart: {} ago",
+                                    activity_age(now, t.last_activity),
+                                    activity_age(now, at)
+                                ),
+                                None => {
+                                    "Time since the last terminal output or screen update".into()
+                                }
+                            }))
                             .child(activity_age(now, t.last_activity)),
                     )
                     .into_any_element()
@@ -1014,6 +1121,11 @@ impl Render for SidebarView {
                                     .overflow_hidden()
                                     .whitespace_nowrap()
                                     .text_ellipsis()
+                                    .child(
+                                        div()
+                                            .text_color(status_color(AgentStatus::Idle))
+                                            .child("●"),
+                                    )
                                     .child(name),
                             )
                             .child(
@@ -1099,6 +1211,7 @@ impl Render for SidebarView {
             .text_color(fg)
             .text_sm()
             .overflow_y_scroll()
+            .track_scroll(&self.scroll)
             .child(
                 div()
                     .flex()
@@ -1109,6 +1222,11 @@ impl Render for SidebarView {
                     .text_xs()
                     .text_color(fg.opacity(0.6))
                     .child(div().flex_1().child("WORKTREES"))
+                    .children([(false, "expand-all", "▾", "Expand all"), (true, "collapse-all", "▸", "Collapse all")].into_iter().map(|(collapsed, id, icon, tip)| {
+                        div().id(id).debug_selector(move || id.into()).px_1().rounded_sm().cursor_pointer()
+                            .tooltip(crate::tooltip::text(tip)).hover(|s| s.bg(fg.opacity(0.15)))
+                            .on_click(cx.listener(move |this, _, _, cx| this.collapse_all(collapsed, cx))).child(icon)
+                    }))
                     .child(
                         div()
                             .id("add-repo")

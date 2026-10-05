@@ -69,7 +69,8 @@ fn agent_conversations_reopen_in_their_panes(cx: &mut TestAppContext) {
     let (mut cx2, view2) = h.reopen();
     wait_until(&mut cx2, &view2, "the conversation to reopen", |v, cx| {
         let first = v.ws.tabs()[0].panes()[0];
-        v.pane_text(first, cx).contains("fake-claude --settings")
+        v.pane_text(first, cx).contains("fake-claude")
+            && v.pane_text(first, cx).contains("--settings")
     });
     view2.read_with(&cx2, |v, cx| {
         let panes = v.ws.tabs()[0].panes();
