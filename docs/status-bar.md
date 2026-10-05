@@ -18,7 +18,9 @@ Codex is queried once per minute through its local app-server protocol:
 initialize, initialized, account/read with refreshToken=false, then
 account/rateLimits/read. Probes have a five-second deadline and their process
 groups are reaped. Only supported ChatGPT account snapshots produce quota.
-Account identity and named buckets stay separate. No login, conversation,
+Account identity and named buckets stay separate. A failed account probe makes
+the compact quota unavailable; previous reports remain only in details until
+current-account verification succeeds again. No login, conversation,
 model request or credential-file reader is introduced. See the
 [official reference](https://developers.openai.com/codex/app-server/).
 
@@ -31,7 +33,10 @@ On macOS, a worker samples the selected pane's PTY process and descendants
 every two seconds. CPU uses one-core percentages, so parallel work can exceed
 100%; the initial sample is unknown. Summed resident set size (RSS) can count
 shared pages repeatedly and is not exact physical memory. PID and start time
-identify the root; exited or reused PIDs are not zero usage.
+identify the root; exited or reused PIDs are not zero usage. A reused PID
+stays rejected on subsequent ticks and after switching away and back. Each
+visited pane keeps its own sampler until that pane closes; only the selected
+pane is sampled, and a new pane starts with an unknown CPU sample.
 
 lsof has a one-second deadline and a 1 MiB output bound. Listeners refresh
 approximately every six seconds (every third sample). Details list TCP LISTEN

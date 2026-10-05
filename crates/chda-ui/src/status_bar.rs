@@ -42,6 +42,11 @@ impl StatusBar {
         }
     }
     pub fn provider(&self, provider: &str, pane: Option<PaneId>) -> Option<&QuotaSnapshot> {
+        // Failed account/authentication probes do not establish that a prior
+        // account is still current. Retain history only in the details view.
+        if provider == "codex" && self.codex_error.is_some() {
+            return None;
+        }
         self.quotas
             .values()
             .filter(|q| q.provider == provider)
@@ -285,5 +290,40 @@ impl StatusBar {
             )
             .into_any_element(),
         )
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use chda_core::agents::quota::codex_quota;
+    use serde_json::json;
+
+    #[test]
+    fn failed_account_probe_hides_old_usage_and_recovery_keeps_accounts_separate() {
+        let mut bar = StatusBar::default();
+        let report = |account: &str, used: f64, at| {
+            codex_quota(
+            &json!({"rateLimits":{"primary":{"usedPercent":used,"windowDurationMins":300,"resetsAt":9000}}}),
+            &json!({"account":{"type":"chatgpt","email":account}}), at).unwrap()
+        };
+        bar.report(report("first@example.test", 20.0, 100));
+        assert_eq!(
+            bar.provider("codex", None)
+                .unwrap()
+                .representative()
+                .unwrap()
+                .used_percent,
+            20.0
+        );
+        bar.codex_error = Some("Account authentication unavailable".into());
+        assert!(bar.provider("codex", None).is_none());
+        assert_eq!(bar.quotas.len(), 1, "last known history remains in details");
+        bar.report(report("second@example.test", 40.0, 200));
+        bar.codex_error = None;
+        assert_eq!(bar.quotas.len(), 2);
+        let current = bar.provider("codex", None).unwrap();
+        assert_eq!(current.scope, "second@example.test");
+        assert_eq!(current.representative().unwrap().used_percent, 40.0);
     }
 }

@@ -33,7 +33,8 @@ impl Sampler {
             .root
             .is_some_and(|old| old.0 == root && old.1 != identity.1)
         {
-            self.root = None;
+            // Keep the original identity quarantined until pane selection
+            // changes; a later tick must not adopt the unrelated process.
             self.ports = None;
             return Err("PTY PID has been reused".into());
         }
@@ -169,6 +170,23 @@ mod tests {
 #[cfg(test)]
 mod live_tests {
     use super::*;
+
+    #[test]
+    fn reused_pid_is_rejected_on_every_sample_until_a_new_pane_sampler() {
+        let pid = std::process::id();
+        let now = crate::terminal_view::now_ms();
+        let mut sampler = Sampler::default();
+        let report = sampler.sample(pid, now, false).unwrap();
+        sampler.root = Some((pid, report.root_started_at.saturating_sub(1)));
+        for _ in 0..2 {
+            assert_eq!(
+                sampler.sample(pid, now, false).unwrap_err(),
+                "PTY PID has been reused"
+            );
+        }
+        assert!(Sampler::default().sample(pid, now, false).is_ok());
+    }
+
     #[test]
     fn own_listener_is_attributed_and_first_cpu_sample_is_unknown() {
         let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();

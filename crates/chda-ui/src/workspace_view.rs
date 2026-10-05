@@ -1409,27 +1409,37 @@ impl WorkspaceView {
 
     /// Repaint ages without syncing panes, writing sessions or polling git.
     fn schedule_telemetry(window: &mut Window, cx: &mut Context<Self>) {
-        let sampler = Arc::new(Mutex::new(platform::resources::Sampler::default()));
+        let samplers: Arc<Mutex<HashMap<PaneId, platform::resources::Sampler>>> =
+            Arc::new(Mutex::new(HashMap::new()));
         cx.spawn(async move |this, cx| {
             let mut tick = 0u64;
             loop {
                 let selection = this.update(cx, |view, cx| {
                     let pane = view.ws.focused_pane();
                     let pid = pane.and_then(|p| view.panes.get(&p)?.0.read(cx).child_pid());
-                    (pane, pid)
+                    (
+                        pane,
+                        pid,
+                        view.panes.keys().copied().collect::<HashSet<_>>(),
+                    )
                 });
-                let Ok((pane, pid)) = selection else {
+                let Ok((pane, pid, live_panes)) = selection else {
                     break;
                 };
-                let sampler = sampler.clone();
+                let samplers = samplers.clone();
                 let task = cx.background_spawn(async move {
-                    pid.ok_or_else(|| "No active PTY process".into())
-                        .and_then(|pid| {
-                            sampler
-                                .lock()
-                                .map_err(|_| "Resource sampler is unavailable".to_owned())?
-                                .sample(pid, now_ms(), tick.is_multiple_of(3))
-                        })
+                    let mut samplers = samplers
+                        .lock()
+                        .map_err(|_| "Resource sampler is unavailable".to_owned())?;
+                    samplers.retain(|pane, _| live_panes.contains(pane));
+                    let pane = pane.ok_or_else(|| "No active terminal pane".to_owned())?;
+                    let pid = pid.ok_or_else(|| "No active PTY process".to_owned())?;
+                    // Keep each pane's original process identity across focus
+                    // changes. Closed panes release their sampler above.
+                    samplers
+                        .entry(pane)
+                        .or_default()
+                        .sample(pid, now_ms(), tick.is_multiple_of(3))
                 });
                 let result = task.await;
                 if this
