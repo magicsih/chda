@@ -1,0 +1,70 @@
+{
+  "features": [
+    {
+      "area": "Terminal",
+      "details": "Ghostty-accurate VT handling, true color, wide glyphs, IME input, mouse selection and reporting, scrollback search (`cmd-f`), cmd-click links and file paths, right-click actions on paths (reveal in Finder, open a tab or `cd` there, copy), drag and drop paths, inline images (Kitty graphics protocol), Mermaid diagrams in agent output rendered offline (\"View diagram\"), Markdown files previewed in the browser (right-click a `.md` path, or \"Preview Markdown\" in the palette), font size shortcuts, prompt jumping (`cmd-up` / `cmd-down`)",
+      "title": "Ghostty inside",
+      "summary": "True color, Unicode, IME, search and your Ghostty font and colors. Follow links and paths, show Kitty graphics, and preview Mermaid diagrams and Markdown offline."
+    },
+    {
+      "area": "Tabs and splits",
+      "details": "Ghostty's default shortcuts; tabs grouped by repository; rename a tab with a double-click; terminal and Git tree tabs, splits and directories come back after a restart. Every tab has a close button, even the last one. Closing a tab stops all its panes; `cmd-w` closes only the focused pane. Working or waiting agents ask before they stop.",
+      "title": "Keep your place, close safely",
+      "summary": "Restore terminal and Git tree tabs, splits and directories. Close one pane or a whole tab; working and waiting agents ask before stopping."
+    },
+    {
+      "area": "Title bar",
+      "details": "Your custom tab name comes first; otherwise the focused pane's branch note supplies the title. Long titles are truncated; hover for the full note and branch. Open the focused worktree in Finder, VS Code, Cursor, Zed, Xcode, a git client or another installed app: pick the app once, then one click on ▶ (also \"Open in ...\" in the palette).",
+      "title": "The task in the title",
+      "summary": "See the focused branch note or your custom tab name. Hover for the full note and branch, or open the worktree in your favorite editor."
+    },
+    {
+      "area": "Sidebar",
+      "details": "Repositories and plain folders, worktrees, dirty / ahead / behind / conflict badges, lines added and removed against the default branch (click for a read-only diff tab), pull request state via `gh`, `glab` or `tea`, open-tab counts, an ACTIVE list in tab order with time since last terminal activity and an alias / branch-name toggle. Idle Agents lists live agents ready for another prompt with their repository, branch, tab and pane; click to focus or close that pane. Every badge explains itself on hover.",
+      "title": "Live sessions at a glance",
+      "summary": "Follow worktrees, git badges and pull requests. ACTIVE stays in tab order; Idle Agents shows live sessions ready for another prompt, with one-click focus and close."
+    },
+    {
+      "area": "Worktrees",
+      "details": "Create from a new or existing branch, delete with a safety check, merge-and-clean, bulk cleanup of merged branches, update a branch from its upstream when it is clean and no agent works in it (fast-forward; a diverged branch asks before a rebase or merge and never rewrites pushed commits); a note per branch saying what the task is (right-click \"Edit note...\", or `chda note <text>` inside the worktree), shown as the row's label and searchable in the palette",
+      "title": "One worktree per task",
+      "summary": "Create from any branch, label it with a note, read its diff, update from upstream, then merge and clean up with checks for unsaved or unpushed work."
+    },
+    {
+      "area": "Git history",
+      "details": "Right-click a repository and choose \"View Git tree\" for a read-only commit graph with parent connections, subjects, short hashes and local / remote branches, tags and HEAD. History loads in pages as you scroll; refresh or retry without opening a shell. One graph tab per repository; graph tabs restore after a restart.",
+      "title": "Read the Git tree",
+      "summary": "Choose View Git tree from the repository menu for commit connections, subjects, short hashes and branch, tag and HEAD labels. Browse in a read-only tab, refresh and restore it after restarting."
+    },
+    {
+      "area": "Agents",
+      "details": "Claude Code, Codex, Gemini CLI, GitHub Copilot CLI and OpenCode status from their own hooks on tabs, the ACTIVE list, worktree rows and the Dock badge; notifications that open the agent's pane; jump to the agent that waits (`cmd-shift-a`); session list ordered by the last message, with token usage and one-click resume; cmd-click several sessions to resume them side by side in one tab",
+      "title": "Agents you can see",
+      "summary": "Track Claude Code, Codex, Gemini CLI, Copilot CLI and OpenCode. Notifications open the right pane; past conversations resume together or side by side."
+    },
+    {
+      "area": "Palette",
+      "details": "`cmd-shift-p`: every action, worktree, agent launch and session in one fuzzy list",
+      "title": "Every action in one place",
+      "summary": "Press `cmd-shift-p` to find worktrees, launch agents, resume sessions and run actions. Agents can create worktrees and open tabs through `chda mcp`."
+    },
+    {
+      "area": "Config",
+      "details": "Reads your Ghostty font, colors and padding; chda's own settings in one TOML file; edits apply without a restart",
+      "title": "Your terminal, your settings",
+      "summary": "Reuse your Ghostty font, colors and padding. Edit chda's TOML settings without restarting. Homebrew and version-manager agents are found through your login shell's PATH."
+    }
+  ],
+  "screenshots": [
+    {
+      "file": "git-graph.jpg",
+      "alt": "A read-only Git tree tab with commit connections, branch labels, subjects and short hashes",
+      "label": "View full-size Git tree screenshot"
+    },
+    {
+      "file": "idle-agents.jpg",
+      "alt": "The Idle Agents list showing live sessions with their repository, branch, tab, pane and idle duration",
+      "label": "View full-size Idle Agents screenshot"
+    }
+  ]
+}

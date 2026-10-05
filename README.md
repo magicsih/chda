@@ -98,16 +98,27 @@ document do not run. Mermaid blocks inside Markdown become diagrams too.
 
 ## Features
 
+<!-- BEGIN GENERATED FEATURES -->
 | Area | What you get |
 |---|---|
 | Terminal | Ghostty-accurate VT handling, true color, wide glyphs, IME input, mouse selection and reporting, scrollback search (`cmd-f`), cmd-click links and file paths, right-click actions on paths (reveal in Finder, open a tab or `cd` there, copy), drag and drop paths, inline images (Kitty graphics protocol), Mermaid diagrams in agent output rendered offline ("View diagram"), Markdown files previewed in the browser (right-click a `.md` path, or "Preview Markdown" in the palette), font size shortcuts, prompt jumping (`cmd-up` / `cmd-down`) |
-| Tabs and splits | Ghostty's default shortcuts; tabs grouped by repository; rename a tab with a double-click; tabs, splits and directories come back after a restart |
-| Title bar | Open the focused worktree in Finder, VS Code, Cursor, Zed, Xcode, a git client or another installed app: pick the app once, then one click on ▶ (also "Open in ..." in the palette) |
-| Sidebar | Repositories and plain folders, worktrees, dirty / ahead / behind / conflict badges, lines added and removed against the default branch (click for a read-only diff tab), pull request state via `gh`, `glab` or `tea`, open-tab counts, an ACTIVE list in tab order with time since last terminal activity and an alias / branch-name toggle; every badge explains itself on hover |
+| Tabs and splits | Ghostty's default shortcuts; tabs grouped by repository; rename a tab with a double-click; terminal and Git tree tabs, splits and directories come back after a restart. Every tab has a close button, even the last one. Closing a tab stops all its panes; `cmd-w` closes only the focused pane. Working or waiting agents ask before they stop. |
+| Title bar | Your custom tab name comes first; otherwise the focused pane's branch note supplies the title. Long titles are truncated; hover for the full note and branch. Open the focused worktree in Finder, VS Code, Cursor, Zed, Xcode, a git client or another installed app: pick the app once, then one click on ▶ (also "Open in ..." in the palette). |
+| Sidebar | Repositories and plain folders, worktrees, dirty / ahead / behind / conflict badges, lines added and removed against the default branch (click for a read-only diff tab), pull request state via `gh`, `glab` or `tea`, open-tab counts, an ACTIVE list in tab order with time since last terminal activity and an alias / branch-name toggle. Idle Agents lists live agents ready for another prompt with their repository, branch, tab and pane; click to focus or close that pane. Every badge explains itself on hover. |
 | Worktrees | Create from a new or existing branch, delete with a safety check, merge-and-clean, bulk cleanup of merged branches, update a branch from its upstream when it is clean and no agent works in it (fast-forward; a diverged branch asks before a rebase or merge and never rewrites pushed commits); a note per branch saying what the task is (right-click "Edit note...", or `chda note <text>` inside the worktree), shown as the row's label and searchable in the palette |
+| Git history | Right-click a repository and choose "View Git tree" for a read-only commit graph with parent connections, subjects, short hashes and local / remote branches, tags and HEAD. History loads in pages as you scroll; refresh or retry without opening a shell. One graph tab per repository; graph tabs restore after a restart. |
 | Agents | Claude Code, Codex, Gemini CLI, GitHub Copilot CLI and OpenCode status from their own hooks on tabs, the ACTIVE list, worktree rows and the Dock badge; notifications that open the agent's pane; jump to the agent that waits (`cmd-shift-a`); session list ordered by the last message, with token usage and one-click resume; cmd-click several sessions to resume them side by side in one tab |
 | Palette | `cmd-shift-p`: every action, worktree, agent launch and session in one fuzzy list |
 | Config | Reads your Ghostty font, colors and padding; chda's own settings in one TOML file; edits apply without a restart |
+
+<p align="center">
+  <img src="docs/media/git-graph.jpg" alt="A read-only Git tree tab with commit connections, branch labels, subjects and short hashes" width="880">
+</p>
+
+<p align="center">
+  <img src="docs/media/idle-agents.jpg" alt="The Idle Agents list showing live sessions with their repository, branch, tab, pane and idle duration" width="880">
+</p>
+<!-- END GENERATED FEATURES -->
 
 ACTIVE keeps open tabs in tab order, so concurrent output does not move rows.
 The right edge shows time since the latest terminal activity (`1s`, `1m`, `1h`,
@@ -115,6 +126,11 @@ The right edge shows time since the latest terminal activity (`1s`, `1m`, `1h`,
 an agent is thinking. Click **Alias** / **Branch** in the ACTIVE header to switch
 between each branch note's first line and its branch name. Missing notes fall
 back to branch names; the choice is saved, and hovering shows the branch name.
+
+**Idle Agents** is separate: it lists live agents ready for another prompt,
+not plain shells or saved conversations. Its duration starts when readiness
+or completion is reported (`—` when unknown), independently of terminal output.
+Click a row to focus that exact pane; its close button closes only that pane.
 
 ## How agent status works
 

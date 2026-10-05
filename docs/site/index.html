@@ -132,8 +132,10 @@
   .col { background: var(--card); border: 1px solid var(--line); border-radius: 10px; padding: 16px; }
   .col h3 { margin: 0 0 6px; font-size: 17px; }
   .col p { margin: 0; color: var(--muted); font-size: 15px; }
+  .gallery-title { margin: 24px 0 12px; font-size: 18px; }
   .shots { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
   .shots img { width: 100%; height: auto; border: 1px solid var(--line); border-radius: 10px; }
+  .shots a { display: block; }
   .wide { display: block; width: 100%; height: auto; margin-bottom: 16px; border: 1px solid var(--line); border-radius: 10px; }
   .lead { color: var(--muted); margin: 0 0 16px; }
   pre { background: var(--code-bg); color: var(--code-fg); padding: 14px 16px; border-radius: 8px; overflow-x: auto; font-size: 14px; }
@@ -161,14 +163,24 @@
 
   <section>
     <h2>Why a worktree terminal</h2>
+    <!-- BEGIN GENERATED FEATURES -->
     <div class="cols">
-      <div class="col"><h3>One worktree per task</h3><p>Create a worktree from the sidebar, from any branch, with a note saying what the task is. Work in it, read its diff, open it in your editor from the title bar, merge it back and clean it up. ACTIVE stays in tab order, shows time since last terminal activity, and switches between branch notes and branch names.</p></div>
-      <div class="col"><h3>Agents you can see</h3><p>See who is working, waiting for you, or done across Claude Code, Codex, Gemini CLI, Copilot CLI and OpenCode. You can also type <code>codex</code> directly in a chda terminal and follow its state.</p></div>
-      <div class="col"><h3>Ghostty inside</h3><p>The VT core is libghostty-vt, so escapes, Unicode and keys behave like Ghostty. Your Ghostty font, colors and ligatures carry over.</p></div>
-      <div class="col"><h3>Agents can drive it</h3><p><code>chda mcp</code> lets an agent create a worktree, open a tab or report its status. New worktrees show up in the sidebar at once.</p></div>
-      <div class="col"><h3>Pick up where you left off</h3><p>After a restart, tabs, splits and directories come back, and panes that ran an agent reopen its conversation. Past sessions show the tokens they used and resume side by side. Agents installed through Homebrew or a version manager are found using your login shell's PATH, even when chda starts from the Dock.</p></div>
-      <div class="col"><h3>More than text</h3><p>Images through the Kitty graphics protocol, Mermaid diagrams and Markdown files rendered offline in your browser, and right-click actions on every file path in the output.</p></div>
+      <div class="col"><h3>Ghostty inside</h3><p>True color, Unicode, IME, search and your Ghostty font and colors. Follow links and paths, show Kitty graphics, and preview Mermaid diagrams and Markdown offline.</p></div>
+      <div class="col"><h3>Keep your place, close safely</h3><p>Restore terminal and Git tree tabs, splits and directories. Close one pane or a whole tab; working and waiting agents ask before stopping.</p></div>
+      <div class="col"><h3>The task in the title</h3><p>See the focused branch note or your custom tab name. Hover for the full note and branch, or open the worktree in your favorite editor.</p></div>
+      <div class="col"><h3>Live sessions at a glance</h3><p>Follow worktrees, git badges and pull requests. ACTIVE stays in tab order; Idle Agents shows live sessions ready for another prompt, with one-click focus and close.</p></div>
+      <div class="col"><h3>One worktree per task</h3><p>Create from any branch, label it with a note, read its diff, update from upstream, then merge and clean up with checks for unsaved or unpushed work.</p></div>
+      <div class="col"><h3>Read the Git tree</h3><p>Choose View Git tree from the repository menu for commit connections, subjects, short hashes and branch, tag and HEAD labels. Browse in a read-only tab, refresh and restore it after restarting.</p></div>
+      <div class="col"><h3>Agents you can see</h3><p>Track Claude Code, Codex, Gemini CLI, Copilot CLI and OpenCode. Notifications open the right pane; past conversations resume together or side by side.</p></div>
+      <div class="col"><h3>Every action in one place</h3><p>Press <code>cmd-shift-p</code> to find worktrees, launch agents, resume sessions and run actions. Agents can create worktrees and open tabs through <code>chda mcp</code>.</p></div>
+      <div class="col"><h3>Your terminal, your settings</h3><p>Reuse your Ghostty font, colors and padding. Edit chda&#x27;s TOML settings without restarting. Homebrew and version-manager agents are found through your login shell&#x27;s PATH.</p></div>
     </div>
+    <h3 class="gallery-title">Git history and live sessions</h3>
+    <div class="shots">
+      <a href="git-graph.jpg"><img src="git-graph.jpg" loading="lazy" decoding="async" alt="A read-only Git tree tab with commit connections, branch labels, subjects and short hashes" width="1920" height="990"><span>View full-size Git tree screenshot</span></a>
+      <a href="idle-agents.jpg"><img src="idle-agents.jpg" loading="lazy" decoding="async" alt="The Idle Agents list showing live sessions with their repository, branch, tab, pane and idle duration" width="1900" height="970"><span>View full-size Idle Agents screenshot</span></a>
+    </div>
+<!-- END GENERATED FEATURES -->
   </section>
 
   <section>
