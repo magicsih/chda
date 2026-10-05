@@ -759,6 +759,8 @@ impl WorkspaceView {
             self.watch_repo(&repo);
             self.refresh_repo(repo, cx);
         }
+        let order = self.config.repos.clone();
+        self.sidebar.update(cx, |s, _| s.model.order_repos(&order));
         self.sync_starred(cx);
         if self.sidebar_visible && !sidebar_was_visible {
             self.refresh_all(cx);
@@ -3394,6 +3396,17 @@ impl WorkspaceView {
                 }
             }
             SidebarEvent::Unstar { repo, branch } => self.set_starred(&repo, &branch, false, cx),
+            SidebarEvent::MoveRepo { from, to } => {
+                let order = self.sidebar.update(cx, |s, cx| {
+                    let moved = s.model.move_repo(&from, &to);
+                    cx.notify();
+                    moved.then(|| s.model.repos.iter().map(|r| r.path.clone()).collect())
+                });
+                if let Some(order) = order {
+                    self.config.repos = order;
+                    self.save_config();
+                }
+            }
             SidebarEvent::ToggleActiveLabel => {
                 self.config.active_label = match self.config.active_label {
                     chda_config::ActiveLabel::Alias => chda_config::ActiveLabel::Branch,
