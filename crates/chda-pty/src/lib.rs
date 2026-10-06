@@ -2,6 +2,7 @@
 //!
 //! Platform-specific code for the PTY lives here.
 
+pub mod handoff;
 mod shell_path;
 pub use shell_path::shell_path;
 
@@ -70,10 +71,26 @@ impl From<portable_pty::ExitStatus> for ExitStatus {
 /// dedicated thread. Writes and resizes go through this handle. Keep reading
 /// for as long as the child lives: the tty holds the child's exit until its
 /// output is drained.
+///
+/// A PTY is either spawned here or adopted from an earlier chda process
+/// ([`Pty::detach`], [`Pty::adopt`]); an adopted child belongs to another
+/// parent, so its exit status is unknown.
 pub struct Pty {
-    master: Box<dyn MasterPty + Send>,
+    master: Master,
     writer: Box<dyn Write + Send>,
-    child: Box<dyn Child + Send + Sync>,
+    child: ChildProcess,
+}
+
+enum Master {
+    Spawned(Box<dyn MasterPty + Send>),
+    #[cfg(unix)]
+    Adopted(std::os::fd::OwnedFd),
+}
+
+enum ChildProcess {
+    Spawned(Box<dyn Child + Send + Sync>),
+    #[cfg(unix)]
+    Adopted(u32),
 }
 
 impl std::fmt::Debug for Pty {
@@ -122,18 +139,84 @@ impl Pty {
         let child = slave.spawn_command(cmd).map_err(io::Error::other)?;
         // The slave end is only needed to spawn; the child holds its own copy.
         drop(slave);
+        // portable-pty's Unix writer types end-of-file into the PTY when it
+        // is dropped, which would end the shell of a detached PTY. A plain
+        // descriptor does not; closing the PTY still hangs up the child.
+        #[cfg(unix)]
+        let writer: Box<dyn Write + Send> = {
+            let raw = master
+                .as_raw_fd()
+                .ok_or_else(|| io::Error::other("the PTY has no descriptor"))?;
+            // SAFETY: `raw` stays open while `master` lives.
+            let fd = unsafe { std::os::fd::BorrowedFd::borrow_raw(raw) }.try_clone_to_owned()?;
+            Box::new(std::fs::File::from(fd))
+        };
+        #[cfg(not(unix))]
         let writer = master.take_writer().map_err(io::Error::other)?;
 
         Ok(Self {
-            master,
+            master: Master::Spawned(master),
             writer,
-            child,
+            child: ChildProcess::Spawned(child),
         })
     }
 
-    /// A reader for the child's output. Call once and move it to a reader thread.
-    pub fn reader(&self) -> io::Result<Box<dyn Read + Send>> {
-        self.master.try_clone_reader().map_err(io::Error::other)
+    /// Take over a PTY another chda process detached. The child keeps
+    /// running; it never sees the PTY close.
+    pub fn adopt(detached: DetachedPty) -> io::Result<Self> {
+        #[cfg(unix)]
+        {
+            let writer = std::fs::File::from(detached.fd.try_clone()?);
+            Ok(Self {
+                master: Master::Adopted(detached.fd),
+                writer: Box::new(writer),
+                child: ChildProcess::Adopted(detached.pid),
+            })
+        }
+        #[cfg(not(unix))]
+        {
+            let _ = detached;
+            Err(unsupported())
+        }
+    }
+
+    /// Let go of the PTY without ending the child, so another process can
+    /// [`Pty::adopt`] it. Stop the reader first: bytes it reads after this
+    /// are lost to the next owner.
+    pub fn detach(self) -> io::Result<DetachedPty> {
+        #[cfg(unix)]
+        {
+            let pid = self
+                .pid()
+                .ok_or_else(|| io::Error::other("the child has no process id"))?;
+            let fd = match &self.master {
+                Master::Spawned(master) => {
+                    let raw = master
+                        .as_raw_fd()
+                        .ok_or_else(|| io::Error::other("the PTY has no descriptor"))?;
+                    // SAFETY: `raw` stays open while `master` lives.
+                    unsafe { std::os::fd::BorrowedFd::borrow_raw(raw) }.try_clone_to_owned()?
+                }
+                Master::Adopted(fd) => fd.try_clone()?,
+            };
+            Ok(DetachedPty { fd, pid })
+        }
+        #[cfg(not(unix))]
+        {
+            let _ = self;
+            Err(unsupported())
+        }
+    }
+
+    /// A reader for the child's output. Call once and move it to a reader
+    /// thread; its [`ReaderStop`] ends the reads without losing bytes.
+    pub fn reader(&self) -> io::Result<PtyReader> {
+        let inner: Box<dyn Read + Send> = match &self.master {
+            Master::Spawned(master) => master.try_clone_reader().map_err(io::Error::other)?,
+            #[cfg(unix)]
+            Master::Adopted(fd) => Box::new(std::fs::File::from(fd.try_clone()?)),
+        };
+        PtyReader::new(inner, self.raw_fd())
     }
 
     /// Send bytes to the child.
@@ -144,27 +227,93 @@ impl Pty {
 
     /// Tell the kernel and the child that the terminal size changed.
     pub fn resize(&self, size: PtySize) -> io::Result<()> {
-        self.master.resize(size.into()).map_err(io::Error::other)
+        match &self.master {
+            Master::Spawned(master) => master.resize(size.into()).map_err(io::Error::other),
+            #[cfg(unix)]
+            Master::Adopted(fd) => {
+                use std::os::fd::AsRawFd;
+                let ws = libc::winsize {
+                    ws_row: size.rows,
+                    ws_col: size.cols,
+                    ws_xpixel: size.pixel_width,
+                    ws_ypixel: size.pixel_height,
+                };
+                // SAFETY: TIOCSWINSZ reads one winsize from the pointer.
+                if unsafe { libc::ioctl(fd.as_raw_fd(), libc::TIOCSWINSZ, &ws) } != 0 {
+                    return Err(io::Error::last_os_error());
+                }
+                Ok(())
+            }
+        }
     }
 
     /// Process id of the child, if known.
     pub fn pid(&self) -> Option<u32> {
-        self.child.process_id()
+        match &self.child {
+            ChildProcess::Spawned(child) => child.process_id(),
+            #[cfg(unix)]
+            ChildProcess::Adopted(pid) => Some(*pid),
+        }
     }
 
-    /// Non-blocking check whether the child has exited.
-    pub fn try_wait(&mut self) -> io::Result<Option<ExitStatus>> {
-        Ok(self.child.try_wait()?.map(Into::into))
+    /// Non-blocking check whether the child has exited. `Some(None)`: it
+    /// exited, but it was adopted, so its status is unknown.
+    pub fn try_wait(&mut self) -> io::Result<Option<Option<ExitStatus>>> {
+        match &mut self.child {
+            ChildProcess::Spawned(child) => Ok(child.try_wait()?.map(|s| Some(s.into()))),
+            #[cfg(unix)]
+            ChildProcess::Adopted(pid) => Ok((!alive(*pid)).then_some(None)),
+        }
     }
 
-    /// Block until the child exits.
-    pub fn wait(&mut self) -> io::Result<ExitStatus> {
-        Ok(self.child.wait()?.into())
+    /// Block until the child exits; `None` for an adopted child.
+    pub fn wait(&mut self) -> io::Result<Option<ExitStatus>> {
+        match &mut self.child {
+            ChildProcess::Spawned(child) => Ok(Some(child.wait()?.into())),
+            #[cfg(unix)]
+            ChildProcess::Adopted(pid) => {
+                while alive(*pid) {
+                    std::thread::sleep(std::time::Duration::from_millis(20));
+                }
+                Ok(None)
+            }
+        }
     }
 
-    /// Terminate the child.
+    /// Terminate the child: SIGHUP, as closing a terminal does.
     pub fn kill(&mut self) -> io::Result<()> {
-        self.child.kill()
+        match &mut self.child {
+            ChildProcess::Spawned(child) => child.kill(),
+            #[cfg(unix)]
+            ChildProcess::Adopted(pid) => {
+                // SAFETY: plain signal delivery.
+                if unsafe { libc::kill(*pid as libc::pid_t, libc::SIGHUP) } != 0 {
+                    return Err(io::Error::last_os_error());
+                }
+                Ok(())
+            }
+        }
+    }
+
+    fn raw_fd(&self) -> Option<i32> {
+        match &self.master {
+            Master::Spawned(master) => {
+                #[cfg(unix)]
+                {
+                    master.as_raw_fd()
+                }
+                #[cfg(not(unix))]
+                {
+                    let _ = master;
+                    None
+                }
+            }
+            #[cfg(unix)]
+            Master::Adopted(fd) => {
+                use std::os::fd::AsRawFd;
+                Some(fd.as_raw_fd())
+            }
+        }
     }
 
     /// Working directory of the process in the foreground of this PTY, for
@@ -172,7 +321,7 @@ impl Pty {
     pub fn foreground_cwd(&self) -> Option<PathBuf> {
         #[cfg(target_os = "macos")]
         {
-            let fd = self.master.as_raw_fd()?;
+            let fd = self.raw_fd()?;
             let pgrp = unsafe { libc::tcgetpgrp(fd) };
             if pgrp <= 0 {
                 return None;
@@ -183,6 +332,155 @@ impl Pty {
         {
             None
         }
+    }
+}
+
+/// Whether a process that is not our child still runs. Reaps it when it is
+/// our child after all (a PTY detached and adopted in the same process).
+#[cfg(unix)]
+fn alive(pid: u32) -> bool {
+    let pid = pid as libc::pid_t;
+    let mut status = 0;
+    // SAFETY: WNOHANG never blocks; ECHILD just means another parent.
+    if unsafe { libc::waitpid(pid, &mut status, libc::WNOHANG) } == pid {
+        return false;
+    }
+    // SAFETY: signal 0 only checks that the process exists.
+    unsafe { libc::kill(pid, 0) == 0 }
+}
+
+#[cfg(not(unix))]
+fn unsupported() -> io::Error {
+    io::Error::new(
+        io::ErrorKind::Unsupported,
+        "handing terminals to another process needs Unix PTYs",
+    )
+}
+
+/// A PTY let go by [`Pty::detach`]: its master descriptor and the child's
+/// process id, ready for [`Pty::adopt`] here or in a successor process.
+#[derive(Debug)]
+pub struct DetachedPty {
+    #[cfg(unix)]
+    fd: std::os::fd::OwnedFd,
+    pid: u32,
+}
+
+impl DetachedPty {
+    pub fn pid(&self) -> u32 {
+        self.pid
+    }
+}
+
+/// Output of a [`Pty`]. On Unix, [`ReaderStop::stop`] makes the next read
+/// return end of file without taking bytes from the PTY.
+pub struct PtyReader {
+    inner: Box<dyn Read + Send>,
+    #[cfg(unix)]
+    poll: Option<(i32, std::os::fd::OwnedFd)>,
+    stop: ReaderStop,
+}
+
+/// Ends a [`PtyReader`]'s reads from another thread.
+#[derive(Clone, Debug)]
+pub struct ReaderStop {
+    #[cfg(unix)]
+    pipe: Option<std::sync::Arc<std::os::fd::OwnedFd>>,
+}
+
+impl ReaderStop {
+    /// Wake the reader and make it report end of file. Unix only; elsewhere
+    /// the reader runs until the child exits.
+    pub fn stop(&self) {
+        #[cfg(unix)]
+        if let Some(pipe) = &self.pipe {
+            use std::os::fd::AsRawFd;
+            // SAFETY: one byte from a valid buffer.
+            unsafe { libc::write(pipe.as_raw_fd(), [1u8].as_ptr().cast(), 1) };
+        }
+    }
+}
+
+impl PtyReader {
+    fn new(inner: Box<dyn Read + Send>, fd: Option<i32>) -> io::Result<Self> {
+        #[cfg(unix)]
+        {
+            use std::os::fd::{FromRawFd, OwnedFd};
+            let Some(fd) = fd else {
+                return Ok(Self {
+                    inner,
+                    poll: None,
+                    stop: ReaderStop { pipe: None },
+                });
+            };
+            let mut ends = [0; 2];
+            // SAFETY: pipe fills two descriptors we then own.
+            if unsafe { libc::pipe(ends.as_mut_ptr()) } != 0 {
+                return Err(io::Error::last_os_error());
+            }
+            let (read, write) =
+                unsafe { (OwnedFd::from_raw_fd(ends[0]), OwnedFd::from_raw_fd(ends[1])) };
+            for end in ends {
+                // SAFETY: setting FD_CLOEXEC on descriptors we own.
+                unsafe { libc::fcntl(end, libc::F_SETFD, libc::FD_CLOEXEC) };
+            }
+            Ok(Self {
+                inner,
+                poll: Some((fd, read)),
+                stop: ReaderStop {
+                    pipe: Some(std::sync::Arc::new(write)),
+                },
+            })
+        }
+        #[cfg(not(unix))]
+        {
+            let _ = fd;
+            Ok(Self {
+                inner,
+                stop: ReaderStop {},
+            })
+        }
+    }
+
+    pub fn stopper(&self) -> ReaderStop {
+        self.stop.clone()
+    }
+}
+
+impl Read for PtyReader {
+    fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
+        #[cfg(unix)]
+        if let Some((fd, stop)) = &self.poll {
+            use std::os::fd::AsRawFd;
+            let mut fds = [
+                libc::pollfd {
+                    fd: *fd,
+                    events: libc::POLLIN,
+                    revents: 0,
+                },
+                libc::pollfd {
+                    fd: stop.as_raw_fd(),
+                    events: libc::POLLIN,
+                    revents: 0,
+                },
+            ];
+            loop {
+                // SAFETY: two valid pollfd entries.
+                let n = unsafe { libc::poll(fds.as_mut_ptr(), 2, -1) };
+                if n < 0 {
+                    let err = io::Error::last_os_error();
+                    if err.kind() == io::ErrorKind::Interrupted {
+                        continue;
+                    }
+                    return Err(err);
+                }
+                break;
+            }
+            if fds[1].revents != 0 {
+                return Ok(0);
+            }
+        }
+        self.inner.read(buf)
     }
 }
 
@@ -258,7 +556,7 @@ mod tests {
         let _ = reader.read_to_end(&mut out);
         let text = String::from_utf8_lossy(&out);
         assert!(text.contains("hello-pty"), "output was {text:?}");
-        let status = pty.wait().unwrap();
+        let status = pty.wait().unwrap().unwrap();
         assert_eq!(status.code, 3);
     }
 
@@ -291,7 +589,7 @@ mod tests {
         }
         assert_eq!(cwd.as_deref(), Some(Path::new("/private/tmp")));
         pty.write_all(b"\n").unwrap();
-        assert!(pty.wait().unwrap().success());
+        assert!(pty.wait().unwrap().unwrap().success());
         drain.join().unwrap();
     }
 
@@ -336,6 +634,102 @@ mod tests {
         let text = String::from_utf8_lossy(&out);
         assert!(text.contains("got:ping"), "output was {text:?}");
         assert!(text.contains("30 100"), "output was {text:?}");
-        assert!(pty.wait().unwrap().success());
+        assert!(pty.wait().unwrap().unwrap().success());
+    }
+
+    /// A detached PTY adopted again keeps its child running, and a stopped
+    /// reader leaves unread output for the next owner.
+    #[test]
+    #[cfg(unix)]
+    fn detach_and_adopt_keep_the_child_and_its_output() {
+        let pty = Pty::spawn(
+            size(),
+            SpawnOptions {
+                command: Some(&[
+                    "/bin/sh",
+                    "-c",
+                    "read a; echo first:$a; read b; echo second:$b",
+                ]),
+                ..Default::default()
+            },
+        )
+        .unwrap();
+        let reader = pty.reader().unwrap();
+        let stop = reader.stopper();
+        let thread = std::thread::spawn(move || {
+            let mut reader = reader;
+            let mut out = Vec::new();
+            let _ = reader.read_to_end(&mut out);
+            out
+        });
+        stop.stop();
+        assert!(
+            thread.join().unwrap().is_empty(),
+            "the stopped reader read nothing"
+        );
+        let pid = pty.pid().unwrap();
+
+        let mut pty = Pty::adopt(pty.detach().unwrap()).unwrap();
+        assert_eq!(pty.pid(), Some(pid));
+        pty.resize(PtySize {
+            cols: 90,
+            rows: 20,
+            pixel_width: 0,
+            pixel_height: 0,
+        })
+        .unwrap();
+        let mut reader = pty.reader().unwrap();
+        pty.write_all(b"one\ntwo\n").unwrap();
+        let mut out = Vec::new();
+        let _ = reader.read_to_end(&mut out);
+        let text = String::from_utf8_lossy(&out);
+        assert!(
+            text.contains("first:one") && text.contains("second:two"),
+            "{text:?}"
+        );
+        assert_eq!(
+            pty.wait().unwrap(),
+            None,
+            "an adopted child's status is unknown"
+        );
+    }
+
+    #[test]
+    #[cfg(unix)]
+    fn handoff_receive_reads_descriptors_and_state() {
+        use std::io::Write;
+        use std::os::fd::{AsRawFd, IntoRawFd};
+        use std::os::unix::net::UnixStream;
+        let pty = Pty::spawn(
+            size(),
+            SpawnOptions {
+                command: Some(&["/bin/sh", "-c", "read x; echo adopted:$x"]),
+                ..Default::default()
+            },
+        )
+        .unwrap();
+        let detached = pty.detach().unwrap();
+        let pid = detached.pid();
+        let (mut ours, theirs) = UnixStream::pair().unwrap();
+        let header = format!("chda-handoff 1 {}:{pid}\n", detached.fd.as_raw_fd());
+        let _ = detached.fd.into_raw_fd();
+        ours.write_all(header.as_bytes()).unwrap();
+        ours.write_all(b"{\"state\":1}").unwrap();
+        ours.shutdown(std::net::Shutdown::Write).unwrap();
+
+        let inherited = handoff::receive(theirs.into_raw_fd()).unwrap();
+        assert_eq!(inherited.state, b"{\"state\":1}");
+        assert_eq!(inherited.ptys.len(), 1);
+        inherited.reply.ready().unwrap();
+        let mut line = String::new();
+        std::io::BufRead::read_line(&mut std::io::BufReader::new(&ours), &mut line).unwrap();
+        assert_eq!(line, "ready\n");
+
+        let mut adopted = Pty::adopt(inherited.ptys.into_iter().next().unwrap()).unwrap();
+        let mut reader = adopted.reader().unwrap();
+        adopted.write_all(b"yes\n").unwrap();
+        let mut out = Vec::new();
+        let _ = reader.read_to_end(&mut out);
+        assert!(String::from_utf8_lossy(&out).contains("adopted:yes"));
     }
 }

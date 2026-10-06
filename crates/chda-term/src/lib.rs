@@ -19,7 +19,7 @@ pub use input::*;
 pub use links::{Hyperlink, Link, LinkTarget, links_at};
 pub use pwd::parse_pwd_report;
 pub use search::{SearchMark, SearchQuery, SearchStatus};
-pub use session::{DEFAULT_SCROLLBACK, Event, Session, SessionOptions};
+pub use session::{DEFAULT_SCROLLBACK, DetachedSession, Event, Session, SessionOptions};
 pub use shell_integration::{
     ShellIntegration, ShellLaunch, default_data_dir, launch_for, login_shell,
 };

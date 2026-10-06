@@ -11,7 +11,7 @@ use std::sync::{Arc, Mutex};
 use std::thread;
 use std::time::{Duration, Instant};
 
-use chda_pty::{ExitStatus, Pty, PtySize, SpawnOptions};
+use chda_pty::{DetachedPty, ExitStatus, Pty, PtyReader, PtySize, ReaderStop, SpawnOptions};
 
 use crate::frame::{ColorConfig, Frame, Size};
 use crate::input::{KeyCode, KeyInput, Modifiers, MouseInput};
@@ -53,8 +53,9 @@ pub enum Event {
     /// Reply to [`Session::find_last_diagram`]: the last Mermaid source in
     /// the scrollback, if any.
     LastDiagram(Option<String>),
-    /// The child exited; the session is finished.
-    Exited(ExitStatus),
+    /// The child exited; the session is finished. The status is unknown
+    /// for a child adopted from an earlier chda process.
+    Exited(Option<ExitStatus>),
 }
 
 /// Session configuration.
@@ -120,6 +121,19 @@ enum Command {
         older: bool,
     },
     SetColors(ColorConfig),
+    Detach(Sender<std::io::Result<DetachedSession>>),
+}
+
+/// A session let go by [`Session::detach`]: the PTY with its running child
+/// and the terminal's content, for [`Session::adopt`] here or in a
+/// successor process.
+#[derive(Debug)]
+pub struct DetachedSession {
+    pub pty: DetachedPty,
+    /// [`Terminal::snapshot`] of the screen and scrollback.
+    pub snapshot: Vec<u8>,
+    /// The terminal size the snapshot was taken at.
+    pub size: Size,
 }
 
 enum Msg {
@@ -177,8 +191,35 @@ impl Session {
                 env: &env,
             },
         )?;
+        Self::start(opts, pty, None, events, wake)
+    }
+
+    /// Continue a session another chda process (or this one) detached: the
+    /// child keeps running and the screen and scrollback come back.
+    pub fn adopt(
+        opts: SessionOptions,
+        detached: DetachedSession,
+        events: Sender<Event>,
+        wake: impl Fn() + Send + 'static,
+    ) -> std::io::Result<Self> {
+        let pty = Pty::adopt(detached.pty)?;
+        let restore = Restore {
+            snapshot: detached.snapshot,
+            size: detached.size,
+        };
+        Self::start(opts, pty, Some(restore), events, wake)
+    }
+
+    fn start(
+        opts: SessionOptions,
+        pty: Pty,
+        restore: Option<Restore>,
+        events: Sender<Event>,
+        wake: impl Fn() + Send + 'static,
+    ) -> std::io::Result<Self> {
         let child_pid = pty.pid();
         let reader = pty.reader()?;
+        let stop = reader.stopper();
 
         let (tx, rx) = mpsc::channel();
         let frame = Arc::new(Mutex::new(Arc::new(Frame::default())));
@@ -188,7 +229,7 @@ impl Session {
             let frame = Arc::clone(&frame);
             thread::Builder::new()
                 .name("chda-term".into())
-                .spawn(move || run(opts, pty, rx, frame, events, wake))?
+                .spawn(move || run(opts, Owned { pty, stop, restore }, rx, frame, events, wake))?
         };
 
         Ok(Self {
@@ -197,6 +238,16 @@ impl Session {
             frame,
             thread: Some(thread),
         })
+    }
+
+    /// Stop reading, capture the screen and let go of the PTY without
+    /// ending the child. The reply arrives on the returned channel once the
+    /// output read so far is parsed; the session then ends without an
+    /// [`Event::Exited`]. Fails when the child already exited.
+    pub fn detach(&self) -> Receiver<std::io::Result<DetachedSession>> {
+        let (tx, rx) = mpsc::channel();
+        self.send(Command::Detach(tx));
+        rx
     }
 
     /// The latest frame. Cheap to call; the terminal thread swaps in new ones.
@@ -316,7 +367,20 @@ impl Drop for Session {
     }
 }
 
-fn spawn_reader(mut reader: Box<dyn Read + Send>, tx: Sender<Msg>) {
+/// What the terminal thread owns besides the VT state.
+struct Owned {
+    pty: Pty,
+    stop: ReaderStop,
+    restore: Option<Restore>,
+}
+
+/// A detached session's content to show before new output.
+struct Restore {
+    snapshot: Vec<u8>,
+    size: Size,
+}
+
+fn spawn_reader(mut reader: PtyReader, tx: Sender<Msg>) {
     let _ = thread::Builder::new()
         .name("chda-pty-read".into())
         .spawn(move || {
@@ -337,13 +401,19 @@ fn spawn_reader(mut reader: Box<dyn Read + Send>, tx: Sender<Msg>) {
 
 fn run(
     opts: SessionOptions,
-    mut pty: Pty,
+    owned: Owned,
     rx: Receiver<Msg>,
     frame_slot: Arc<Mutex<Arc<Frame>>>,
     events: Sender<Event>,
     wake: impl Fn(),
 ) {
-    let mut term = match Terminal::new(opts.size, opts.scrollback) {
+    let Owned {
+        mut pty,
+        stop,
+        restore,
+    } = owned;
+    let start_size = restore.as_ref().map_or(opts.size, |r| r.size);
+    let mut term = match Terminal::new(start_size, opts.scrollback) {
         Ok(t) => t,
         Err(_) => {
             let _ = pty.kill();
@@ -351,6 +421,23 @@ fn run(
         }
     };
     let _ = term.set_colors(&opts.colors);
+    if let Some(restore) = restore {
+        term.feed(&restore.snapshot);
+        // Rebuilding the screen is not news: no replies to the child, no
+        // bell or prompt events.
+        let _ = term.take_effects();
+        let _ = term.take_effects();
+        if restore.size != opts.size {
+            let _ = term.resize(opts.size, opts.cell_width_px, opts.cell_height_px);
+            let _ = pty.resize(PtySize {
+                cols: opts.size.cols,
+                rows: opts.size.rows,
+                pixel_width: (opts.cell_width_px * u32::from(opts.size.cols)) as u16,
+                pixel_height: (opts.cell_height_px * u32::from(opts.size.rows)) as u16,
+            });
+        }
+    }
+    let mut detaching: Option<Sender<std::io::Result<DetachedSession>>> = None;
     let emit = |event: Event| {
         let _ = events.send(event);
         wake();
@@ -394,6 +481,12 @@ fn run(
                 Msg::OutputClosed => {
                     closed = true;
                 }
+                Msg::Command(Command::Detach(reply)) => {
+                    stop.stop();
+                    detaching = Some(reply);
+                }
+                // Once detaching, nothing more reaches the child.
+                Msg::Command(_) if detaching.is_some() => {}
                 Msg::Command(cmd) => {
                     if matches!(cmd, Command::Search(_) | Command::SearchStep { .. }) {
                         search_stale = false;
@@ -412,6 +505,29 @@ fn run(
             if let Some(status) = term.refresh_search() {
                 replies.push(Event::Search(status));
                 dirty = true;
+            }
+        }
+
+        if closed && let Some(reply) = detaching.take() {
+            match pty.try_wait() {
+                Ok(None) => {
+                    let size = term.size();
+                    let detached =
+                        term.snapshot()
+                            .map_err(std::io::Error::other)
+                            .and_then(|snapshot| {
+                                Ok(DetachedSession {
+                                    pty: pty.detach()?,
+                                    snapshot,
+                                    size,
+                                })
+                            });
+                    let _ = reply.send(detached);
+                    return;
+                }
+                _ => {
+                    let _ = reply.send(Err(std::io::Error::other("the program already exited")));
+                }
             }
         }
 
@@ -461,10 +577,7 @@ fn run(
         Ok(Some(s)) => s,
         _ => {
             let _ = pty.kill();
-            pty.wait().unwrap_or(ExitStatus {
-                code: 0,
-                signal: None,
-            })
+            pty.wait().ok().flatten()
         }
     };
     emit(Event::Exited(status));
@@ -478,6 +591,8 @@ fn handle_command(
     replies: &mut Vec<Event>,
 ) -> bool {
     match cmd {
+        // The run loop takes this one before commands reach here.
+        Command::Detach(_) => false,
         Command::Key(input) => {
             if let Ok(bytes) = term.encode_key(&input)
                 && !bytes.is_empty()
@@ -708,6 +823,60 @@ mod tests {
         }
     }
 
+    /// A detached session continues in a new one: the child never notices,
+    /// the old screen is back, and output written meanwhile is not lost.
+    #[test]
+    fn detach_and_adopt_continue_the_same_child() {
+        let mut p = Probe::spawn(&[
+            "/bin/sh",
+            "-c",
+            "echo before; read x; echo after:$x; read y",
+        ]);
+        p.wait_for_text("before");
+        let detached = p
+            .session
+            .detach()
+            .recv_timeout(Duration::from_secs(5))
+            .unwrap()
+            .unwrap();
+        let pid = detached.pty.pid();
+        assert_eq!(p.session.child_pid(), Some(pid));
+        drop(p);
+
+        let (tx, events) = mpsc::channel();
+        let session = Session::adopt(
+            SessionOptions {
+                size: Size { cols: 40, rows: 6 },
+                ..Default::default()
+            },
+            detached,
+            tx,
+            || {},
+        )
+        .unwrap();
+        let mut q = Probe {
+            session,
+            events,
+            seen: Vec::new(),
+        };
+        q.wait_for_text("before");
+        q.session.text("hi\r".into());
+        q.wait_for_text("after:hi");
+        q.session.text("\r".into());
+        assert_eq!(
+            q.wait_for(|e| matches!(e, Event::Exited(_))),
+            Event::Exited(None)
+        );
+    }
+
+    #[test]
+    fn detaching_an_exited_session_fails() {
+        let mut p = Probe::spawn(&["/bin/sh", "-c", "exit 0"]);
+        p.wait_for(|e| matches!(e, Event::Exited(_)));
+        let reply = p.session.detach().recv_timeout(Duration::from_secs(2));
+        assert!(!matches!(reply, Ok(Ok(_))));
+    }
+
     #[test]
     fn shell_output_shows_up_in_frames_and_exit_is_reported() {
         let mut p = Probe::spawn(&["/bin/sh", "-c", "echo marker-1; read x; echo got:$x"]);
@@ -719,10 +888,10 @@ mod tests {
         let ev = p.wait_for(|e| matches!(e, Event::Exited(_)));
         assert_eq!(
             ev,
-            Event::Exited(ExitStatus {
+            Event::Exited(Some(ExitStatus {
                 code: 0,
                 signal: None
-            })
+            }))
         );
     }
 

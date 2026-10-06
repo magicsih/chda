@@ -547,6 +547,61 @@ impl Terminal {
         crate::mermaid::last_diagram(&String::from_utf8_lossy(&bytes))
     }
 
+    /// The screen, scrollback and terminal state as VT sequences that
+    /// rebuild them when fed to a fresh terminal of the same size: modes,
+    /// scrolling region, tab stops, working directory, keyboard protocol,
+    /// styles, hyperlinks, the cursor and the title. With a full-screen
+    /// application running, the shell's primary screen comes first, then
+    /// the alternate one. Kitty images are not included.
+    ///
+    /// Leaves the alternate screen to read the primary one, so call it only
+    /// on a terminal that is being handed over.
+    pub fn snapshot(&mut self) -> Result<Vec<u8>> {
+        let alternate = if self.alternate_screen() {
+            let alt = self.format_state()?;
+            self.vt.vt_write(b"\x1b[?1049l");
+            Some(alt)
+        } else {
+            None
+        };
+        let mut out = self.format_state()?;
+        let title: String = self.title().chars().filter(|c| !c.is_control()).collect();
+        if !title.is_empty() {
+            out.extend_from_slice(format!("\x1b]2;{title}\x07").as_bytes());
+        }
+        if let Some(alt) = alternate {
+            // The alternate screen's content starts from its home position.
+            out.extend_from_slice(b"\x1b[?1049h\x1b[H");
+            out.extend_from_slice(&alt);
+        }
+        Ok(out)
+    }
+
+    /// One screen's content and state. The formatter sets tab stops after
+    /// the cursor, which moves it, so the cursor position goes last.
+    fn format_state(&self) -> Result<Vec<u8>> {
+        let opts = FormatterOptions::new()
+            .with_format(Format::Vt)
+            .with_unwrap(false)
+            .with_trim(false)
+            .with_modes(true)
+            .with_scrolling_region(true)
+            .with_tabstops(true)
+            .with_pwd(true)
+            .with_keyboard(true)
+            .with_cursor(true)
+            .with_style(true)
+            .with_hyperlink(true)
+            .with_protection(true)
+            .with_kitty_keyboard(true)
+            .with_charsets(true);
+        let mut formatter = Formatter::new(&self.vt, opts)?;
+        let mut out = formatter.format_alloc(None)?.to_vec();
+        let (x, y) = (self.vt.cursor_x()?, self.vt.cursor_y()?);
+        out.extend_from_slice(format!("\x1b[{};{}H", y + 1, x + 1).as_bytes());
+        Ok(out)
+    }
+
     fn screen_text(&self) -> Result<String> {
         let opts = FormatterOptions::new()
             .with_format(Format::Plain)
@@ -586,6 +641,14 @@ impl Terminal {
         if m.row < bar.offset || m.row >= bar.offset + bar.len {
             let top = m.row.saturating_sub(bar.len / 2);
             self.vt.scroll_viewport(ScrollViewport::Row(top as usize));
+        }
+    }
+
+    /// The grid size in cells.
+    pub fn size(&self) -> Size {
+        Size {
+            cols: self.vt.cols().unwrap_or(0),
+            rows: self.vt.rows().unwrap_or(0),
         }
     }
 
@@ -1542,6 +1605,74 @@ mod bench {
             "fed {} bytes in {elapsed:?} ({:.1} MB/s), {frames} frames built",
             data.len(),
             data.len() as f64 / 1e6 / elapsed.as_secs_f64()
+        );
+    }
+
+    fn snapshot_state(t: &Terminal) -> String {
+        use libghostty_vt::terminal::{Mode, ModeKind};
+        let dec = |n: u16| t.vt.mode(Mode::new(n, ModeKind::Dec)).unwrap_or(false);
+        format!(
+            "cursor=({},{}) alt={} paste={} cursor-keys={} mouse={} pwd={:?} title={:?}",
+            t.vt.cursor_x().unwrap(),
+            t.vt.cursor_y().unwrap(),
+            t.alternate_screen(),
+            dec(2004),
+            dec(1),
+            t.mouse_tracking(),
+            t.pwd(),
+            t.title(),
+        )
+    }
+
+    #[test]
+    fn snapshot_restores_scrollback_cursor_and_modes() {
+        let size = Size { cols: 30, rows: 6 };
+        let mut a = Terminal::new(size, 1_000_000).unwrap();
+        a.feed(b"\x1b]7;file://host/tmp/proj\x07\x1b]2;build\x07");
+        for i in 0..40 {
+            a.feed(format!("\x1b[3{}mline {i}\x1b[0m\r\n", i % 8).as_bytes());
+        }
+        a.feed(b"\x1b[?2004h\x1b[?1h\x1b[1;31mred\x1b[0m $ partial");
+        let (text, state) = (a.screen_text().unwrap(), snapshot_state(&a));
+        let blob = a.snapshot().unwrap();
+
+        let mut b = Terminal::new(size, 1_000_000).unwrap();
+        b.feed(&blob);
+        assert_eq!(b.screen_text().unwrap(), text);
+        assert_eq!(snapshot_state(&b), state);
+        // Output after the handover continues where it left off.
+        b.feed(b" more\r\nnext");
+        assert!(
+            b.screen_text()
+                .unwrap()
+                .ends_with("red $ partial more\nnext")
+        );
+    }
+
+    #[test]
+    fn snapshot_restores_a_full_screen_app_over_the_shell() {
+        let size = Size { cols: 30, rows: 6 };
+        let mut a = Terminal::new(size, 1_000_000).unwrap();
+        for i in 0..20 {
+            a.feed(format!("shell {i}\r\n").as_bytes());
+        }
+        a.feed(b"$ vim");
+        let shell_text = a.screen_text().unwrap();
+        let shell_cursor = (a.vt.cursor_x().unwrap(), a.vt.cursor_y().unwrap());
+        a.feed(b"\x1b[?1049h\x1b[?1000h\x1b[2J\x1b[Hvim line 1\r\n\x1b[7mstatus\x1b[0m\x1b[3;5H");
+        let (app_text, app_state) = (a.screen_text().unwrap(), snapshot_state(&a));
+        let blob = a.snapshot().unwrap();
+
+        let mut b = Terminal::new(size, 1_000_000).unwrap();
+        b.feed(&blob);
+        assert_eq!(b.screen_text().unwrap(), app_text);
+        assert_eq!(snapshot_state(&b), app_state);
+        // Quitting the app shows the shell and its cursor again.
+        b.feed(b"\x1b[?1049l");
+        assert_eq!(b.screen_text().unwrap(), shell_text);
+        assert_eq!(
+            (b.vt.cursor_x().unwrap(), b.vt.cursor_y().unwrap()),
+            shell_cursor
         );
     }
 }
