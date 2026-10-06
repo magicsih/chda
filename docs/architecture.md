@@ -107,8 +107,10 @@ knows nothing about views. `chda-ui`'s `WorkspaceView` maps pane ids to
 terminal events (exit, title, cwd, bell, focus) into model updates.
 
 Redraws stay local. Terminal panes and the sidebar are cached views: a
-window redraw (the working-dot pulse in the tab bar, a status bar tick)
-reuses their last frame unless they notified. A pane's output notifies only
+window redraw (a status bar tick) reuses their last frame unless they
+notified. While an agent works, the status spinner redraws the tab bar and
+the visible sidebar ten times a second; panes stay cached and the timer
+stops when no agent works or the system asks to reduce motion. A pane's output notifies only
 its own view. Its title (agents such as Codex animate it while working) and
 its once-a-second activity time do not redraw the window unless a tab label
 or agent status changes; ACTIVE ages pick up the time on their own

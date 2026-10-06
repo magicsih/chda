@@ -131,10 +131,6 @@ const RELEASE_CHECK: Duration = Duration::from_secs(60 * 60);
 /// How long terminal activity waits before it is saved for the next launch.
 const ACTIVITY_SAVE_DELAY: Duration = Duration::from_secs(5);
 
-/// Step of the "working" dot pulse; the timer only runs while an agent works.
-const PULSE_STEP: Duration = Duration::from_millis(250);
-const PULSE_STEPS: u8 = 8;
-
 /// A popup menu anchored at a window position.
 pub(crate) struct ContextMenu {
     position: Point<Pixels>,
@@ -332,9 +328,9 @@ pub struct WorkspaceView {
     config_problem: Option<String>,
     /// The theme palette shows a theme that is not the configured one yet.
     previewing_theme: bool,
-    /// Phase of the "working" dot pulse, and whether its timer runs.
-    pulse: u8,
-    pulsing: bool,
+    /// Frame of the "working" spinner, and whether its timer runs.
+    spin: u32,
+    pub(crate) spinning: bool,
     /// The pane "go to waiting agent" jumped to last, to cycle onwards.
     last_jump: Option<PaneId>,
     /// Window frame, kept for session restore.
@@ -450,8 +446,8 @@ impl WorkspaceView {
             config_watcher: None,
             config_problem: None,
             previewing_theme: false,
-            pulse: 0,
-            pulsing: false,
+            spin: 0,
+            spinning: false,
             last_jump: None,
             bounds: None,
             quitting: false,
@@ -1289,11 +1285,11 @@ impl WorkspaceView {
     }
 
     /// After agent status or focus changes: refresh the activity list, the
-    /// Dock badge and the pulse timer.
+    /// Dock badge and the spinner timer.
     fn sync_attention(&mut self, cx: &mut Context<Self>) {
         self.sync_panes(cx);
         self.env.system.set_badge(self.ws.unseen_waiting());
-        self.ensure_pulse(cx);
+        self.ensure_spin(cx);
         cx.notify();
     }
 
@@ -1306,25 +1302,35 @@ impl WorkspaceView {
             .any(|a| a.status == AgentStatus::Working)
     }
 
-    /// Run the pulse timer while some agent works; it stops by itself.
-    fn ensure_pulse(&mut self, cx: &mut Context<Self>) {
-        if self.pulsing || !self.any_working() {
+    /// Run the spinner timer while some agent works; it stops by itself.
+    /// The tab bar and the sidebar redraw on each frame, nothing else does.
+    fn ensure_spin(&mut self, cx: &mut Context<Self>) {
+        if self.spinning || cx.reduce_motion() || !self.any_working() {
             return;
         }
-        self.pulsing = true;
+        self.spinning = true;
         cx.spawn(async move |this, cx| {
             loop {
-                cx.background_executor().timer(PULSE_STEP).await;
+                cx.background_executor()
+                    .timer(crate::status_icon::SPIN_STEP)
+                    .await;
                 let keep = this.update(cx, |view, cx| {
-                    if !view.any_working() {
-                        view.pulsing = false;
-                        view.pulse = 0;
-                        cx.notify();
-                        return false;
-                    }
-                    view.pulse = (view.pulse + 1) % PULSE_STEPS;
+                    let working = view.any_working() && !cx.reduce_motion();
+                    view.spin = if working {
+                        view.spin.wrapping_add(1)
+                    } else {
+                        0
+                    };
+                    let (spin, visible) = (view.spin, view.sidebar_visible);
+                    view.sidebar.update(cx, |s, cx| {
+                        s.spin = spin;
+                        if visible {
+                            cx.notify();
+                        }
+                    });
                     cx.notify();
-                    true
+                    view.spinning = working;
+                    working
                 });
                 if !keep.unwrap_or(false) {
                     break;
@@ -1332,12 +1338,6 @@ impl WorkspaceView {
             }
         })
         .detach();
-    }
-
-    /// Opacity of a "working" dot for the current pulse phase.
-    fn pulse_opacity(&self) -> f32 {
-        let t = f32::from(self.pulse) / f32::from(PULSE_STEPS) * std::f32::consts::TAU;
-        0.6 + 0.4 * t.cos()
     }
 
     /// Cycle through panes whose agent waits for input, then those with a
@@ -5073,13 +5073,7 @@ impl WorkspaceView {
                         AgentStatus::Idle => format!("{name} is idle; ready for another task"),
                     }
                 });
-                let dot = agent.map(|a| {
-                    let mut color = crate::sidebar_view::status_color(a.status);
-                    if a.status == AgentStatus::Working {
-                        color = color.opacity(self.pulse_opacity());
-                    }
-                    div().flex_shrink_0().text_color(color).child("\u{25cf}")
-                });
+                let dot = agent.map(|a| crate::status_icon::status_icon(Some(a.status), self.spin));
                 div()
                     .id(("tab", i))
                     .debug_selector(move || format!("tab-{i}"))
@@ -5128,7 +5122,7 @@ impl WorkspaceView {
     fn render_node(&self, node: &Node, divider: Hsla) -> AnyElement {
         match node {
             Node::Leaf(pane) => match self.panes.get(pane) {
-                // Cached: redrawing the window (tab bar pulse, another
+                // Cached: redrawing the window (tab bar spinner, another
                 // pane's output) reuses a pane's last frame unless it changed.
                 Some((view, _)) => div()
                     .size_full()

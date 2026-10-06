@@ -300,3 +300,52 @@ done
             && v.sidebar.read(cx).model.repos[0].worktrees[0].status() == AgentStatus::Idle
     });
 }
+
+#[gpui::test]
+fn working_spinner_turns_only_while_an_agent_works(cx: &mut TestAppContext) {
+    use crate::status_icon::SPIN_STEP;
+    use futures::{FutureExt, StreamExt};
+
+    let mut h = Harness::open(cx, "spinner", |_| {});
+    h.wait_prompt();
+    let pane = h.read(|v, _| v.ws.tabs()[0].panes()[0]);
+    let home = h.home.home.clone();
+    let sidebar = h.read(|v, _| v.sidebar.clone());
+    let spin = |h: &Harness| h.read(|v, cx| v.sidebar.read(cx).spin);
+
+    h.hook(Some(pane.raw()), &home, HookKind::PromptSubmitted);
+    h.wait_for("the agent to work", move |v, _| {
+        v.ws.pane(pane)
+            .and_then(|p| p.agent.as_ref())
+            .is_some_and(|a| a.status == AgentStatus::Working)
+    });
+    let start = spin(&h);
+    let mut notices = h.cx.cx.notifications(&sidebar);
+    for _ in 0..3 {
+        h.cx.executor().advance_clock(SPIN_STEP);
+        h.cx.run_until_parked();
+    }
+    assert_eq!(spin(&h), start + 3, "the sidebar spinner turns each step");
+    assert!(notices.next().now_or_never().is_some());
+
+    // Waiting for input is a still icon: the timer stops with the work.
+    h.hook(Some(pane.raw()), &home, HookKind::WaitingInput);
+    h.wait_for("the agent to wait", move |v, _| {
+        v.ws.pane(pane)
+            .and_then(|p| p.agent.as_ref())
+            .is_some_and(|a| a.status == AgentStatus::WaitingInput)
+    });
+    h.cx.executor().advance_clock(SPIN_STEP);
+    h.cx.run_until_parked();
+    assert!(
+        !h.read(|v, _| v.spinning),
+        "no timer without a working agent"
+    );
+    while notices.next().now_or_never().is_some() {}
+    h.cx.executor().advance_clock(SPIN_STEP * 5);
+    h.cx.run_until_parked();
+    assert!(
+        notices.next().now_or_never().is_none(),
+        "a waiting agent does not repaint the sidebar"
+    );
+}
