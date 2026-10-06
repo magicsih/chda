@@ -12,9 +12,9 @@ use std::f32::consts::PI;
 use std::time::Duration;
 
 /// Time between spinner frames; the timer only runs while an agent works.
-pub const SPIN_STEP: Duration = Duration::from_millis(100);
+pub const SPIN_STEP: Duration = Duration::from_millis(125);
 /// Frames per spinner turn.
-pub const SPIN_STEPS: u32 = 10;
+pub const SPIN_STEPS: u32 = 8;
 
 /// Every icon takes the same square so labels line up.
 const BOX: f32 = 12.0;

@@ -341,11 +341,18 @@ fn working_spinner_turns_only_while_an_agent_works(cx: &mut TestAppContext) {
         !h.read(|v, _| v.spinning),
         "no timer without a working agent"
     );
+    // Only the once-a-second ACTIVE age tick repaints the sidebar now.
     while notices.next().now_or_never().is_some() {}
-    h.cx.executor().advance_clock(SPIN_STEP * 5);
-    h.cx.run_until_parked();
+    let mut repaints = 0;
+    for _ in 0..16 {
+        h.cx.executor().advance_clock(SPIN_STEP);
+        h.cx.run_until_parked();
+        while notices.next().now_or_never().is_some() {
+            repaints += 1;
+        }
+    }
     assert!(
-        notices.next().now_or_never().is_none(),
-        "a waiting agent does not repaint the sidebar"
+        repaints <= 3,
+        "a waiting agent repainted the sidebar {repaints} times in two seconds"
     );
 }
