@@ -4,6 +4,12 @@ All notable changes to chda. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); entries are
 generated from conventional commit messages by release-plz.
 
+## [0.1.17](https://github.com/magicsih/chda/compare/v0.1.16...v0.1.17) - 2026-10-06
+
+### Fixed
+
+- *(sidebar)* show a spinner for working agents and a badge for waiting ones ([#142](https://github.com/magicsih/chda/pull/142))
+
 ## [0.1.16](https://github.com/magicsih/chda/compare/v0.1.15...v0.1.16) - 2026-10-05
 
 ### Added
