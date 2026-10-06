@@ -2,6 +2,8 @@
 
 use std::path::PathBuf;
 
+use crate::status_icon::status_icon;
+
 use chda_core::{
     AgentStatus, CheckState, DiffSummary, GitBadges, PrInfo, PrState, RepoEntry, SessionEntry,
     Sidebar, WorktreeEntry, activity_age, relative_age,
@@ -208,6 +210,8 @@ pub struct SidebarView {
     /// Highlighted worktree (e.g. after a notification for a closed pane).
     pub(crate) selected: Option<PathBuf>,
     pub(crate) active_tab: Option<chda_core::TabId>,
+    /// Frame of the "working" spinner, advanced by the workspace.
+    pub(crate) spin: u32,
     pub(crate) scroll: gpui::ScrollHandle,
     reveal: Option<PathBuf>,
     pending_navigation: bool,
@@ -222,6 +226,11 @@ impl EventEmitter<SidebarEvent> for SidebarView {}
 
 pub(crate) fn no_agent_color() -> Hsla {
     gpui::rgb(0x6c7086).into()
+}
+
+/// Background of a row whose agent waits for input.
+fn waiting_tint() -> Hsla {
+    status_color(AgentStatus::WaitingInput).opacity(0.16)
 }
 
 pub fn status_color(status: AgentStatus) -> Hsla {
@@ -244,6 +253,7 @@ impl SidebarView {
             expanded: Vec::new(),
             selected: None,
             active_tab: None,
+            spin: 0,
             scroll: gpui::ScrollHandle::new(),
             reveal: None,
             pending_navigation: false,
@@ -463,9 +473,9 @@ impl SidebarView {
         col.into_any_element()
     }
 
-    /// A worktree's status dot color and tooltip: gray when no agent runs
-    /// there, yellow for a live idle agent.
-    fn status_dot(&self, wt: &WorktreeEntry) -> (Hsla, String) {
+    /// A worktree's status icon and tooltip: `None` (gray) when no agent
+    /// runs there, `Idle` (yellow) for a live idle agent.
+    fn status_dot(&self, wt: &WorktreeEntry) -> (Option<AgentStatus>, String) {
         let status = wt.status();
         let live_idle = self.model.idle_agents.iter().any(|i| {
             i.cwd
@@ -475,11 +485,11 @@ impl SidebarView {
         });
         match status {
             AgentStatus::Idle if live_idle => (
-                status_color(status),
+                Some(status),
                 "A live agent is idle here, ready for another task. Click to go there.".into(),
             ),
-            AgentStatus::Idle => (no_agent_color(), status_tooltip(wt, &self.agents)),
-            _ => (status_color(status), status_tooltip(wt, &self.agents)),
+            AgentStatus::Idle => (None, status_tooltip(wt, &self.agents)),
+            _ => (Some(status), status_tooltip(wt, &self.agents)),
         }
     }
 
@@ -511,10 +521,7 @@ impl SidebarView {
             .to_owned();
         let (dot, mut tip) = match worktree {
             Some(w) => self.status_dot(w),
-            None => (
-                no_agent_color(),
-                "No worktree has this branch checked out.".to_owned(),
-            ),
+            None => (None, "No worktree has this branch checked out.".to_owned()),
         };
         tip = format!("{}\n{repo_name} \u{2022} {}\n{tip}", label, starred.branch);
         let (repo, branch) = (starred.repo.clone(), starred.branch.clone());
@@ -529,6 +536,9 @@ impl SidebarView {
             .py_0p5()
             .cursor_pointer()
             .when(worktree.is_none(), |d| d.opacity(0.55))
+            .when(dot == Some(AgentStatus::WaitingInput), |d| {
+                d.bg(waiting_tint())
+            })
             .when(
                 worktree.is_some_and(|w| self.selected.as_ref() == Some(&w.path)),
                 |d| d.bg(fg.opacity(0.14)),
@@ -564,7 +574,7 @@ impl SidebarView {
                     }))
                     .child("\u{2605}"),
             )
-            .child(div().flex_shrink_0().text_color(dot).child("\u{25cf}"))
+            .child(status_icon(dot, self.spin))
             .child(
                 div()
                     .flex_1()
@@ -598,7 +608,7 @@ impl SidebarView {
         let fg = self.fg;
         let path = wt.path.clone();
         let expanded = self.expanded.contains(&wt.path);
-        let (dot_color, status_tip) = self.status_dot(wt);
+        let (dot, status_tip) = self.status_dot(wt);
         let name = match &wt.branch {
             _ if folder => "(no git)".to_owned(),
             Some(branch) => branch.clone(),
@@ -777,6 +787,9 @@ impl SidebarView {
             .py_0p5()
             .cursor_pointer()
             .when(wt.missing || wt.busy.is_some(), |d| d.opacity(0.55))
+            .when(dot == Some(AgentStatus::WaitingInput), |d| {
+                d.bg(waiting_tint())
+            })
             .when(self.selected.as_ref() == Some(&wt.path), |d| {
                 d.bg(fg.opacity(0.14))
             })
@@ -822,7 +835,6 @@ impl SidebarView {
                         format!("wt-dot:{}", wt.path.display()).into(),
                     ))
                     .flex_shrink_0()
-                    .text_color(dot_color)
                     .tooltip(crate::tooltip::text(status_tip))
                     .on_click({
                         let path = path.clone();
@@ -831,7 +843,7 @@ impl SidebarView {
                             cx.emit(SidebarEvent::JumpToAgent(path.clone()));
                         })
                     })
-                    .child("\u{25cf}"),
+                    .child(status_icon(dot, self.spin)),
             )
             .child(match wt.note_title() {
                 // With a note, the task is the label and the branch sits
@@ -1224,9 +1236,13 @@ impl Render for SidebarView {
                 div()
                     .id(ElementId::Name(format!("active:{:?}", t.tab).into()))
                     .debug_selector(move || format!("active-{id:?}"))
+                    .when(t.status == AgentStatus::WaitingInput, |d| {
+                        d.bg(waiting_tint())
+                    })
                     .when(self.active_tab == Some(id), |d| d.bg(fg.opacity(0.14)))
                     .flex()
                     .flex_row()
+                    .items_center()
                     .gap_1()
                     .px_2()
                     .py_0p5()
@@ -1236,16 +1252,10 @@ impl Render for SidebarView {
                     .when_some(t.branch.clone(), |d, branch| {
                         d.tooltip(crate::tooltip::text(branch))
                     })
-                    .child(
-                        div()
-                            .flex_shrink_0()
-                            .text_color(if t.status == AgentStatus::Idle && !t.agent_live {
-                                no_agent_color()
-                            } else {
-                                status_color(t.status)
-                            })
-                            .child("\u{25cf}"),
-                    )
+                    .child(status_icon(
+                        (t.status != AgentStatus::Idle || t.agent_live).then_some(t.status),
+                        self.spin,
+                    ))
                     .child(
                         div()
                             .flex_1()
@@ -1356,8 +1366,7 @@ impl Render for SidebarView {
                                                 format!("idle-dot-{}", pane.raw())
                                             })
                                             .flex_shrink_0()
-                                            .text_color(status_color(AgentStatus::Idle))
-                                            .child("●"),
+                                            .child(status_icon(Some(AgentStatus::Idle), 0)),
                                     )
                                     .child(
                                         div()

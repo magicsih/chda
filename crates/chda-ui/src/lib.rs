@@ -15,6 +15,7 @@ mod scenarios;
 mod settings;
 mod sidebar_view;
 mod status_bar;
+mod status_icon;
 mod terminal_element;
 mod terminal_images;
 mod terminal_view;
