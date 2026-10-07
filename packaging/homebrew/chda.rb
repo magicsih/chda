@@ -9,6 +9,8 @@ cask "chda" do
   desc "Terminal with a git worktree side panel and a status board for LLM coding agents"
   homepage "https://github.com/magicsih/chda"
 
+  auto_updates true
+
   depends_on macos: :sonoma
 
   app "chda.app"

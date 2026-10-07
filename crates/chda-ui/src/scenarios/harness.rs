@@ -343,6 +343,31 @@ fn open_window(
         }
         let env = Rc::new(Environment {
             collect_telemetry: false,
+            update_launcher: {
+                let directory = home.data.join("update-fixture");
+                Arc::new(move |_, _| {
+                    if !directory.exists() {
+                        return Err("Updates are disabled in this test environment".into());
+                    }
+                    use std::io::Write;
+                    writeln!(
+                        std::fs::OpenOptions::new()
+                            .create(true)
+                            .append(true)
+                            .open(directory.join("launches"))
+                            .unwrap(),
+                        "launch"
+                    )
+                    .unwrap();
+                    Ok(crate::platform::update::UpdateJob {
+                        handoff: chda_core::handoff::UpdateHandoff {
+                            directory: directory.clone(),
+                            target_exe: directory.join("missing-target"),
+                            recovery_exe: directory.join("missing-recovery"),
+                        },
+                    })
+                })
+            },
             windows: Default::default(),
             config_path: Some(home.config.clone()),
             data_dir: Some(home.data.clone()),

@@ -253,6 +253,7 @@ impl Session {
         };
         let thread = {
             let frame = Arc::clone(&frame);
+            let output_tx = tx.clone();
             thread::Builder::new()
                 .name("chda-term".into())
                 .spawn(move || {
@@ -263,6 +264,7 @@ impl Session {
                             stop,
                             restore,
                             pending_reader,
+                            output_tx,
                         },
                         rx,
                         frame,
@@ -413,6 +415,7 @@ struct Owned {
     stop: ReaderStop,
     restore: Option<Restore>,
     pending_reader: Option<(PtyReader, Sender<Msg>)>,
+    output_tx: Sender<Msg>,
 }
 
 /// A detached session's content to show before new output.
@@ -450,9 +453,10 @@ fn run(
 ) {
     let Owned {
         mut pty,
-        stop,
+        mut stop,
         restore,
         mut pending_reader,
+        output_tx,
     } = owned;
     let mut owns_child = pending_reader.is_none();
     let start_size = restore.as_ref().map_or(opts.size, |r| r.size);
@@ -472,18 +476,8 @@ fn run(
         // Rebuilding the screen is not news: no replies to the child, no
         // bell or prompt events.
         let _ = term.take_effects();
-        let _ = term.take_effects();
-        if owns_child && restore.size != opts.size {
-            let _ = term.resize(opts.size, opts.cell_width_px, opts.cell_height_px);
-            let _ = pty.resize(PtySize {
-                cols: opts.size.cols,
-                rows: opts.size.rows,
-                pixel_width: (opts.cell_width_px * u32::from(opts.size.cols)) as u16,
-                pixel_height: (opts.cell_height_px * u32::from(opts.size.rows)) as u16,
-            });
-        }
     }
-    let mut detaching: Option<Sender<std::io::Result<DetachedSession>>> = None;
+    let mut detaching = None;
     let emit = |event: Event| {
         let _ = events.send(event);
         wake();
@@ -547,8 +541,19 @@ fn run(
                 }
                 Msg::Command(_) if !owns_child => {}
                 Msg::Command(Command::Detach(reply)) => {
-                    stop.stop();
-                    detaching = Some(reply);
+                    // Reserve recovery resources before stopping the reader.
+                    match pty
+                        .detached_handle()
+                        .and_then(|handle| pty.reader().map(|reader| (handle, reader)))
+                    {
+                        Ok((handle, reader)) => {
+                            stop.stop();
+                            detaching = Some((reply, handle, reader));
+                        }
+                        Err(error) => {
+                            let _ = reply.send(Err(error));
+                        }
+                    }
                 }
                 // Once detaching, nothing more reaches the child.
                 Msg::Command(_) if detaching.is_some() => {}
@@ -573,22 +578,26 @@ fn run(
             }
         }
 
-        if closed && let Some(reply) = detaching.take() {
+        if closed && let Some((reply, handle, reader)) = detaching.take() {
             match pty.try_wait() {
                 Ok(None) => {
                     let size = term.size();
-                    let detached =
-                        term.snapshot()
-                            .map_err(std::io::Error::other)
-                            .and_then(|snapshot| {
-                                Ok(DetachedSession {
-                                    pty: pty.detach()?,
-                                    snapshot,
-                                    size,
-                                })
-                            });
-                    let _ = reply.send(detached);
-                    return;
+                    match term.snapshot().map_err(std::io::Error::other) {
+                        Ok(snapshot) => {
+                            let _ = reply.send(Ok(DetachedSession {
+                                pty: handle,
+                                snapshot,
+                                size,
+                            }));
+                            return;
+                        }
+                        Err(error) => {
+                            stop = reader.stopper();
+                            spawn_reader(reader, output_tx.clone());
+                            closed = false;
+                            let _ = reply.send(Err(error));
+                        }
+                    }
                 }
                 _ => {
                     let _ = reply.send(Err(std::io::Error::other("the program already exited")));
@@ -893,6 +902,27 @@ mod tests {
                 text: text.map(str::to_owned),
             });
         }
+    }
+
+    #[test]
+    fn rejected_image_handoff_keeps_the_terminal_and_child_running() {
+        let mut p = Probe::spawn(&[
+            "/bin/sh",
+            "-c",
+            r"printf '\033_Ga=T,f=32,s=1,v=1,q=2;/////w==\033\\'; echo before; read x; echo survived:$x; read y",
+        ]);
+        p.wait_for_text("before");
+        let Err(error) = p
+            .session
+            .detach()
+            .recv_timeout(Duration::from_secs(5))
+            .unwrap()
+        else {
+            panic!("image handoff must fail");
+        };
+        assert!(error.to_string().contains("inline images"));
+        p.session.write(b"yes\n".to_vec());
+        p.wait_for_text("survived:yes");
     }
 
     #[test]

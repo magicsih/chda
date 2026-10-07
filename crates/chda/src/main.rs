@@ -26,18 +26,39 @@ fn main() {
         Some("note") => std::process::exit(chda_core::note_main(&args[1..])),
         Some("mcp") => std::process::exit(chda_agents::mcp_main(&args[1..])),
         Some("--version" | "-V") => println!("chda {}", env!("CARGO_PKG_VERSION")),
+        Some("--update-broker") => {
+            let result = args
+                .get(1)
+                .and_then(|s| s.parse().ok())
+                .ok_or_else(|| std::io::Error::other("missing broker descriptor"))
+                .and_then(chda_ui::run_broker);
+            if let Err(error) = result {
+                eprintln!("chda: {error}");
+                std::process::exit(1);
+            }
+        }
+        Some("--adopt") => {
+            let result = args
+                .get(1)
+                .and_then(|s| s.parse().ok())
+                .ok_or_else(|| std::io::Error::other("missing adoption descriptor"))
+                .and_then(|fd| chda_ui::run_adopt(ghostty_config(), fd));
+            if let Err(error) = result {
+                eprintln!("chda: {error}");
+                std::process::exit(1);
+            }
+        }
         Some(other) => {
             eprintln!("unknown argument: {other}");
             std::process::exit(2);
         }
-        None => {
-            let theme = chda_config::ChdaConfig::default_path()
-                .and_then(|p| chda_config::ChdaConfig::load(&p).ok())
-                .and_then(|c| c.theme);
-            chda_ui::run(chda_config::load(
-                &chda_config::Paths::default_for_user(),
-                theme.as_deref(),
-            ));
-        }
+        None => chda_ui::run(ghostty_config()),
     }
+}
+
+fn ghostty_config() -> chda_config::GhosttyConfig {
+    let theme = chda_config::ChdaConfig::default_path()
+        .and_then(|p| chda_config::ChdaConfig::load(&p).ok())
+        .and_then(|c| c.theme);
+    chda_config::load(&chda_config::Paths::default_for_user(), theme.as_deref())
 }

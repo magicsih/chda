@@ -261,15 +261,8 @@ pub fn deliver(event: &HookEvent) {
     if ipc::send(&ipc::socket_path(&dir), event).is_ok() {
         return;
     }
-    let _ = std::fs::create_dir_all(&dir);
-    if let Ok(line) = serde_json::to_string(event)
-        && let Ok(mut f) = std::fs::OpenOptions::new()
-            .create(true)
-            .append(true)
-            .open(dir.join("events.jsonl"))
-    {
-        use std::io::Write;
-        let _ = writeln!(f, "{line}");
+    if let Ok(line) = serde_json::to_string(event) {
+        let _ = ipc::append_fallback(&dir, &line);
     }
 }
 

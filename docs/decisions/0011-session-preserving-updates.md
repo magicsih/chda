@@ -1,84 +1,112 @@
 # Session-preserving updates
 
-Status: approved direction; implementation incomplete. This change supplies
-terminal handoff primitives, not a working in-app updater.
+Status: implemented; production signing configuration and administrator-owned
+installation acceptance remain release gates. No release is published by this PR.
 
 ## Decision
 
-For distributed macOS apps, use Sparkle 2.10.0 for download, signature
-verification, system authorization and app replacement. Keep existing daily
-update-check preferences. Download and installation begin only after the
-user clicks Update; release notes and version dismissal remain separate.
-One app-owned controller must publish progress to every window and reject
-duplicate update attempts.
+Use the official stable **Sparkle 2.10.0**, pinned by archive SHA-256, for
+macOS download, Ed25519 signature verification, system authorization and app
+replacement. The daily release check and its existing setting remain separate.
+Download and installation require clicking Update. An app-owned controller
+shares progress across windows and prevents duplicate attempts. Release notes
+and version dismissal remain in a separate menu; Cancel is available before
+session preparation. Automatic checks/downloads inside Sparkle are disabled.
 
-Use a separate process to keep sessions alive while the original GUI exits.
-Sparkle cannot finish replacement until the target app terminates. Its
-updater can outlive that target, and its delegate can disable automatic
-relaunch. The broker, rather than Sparkle, must launch the successor with
-`--adopt` after receiving installation completion.
+The macOS bridge in `chda-ui/platform/update` runs in a signed standalone
+helper embedded in the bundle. It hosts Sparkle with a custom user driver,
+uses the original app as its host, and disables Sparkle's automatic relaunch.
+A private per-attempt directory holds a verified copy of the old signed app,
+progress, control markers and the event journal. The helper runs from this
+copy, so replacing the original bundle does not remove its executable.
 
-Before quitting, retain a verified copy of the current signed app and hand
-the broker all PTY masters, terminal snapshots, window bounds, tab layouts,
-focus, pane IDs and agent state. Freeze input and structural changes only
-once installation is ready. Preserve agent events throughout the handoff;
-reopening the ordinary restore file is not live-session recovery.
+## Ownership and recovery
 
-The successor first prepares every window and terminal without reading
-PTY output, resizing the PTYs or owning shell termination. Only after all
-preparation succeeds may the broker grant ownership. Failed preparation
-must release the successor's resources without killing the shell. The
-broker keeps recovery descriptors until this decision.
+1. Download and verification happen while all windows remain usable. Native
+   authorization cancellation reports an error to the original GUI.
+2. Once Sparkle is ready, serialize accepted hook events to the handoff
+   journal, drain the preceding event queue, then freeze input, window closing
+   and structural changes across the app.
+3. Detach every terminal after draining its reader. Capture primary and
+   alternate screens, scrollback, VT state, pane IDs, titles, live agent state,
+   session start time, window bounds, tab layout and focus. A partial failure
+   reconnects all detached panes before unfreezing the original GUI.
+4. Start the retained app as `--update-broker`. It verifies the backup's code
+   signature, validates the complete window/PTY mapping and acknowledges
+   preparation before the GUI commits ownership and exits without destructors.
+5. The broker retains every PTY master while Sparkle finishes installation.
+   On success it checks the replacement against the old app's Apple code
+   requirement and launches it with `--adopt` and inherited descriptors.
+6. The successor prepares every window and terminal without consuming output,
+   resizing the PTYs or acquiring permission to terminate shells. After all
+   first frames exist, the broker commits ownership and the successor starts
+   reading. AppKit state restoration is suppressed for this launch because
+   the handoff, rather than macOS crash-history restoration, owns the windows.
+7. Installation or preparation failure launches the retained signed app with
+   the same descriptors and an error banner. Failed successors are killed
+   and reaped before recovery, without running shell-owning destructors. If
+   recovery itself fails, the broker keeps the descriptors and offers Retry.
+   Once a successor has committed, the broker does not rewind consumed output.
 
-Download failure or cancelled authorization leaves the old GUI running.
-After the GUI exits, installation or successor preparation failure must
-reopen the retained signed app with the same sessions and an error message.
-Do not roll back to an obsolete snapshot after a successor has committed
-and started consuming output.
+The handoff envelope and descriptor list are bounded. Preparation has a
+30-second timeout; installation has a five-minute deadline before recovery.
+The terminal reader continues draining while a normal shell is terminated,
+avoiding a macOS close-time hang when its final output fills the PTY buffer.
 
-## Implemented primitives
+Hook clients wait for acknowledgement. During the freeze the IPC server
+journals events before acknowledgement; each provisional GUI also journals
+accepted events until commit. When no GUI is available, hooks append to a
+locked fallback file. The successor replays journaled and fallback events
+with the original session start time and pane IDs. Failed provisional GUIs
+cannot consume the only durable copy of fallback events.
 
-- PTY detach/adopt with an interruptible reader and recovery descriptors.
-- Terminal snapshots of primary/alternate text screens, scrollback and VT
-  state. Kitty graphics are **not** serialized by the existing snapshot
-  implementation; complete graphical terminal preservation remains open.
-- A bounded version 2 handoff envelope and explicit `prepared` / `commit`
-  exchange. Abandoned or rejected successors are killed and reaped before
-  the predecessor reuses its PTYs.
-- Provisional terminal adoption: construction publishes the restored frame;
-  output reading and shell termination ownership begin only on commit.
-- Window/pane metadata serialization retaining pane IDs for hook routing.
+## Explicit boundary
 
-The command-line entry point does not yet dispatch `--adopt`; the production
-GUI does not yet use these primitives. A successful primitive test therefore
-does not prove a session-preserving app update.
+The current Ghostty formatter does not serialize Kitty image storage. Any
+terminal that has used inline graphics rejects preparation before its
+resources are relinquished, and the app resumes all panes. This includes
+image data no longer visible on screen. The error tells the user to close
+that terminal before updating. Text-only shells and full-screen terminal
+applications preserve their primary/alternate text and scrollback. Images
+are never silently discarded to complete an update.
 
-## Remaining integration and release gates
+Linux, Windows, unbundled executables and unsigned development apps do not
+install updates. Their existing release notice reports the supported macOS
+installation requirement when clicked.
 
-- Sparkle framework packaging and a macOS bridge under `chda-ui/platform`.
-- Shared update UI, process supervision, all-window preparation, partial
-  detach recovery, and input/window mutation guards.
-- Continuous hook/agent event routing while the GUI is absent; switching
-  listeners must not discard events accepted by the preceding listener.
-- Verified old-app retention, native installation completion monitoring and
-  successor/old-app launch with bounded recovery handling.
-- Signed ZIP appcast generation and upload as `appcast.xml`; feed URL:
-  `https://github.com/magicsih/chda/releases/latest/download/appcast.xml`.
-- Provision the Sparkle signing key separately and embed its public key.
-  Do not ship a placeholder key or publish an unsigned update feed.
-- Add Homebrew `auto_updates true` when the updater actually works.
-- Update the product catalog and generated README/Pages when the user flow
-  is implemented, without describing this foundation as a shipped feature.
+## Release configuration
 
-Release acceptance requires signed user-owned and administrator-owned app
-installations, real distinct GUI processes with multiple windows/splits,
-active jobs, text/scrollback, focus and agent events. Exercise network and
-signature failures, authorization cancellation, partial handoff, installation
-failure and successor preparation failure. Verify narrow-window progress
-and errors and macOS tests plus Linux/Windows builds.
+- Bundle the signed helper and Sparkle framework, including its license, and
+  sign nested code before the outer app. Produce the notarized universal ZIP.
+- Configure the cataloged production Sparkle key separately, then set the
+  release secret `SPARKLE_ED_KEY` and variable `SPARKLE_PUBLIC_KEY`. The first
+  is the base64 Ed25519 seed, the second its public key. The release job writes
+  the private seed only to a mode-restricted ephemeral file and removes it.
+- `scripts/generate-appcast.py` uses the pinned official tools, validates the
+  exact release URL/version/archive size and verifies the Ed25519 signature.
+  Missing or mismatching signing input fails the release instead of producing
+  a placeholder feed. Publish `appcast.xml` alongside the ZIP.
+- Embed `https://github.com/magicsih/chda/releases/latest/download/appcast.xml`
+  as the feed and the public key as `SUPublicEDKey`.
+- The Homebrew cask declares `auto_updates true`. Existing v0.1.19 users need
+  one manual upgrade (`brew upgrade --cask --greedy chda`) to reach the first
+  updater-enabled release.
 
-Users on v0.1.19 need one manual update to the first updater-enabled version.
-This work does not authorize a release or external credential changes.
+No production Sparkle key was found during implementation. Registration,
+external secret changes, a public release and release acceptance on an
+administrator-owned installation are separate tasks, not implied by a build.
+
+## Verification
+
+Automated Rust scenarios cover the update button/menu, duplicate launch
+prevention, failed handoff returning to the same live shell, transactional
+image rejection, provisional process failure and event-journal/fallback races.
+Native tests use isolated Developer ID signed apps and an ephemeral test
+Ed25519 key, never the installed user app or production update credentials.
+They exercise the official installer, signature/network/cancellation failures,
+real broker/successor processes, multiple windows and splits, continuing shell
+PIDs, installation failure and new-executable failure with backup recovery.
+See [testing](../testing.md) for commands and outstanding release checks.
 
 ## Sources
 

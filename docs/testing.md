@@ -130,17 +130,38 @@ not make model requests or prove provider availability.
 These tests do not replace native popup, narrow/light-theme, Pages layout
 and real CLI resume verification. Record final release evidence separately.
 
-## Live-update primitives
+## Session-preserving updates
 
-`chda-pty`'s `failed_process_preserves_shell_then_a_second_process_commits`
-launches separate successor processes against a real PTY: the first rejects
-preparation, the second prepares and commits, and the original shell receives
-its input. `chda-term`'s
-`failed_preparation_keeps_child_output_for_recovery` drops a provisional
-terminal and checks that recovery retains the shell and unread output.
-Snapshot tests exercise primary/alternate text screens, scrollback and VT
-modes; core tests retain pane IDs and encode window/pane metadata.
+Run `cargo test --workspace`, `cargo clippy --workspace --all-targets -- -D warnings`,
+`python3 scripts/test-appcast.py` and `python3 scripts/sync-product-docs.py --check`.
+The macOS CI job also compiles the universal native helper against the pinned
+Sparkle framework; Linux and Windows continue to build without it.
 
-These are primitive tests. They do not exercise a production GUI `--adopt`
-path, Sparkle installation, signature verification, authorization, multi-window
-reconnection or old-app recovery. See decision 0011 for outstanding gates.
+The Rust scenarios exercise duplicate clicks across windows, shared progress,
+failed handoff returning to the original live shell, provisional successor
+failure, rejection of unsupported inline-image state without killing the
+shell, snapshot fidelity and concurrent event journal/fallback delivery.
+
+For native acceptance on macOS, build `cargo build -p chda`, then run in a
+Python environment with `cryptography` installed:
+
+```sh
+python scripts/test-macos-update.py --identity "Developer ID Application: Your Name (TEAMID)"
+```
+
+The script uses that existing signing identity, generates and deletes an
+isolated test Ed25519 seed, and retains private logs/results under its printed
+temporary directory. It never updates `/Applications/chda.app`, changes
+production signing configuration or publishes a release. Its loopback feed
+exists only inside the test bundles. The seven cases cover official Sparkle
+installation, invalid signature, network error, cancellation, distinct broker
+and GUI processes with three surviving shell PIDs/two windows/a split,
+installation failure recovery and a signed replacement executable that exits
+before preparation. Native success means the post-commit GUI also answers IPC.
+
+This is separate from notarization and production release acceptance. Before
+shipping, verify an administrator-owned app with the actual system approval
+and authentication-cancellation dialogs, and visually inspect progress/error
+states and reconnected text/scrollback at narrow and desktop window sizes.
+Production Sparkle signing input must be registered before publishing the first
+updater-enabled release. See [decision 0011](decisions/0011-session-preserving-updates.md).

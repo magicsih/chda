@@ -552,11 +552,18 @@ impl Terminal {
     /// scrolling region, tab stops, working directory, keyboard protocol,
     /// styles, hyperlinks, the cursor and the title. With a full-screen
     /// application running, the shell's primary screen comes first, then
-    /// the alternate one. Kitty images are not included.
-    ///
-    /// Leaves the alternate screen to read the primary one, so call it only
-    /// on a terminal that is being handed over.
-    pub fn snapshot(&mut self) -> Result<Vec<u8>> {
+    /// the alternate one. Image sessions are rejected rather than losing pixels.
+    /// The original terminal is left intact if preparation fails.
+    pub fn snapshot(&mut self) -> std::io::Result<Vec<u8>> {
+        self.snapshot_inner().map_err(std::io::Error::other)
+    }
+
+    fn snapshot_inner(
+        &mut self,
+    ) -> std::result::Result<Vec<u8>, Box<dyn std::error::Error + Send + Sync>> {
+        if self.vt.kitty_graphics()?.generation()? != 0 {
+            return Err("This terminal has used inline images. Close that terminal before updating; its running process has been left untouched.".into());
+        }
         let alternate = if self.alternate_screen() {
             let alt = self.format_state()?;
             self.vt.vt_write(b"\x1b[?1049l");
@@ -564,7 +571,13 @@ impl Terminal {
         } else {
             None
         };
-        let mut out = self.format_state()?;
+        let primary = self.format_state();
+        // Switching back rebuilds the alternate buffer that 1049 clears.
+        if let Some(alt) = &alternate {
+            self.vt.vt_write(b"\x1b[?1049h\x1b[H");
+            self.vt.vt_write(alt);
+        }
+        let mut out = primary?;
         let title: String = self.title().chars().filter(|c| !c.is_control()).collect();
         if !title.is_empty() {
             out.extend_from_slice(format!("\x1b]2;{title}\x07").as_bytes());
@@ -1476,6 +1489,13 @@ mod tests {
         assert!(t.is_dirty().unwrap());
         let f = t.frame().unwrap();
         assert_eq!(f.images.len(), 1);
+        assert!(
+            t.snapshot()
+                .unwrap_err()
+                .to_string()
+                .contains("inline images")
+        );
+        assert_eq!(t.frame().unwrap().images.len(), 1);
         let p = &f.images[0];
         assert_eq!((p.col, p.row), (2, 0));
         assert_eq!((p.width, p.height), (20, 40));

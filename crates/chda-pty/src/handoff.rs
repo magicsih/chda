@@ -65,6 +65,16 @@ mod unix {
     ) -> io::Result<Successor> {
         spawn_command(Command::new(exe), ptys, state, |cmd, fd| {
             cmd.arg(ADOPT_FLAG).arg(fd.to_string());
+            // chda restores its own windows. AppKit's crash-history prompt
+            // would otherwise block preparation after a rejected successor.
+            #[cfg(target_os = "macos")]
+            cmd.args(["-ApplePersistenceIgnoreState", "YES"]);
+        })
+    }
+
+    pub fn spawn_broker(exe: &Path, ptys: &[DetachedPty], state: &[u8]) -> io::Result<Successor> {
+        spawn_command(Command::new(exe), ptys, state, |cmd, fd| {
+            cmd.arg("--update-broker").arg(fd.to_string());
         })
     }
 
@@ -327,7 +337,7 @@ mod unix {
 }
 
 #[cfg(unix)]
-pub use unix::{receive, spawn_successor};
+pub use unix::{receive, spawn_broker, spawn_successor};
 
 #[cfg(not(unix))]
 pub fn spawn_successor(_: &Path, _: &[DetachedPty], _: &[u8]) -> io::Result<Successor> {
@@ -361,3 +371,8 @@ impl Reply {
 
 /// Whether this platform can hand terminals to a successor.
 pub const SUPPORTED: bool = cfg!(unix);
+
+#[cfg(not(unix))]
+pub fn spawn_broker(_: &Path, _: &[DetachedPty], _: &[u8]) -> io::Result<Successor> {
+    Err(crate::unsupported())
+}

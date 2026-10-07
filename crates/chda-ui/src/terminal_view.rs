@@ -246,10 +246,21 @@ impl TerminalView {
                 options.env.extend(launch.env);
             }
         }
-        let session = Session::spawn(options, events_tx, move || {
+        let inherited = env.windows.borrow_mut().update.inherited.remove(&pane_id);
+        let wake = move || {
             let _ = wake_tx.unbounded_send(());
-        })
-        .expect("failed to start the shell");
+        };
+        let session = match inherited {
+            Some((_, detached)) => {
+                options.size = detached.size;
+                Session::prepare_adoption(options, detached, events_tx, wake)
+            }
+            None if env.windows.borrow().update.adopting => {
+                panic!("missing inherited terminal {pane_id}")
+            }
+            None => Session::spawn(options, events_tx, wake),
+        }
+        .expect("failed to prepare the terminal");
         let frame = session.frame();
 
         Self::drive(wake_rx, window, cx);
@@ -298,6 +309,57 @@ impl TerminalView {
             hovered_link: None,
             dragged: Default::default(),
         }
+    }
+
+    pub(crate) fn detach(&self) -> mpsc::Receiver<std::io::Result<chda_term::DetachedSession>> {
+        self.session.detach()
+    }
+
+    pub(crate) fn adoption_ready(&self) -> bool {
+        let frame = self.session.frame();
+        frame.size.cols > 0 && frame.size.rows > 0
+    }
+
+    pub(crate) fn commit_adoption(&self) {
+        self.session.commit_adoption();
+    }
+
+    pub(crate) fn reconnect(
+        &mut self,
+        detached: chda_term::DetachedSession,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> std::io::Result<()> {
+        let (tx, events) = mpsc::channel();
+        let (wake_tx, wake_rx) = unbounded();
+        let session = Session::prepare_adoption(
+            SessionOptions {
+                size: detached.size,
+                colors: self.settings.colors.clone(),
+                scrollback: self.settings.scrollback,
+                ..Default::default()
+            },
+            detached,
+            tx,
+            move || {
+                let _ = wake_tx.unbounded_send(());
+            },
+        )?;
+        events
+            .recv_timeout(std::time::Duration::from_secs(5))
+            .map_err(std::io::Error::other)?;
+        if session.frame().size.cols == 0 {
+            return Err(std::io::Error::other("Terminal recovery did not prepare"));
+        }
+        session.commit_adoption();
+        self.session = session;
+        self.events = events;
+        self.frame = self.session.frame();
+        self.grid = (Size { cols: 0, rows: 0 }, 0, 0);
+        self.layout_cache = None;
+        Self::drive(wake_rx, window, cx);
+        cx.notify();
+        Ok(())
     }
 
     /// Ask the OS for the shell's directory until the shell starts

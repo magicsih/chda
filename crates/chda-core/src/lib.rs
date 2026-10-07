@@ -42,3 +42,5 @@ pub use sidebar::*;
 pub use update::*;
 pub use watch::{FileWatcher, RepoWatcher};
 pub use workspace::*;
+
+pub mod self_update;

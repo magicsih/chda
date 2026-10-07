@@ -18,6 +18,19 @@ pub struct Handoff {
     pub session: SavedSession,
     /// One entry per handed PTY, in the same order.
     pub panes: Vec<HandoffPane>,
+    #[serde(default)]
+    pub started_at: u64,
+    #[serde(default)]
+    pub update: Option<UpdateHandoff>,
+    #[serde(default)]
+    pub recovery_error: Option<String>,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct UpdateHandoff {
+    pub directory: std::path::PathBuf,
+    pub target_exe: std::path::PathBuf,
+    pub recovery_exe: std::path::PathBuf,
 }
 
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
@@ -108,6 +121,7 @@ mod tests {
         let mut handoff = Handoff {
             session: SavedSession::default(),
             panes: vec![HandoffPane::new(7, 80, 24, b"before".to_vec())],
+            ..Default::default()
         };
         handoff.panes[0].snapshot = b"changed snapshot".to_vec();
         let bytes = handoff.encode().unwrap();
@@ -139,6 +153,7 @@ mod tests {
         let handoff = Handoff {
             session: SavedSession::default(),
             panes: vec![first, HandoffPane::new(9, 100, 30, vec![0, 255, 10])],
+            ..Default::default()
         };
         let decoded = Handoff::decode(&handoff.encode().unwrap()).unwrap();
         assert_eq!(decoded, handoff);

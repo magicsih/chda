@@ -12,6 +12,7 @@ sysinfo = { version = "0.31.4", default-features = false, features = ["system"] 
 chda-config.workspace = true
 chda-core.workspace = true
 chda-term.workspace = true
+chda-pty.workspace = true
 serde_json.workspace = true
 futures.workspace = true
 gpui.workspace = true

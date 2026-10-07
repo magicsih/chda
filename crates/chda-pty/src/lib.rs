@@ -184,6 +184,11 @@ impl Pty {
     /// [`Pty::adopt`] it. Stop the reader first: bytes it reads after this
     /// are lost to the next owner.
     pub fn detach(self) -> io::Result<DetachedPty> {
+        self.detached_handle()
+    }
+
+    /// Duplicate the master without relinquishing the current owner.
+    pub fn detached_handle(&self) -> io::Result<DetachedPty> {
         #[cfg(unix)]
         {
             let pid = self

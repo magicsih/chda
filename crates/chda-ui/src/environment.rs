@@ -81,6 +81,7 @@ impl System for NativeSystem {
 
 pub struct Environment {
     pub collect_telemetry: bool,
+    pub update_launcher: crate::upgrade::LaunchUpdate,
     pub(crate) windows: Rc<std::cell::RefCell<crate::window_registry::WindowRegistry>>,
     /// chda's `config.toml`.
     pub config_path: Option<PathBuf>,
@@ -126,6 +127,7 @@ impl Environment {
             .unwrap_or_default();
         Self {
             collect_telemetry: true,
+            update_launcher: Arc::new(platform::update::start),
             windows: Default::default(),
             config_path: ChdaConfig::default_path(),
             data_dir: data_dir(),
