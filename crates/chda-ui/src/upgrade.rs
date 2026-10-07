@@ -9,6 +9,10 @@ use std::{
     collections::HashMap,
     io,
     path::PathBuf,
+    sync::{
+        Arc,
+        atomic::{AtomicUsize, Ordering},
+    },
     time::{Duration, Instant},
 };
 
@@ -25,6 +29,25 @@ pub(crate) struct UpdateState {
     pub journal: Option<PathBuf>,
     pub adopting: bool,
     pub inherited: HashMap<u64, (HandoffPane, DetachedSession)>,
+    operations: Arc<AtomicUsize>,
+}
+
+// A detached UI task may outlive its window. Keep the count app-owned until
+// both its background mutation and foreground completion have finished.
+pub(crate) struct UpdateOperation(Arc<AtomicUsize>);
+impl Drop for UpdateOperation {
+    fn drop(&mut self) {
+        self.0.fetch_sub(1, Ordering::SeqCst);
+    }
+}
+impl UpdateState {
+    pub(crate) fn operation(&self) -> UpdateOperation {
+        self.operations.fetch_add(1, Ordering::SeqCst);
+        UpdateOperation(self.operations.clone())
+    }
+    pub(crate) fn has_operations(&self) -> bool {
+        self.operations.load(Ordering::SeqCst) != 0
+    }
 }
 
 /// Invoked only in a separately spawned, non-GUI process.

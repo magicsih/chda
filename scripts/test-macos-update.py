@@ -6,6 +6,7 @@ Xcode command-line tools and a built chda binary. No production key or installed
 app is used. Test applications and their shells are terminated after each case.
 """
 import argparse
+import atexit
 import base64
 import functools
 import http.server
@@ -56,6 +57,7 @@ class Fixture:
         self.logs = (self.root / 'commands.log').open('w')
         key = Ed25519PrivateKey.generate()
         seed = self.root / 'seed'
+        atexit.register(seed.unlink, missing_ok=True)
         seed.write_bytes(base64.b64encode(key.private_bytes(
             serialization.Encoding.Raw, serialization.PrivateFormat.Raw,
             serialization.NoEncryption())))
@@ -68,6 +70,13 @@ class Fixture:
         class Quiet(http.server.SimpleHTTPRequestHandler):
             def log_message(self, *args):
                 pass
+
+            def copyfile(self, source, outputfile):
+                try:
+                    super().copyfile(source, outputfile)
+                except (BrokenPipeError, ConnectionResetError):
+                    # A cancellation case deliberately stops an active download.
+                    pass
         self.server = http.server.ThreadingHTTPServer(
             ('127.0.0.1', 0), functools.partial(Quiet, directory=str(self.feed)))
         self.url = f'http://127.0.0.1:{self.server.server_port}/'
@@ -221,7 +230,7 @@ class Fixture:
                 return dict(bounds=dict(x=x, y=150, width=600, height=420),
                             tabs=[dict(title='Preserved', root=root, focused=0)], active=0)
             state = dict(session=dict(windows=[window(dict(kind='split', horizontal=True, ratio=.5,
-                first=node(1), second=node(2)), 80), window(node(3), 710)], active_window=1),
+                first=node(1), second=node(2)), 80), window(node(3), 710)], active_window=0),
                 panes=panes, started_at=int(time.time()*1000), update=dict(directory=str(job),
                     target_exe=str(self.target / 'Contents/MacOS/chda'),
                     recovery_exe=str(self.backup / 'Contents/MacOS/chda')))
@@ -258,8 +267,10 @@ class Fixture:
                     break
                 assert time.monotonic() < deadline, reply
                 time.sleep(.1)
+            saved = json.loads((job / 'data/chda/session.json').read_text())
+            assert saved['active_window'] == 0, 'adoption moved focus to the last window'
             (job / 'handoff.json').write_text(json.dumps(state, indent=2))
-            self.passed(name, 'same 3 shell PIDs; 2 GUI windows and split; post-commit IPC responds')
+            self.passed(name, 'same 3 shell PIDs; 2 GUI windows, split and original focus; post-commit IPC responds')
         finally:
             if broker and broker.poll() is None:
                 broker.terminate()

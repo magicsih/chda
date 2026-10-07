@@ -124,6 +124,34 @@ impl WorkspaceView {
                 registry.started_at.unwrap_or(0),
             )
         };
+        // Let in-flight mutations complete, including callbacks that open a
+        // terminal. Do not discard an unfinished sheet or rename on relaunch.
+        let busy = self.env.windows.borrow().update.has_operations()
+            || entries.iter().any(|entry| {
+                let pending = |view: &Self| {
+                    view.sheet.is_some()
+                        || view.note_sheet.is_some()
+                        || view.confirm.is_some()
+                        || view.palette.is_some()
+                        || view.renaming.is_some()
+                        || !view.initializing_panes.is_empty()
+                };
+                if entry.view == self.self_weak {
+                    pending(self)
+                } else {
+                    entry
+                        .view
+                        .upgrade()
+                        .is_some_and(|view| pending(view.read(cx)))
+                }
+            });
+        if busy {
+            let mut registry = self.env.windows.borrow_mut();
+            registry.update.preparing = false;
+            registry.update.progress = UpdateProgress::Waiting;
+            cx.notify();
+            return;
+        }
         let journal = self
             .env
             .windows
@@ -309,7 +337,9 @@ impl WorkspaceView {
             pane.read(cx).commit_adoption();
         }
         self.drain_hook_events(window, cx);
-        self.focus_active(window, cx);
+        // Window focus was restored before preparation. Focusing every
+        // window here would replace the saved active window with the last one.
+        self.save_session();
         window.refresh();
         cx.notify();
     }

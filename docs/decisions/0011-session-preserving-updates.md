@@ -24,9 +24,11 @@ copy, so replacing the original bundle does not remove its executable.
 
 1. Download and verification happen while all windows remain usable. Native
    authorization cancellation reports an error to the original GUI.
-2. Once Sparkle is ready, serialize accepted hook events to the handoff
-   journal, drain the preceding event queue, then freeze input, window closing
-   and structural changes across the app.
+2. Once Sparkle is ready, wait for in-flight repository mutations and their
+   UI callbacks, terminal initialization and unfinished sheets or renames.
+   Then serialize accepted hook events to the handoff journal, drain the
+   preceding event queue, and freeze input, window closing and structural
+   changes across the app. The waiting state remains cancellable.
 3. Detach every terminal after draining its reader. Capture primary and
    alternate screens, scrollback, VT state, pane IDs, titles, live agent state,
    session start time, window bounds, tab layout and focus. A partial failure
@@ -99,13 +101,16 @@ administrator-owned installation are separate tasks, not implied by a build.
 ## Verification
 
 Automated Rust scenarios cover the update button/menu, duplicate launch
-prevention, failed handoff returning to the same live shell, transactional
+prevention, waiting for active tasks without freezing the shell, failed
+handoff returning to the same live shell, transactional
 image rejection, provisional process failure and event-journal/fallback races.
 Native tests use isolated Developer ID signed apps and an ephemeral test
 Ed25519 key, never the installed user app or production update credentials.
 They exercise the official installer, signature/network/cancellation failures,
 real broker/successor processes, multiple windows and splits, continuing shell
-PIDs, installation failure and new-executable failure with backup recovery.
+PIDs, the original active window, installation failure and new-executable
+failure with backup recovery. Native narrow-window reconnection progress and
+recovered terminal/error displays, plus desktop/narrow Pages, were inspected.
 See [testing](../testing.md) for commands and outstanding release checks.
 
 ## Sources

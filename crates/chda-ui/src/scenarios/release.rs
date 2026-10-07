@@ -136,7 +136,20 @@ fn one_click_shares_progress_and_failed_handoff_restores_the_live_shell(cx: &mut
             .count(),
         1
     );
+    let operation = env.windows.borrow().update.operation();
     std::fs::write(job.join("progress.jsonl"), "{\"phase\":\"ready\"}\n").unwrap();
+    h.cx.executor()
+        .advance_clock(std::time::Duration::from_millis(200));
+    h.wait_for("current task before handoff", |v, _| {
+        let registry = v.env.windows.borrow();
+        registry.update.progress == UpdateProgress::Waiting && !registry.update.frozen
+    });
+    h.run(
+        "printf 'waiting:%s\\n' \"$CHDA_SURVIVAL\"",
+        "waiting:still-here",
+    );
+    assert!(!job.join("cancel").exists());
+    drop(operation);
     h.cx.executor()
         .advance_clock(std::time::Duration::from_millis(200));
     h.wait_for("failed broker rollback", |v, _| {

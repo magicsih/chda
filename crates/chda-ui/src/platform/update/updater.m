@@ -11,7 +11,6 @@
 @property(nonatomic, copy) void (^cancelCheck)(void);
 @property(nonatomic) uint64_t total;
 @property(nonatomic) uint64_t received;
-@property(nonatomic) BOOL ready;
 @property(nonatomic) BOOL installing;
 @property(nonatomic) pid_t gui;
 @property(nonatomic, strong) NSPanel *progressWindow;
@@ -87,7 +86,7 @@
 - (void)showDownloadDidStartExtractingUpdate { self.cancelCheck = nil; [self phase:@"verifying"]; }
 - (void)showExtractionReceivedProgress:(double)progress {}
 - (void)showReadyToInstallAndRelaunch:(void (^)(SPUUserUpdateChoice))reply {
-    self.ready = YES; self.installReply = reply; [self phase:@"ready"];
+    self.installReply = reply; [self phase:@"ready"];
 }
 - (void)showInstallingUpdateWithApplicationTerminated:(BOOL)terminated retryTerminatingApplication:(void (^)(void))retry {
     [self phase:@"installing"];

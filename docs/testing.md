@@ -138,6 +138,7 @@ The macOS CI job also compiles the universal native helper against the pinned
 Sparkle framework; Linux and Windows continue to build without it.
 
 The Rust scenarios exercise duplicate clicks across windows, shared progress,
+waiting for active tasks while the original shell remains usable,
 failed handoff returning to the original live shell, provisional successor
 failure, rejection of unsupported inline-image state without killing the
 shell, snapshot fidelity and concurrent event journal/fallback delivery.
@@ -155,13 +156,15 @@ temporary directory. It never updates `/Applications/chda.app`, changes
 production signing configuration or publishes a release. Its loopback feed
 exists only inside the test bundles. The seven cases cover official Sparkle
 installation, invalid signature, network error, cancellation, distinct broker
-and GUI processes with three surviving shell PIDs/two windows/a split,
+and GUI processes with three surviving shell PIDs/two windows/a split and
+the original active window,
 installation failure recovery and a signed replacement executable that exits
 before preparation. Native success means the post-commit GUI also answers IPC.
 
 This is separate from notarization and production release acceptance. Before
 shipping, verify an administrator-owned app with the actual system approval
-and authentication-cancellation dialogs, and visually inspect progress/error
-states and reconnected text/scrollback at narrow and desktop window sizes.
+and authentication-cancellation dialogs. Native narrow-window reconnection
+progress, recovered terminal text and error wrapping, and desktop/narrow Pages
+were visually checked during implementation; repeat them for release artifacts.
 Production Sparkle signing input must be registered before publishing the first
 updater-enabled release. See [decision 0011](decisions/0011-session-preserving-updates.md).

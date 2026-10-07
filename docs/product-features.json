@@ -14,7 +14,7 @@
     },
     {
       "area": "App updates",
-      "details": "In a configured, signed macOS release, click Update to download, verify and install with Sparkle. Progress is shared across windows; macOS asks for administrator approval when required. Windows briefly reopen while running shells and agents, terminal text and scrollback, pane IDs, layouts and focus reconnect. Failed installation or startup reopens the retained signed app with the same sessions. Terminals that have used inline images block the update without stopping their processes. Release notes and version dismissal remain separate; automatic downloads and installs are off. v0.1.19 requires one manual update first.",
+      "details": "In a configured, signed macOS release, click Update to download, verify and install with Sparkle. Progress is shared across windows; installation waits for current repository tasks and unfinished input before preserving sessions. macOS asks for administrator approval when required. Windows briefly reopen while running shells and agents, terminal text and scrollback, pane IDs, layouts and focus reconnect. Failed installation or startup reopens the retained signed app with the same sessions. Terminals that have used inline images block the update without stopping their processes. Release notes and version dismissal remain separate; automatic downloads and installs are off. v0.1.19 requires one manual update first.",
       "title": "Update without stopping your work",
       "summary": "Click Update in the signed macOS app. Running shells and agents reconnect with their text, scrollback and window layouts. Installation failure reopens the retained app with your sessions; inline-image terminals ask you to close them first."
     },

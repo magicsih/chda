@@ -2939,7 +2939,9 @@ impl WorkspaceView {
         if let Some(pane) = self.ws.focused_pane() {
             self.pane_navigation.insert(pane, order);
         }
-        self.reviewed_focused(cx);
+        if !self.env.windows.borrow().update.adopting {
+            self.reviewed_focused(cx);
+        }
         // ACTIVE labels depend on split focus, even when no agent status or
         // terminal output changed. Keep each row in sync with its click target.
         self.sync_panes(cx);
@@ -3247,6 +3249,7 @@ impl WorkspaceView {
     }
 
     fn add_repo(&mut self, _: &AddRepo, window: &mut Window, cx: &mut Context<Self>) {
+        let operation = self.env.windows.borrow().update.operation();
         let rx = cx.prompt_for_paths(PathPromptOptions {
             files: false,
             directories: true,
@@ -3254,6 +3257,7 @@ impl WorkspaceView {
             prompt: Some("Add repository".into()),
         });
         cx.spawn_in(window, async move |this, cx| {
+            let _operation = operation;
             let Ok(Ok(Some(paths))) = rx.await else {
                 return;
             };
@@ -3284,6 +3288,7 @@ impl WorkspaceView {
             .file_name()
             .map(|n| n.to_string_lossy().into_owned())
             .unwrap_or_else(|| path.to_string_lossy().into_owned());
+        let operation = self.env.windows.borrow().update.operation();
         let answer = window.prompt(
             PromptLevel::Info,
             &format!("{name} is not a git repository."),
@@ -3295,6 +3300,7 @@ impl WorkspaceView {
             cx,
         );
         cx.spawn(async move |this, cx| {
+            let _operation = operation;
             let Ok(choice) = answer.await else {
                 return;
             };
@@ -3310,11 +3316,13 @@ impl WorkspaceView {
     /// `git init` in a folder, then show it as a repository: added to the
     /// sidebar if it is not there yet, refreshed if it was a plain folder.
     fn init_git(&mut self, path: PathBuf, cx: &mut Context<Self>) {
+        let operation = self.env.windows.borrow().update.operation();
         let task = cx.background_spawn({
             let path = path.clone();
             async move { chda_core::init_repository(&path) }
         });
         cx.spawn(async move |this, cx| {
+            let _operation = operation;
             let result = task.await;
             let _ = this.update(cx, |view, cx| match result {
                 Ok(()) => {
@@ -3738,11 +3746,13 @@ impl WorkspaceView {
             .unwrap_or_else(|| "the branch".into());
         self.status_line = Some(format!("Updating {branch}\u{2026}"));
         cx.notify();
+        let operation = self.env.windows.borrow().update.operation();
         let task = cx.background_spawn({
             let worktree = worktree.clone();
             async move { chda_core::update_branch(&worktree, strategy) }
         });
         cx.spawn(async move |this, cx| {
+            let _operation = operation;
             let result = task.await;
             let _ = this.update(cx, |view, cx| {
                 use chda_core::{PullMode, UpdateOutcome};
@@ -4073,11 +4083,13 @@ impl WorkspaceView {
                     cx.notify();
                     return;
                 }
+                let operation = self.env.windows.borrow().update.operation();
                 let task = cx.background_spawn({
                     let repo = repo.clone();
                     async move { chda_core::merge_and_clean(&repo, &entry, force) }
                 });
                 cx.spawn(async move |this, cx| {
+                    let _operation = operation;
                     let result = task.await;
                     let _ = this.update(cx, |view, cx| {
                         view.status_line = Some(match result {
@@ -4133,6 +4145,7 @@ impl WorkspaceView {
                     cx.notify();
                     return;
                 }
+                let operation = self.env.windows.borrow().update.operation();
                 let task = cx.background_spawn({
                     let repo = repo.clone();
                     async move {
@@ -4143,6 +4156,7 @@ impl WorkspaceView {
                     }
                 });
                 cx.spawn(async move |this, cx| {
+                    let _operation = operation;
                     let results = task.await;
                     let _ = this.update(cx, |view, cx| {
                         let ok = results.iter().filter(|r| r.is_ok()).count();
@@ -4232,6 +4246,7 @@ impl WorkspaceView {
                     }
                     cx.notify();
                 });
+                let operation = self.env.windows.borrow().update.operation();
                 let task = cx.background_spawn({
                     let repo = repo.clone();
                     async move {
@@ -4248,6 +4263,7 @@ impl WorkspaceView {
                     }
                 });
                 cx.spawn(async move |this, cx| {
+                    let _operation = operation;
                     let result = task.await;
                     let _ = this.update(cx, |view, cx| {
                         view.sidebar.update(cx, |s, cx| {
@@ -4268,7 +4284,9 @@ impl WorkspaceView {
                         });
                         if result.is_ok() {
                             let repo = repo.clone();
+                            let operation = view.env.windows.borrow().update.operation();
                             cx.background_spawn(async move {
+                                let _operation = operation;
                                 if let Err(e) = chda_core::purge_trash(&repo) {
                                     eprintln!(
                                         "chda: emptying {}'s chda-trash: {e}",
@@ -4315,6 +4333,7 @@ impl WorkspaceView {
                 self.open_palette(items, 0, "Check out a branch", window, cx);
             }
             MenuAction::PruneMissing { repo, worktree } => {
+                let operation = self.env.windows.borrow().update.operation();
                 let task =
                     cx.background_spawn({
                         let repo = repo.clone();
@@ -4323,6 +4342,7 @@ impl WorkspaceView {
                         }
                     });
                 cx.spawn(async move |this, cx| {
+                    let _operation = operation;
                     let result = task.await;
                     let _ = this.update(cx, |view, cx| {
                         view.status_line = Some(match result {
@@ -4625,6 +4645,7 @@ impl WorkspaceView {
         let repo = sheet.repo.clone();
         let base = sheet.base.clone();
         let path = self.config.worktree_path(&repo, &branch);
+        let operation = self.env.windows.borrow().update.operation();
         let task = cx.background_spawn({
             let repo = repo.clone();
             let branch = branch.clone();
@@ -4643,6 +4664,7 @@ impl WorkspaceView {
             }
         });
         cx.spawn_in(window, async move |this, cx| {
+            let _operation = operation;
             let result = task.await;
             let _ = this.update_in(cx, |view, window, cx| {
                 match result {
