@@ -45,8 +45,8 @@
     {
       "area": "Status bar",
       "title": "Quota and local session resources",
-      "summary": "Keep Claude Code and Codex quota windows visible with real reset countdowns, alongside selected-pane CPU, RSS memory and listeners. Missing or stale data is labeled.",
-      "details": "The bottom bar reports provider quota, never inferred from token counts. Claude Code reports through a per-launch status line; Codex uses the local app-server account protocol. Details separate accounts or unknown session scopes and quota windows. On macOS, selected-pane PTY descendants supply CPU, summed RSS, listening endpoints, process count and uptime. Sampling runs off the UI thread with deadlines; unavailable and stale values remain explicit. See docs/status-bar.md for scopes and refresh behavior."
+      "summary": "See Claude Code and Codex quota, clear loading and retry states, reset countdowns, and selected-pane CPU, memory and listeners.",
+      "details": "The bottom bar reports provider quota, never inferred from token counts. Startup shows Waiting for usage for Claude Code and Loading for Codex. Empty reports preserve the same session or account's last valid reading and its actual age. All windows share reports and one Codex query loop; transient failures retry promptly, and a verified account's retained reading is labeled retrying. Authentication and installation problems have specific labels and details. Claude Code reports through a per-launch status line; Codex uses the local app-server account protocol. Details separate accounts or unknown session scopes and quota windows. On macOS, selected-pane PTY descendants supply CPU, summed RSS, listening endpoints, process count and uptime. Sampling runs off the UI thread with deadlines. See docs/status-bar.md for scopes and refresh behavior."
     },
     {
       "area": "Palette",
