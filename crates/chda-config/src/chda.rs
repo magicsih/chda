@@ -106,6 +106,10 @@ pub struct ChdaConfig {
     pub default_action: DefaultAction,
     pub tab_title: TabTitle,
     pub active_label: ActiveLabel,
+    /// Hide ACTIVE rows while keeping the header and count visible.
+    pub active_collapsed: bool,
+    /// Hide live idle rows while keeping the header and count visible.
+    pub idle_agents_collapsed: bool,
     /// Agents offered in the sidebar and the palette, by id (`claude`,
     /// `codex`, `gemini`, `copilot`, `opencode`).
     pub agents: Vec<String>,
@@ -147,6 +151,8 @@ impl Default for ChdaConfig {
             default_action: DefaultAction::Terminal,
             tab_title: TabTitle::Branch,
             active_label: ActiveLabel::Alias,
+            active_collapsed: false,
+            idle_agents_collapsed: false,
             agents: vec!["claude".into(), "codex".into()],
             sidebar_width: 280,
             sidebar_visible: true,
@@ -272,6 +278,8 @@ mod tests {
         c.repos.push("/src/app".into());
         c.default_action = DefaultAction::Claude;
         c.active_label = ActiveLabel::Branch;
+        c.active_collapsed = true;
+        c.idle_agents_collapsed = true;
         c.save(&path).unwrap();
         let text = fs::read_to_string(&path).unwrap();
         assert!(text.contains("default-action = \"claude\""), "{text}");
@@ -288,6 +296,8 @@ mod tests {
         let c = ChdaConfig::load(&path).unwrap();
         assert_eq!(c.sidebar_width, 320);
         assert_eq!(c.active_label, ActiveLabel::Alias);
+        assert!(!c.active_collapsed);
+        assert!(!c.idle_agents_collapsed);
         assert_eq!(
             c.repo_hosts.get(Path::new("/src/app")).map(String::as_str),
             Some("github.example.com")

@@ -2173,6 +2173,8 @@ impl WorkspaceView {
             s.model.active_tabs = active_tabs;
             s.model.idle_agents = idle_agents;
             s.active_label = self.config.active_label;
+            s.active_collapsed = self.config.active_collapsed;
+            s.idle_agents_collapsed = self.config.idle_agents_collapsed;
             cx.notify();
         });
         self.sync_sidebar_selection(false, cx);
@@ -2860,9 +2862,11 @@ impl WorkspaceView {
             self.pane_navigation.insert(pane, order);
         }
         self.reviewed_focused(cx);
+        // ACTIVE labels depend on split focus, even when no agent status or
+        // terminal output changed. Keep each row in sync with its click target.
+        self.sync_panes(cx);
         self.sync_sidebar_selection(true, cx);
         self.sync_title(window, cx);
-        self.save_session();
         cx.notify();
     }
 
@@ -3499,6 +3503,16 @@ impl WorkspaceView {
                     chda_config::ActiveLabel::Alias => chda_config::ActiveLabel::Branch,
                     chda_config::ActiveLabel::Branch => chda_config::ActiveLabel::Alias,
                 };
+                self.save_config();
+                self.sync_panes(cx);
+            }
+            SidebarEvent::ToggleActive => {
+                self.config.active_collapsed = !self.config.active_collapsed;
+                self.save_config();
+                self.sync_panes(cx);
+            }
+            SidebarEvent::ToggleIdleAgents => {
+                self.config.idle_agents_collapsed = !self.config.idle_agents_collapsed;
                 self.save_config();
                 self.sync_panes(cx);
             }

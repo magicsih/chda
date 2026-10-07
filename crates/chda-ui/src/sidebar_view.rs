@@ -37,6 +37,8 @@ pub enum SidebarEvent {
     FocusPane(chda_core::PaneId),
     ClosePane(chda_core::PaneId),
     ToggleActiveLabel,
+    ToggleActive,
+    ToggleIdleAgents,
     /// The status dot of a worktree was clicked: go to its agent's pane.
     JumpToAgent(PathBuf),
     /// Open a read-only tab with the worktree's diff against its base.
@@ -200,6 +202,8 @@ fn busy_tooltip(busy: &str) -> String {
 pub struct SidebarView {
     pub model: Sidebar,
     pub active_label: chda_config::ActiveLabel,
+    pub(crate) active_collapsed: bool,
+    pub(crate) idle_agents_collapsed: bool,
     /// The first session index has finished.
     pub sessions_loaded: bool,
     /// Labels and names of the agents chda knows.
@@ -247,6 +251,8 @@ impl SidebarView {
         Self {
             model: Sidebar::new(),
             active_label: Default::default(),
+            active_collapsed: false,
+            idle_agents_collapsed: false,
             sessions_loaded: false,
             agents,
             picked: Vec::new(),
@@ -893,13 +899,9 @@ impl SidebarView {
                         return;
                     };
                     let viewport = scroll.bounds();
-                    let delta = if target.top() < viewport.top() {
-                        viewport.top() - target.top()
-                    } else if target.bottom() > viewport.bottom() {
-                        viewport.bottom() - target.bottom()
-                    } else {
-                        gpui::px(0.0)
-                    };
+                    // Align near the top even when the target is already
+                    // visible. List edges limit how high it can be placed.
+                    let delta = viewport.top() + gpui::px(8.0) - target.top();
                     let scroll = scroll.clone();
                     let path = path.clone();
                     let this = this.clone();
@@ -909,9 +911,10 @@ impl SidebarView {
                                 return;
                             }
                             s.reveal = None;
-                            if delta != gpui::px(0.0) {
-                                let mut offset = scroll.offset();
-                                offset.y += delta;
+                            let mut offset = scroll.offset();
+                            offset.y =
+                                (offset.y + delta).clamp(-scroll.max_offset().y, gpui::px(0.0));
+                            if offset != scroll.offset() {
                                 scroll.set_offset(offset);
                                 cx.notify();
                             }
@@ -1509,6 +1512,8 @@ impl Render for SidebarView {
             .when(!active.is_empty(), |d| {
                 d.child(
                     div()
+                        .id("active-section-toggle")
+                        .debug_selector(|| "active-section-toggle".into())
                         .flex()
                         .flex_row()
                         .items_center()
@@ -1517,7 +1522,17 @@ impl Render for SidebarView {
                         .pb_1()
                         .text_xs()
                         .text_color(fg.opacity(0.6))
+                        .cursor_pointer()
+                        .hover(|s| s.bg(fg.opacity(0.08)))
+                        .tooltip(crate::tooltip::text(if self.active_collapsed {
+                            "Expand ACTIVE"
+                        } else {
+                            "Collapse ACTIVE"
+                        }))
+                        .on_click(cx.listener(|_, _, _, cx| cx.emit(SidebarEvent::ToggleActive)))
+                        .child(div().w_3().child(if self.active_collapsed { "▸" } else { "▾" }))
                         .child(div().flex_1().child("ACTIVE"))
+                        .child(div().px_1().child(active.len().to_string()))
                         .child(
                             div()
                                 .id("active-label-toggle")
@@ -1528,7 +1543,9 @@ impl Render for SidebarView {
                                 .tooltip(crate::tooltip::text(
                                     "Switch ACTIVE labels between branch aliases and branch names",
                                 ))
+                                .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
                                 .on_click(cx.listener(|_, _, _, cx| {
+                                    cx.stop_propagation();
                                     cx.emit(SidebarEvent::ToggleActiveLabel)
                                 }))
                                 .child(match self.active_label {
@@ -1537,13 +1554,26 @@ impl Render for SidebarView {
                                 }),
                         ),
                 )
-                .children(active)
+                .when(!self.active_collapsed, |d| d.children(active))
                 .child(div().h(gpui::px(6.0)))
             })
             .when(!idle.is_empty(), |d| {
-                d.child(div().px_2().pt_2().pb_1().text_xs()
-                    .text_color(fg.opacity(0.6)).child("Idle agents"))
-                    .children(idle)
+                d.child(div()
+                    .id("idle-section-toggle")
+                    .debug_selector(|| "idle-section-toggle".into())
+                    .flex().items_center().px_2().pt_2().pb_1().text_xs()
+                    .cursor_pointer().hover(|s| s.bg(fg.opacity(0.08)))
+                    .text_color(fg.opacity(0.6))
+                    .tooltip(crate::tooltip::text(if self.idle_agents_collapsed {
+                        "Expand Idle Agents"
+                    } else {
+                        "Collapse Idle Agents"
+                    }))
+                    .on_click(cx.listener(|_, _, _, cx| cx.emit(SidebarEvent::ToggleIdleAgents)))
+                    .child(div().w_3().child(if self.idle_agents_collapsed { "▸" } else { "▾" }))
+                    .child(div().flex_1().child("Idle Agents"))
+                    .child(div().px_1().child(idle.len().to_string())))
+                    .when(!self.idle_agents_collapsed, |d| d.children(idle))
             })
             .when(!self.picked.is_empty(), |d| {
                 let count = self.picked.len();

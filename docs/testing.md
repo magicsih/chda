@@ -34,6 +34,7 @@ Three layers, all run by `cargo test --workspace` (CI: the macOS job).
 | S3 Resuming: a worktree lists its agent sessions | `worktrees::worktree_lists_its_agent_sessions` | #41 |
 | S3 Resuming several sessions side by side, newest message first | `worktrees::picked_sessions_resume_in_one_tab` | #30 |
 | S4 Finishing: merge into main and clean up | `worktrees::merge_into_main_and_clean_up` | |
+| ACTIVE branch labels and click targets follow split focus, worktree navigation aligns near the top with edge clamping, and independent ACTIVE/Idle Agents collapse survives refresh and restart | `sidebar::active_labels_and_clicks_follow_split_focus_across_branches`, `sidebar::navigation_places_the_worktree_as_high_as_the_list_allows`, `sidebar::agent_sections_collapse_independently_and_persist` | |
 | ACTIVE rows stay in tab order, activity ages and saved alias/branch toggle | `sidebar::active_tabs_stay_in_place_and_labels_toggle_persistently`, `sidebar::activity_ages_refresh_without_output_or_session_writes` | #100 |
 | Repository drag reordering: down/up, collapsed groups, no click on drag, drops outside or on itself, external folder drop afterwards, refresh and restart | `reorder::dragging_repository_headers_reorders_and_persists` | #130 |
 | STARRED branches: menu starring without duplicates, same branch name in two repositories, navigation and tab reuse, one-click unstar, missing worktree, restart | `starred::starred_branches_navigate_unstar_in_one_click_and_persist` | #129 |
