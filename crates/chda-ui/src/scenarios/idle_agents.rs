@@ -206,14 +206,39 @@ fn idle_rows_follow_live_panes_and_preserve_mixed_state_attention(cx: &mut TestA
 
 #[gpui::test]
 fn idle_close_targets_only_its_pane_and_tab_close_still_confirms(cx: &mut TestAppContext) {
+    use crate::terminal_view::TerminalEvent;
+    use std::cell::Cell;
+    use std::rc::Rc;
+
     let mut h = Harness::open(cx, "idle-close", |_| {});
     h.wait_prompt();
     let idle = pane(&h);
+    let prompt_shown = Rc::new(Cell::new(false));
+    let terminal = h.focused_terminal();
+    let prompt_subscription = h.cx.update(|_, cx| {
+        let shown = prompt_shown.clone();
+        cx.subscribe(&terminal, move |_, event, _| {
+            if matches!(event, TerminalEvent::Prompt) {
+                shown.set(true);
+            }
+        })
+    });
     let path = h.home.home.join("idle.pid");
     h.run(
         &format!("echo $$ > '{}'; echo pid-saved", path.display()),
         "pid-saved",
     );
+    // The typed command contains the marker too. Wait for its output and
+    // the new prompt event before simulating an agent in this shell;
+    // otherwise that late prompt can end the simulated session.
+    h.wait_for("the PID command to finish", |v, cx| {
+        prompt_shown.get()
+            && v.pane_text(idle, cx)
+                .lines()
+                .any(|l| l.trim() == "pid-saved")
+    });
+    drop(prompt_subscription);
+    drop(terminal);
     let pid: u32 = std::fs::read_to_string(path)
         .unwrap()
         .trim()
@@ -226,6 +251,12 @@ fn idle_close_targets_only_its_pane_and_tab_close_still_confirms(cx: &mut TestAp
     emit(&mut h, working, HookKind::PromptSubmitted);
     h.wait_for("idle close row", |v, cx| {
         v.sidebar.read(cx).model.idle_agents.len() == 1
+            && v.ws
+                .pane(working)
+                .unwrap()
+                .agent
+                .as_ref()
+                .is_some_and(|a| a.status == AgentStatus::Working)
     });
     // The tab-wide control retains #108's active-agent confirmation.
     click(&mut h, "tab-close-0");

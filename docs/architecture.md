@@ -160,6 +160,14 @@ title bar stays and no apps are listed yet.
 
 ## Sidebar and agents
 
+ACTIVE and Idle Agents have independent header toggles and counts. Their
+`active-collapsed` and `idle-agents-collapsed` preferences are saved in
+`config.toml`. Navigation reveals the selected worktree near the top of the
+scroll viewport, clamped to the list edges, once per navigation; background
+refreshes preserve manual scrolling and repository collapse. ACTIVE labels
+are derived again when split focus changes, so the branch shown in a row
+continues to match the pane that clicking it will focus.
+
 `chda-core::Sidebar` holds registered repositories, their worktrees with git
 badges and branch notes (git's own `branch.<name>.description`, so other git
 tools see them and they are never pushed), per-agent status (idle, working, waiting for input, review) and the

@@ -4,6 +4,260 @@ use gpui::{Modifiers, MouseButton, TestAppContext, point, px};
 
 use super::harness::Harness;
 
+fn click_row(h: &mut Harness, selector: &str) {
+    h.cx.run_until_parked();
+    let at =
+        h.cx.debug_bounds(Box::leak(selector.to_owned().into_boxed_str()))
+            .expect(selector)
+            .center();
+    h.cx.simulate_click(at, Modifiers::none());
+    h.cx.run_until_parked();
+}
+
+#[gpui::test]
+fn active_labels_and_clicks_follow_split_focus_across_branches(cx: &mut TestAppContext) {
+    use super::harness::git;
+    use crate::sidebar_view::SidebarEvent;
+    use chda_core::agents::HookKind;
+
+    let mut main = std::path::PathBuf::new();
+    let mut feature = main.clone();
+    let mut h = Harness::open(cx, "active-focus", |home| {
+        main = home.repo("app");
+        feature = home.home.join("feature");
+        git(
+            &main,
+            &[
+                "worktree",
+                "add",
+                "-q",
+                "-b",
+                "feature",
+                feature.to_str().unwrap(),
+            ],
+        );
+        std::fs::write(
+            &home.config,
+            format!(
+                "repos = [\"{}\"]\nactive-label = \"branch\"\n",
+                main.display()
+            ),
+        )
+        .unwrap();
+    });
+    h.wait_prompt();
+    h.cx.update(|window, cx| {
+        h.view.update(cx, |v, cx| {
+            v.on_sidebar_event(SidebarEvent::OpenWorktree(main.clone()), window, cx);
+        })
+    });
+    h.wait_prompt();
+    let (tab, first) = h.read(|v, _| (v.ws.active_tab().unwrap().id, v.ws.focused_pane().unwrap()));
+    h.hook(Some(first.raw()), &main, HookKind::PromptSubmitted);
+    h.wait_for("the first pane working", |v, _| {
+        v.ws.pane(first).unwrap().agent.is_some()
+    });
+    h.keys("cmd-d");
+    h.wait_prompt();
+    let second = h.read(|v, _| v.ws.focused_pane().unwrap());
+    h.run(&format!("cd '{}'", feature.display()), "test%");
+    h.wait_for("the feature directory", |v, _| {
+        v.ws.pane(second).unwrap().cwd.as_ref() == Some(&feature)
+    });
+    h.hook(Some(second.raw()), &feature, HookKind::SessionStart);
+    h.wait_for("the second pane idle", |v, cx| {
+        v.sidebar
+            .read(cx)
+            .model
+            .idle_agents
+            .iter()
+            .any(|r| r.pane == second)
+    });
+    h.keys("cmd-alt-left");
+    h.read(|v, cx| {
+        assert_eq!(v.ws.focused_pane(), Some(first));
+        let sidebar = v.sidebar.read(cx);
+        let row = sidebar
+            .model
+            .active_tabs
+            .iter()
+            .find(|r| r.tab == tab)
+            .unwrap();
+        assert_eq!(
+            row.branch.as_deref(),
+            Some("main"),
+            "ACTIVE follows focus even without new output or agent status"
+        );
+        assert_eq!(row.title, "main");
+        assert_eq!(sidebar.selected.as_ref(), Some(&main));
+    });
+    h.keys("cmd-t");
+    h.wait_prompt();
+    click_row(&mut h, &format!("active-{tab:?}"));
+    h.read(|v, cx| {
+        assert_eq!(v.ws.focused_pane(), Some(first));
+        assert_eq!(v.sidebar.read(cx).selected.as_ref(), Some(&main));
+    });
+    click_row(&mut h, &format!("idle-{}", second.raw()));
+    h.read(|v, cx| {
+        assert_eq!(v.ws.focused_pane(), Some(second));
+        let sidebar = v.sidebar.read(cx);
+        let row = sidebar
+            .model
+            .active_tabs
+            .iter()
+            .find(|r| r.tab == tab)
+            .unwrap();
+        assert_eq!(row.branch.as_deref(), Some("feature"));
+        assert_eq!(sidebar.selected.as_ref(), Some(&feature));
+    });
+}
+
+#[gpui::test]
+fn navigation_places_the_worktree_as_high_as_the_list_allows(cx: &mut TestAppContext) {
+    use super::harness::git;
+    use crate::sidebar_view::SidebarEvent;
+
+    let mut repo = std::path::PathBuf::new();
+    let mut paths = Vec::new();
+    let mut h = Harness::open(cx, "reveal-top", |home| {
+        repo = home.repo("app");
+        for index in 0..24 {
+            let branch = format!("task-{index:02}");
+            let path = home.home.join(&branch);
+            git(
+                &repo,
+                &[
+                    "worktree",
+                    "add",
+                    "-q",
+                    "-b",
+                    &branch,
+                    path.to_str().unwrap(),
+                ],
+            );
+            paths.push(path);
+        }
+        std::fs::write(&home.config, format!("repos = [\"{}\"]\n", repo.display())).unwrap();
+    });
+    h.wait_prompt();
+    h.cx.simulate_resize(gpui::size(px(960.0), px(480.0)));
+    h.wait_for("all worktrees", |v, cx| {
+        v.sidebar.read(cx).model.repos[0].worktrees.len() == 25
+    });
+    h.view.update(&mut h.cx, |v, cx| {
+        v.sidebar.update(cx, |s, cx| {
+            s.model.set_sort(chda_core::SortOrder::Name);
+            cx.notify();
+        })
+    });
+    for path in [&paths[6], &paths[23], &paths[0]] {
+        h.cx.run_until_parked();
+        let selector = Box::leak(format!("wt:{}", path.display()).into_boxed_str());
+        h.cx.update(|window, cx| {
+            h.view.update(cx, |v, cx| {
+                v.on_sidebar_event(SidebarEvent::OpenWorktree(path.clone()), window, cx)
+            })
+        });
+        h.wait_prompt();
+        h.cx.run_until_parked();
+        // The test platform has no display frame loop. Deliver the frame
+        // scheduled after the target's layout, as the native platform does.
+        h.cx.update(|window, cx| window.simulate_next_frame(cx));
+        h.cx.run_until_parked();
+        let after = h.cx.debug_bounds(selector).unwrap();
+        let viewport = h.read(|v, cx| v.sidebar.read(cx).scroll.bounds());
+        h.read(|v, cx| {
+            let sidebar = v.sidebar.read(cx);
+            let offset = sidebar.scroll.offset().y;
+            let max = sidebar.scroll.max_offset().y;
+            assert!(max > px(0.0), "fixture has a scrollable list");
+            let expected = (offset + viewport.top() + px(8.0) - after.top()).clamp(-max, px(0.0));
+            assert_eq!(sidebar.selected.as_ref(), Some(path));
+            assert!((offset - expected).abs() < px(2.0),
+                "navigation aligns near the top, clamped at list edges: actual {:?}, expected {expected:?}", sidebar.scroll.offset());
+        });
+        assert!(after.top() >= viewport.top() && after.bottom() <= viewport.bottom());
+        // A background refresh must not move the list back to this target.
+        let scroll = h.read(|v, cx| v.sidebar.read(cx).scroll.clone());
+        scroll.set_offset(point(px(0.0), px(0.0)));
+        h.run("echo still-here", "still-here");
+        assert_eq!(scroll.offset().y, px(0.0));
+    }
+}
+
+#[gpui::test]
+fn agent_sections_collapse_independently_and_persist(cx: &mut TestAppContext) {
+    use super::harness::wait_until;
+    use crate::terminal_view::TerminalEvent;
+    use chda_core::agents::HookKind;
+
+    let mut h = Harness::open(cx, "section-collapse", |_| {});
+    h.wait_prompt();
+    let (tab, pane) = h.read(|v, _| (v.ws.active_tab().unwrap().id, v.ws.focused_pane().unwrap()));
+    h.hook(Some(pane.raw()), &h.home.home, HookKind::SessionStart);
+    h.wait_for("the live idle row", |v, cx| {
+        v.sidebar.read(cx).model.idle_agents.len() == 1
+    });
+    let active_selector = Box::leak(format!("active-{tab:?}").into_boxed_str());
+    let idle_selector = Box::leak(format!("idle-{}", pane.raw()).into_boxed_str());
+    click_row(&mut h, "active-section-toggle");
+    assert!(h.cx.debug_bounds(active_selector).is_none());
+    assert!(h.cx.debug_bounds(idle_selector).is_some());
+    let label = h.read(|v, _| v.config.active_label);
+    click_row(&mut h, "active-label-toggle");
+    assert_ne!(h.read(|v, _| v.config.active_label), label);
+    assert!(
+        h.read(|v, _| v.config.active_collapsed),
+        "label toggle never expands its parent"
+    );
+    click_row(&mut h, "idle-section-toggle");
+    assert!(h.cx.debug_bounds(idle_selector).is_none());
+    assert!(h.cx.debug_bounds("active-section-toggle").is_some());
+    assert!(h.cx.debug_bounds("idle-section-toggle").is_some());
+    let config = chda_config::ChdaConfig::load(&h.home.config).unwrap();
+    assert!(config.active_collapsed && config.idle_agents_collapsed);
+    assert_eq!(h.read(|v, _| v.ws.focused_pane()), Some(pane));
+    let terminal = h.focused_terminal();
+    h.cx.update(|_, cx| {
+        terminal.update(cx, |_, cx| {
+            cx.emit(TerminalEvent::Activity(crate::terminal_view::now_ms()))
+        })
+    });
+    h.cx.run_until_parked();
+    assert!(h.cx.debug_bounds(active_selector).is_none());
+    assert!(h.cx.debug_bounds(idle_selector).is_none());
+    click_row(&mut h, "active-section-toggle");
+    assert!(h.cx.debug_bounds(active_selector).is_some());
+    assert!(h.cx.debug_bounds(idle_selector).is_none());
+    click_row(&mut h, "active-section-toggle");
+    // Restore does not restore agent life, but it retains both preferences.
+    let (mut cx2, view2) = h.reopen();
+    wait_until(&mut cx2, &view2, "saved section preferences", |v, cx| {
+        let sidebar = v.sidebar.read(cx);
+        sidebar.active_collapsed
+            && sidebar.idle_agents_collapsed
+            && !sidebar.model.active_tabs.is_empty()
+    });
+    cx2.run_until_parked();
+    assert!(cx2.debug_bounds("active-section-toggle").is_some());
+    let restored_tab = view2.read_with(&cx2, |v, _| v.ws.active_tab().unwrap().id);
+    assert!(
+        cx2.debug_bounds(Box::leak(
+            format!("active-{restored_tab:?}").into_boxed_str()
+        ))
+        .is_none()
+    );
+    // Live configuration changes also apply independently.
+    let mut config = chda_config::ChdaConfig::load(&h.home.config).unwrap();
+    config.active_collapsed = false;
+    config.save(&h.home.config).unwrap();
+    wait_until(&mut cx2, &view2, "live section preference", |v, cx| {
+        let sidebar = v.sidebar.read(cx);
+        !sidebar.active_collapsed && sidebar.idle_agents_collapsed
+    });
+}
+
 fn width(h: &Harness) -> u32 {
     h.read(|v, _| v.config.sidebar_width)
 }
