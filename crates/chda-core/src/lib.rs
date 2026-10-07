@@ -8,6 +8,7 @@ mod gitea;
 mod github;
 mod gitlab;
 mod graph;
+pub mod handoff;
 pub use graph::*;
 mod names;
 mod refresh;

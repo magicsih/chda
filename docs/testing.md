@@ -129,3 +129,18 @@ not make model requests or prove provider availability.
 
 These tests do not replace native popup, narrow/light-theme, Pages layout
 and real CLI resume verification. Record final release evidence separately.
+
+## Live-update primitives
+
+`chda-pty`'s `failed_process_preserves_shell_then_a_second_process_commits`
+launches separate successor processes against a real PTY: the first rejects
+preparation, the second prepares and commits, and the original shell receives
+its input. `chda-term`'s
+`failed_preparation_keeps_child_output_for_recovery` drops a provisional
+terminal and checks that recovery retains the shell and unread output.
+Snapshot tests exercise primary/alternate text screens, scrollback and VT
+modes; core tests retain pane IDs and encode window/pane metadata.
+
+These are primitive tests. They do not exercise a production GUI `--adopt`
+path, Sparkle installation, signature verification, authorization, multi-window
+reconnection or old-app recovery. See decision 0011 for outstanding gates.

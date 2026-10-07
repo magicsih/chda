@@ -77,6 +77,10 @@ pub enum SavedNode {
         /// That agent's session id.
         #[serde(default, skip_serializing_if = "Option::is_none")]
         session: Option<String>,
+        /// The pane's id, kept only when handing running panes to a new
+        /// chda process (their programs report to it).
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        pane: Option<u64>,
     },
     Split {
         /// `horizontal` places the children side by side.
@@ -143,6 +147,15 @@ impl SavedWindow {
 impl Workspace {
     /// Capture tabs, layout, directories and tab names.
     pub fn snapshot(&self) -> SavedWindow {
+        self.snapshot_inner(false)
+    }
+
+    /// [`Workspace::snapshot`] with pane ids, for a live upgrade.
+    pub fn handoff_snapshot(&self) -> SavedWindow {
+        self.snapshot_inner(true)
+    }
+
+    fn snapshot_inner(&self, ids: bool) -> SavedWindow {
         let tabs = self
             .tabs()
             .iter()
@@ -151,7 +164,7 @@ impl Workspace {
                 let index = |p: PaneId| leaves.iter().position(|l| *l == p);
                 let content = match &tab.content {
                     crate::TabContent::Terminal(terminal) => SavedTabContent::Terminal {
-                        root: self.save_node(&terminal.root),
+                        root: self.save_node(&terminal.root, ids),
                         focused: index(terminal.focused).unwrap_or(0),
                         zoomed: terminal.zoomed.and_then(index),
                     },
@@ -172,7 +185,7 @@ impl Workspace {
         }
     }
 
-    fn save_node(&self, node: &Node) -> SavedNode {
+    fn save_node(&self, node: &Node, ids: bool) -> SavedNode {
         match node {
             Node::Leaf(p) => {
                 let info = self.pane(*p);
@@ -183,6 +196,7 @@ impl Workspace {
                     repo: info.and_then(|i| i.repo.clone()),
                     agent: agent.as_ref().map(|a| a.agent.clone()),
                     session: agent.map(|a| a.session),
+                    pane: ids.then_some(p.raw()),
                 }
             }
             Node::Split {
@@ -193,8 +207,8 @@ impl Workspace {
             } => SavedNode::Split {
                 horizontal: *axis == Axis::Horizontal,
                 ratio: *ratio,
-                first: Box::new(self.save_node(first)),
-                second: Box::new(self.save_node(second)),
+                first: Box::new(self.save_node(first, ids)),
+                second: Box::new(self.save_node(second, ids)),
             },
         }
     }
@@ -249,6 +263,7 @@ impl Workspace {
                 repo,
                 agent,
                 session,
+                pane,
             } => {
                 let resolved = match cwd {
                     Some(dir) if !dir.is_dir() => {
@@ -262,13 +277,17 @@ impl Workspace {
                     .clone()
                     .zip(session.clone())
                     .map(|(agent, session)| AgentSessionRef { agent, session });
-                let pane = self.add_pane(PaneInfo {
+                let info = PaneInfo {
                     cwd: resolved.clone(),
                     last_activity: *last_activity,
                     previous_activity: (*last_activity > 0).then_some(*last_activity),
                     agent_session: agent.clone(),
                     ..Default::default()
-                });
+                };
+                let pane = match pane {
+                    Some(id) => self.add_pane_with_id(*id, info),
+                    None => self.add_pane(info),
+                };
                 leaves.push(RestoredPane {
                     pane,
                     cwd: resolved,
@@ -443,5 +462,31 @@ impl SavedSession {
         let tmp = path.with_extension("json.tmp");
         fs::write(&tmp, text)?;
         fs::rename(tmp, path)
+    }
+}
+
+#[cfg(test)]
+mod handoff_tests {
+    use super::*;
+    use crate::workspace::Axis;
+
+    #[test]
+    fn handoff_snapshot_keeps_pane_ids_and_later_ids_follow() {
+        let mut ws = Workspace::new();
+        let (_, a) = ws.new_tab();
+        let b = ws.split(Axis::Vertical).unwrap();
+        let saved = ws.handoff_snapshot();
+        assert!(
+            !serde_json::to_string(&ws.snapshot())
+                .unwrap()
+                .contains("\"pane\":")
+        );
+
+        let mut next = Workspace::new();
+        let (panes, _) = next.restore(&saved);
+        let ids: Vec<PaneId> = panes.iter().map(|p| p.pane).collect();
+        assert_eq!(ids, [a, b]);
+        let (_, c) = next.new_tab();
+        assert!(c.raw() > b.raw(), "a new pane does not reuse an adopted id");
     }
 }

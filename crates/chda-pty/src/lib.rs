@@ -367,6 +367,21 @@ pub struct DetachedPty {
 }
 
 impl DetachedPty {
+    /// Keep a recovery descriptor until the successor is fully prepared.
+    pub fn try_clone(&self) -> io::Result<Self> {
+        #[cfg(unix)]
+        {
+            Ok(Self {
+                fd: self.fd.try_clone()?,
+                pid: self.pid,
+            })
+        }
+        #[cfg(not(unix))]
+        {
+            Err(unsupported())
+        }
+    }
+
     pub fn pid(&self) -> u32 {
         self.pid
     }
@@ -711,19 +726,21 @@ mod tests {
         let detached = pty.detach().unwrap();
         let pid = detached.pid();
         let (mut ours, theirs) = UnixStream::pair().unwrap();
-        let header = format!("chda-handoff 1 {}:{pid}\n", detached.fd.as_raw_fd());
+        let header = format!("chda-handoff 2 11 {}:{pid}\n", detached.fd.as_raw_fd());
         let _ = detached.fd.into_raw_fd();
         ours.write_all(header.as_bytes()).unwrap();
         ours.write_all(b"{\"state\":1}").unwrap();
-        ours.shutdown(std::net::Shutdown::Write).unwrap();
 
         let inherited = handoff::receive(theirs.into_raw_fd()).unwrap();
         assert_eq!(inherited.state, b"{\"state\":1}");
         assert_eq!(inherited.ptys.len(), 1);
-        inherited.reply.ready().unwrap();
+        let reply =
+            std::thread::spawn(move || inherited.reply.prepared(std::time::Duration::from_secs(2)));
         let mut line = String::new();
         std::io::BufRead::read_line(&mut std::io::BufReader::new(&ours), &mut line).unwrap();
-        assert_eq!(line, "ready\n");
+        assert_eq!(line, "prepared\n");
+        ours.write_all(b"commit\n").unwrap();
+        reply.join().unwrap().unwrap();
 
         let mut adopted = Pty::adopt(inherited.ptys.into_iter().next().unwrap()).unwrap();
         let mut reader = adopted.reader().unwrap();

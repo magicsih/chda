@@ -122,6 +122,7 @@ enum Command {
     },
     SetColors(ColorConfig),
     Detach(Sender<std::io::Result<DetachedSession>>),
+    CommitAdoption,
 }
 
 /// A session let go by [`Session::detach`]: the PTY with its running child
@@ -191,7 +192,7 @@ impl Session {
                 env: &env,
             },
         )?;
-        Self::start(opts, pty, None, events, wake)
+        Self::start(opts, pty, None, events, wake, false)
     }
 
     /// Continue a session another chda process (or this one) detached: the
@@ -202,12 +203,31 @@ impl Session {
         events: Sender<Event>,
         wake: impl Fn() + Send + 'static,
     ) -> std::io::Result<Self> {
+        let session = Self::prepare_adoption(opts, detached, events, wake)?;
+        session.commit_adoption();
+        Ok(session)
+    }
+
+    /// Build the terminal without consuming PTY output or owning the child.
+    /// Until committed, dropping this session leaves recovery resources intact.
+    /// Wait for the first `Event::Frame` before reporting preparation complete.
+    pub fn prepare_adoption(
+        opts: SessionOptions,
+        detached: DetachedSession,
+        events: Sender<Event>,
+        wake: impl Fn() + Send + 'static,
+    ) -> std::io::Result<Self> {
         let pty = Pty::adopt(detached.pty)?;
         let restore = Restore {
             snapshot: detached.snapshot,
             size: detached.size,
         };
-        Self::start(opts, pty, Some(restore), events, wake)
+        Self::start(opts, pty, Some(restore), events, wake, true)
+    }
+
+    /// Called only after the broker commits every prepared window.
+    pub fn commit_adoption(&self) {
+        self.send(Command::CommitAdoption);
     }
 
     fn start(
@@ -216,6 +236,7 @@ impl Session {
         restore: Option<Restore>,
         events: Sender<Event>,
         wake: impl Fn() + Send + 'static,
+        provisional: bool,
     ) -> std::io::Result<Self> {
         let child_pid = pty.pid();
         let reader = pty.reader()?;
@@ -224,12 +245,31 @@ impl Session {
         let (tx, rx) = mpsc::channel();
         let frame = Arc::new(Mutex::new(Arc::new(Frame::default())));
 
-        spawn_reader(reader, tx.clone());
+        let pending_reader = if provisional {
+            Some((reader, tx.clone()))
+        } else {
+            spawn_reader(reader, tx.clone());
+            None
+        };
         let thread = {
             let frame = Arc::clone(&frame);
             thread::Builder::new()
                 .name("chda-term".into())
-                .spawn(move || run(opts, Owned { pty, stop, restore }, rx, frame, events, wake))?
+                .spawn(move || {
+                    run(
+                        opts,
+                        Owned {
+                            pty,
+                            stop,
+                            restore,
+                            pending_reader,
+                        },
+                        rx,
+                        frame,
+                        events,
+                        wake,
+                    )
+                })?
         };
 
         Ok(Self {
@@ -372,6 +412,7 @@ struct Owned {
     pty: Pty,
     stop: ReaderStop,
     restore: Option<Restore>,
+    pending_reader: Option<(PtyReader, Sender<Msg>)>,
 }
 
 /// A detached session's content to show before new output.
@@ -411,12 +452,17 @@ fn run(
         mut pty,
         stop,
         restore,
+        mut pending_reader,
     } = owned;
+    let mut owns_child = pending_reader.is_none();
     let start_size = restore.as_ref().map_or(opts.size, |r| r.size);
     let mut term = match Terminal::new(start_size, opts.scrollback) {
         Ok(t) => t,
         Err(_) => {
-            let _ = pty.kill();
+            stop.stop();
+            if owns_child {
+                let _ = pty.kill();
+            }
             return;
         }
     };
@@ -427,7 +473,7 @@ fn run(
         // bell or prompt events.
         let _ = term.take_effects();
         let _ = term.take_effects();
-        if restore.size != opts.size {
+        if owns_child && restore.size != opts.size {
             let _ = term.resize(opts.size, opts.cell_width_px, opts.cell_height_px);
             let _ = pty.resize(PtySize {
                 cols: opts.size.cols,
@@ -481,6 +527,25 @@ fn run(
                 Msg::OutputClosed => {
                     closed = true;
                 }
+                Msg::Command(Command::CommitAdoption) => {
+                    if let Some((reader, tx)) = pending_reader.take() {
+                        owns_child = true;
+                        if start_size != opts.size {
+                            let _ = term.resize(opts.size, opts.cell_width_px, opts.cell_height_px);
+                            let _ = pty.resize(PtySize {
+                                cols: opts.size.cols,
+                                rows: opts.size.rows,
+                                pixel_width: (opts.cell_width_px * u32::from(opts.size.cols))
+                                    as u16,
+                                pixel_height: (opts.cell_height_px * u32::from(opts.size.rows))
+                                    as u16,
+                            });
+                            dirty = true;
+                        }
+                        spawn_reader(reader, tx);
+                    }
+                }
+                Msg::Command(_) if !owns_child => {}
                 Msg::Command(Command::Detach(reply)) => {
                     stop.stop();
                     detaching = Some(reply);
@@ -573,6 +638,10 @@ fn run(
         }
     }
 
+    stop.stop();
+    if !owns_child {
+        return;
+    }
     let status = match pty.try_wait() {
         Ok(Some(s)) => s,
         _ => {
@@ -592,7 +661,7 @@ fn handle_command(
 ) -> bool {
     match cmd {
         // The run loop takes this one before commands reach here.
-        Command::Detach(_) => false,
+        Command::Detach(_) | Command::CommitAdoption => false,
         Command::Key(input) => {
             if let Ok(bytes) = term.encode_key(&input)
                 && !bytes.is_empty()
@@ -821,6 +890,52 @@ mod tests {
                 text: text.map(str::to_owned),
             });
         }
+    }
+
+    #[test]
+    fn failed_preparation_keeps_child_output_for_recovery() {
+        let mut original = Probe::spawn(&[
+            "/bin/sh",
+            "-c",
+            "echo before; read x; echo recovered:$x; read y",
+        ]);
+        original.wait_for_text("before");
+        let detached = original
+            .session
+            .detach()
+            .recv_timeout(Duration::from_secs(5))
+            .unwrap()
+            .unwrap();
+        let recovery = DetachedSession {
+            pty: detached.pty.try_clone().unwrap(),
+            snapshot: detached.snapshot.clone(),
+            size: detached.size,
+        };
+        let (tx, rx) = mpsc::channel();
+        let prepared =
+            Session::prepare_adoption(SessionOptions::default(), detached, tx, || {}).unwrap();
+        assert_eq!(
+            rx.recv_timeout(Duration::from_secs(5)).unwrap(),
+            Event::Frame
+        );
+        // Output while a successor is preparing must stay unread in the PTY.
+        let mut writer = Pty::adopt(recovery.pty.try_clone().unwrap()).unwrap();
+        writer.write_all(b"retained\n").unwrap();
+        drop(prepared);
+        assert!(
+            writer.try_wait().unwrap().is_none(),
+            "failed adoption killed the shell"
+        );
+        let (tx, events) = mpsc::channel();
+        let session = Session::adopt(SessionOptions::default(), recovery, tx, || {}).unwrap();
+        let mut recovered = Probe {
+            session,
+            events,
+            seen: Vec::new(),
+        };
+        recovered.wait_for_text("recovered:retained");
+        recovered.session.paste("done\n".into());
+        recovered.wait_for(|e| matches!(e, Event::Exited(_)));
     }
 
     /// A detached session continues in a new one: the child never notices,
