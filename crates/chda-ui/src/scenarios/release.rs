@@ -148,6 +148,12 @@ fn one_click_shares_progress_and_failed_handoff_restores_the_live_shell(cx: &mut
         "printf 'waiting:%s\\n' \"$CHDA_SURVIVAL\"",
         "waiting:still-here",
     );
+    h.cx.run_until_parked();
+    let cancel = h.cx.debug_bounds("cancel-update").unwrap();
+    assert!(
+        cancel.right() <= gpui::px(390.0),
+        "waiting controls run off the window"
+    );
     assert!(!job.join("cancel").exists());
     drop(operation);
     h.cx.executor()

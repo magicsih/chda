@@ -42,7 +42,7 @@ impl UpdateProgress {
             }
             Self::Downloading { .. } => "Downloading…".into(),
             Self::Verifying => "Verifying update…".into(),
-            Self::Waiting => "Finish the current task to update…".into(),
+            Self::Waiting => "Waiting for current task…".into(),
             Self::Ready | Self::Preparing => "Preserving sessions…".into(),
             Self::Installing => "Installing update…".into(),
             Self::Reconnecting => "Reconnecting sessions…".into(),
