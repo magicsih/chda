@@ -215,7 +215,7 @@ fn idle_close_targets_only_its_pane_and_tab_close_still_confirms(cx: &mut TestAp
     let idle = pane(&h);
     let prompt_shown = Rc::new(Cell::new(false));
     let terminal = h.focused_terminal();
-    let _prompt = h.cx.update(|_, cx| {
+    let prompt_subscription = h.cx.update(|_, cx| {
         let shown = prompt_shown.clone();
         cx.subscribe(&terminal, move |_, event, _| {
             if matches!(event, TerminalEvent::Prompt) {
@@ -237,6 +237,8 @@ fn idle_close_targets_only_its_pane_and_tab_close_still_confirms(cx: &mut TestAp
                 .lines()
                 .any(|l| l.trim() == "pid-saved")
     });
+    drop(prompt_subscription);
+    drop(terminal);
     let pid: u32 = std::fs::read_to_string(path)
         .unwrap()
         .trim()
