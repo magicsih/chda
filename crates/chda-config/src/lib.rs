@@ -67,6 +67,8 @@ pub struct GhosttyConfig {
     pub theme: Option<String>,
     pub background: Option<Color>,
     pub foreground: Option<Color>,
+    /// WCAG foreground/background ratio, from 1 to 21.
+    pub minimum_contrast: Option<f32>,
     pub cursor_color: Option<Color>,
     pub cursor_style: Option<CursorStyle>,
     /// `cursor-style-blink`; unset lets the terminal decide.
@@ -126,6 +128,13 @@ impl GhosttyConfig {
             "font-size" => {
                 self.font_size = value.parse().ok().filter(|s: &f32| *s > 0.0);
                 check(self.font_size.is_some());
+            }
+            "minimum-contrast" => {
+                self.minimum_contrast = value
+                    .parse()
+                    .ok()
+                    .filter(|v: &f32| (1.0..=21.0).contains(v));
+                check(self.minimum_contrast.is_some());
             }
             "theme" => self.theme = (!value.is_empty()).then(|| value.to_owned()),
             "background" => self.background = color(value, &mut self.problems, key),
@@ -204,6 +213,7 @@ impl GhosttyConfig {
             theme,
             background,
             foreground,
+            minimum_contrast,
             cursor_color,
             cursor_style,
             cursor_blink,
@@ -590,5 +600,25 @@ mod tests {
                 "window-padding-x = a,b"
             ]
         );
+    }
+    #[test]
+    fn minimum_contrast_validates_and_user_value_overrides_theme() {
+        for value in ["1", "3", "4.5", "21"] {
+            let mut user = GhosttyConfig::default();
+            parse(&format!("minimum-contrast = {value}\n"), None, &mut user);
+            assert!(user.problems.is_empty());
+            let mut theme = GhosttyConfig {
+                minimum_contrast: Some(7.0),
+                ..GhosttyConfig::default()
+            };
+            theme.overlay(&user);
+            assert_eq!(theme.minimum_contrast, value.parse().ok());
+        }
+        for value in ["0.9", "21.1", "NaN", "inf", "bad"] {
+            let mut config = GhosttyConfig::default();
+            parse(&format!("minimum-contrast = {value}\n"), None, &mut config);
+            assert!(config.minimum_contrast.is_none());
+            assert_eq!(config.problems, [format!("minimum-contrast = {value}")]);
+        }
     }
 }

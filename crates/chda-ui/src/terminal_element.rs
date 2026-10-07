@@ -49,6 +49,7 @@ pub struct CachedLayout {
 pub struct Layout {
     hitbox: Hitbox,
     background: Hsla,
+    minimum_contrast: f32,
     rects: Vec<(Bounds<Pixels>, Hsla)>,
     text: Vec<TextBatch>,
     cursor: Option<CursorLayout>,
@@ -166,7 +167,7 @@ impl Element for TerminalElement {
             });
         });
 
-        let (frame, marked_text, selection, blink_on, cached) = {
+        let (frame, marked_text, selection, minimum_contrast, blink_on, cached) = {
             let view = self.view.read(cx);
             (
                 view.frame(),
@@ -175,6 +176,7 @@ impl Element for TerminalElement {
                     view.settings.selection_background.map(hsla),
                     view.settings.selection_foreground.map(hsla),
                 ),
+                view.settings.minimum_contrast,
                 view.blink_on,
                 view.layout_cache.clone(),
             )
@@ -183,6 +185,7 @@ impl Element for TerminalElement {
         let mut layout = Layout {
             hitbox,
             background: hsla(frame.background),
+            minimum_contrast,
             rects: Vec::new(),
             text: Vec::new(),
             cursor: None,
@@ -445,9 +448,47 @@ fn search_background(mark: SearchMark) -> Option<Hsla> {
     }
 }
 
+/// Keep text readable when a TUI retains an explicit background across a theme change.
+/// Match Ghostty's minimum-contrast behavior: retain adequate colors, otherwise
+/// choose the black or white foreground with the higher WCAG contrast ratio.
+fn readable_foreground(fg: Rgb, bg: Rgb, minimum: f32) -> Rgb {
+    if minimum <= 1.0 {
+        return fg;
+    }
+    let luminance = |color: Rgb| {
+        let linear = |v: u8| {
+            let v = f32::from(v) / 255.0;
+            if v <= 0.04045 {
+                v / 12.92
+            } else {
+                ((v + 0.055) / 1.055).powf(2.4)
+            }
+        };
+        0.2126 * linear(color.r) + 0.7152 * linear(color.g) + 0.0722 * linear(color.b)
+    };
+    let a = luminance(fg);
+    let b = luminance(bg);
+    if (a.max(b) + 0.05) / (a.min(b) + 0.05) >= minimum {
+        return fg;
+    }
+    if (b + 0.05) / 0.05 >= 1.05 / (b + 0.05) {
+        Rgb { r: 0, g: 0, b: 0 }
+    } else {
+        Rgb {
+            r: 255,
+            g: 255,
+            b: 255,
+        }
+    }
+}
+
 impl RunStyle {
-    fn of(cell: &Cell, frame: &Frame, selection: SelectionColors) -> Self {
-        let mut fg = hsla(cell.fg);
+    fn of(cell: &Cell, frame: &Frame, selection: SelectionColors, minimum_contrast: f32) -> Self {
+        let mut fg = hsla(readable_foreground(
+            cell.fg,
+            cell.bg.unwrap_or(frame.background),
+            minimum_contrast,
+        ));
         if cell.style.faint {
             fg.a *= 0.7;
         }
@@ -583,7 +624,7 @@ fn layout_frame(
                 flush(&mut batch, layout);
                 continue;
             }
-            let style = RunStyle::of(cell, frame, selection);
+            let style = RunStyle::of(cell, frame, selection, layout.minimum_contrast);
             let alone = cell.width == CellWidth::Wide || cursor_x == Some(x);
             match batch.as_mut() {
                 Some((_, end, s, buf)) if !alone && *s == style && *end + 1 == x => {
@@ -686,4 +727,100 @@ fn rect(origin: Point<Pixels>, cells: u16, m: Metrics) -> Bounds<Pixels> {
         point(origin.x.floor(), origin.y.floor()),
         size((m.cell_width * f32::from(cells)).ceil(), m.line_height),
     )
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use chda_term::{ColorConfig, Rgb, Size, Terminal};
+
+    fn luminance(color: Hsla) -> f32 {
+        let color = color.to_rgb();
+        let linear = |v: f32| {
+            if v <= 0.04045 {
+                v / 12.92
+            } else {
+                ((v + 0.055) / 1.055).powf(2.4)
+            }
+        };
+        0.2126 * linear(color.r) + 0.7152 * linear(color.g) + 0.0722 * linear(color.b)
+    }
+
+    #[test]
+    fn theme_switch_keeps_cached_prompt_background_readable() {
+        let mut terminal = Terminal::new(Size { cols: 20, rows: 3 }, 1024).unwrap();
+        let light = ColorConfig {
+            foreground: Some(Rgb {
+                r: 76,
+                g: 79,
+                b: 105,
+            }),
+            background: Some(Rgb {
+                r: 239,
+                g: 241,
+                b: 245,
+            }),
+            ..ColorConfig::default()
+        };
+        terminal.set_colors(&light).unwrap();
+        // A TUI caches a light composer background but uses the terminal's default text.
+        terminal.feed(b"\x1b[48;2;245;245;245m\x1b[39mPrompt text");
+        let dark = ColorConfig {
+            foreground: Some(Rgb {
+                r: 205,
+                g: 214,
+                b: 244,
+            }),
+            background: Some(Rgb {
+                r: 30,
+                g: 30,
+                b: 46,
+            }),
+            ..ColorConfig::default()
+        };
+        terminal.set_colors(&dark).unwrap();
+        let frame = terminal.frame().unwrap();
+        assert_eq!(frame.row_text(0), "Prompt text");
+        assert_eq!(frame.background, dark.background.unwrap());
+        let cell = frame.cell(0, 0).unwrap();
+        assert_eq!(
+            cell.bg,
+            Some(Rgb {
+                r: 245,
+                g: 245,
+                b: 245
+            })
+        );
+        let style = RunStyle::of(
+            cell,
+            &frame,
+            (None, None),
+            crate::settings::Settings::default().minimum_contrast,
+        );
+        let fg = luminance(style.fg);
+        let bg = luminance(hsla(cell.bg.unwrap()));
+        let contrast = (fg.max(bg) + 0.05) / (fg.min(bg) + 0.05);
+        assert!(
+            contrast >= 3.0,
+            "prompt contrast after the theme switch: {contrast}"
+        );
+    }
+    #[test]
+    fn contrast_adjustment_preserves_readable_colors_and_can_be_disabled() {
+        let white = Rgb {
+            r: 255,
+            g: 255,
+            b: 255,
+        };
+        let black = Rgb { r: 0, g: 0, b: 0 };
+        let red = Rgb {
+            r: 240,
+            g: 40,
+            b: 40,
+        };
+        assert_eq!(readable_foreground(red, black, 3.0), red);
+        assert_eq!(readable_foreground(white, white, 1.0), white);
+        assert_eq!(readable_foreground(white, white, 3.0), black);
+        assert_eq!(readable_foreground(black, black, 3.0), white);
+    }
 }

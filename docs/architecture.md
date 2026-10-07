@@ -255,6 +255,24 @@ gitea.com and codeberg.org map to their forge; other hosts go to the first
 CLI logged in to them. Logins are checked per host and cached for five
 minutes; a host no CLI is logged in to gets a hint on its repository row.
 
+## Terminal text contrast
+
+A running TUI can cache its prompt background at startup while using the
+terminal's default foreground. Switching from a light theme to a dark one
+then combines a retained light background with the new light text.
+The renderer checks each visible text cell against its actual background,
+including application-supplied RGB colors and resolved inverse colors.
+Colors meeting the minimum ratio are preserved; otherwise the foreground
+becomes whichever of black or white has greater WCAG contrast. Application
+backgrounds, input, processes and terminal bytes remain intact. Selection
+and search highlights keep their own color pairs, and SGR invisible text
+remains hidden. Color emoji and images are not recolored.
+
+chda defaults to a ratio of 3. Ghostty's `minimum-contrast` accepts 1 through
+21 and reloads live; 1 disables the adjustment. This maintains readability
+without restarting an agent. It does not replace a CLI's cached palette or
+claim that the CLI has switched its own theme.
+
 ## Config reload and session restore
 
 `chda-core::FileWatcher` watches the directories of the Ghostty config files
