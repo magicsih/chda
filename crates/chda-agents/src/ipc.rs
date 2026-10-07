@@ -1,7 +1,8 @@
 //! Local IPC between `chda hook` / `chda mcp` and the running app: a Unix
 //! domain socket (named pipe on Windows, later). A connection carries either
 //! hook events, one JSON line each, or one request (`{"request": ...}`)
-//! after which the client closes its writing half and reads one reply line.
+//! after which the client reads one reply line. Newlines delimit messages;
+//! acknowledgement does not depend on closing either half of the socket.
 
 mod process;
 pub use process::{capture_command, is_executable, with_process};
@@ -78,7 +79,6 @@ pub fn socket_path(data_dir: &Path) -> PathBuf {
 #[cfg(unix)]
 mod unix {
     use std::io::{self, BufRead, Read, Write};
-    use std::net::Shutdown;
     use std::os::unix::fs::PermissionsExt;
     use std::os::unix::net::{UnixListener, UnixStream};
     use std::path::Path;
@@ -94,11 +94,10 @@ mod unix {
     pub fn send(path: &Path, event: &HookEvent) -> io::Result<()> {
         let mut stream = UnixStream::connect(path)?;
         stream.set_write_timeout(Some(std::time::Duration::from_secs(2)))?;
+        stream.set_read_timeout(Some(Duration::from_secs(3)))?;
         let line = serde_json::to_string(event)?;
         stream.write_all(line.as_bytes())?;
         stream.write_all(b"\n")?;
-        stream.shutdown(Shutdown::Write)?;
-        stream.set_read_timeout(Some(Duration::from_secs(3)))?;
         let mut ack = [0; 3];
         stream.read_exact(&mut ack)?;
         if ack != *b"ok\n" {
@@ -117,7 +116,6 @@ mod unix {
         })?;
         stream.write_all(line.as_bytes())?;
         stream.write_all(b"\n")?;
-        stream.shutdown(Shutdown::Write)?;
         let mut reply = String::new();
         io::BufReader::new(stream).read_line(&mut reply)?;
         serde_json::from_str(&reply).map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e))
@@ -159,11 +157,12 @@ mod unix {
                     let Ok(mut stream) = stream else { continue };
                     let mut buf = String::new();
                     let _ = stream.set_read_timeout(Some(Duration::from_secs(2)));
-                    if std::io::Read::by_ref(&mut stream)
+                    if io::BufReader::new(&mut stream)
                         .take(1_048_577)
-                        .read_to_string(&mut buf)
+                        .read_line(&mut buf)
                         .is_err()
                         || buf.len() > 1_048_576
+                        || !buf.ends_with('\n')
                     {
                         continue;
                     }
@@ -270,6 +269,25 @@ mod tests {
     use super::*;
     use crate::control::{Incoming, Reply, Request};
     use crate::{HookEvent, HookKind};
+
+    #[test]
+    fn hook_is_acknowledged_without_half_closing_the_connection() {
+        use std::io::{Read, Write};
+        let dir = std::env::temp_dir().join(format!("chda-ipc-open-{}", std::process::id()));
+        let path = socket_path(&dir);
+        let (tx, rx) = std::sync::mpsc::channel();
+        let _server = serve(&path, tx, || {}).unwrap();
+        let mut client = std::os::unix::net::UnixStream::connect(&path).unwrap();
+        client
+            .set_read_timeout(Some(std::time::Duration::from_secs(1)))
+            .unwrap();
+        client.write_all(b"{\"agent\":\"claude\",\"session_id\":\"live\",\"cwd\":\"/w\",\"kind\":\"stopped\",\"timestamp\":7}\n").unwrap();
+        let mut ack = [0; 3];
+        client.read_exact(&mut ack).unwrap();
+        assert_eq!(&ack, b"ok\n");
+        assert!(matches!(rx.recv().unwrap(), Incoming::Event(_)));
+        std::fs::remove_dir_all(dir).unwrap();
+    }
 
     #[test]
     fn journal_barrier_keeps_acknowledged_events_and_rejects_mutations() {
@@ -428,7 +446,6 @@ pub fn send_quota(path: &Path, snapshot: &crate::quota::QuotaSnapshot) -> std::i
         stream.set_write_timeout(Some(std::time::Duration::from_secs(1)))?;
         stream.set_read_timeout(Some(std::time::Duration::from_secs(3)))?;
         writeln!(stream, "{json}")?;
-        stream.shutdown(std::net::Shutdown::Write)?;
         let mut ack = [0; 3];
         stream.read_exact(&mut ack)?;
         if ack != *b"ok\n" {

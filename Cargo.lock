@@ -918,7 +918,6 @@ dependencies = [
  "block2 0.6.2",
  "chda-config",
  "chda-core",
- "chda-pty",
  "chda-term",
  "futures",
  "gpui",

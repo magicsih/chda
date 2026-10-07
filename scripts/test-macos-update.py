@@ -246,13 +246,18 @@ class Fixture:
             for i, child in enumerate(children):
                 assert child.poll() is None, 'original shell terminated'
                 assert 'during-handoff' in (job / f'shell-{i}').read_text()
-            client = socket.socket(socket.AF_UNIX)
-            client.settimeout(10)
-            client.connect(str(job / 'data/chda/hook.sock'))
-            client.sendall(json.dumps(dict(request=dict(action='list_worktrees', cwd=str(home)))).encode()+b'\n')
-            client.shutdown(socket.SHUT_WR)
-            assert json.loads(client.recv(65536))['ok']
-            client.close()
+            deadline = time.monotonic() + 10
+            while True:
+                client = socket.socket(socket.AF_UNIX)
+                client.settimeout(10)
+                client.connect(str(job / 'data/chda/hook.sock'))
+                client.sendall(json.dumps(dict(request=dict(action='list_worktrees', cwd=str(home)))).encode()+b'\n')
+                reply = json.loads(client.recv(65536))
+                client.close()
+                if reply['ok']:
+                    break
+                assert time.monotonic() < deadline, reply
+                time.sleep(.1)
             (job / 'handoff.json').write_text(json.dumps(state, indent=2))
             self.passed(name, 'same 3 shell PIDs; 2 GUI windows and split; post-commit IPC responds')
         finally:

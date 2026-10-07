@@ -82,13 +82,12 @@ impl WorkspaceView {
                                 && let Some(job) = &registry.update.job
                                 && let Some(progress) = job.progress()
                             {
-                                registry.update.progress = if progress.busy() && job.handoff.directory.join("helper-exited").exists() {
-                                    UpdateProgress::Failed { message: "The updater stopped. Your sessions are unchanged; try again.".into() }
-                                } else { progress };
+                                registry.update.progress = progress;
                             }
                             if matches!(registry.update.progress, UpdateProgress::Failed { .. })
                                 && !registry.update.preparing
-                                && let Some(job) = registry.update.job.take() {
+                                && let Some(job) = registry.update.job.take()
+                            {
                                 crate::platform::update::discard(job);
                             }
                             let prepare = registry.update.progress == UpdateProgress::Ready
@@ -219,7 +218,7 @@ impl WorkspaceView {
                     ptys.push(session.pty.try_clone()?);
                 }
                 crate::upgrade::validate(&state, ptys.len())?;
-                let mut broker = chda_pty::handoff::spawn_broker(
+                let mut broker = chda_term::handoff::spawn_broker(
                     &job.handoff.recovery_exe,
                     &ptys,
                     &state.encode()?,

@@ -29,7 +29,7 @@ pub(crate) struct UpdateState {
 
 /// Invoked only in a separately spawned, non-GUI process.
 pub fn run_broker(fd: i32) -> io::Result<()> {
-    let inherited = chda_pty::handoff::receive(fd)?;
+    let inherited = chda_term::handoff::receive(fd)?;
     let mut state = Handoff::decode(&inherited.state)?;
     validate(&state, inherited.ptys.len())?;
     let update = state
@@ -58,7 +58,7 @@ pub fn run_broker(fd: i32) -> io::Result<()> {
     let launch = |exe: &std::path::Path, state: &Handoff| -> io::Result<()> {
         update::verify(exe, &update.recovery_exe)?;
         let mut successor =
-            chda_pty::handoff::spawn_successor(exe, &inherited.ptys, &state.encode()?)?;
+            chda_term::handoff::spawn_successor(exe, &inherited.ptys, &state.encode()?)?;
         successor.wait_prepared(Duration::from_secs(30))?;
         successor.commit()
     };
@@ -87,8 +87,8 @@ pub fn run_broker(fd: i32) -> io::Result<()> {
     }
 }
 
-pub(crate) fn inherited(fd: i32) -> io::Result<(Handoff, chda_pty::handoff::Inherited)> {
-    let inherited = chda_pty::handoff::receive(fd)?;
+pub(crate) fn inherited(fd: i32) -> io::Result<(Handoff, chda_term::handoff::Inherited)> {
+    let inherited = chda_term::handoff::receive(fd)?;
     let state = Handoff::decode(&inherited.state)?;
     validate(&state, inherited.ptys.len())?;
     Ok((state, inherited))

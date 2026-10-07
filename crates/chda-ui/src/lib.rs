@@ -120,7 +120,7 @@ pub fn run_adopt(ghostty: chda_config::GhosttyConfig, fd: i32) -> std::io::Resul
 
 fn run_inner(
     ghostty: chda_config::GhosttyConfig,
-    inherited: Option<(chda_core::handoff::Handoff, chda_pty::handoff::Inherited)>,
+    inherited: Option<(chda_core::handoff::Handoff, chda_term::handoff::Inherited)>,
 ) {
     let env = std::rc::Rc::new(environment::Environment::for_user());
     let mut reply = None;

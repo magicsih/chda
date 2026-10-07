@@ -98,6 +98,16 @@ fn one_click_shares_progress_and_failed_handoff_restores_the_live_shell(cx: &mut
             UpdateProgress::Downloading { .. }
         )
     });
+    let first_window = h.cx.update(|window, _| window.window_handle());
+    cx.simulate_window_resize(first_window, gpui::size(gpui::px(390.0), gpui::px(420.0)));
+    h.cx.run_until_parked();
+    let narrow =
+        h.cx.debug_bounds("update-notice")
+            .expect("progress is visible in a narrow window");
+    assert!(
+        narrow.right() <= gpui::px(390.0),
+        "progress runs off the window"
+    );
     let env = h.read(|v, _| v.env.clone());
     let handle = h.cx.update(|_, cx| {
         crate::open_workspace_window(chda_config::load(&env.ghostty, None), None, env.clone(), cx)
@@ -117,7 +127,6 @@ fn one_click_shares_progress_and_failed_handoff_restores_the_live_shell(cx: &mut
             v.start_update(window, cx);
         })
     });
-    h.cx.simulate_click(button.center(), gpui::Modifiers::none());
     h.cx.run_until_parked();
     let job = h.home.data.join("update-fixture");
     assert_eq!(

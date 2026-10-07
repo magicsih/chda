@@ -11,19 +11,33 @@ pub(crate) struct UpdateJob {
 }
 impl UpdateJob {
     pub fn progress(&self) -> Option<UpdateProgress> {
-        use std::io::{Read, Seek, SeekFrom};
-        let mut file = std::fs::File::open(self.handoff.directory.join("progress.jsonl")).ok()?;
-        let length = file.metadata().ok()?.len();
-        let start = length.saturating_sub(64 * 1024);
-        file.seek(SeekFrom::Start(start)).ok()?;
-        let mut text = String::new();
-        file.read_to_string(&mut text).ok()?;
-        // Ignore a partially written final line.
-        let complete = text.rsplit_once('\n')?.0;
-        complete
-            .lines()
-            .rev()
-            .find_map(|s| serde_json::from_str(s).ok())
+        let progress = (|| {
+            use std::io::{Read, Seek, SeekFrom};
+            let mut file =
+                std::fs::File::open(self.handoff.directory.join("progress.jsonl")).ok()?;
+            let length = file.metadata().ok()?.len();
+            let start = length.saturating_sub(64 * 1024);
+            file.seek(SeekFrom::Start(start)).ok()?;
+            let mut text = String::new();
+            file.read_to_string(&mut text).ok()?;
+            // Ignore a partially written final line.
+            let complete = text.rsplit_once('\n')?.0;
+            complete
+                .lines()
+                .rev()
+                .find_map(|s| serde_json::from_str(s).ok())
+        })();
+        if self.handoff.directory.join("helper-exited").exists()
+            && !matches!(
+                progress,
+                Some(UpdateProgress::Installed | UpdateProgress::Failed { .. })
+            )
+        {
+            return Some(UpdateProgress::Failed {
+                message: "The updater stopped. Your sessions are unchanged; try again.".into(),
+            });
+        }
+        progress
     }
     pub fn signal(&self, name: &str) -> io::Result<()> {
         std::fs::write(self.handoff.directory.join(name), b"1\n")
@@ -198,6 +212,12 @@ mod tests {
         log.push_str("\n{\"phase\":\"verifying\"}\n{\"phase\":\"rea");
         std::fs::write(directory.join("progress.jsonl"), log).unwrap();
         assert_eq!(job.progress(), Some(UpdateProgress::Verifying));
+        std::fs::write(directory.join("progress.jsonl"), "").unwrap();
+        std::fs::write(directory.join("helper-exited"), "1").unwrap();
+        assert!(matches!(
+            job.progress(),
+            Some(UpdateProgress::Failed { .. })
+        ));
         std::fs::remove_dir_all(directory).unwrap();
     }
 }

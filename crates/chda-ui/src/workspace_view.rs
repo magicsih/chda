@@ -2596,6 +2596,80 @@ impl WorkspaceView {
         (title, tooltip)
     }
 
+    fn render_update_controls(&self, cx: &mut Context<Self>) -> Option<AnyElement> {
+        let progress = self.env.windows.borrow().update.progress.clone();
+        if self.release_notice.is_none() && !progress.busy() {
+            return None;
+        }
+        let fg = hsla(self.settings.colors.foreground.unwrap_or_default());
+        let stop = |_: &MouseDownEvent, _: &mut Window, cx: &mut App| cx.stop_propagation();
+        let mut bar = div()
+            .flex()
+            .items_center()
+            .gap_2()
+            .px_2()
+            .py_1()
+            .min_w_0()
+            .text_sm()
+            .text_color(fg);
+        if let Some(release) = &self.release_notice {
+            let url = release.url.clone();
+            let progress = self.env.windows.borrow().update.progress.clone();
+            let label = if progress.busy() {
+                progress.label()
+            } else {
+                format!("Update to {}", release.version)
+            };
+            bar = bar.child(
+                div().id("update-notice").debug_selector(|| "update-notice".into())
+                    .h(px(22.0)).px_2().flex().items_center().rounded_md()
+                    .bg(fg.opacity(0.1)).text_color(fg).cursor_pointer()
+                    .hover(|s| s.bg(fg.opacity(0.18))).on_mouse_down(MouseButton::Left, stop)
+                    .tooltip(crate::tooltip::text("Download, verify and install the update. Running sessions reconnect when the window reopens."))
+                    .on_click(cx.listener(|this, _, window, cx| this.start_update(window, cx)))
+                    .child(optical(label)),
+            ).child(
+                div().id("update-menu").debug_selector(|| "update-menu".into())
+                    .h(px(22.0)).px_2().cursor_pointer().on_mouse_down(MouseButton::Left, stop)
+                    .tooltip(crate::tooltip::text("Release notes and update options"))
+                    .on_click(cx.listener(move |this, _, window, cx| {
+                        this.context_menu = Some(ContextMenu {
+                            position: point((window.viewport_size().width - px(330.0)).max(px(0.0)), px(TITLE_BAR_HEIGHT)),
+                            items: vec![
+                                ("Release notes".into(), MenuAction::OpenUrl(url.clone())),
+                                ("Dismiss until the next release".into(), MenuAction::DismissUpdate),
+                            ],
+                        });
+                        cx.notify();
+                    })).child(optical("⋯")),
+            );
+        }
+        let progress = self.env.windows.borrow().update.progress.clone();
+        if progress.busy() {
+            if self.release_notice.is_none() {
+                bar = bar.child(div().h(px(22.0)).px_2().child(optical(progress.label())));
+            }
+            if self.env.windows.borrow().update.job.is_some() {
+                bar = bar.child(
+                    div()
+                        .id("cancel-update")
+                        .debug_selector(|| "cancel-update".into())
+                        .h(px(22.0))
+                        .px_2()
+                        .cursor_pointer()
+                        .on_mouse_down(MouseButton::Left, stop)
+                        .on_click(cx.listener(|this, _, _, _| {
+                            if let Some(job) = &this.env.windows.borrow().update.job {
+                                let _ = job.signal("cancel");
+                            }
+                        }))
+                        .child(optical("Cancel")),
+                );
+            }
+        }
+        Some(bar.into_any_element())
+    }
+
     fn render_title_bar(&self, window: &Window, cx: &mut Context<Self>) -> AnyElement {
         let bg = hsla(self.settings.colors.background.unwrap_or_default());
         let fg = hsla(self.settings.colors.foreground.unwrap_or_default());
@@ -2688,60 +2762,8 @@ impl WorkspaceView {
                             .text_ellipsis(),
                     ),
             );
-        if let Some(release) = &self.release_notice {
-            let url = release.url.clone();
-            let progress = self.env.windows.borrow().update.progress.clone();
-            let label = if progress.busy() {
-                progress.label()
-            } else {
-                format!("Update to {}", release.version)
-            };
-            bar = bar.child(
-                div().id("update-notice").debug_selector(|| "update-notice".into())
-                    .h(px(22.0)).px_2().flex().items_center().rounded_md()
-                    .bg(fg.opacity(0.1)).text_color(fg).cursor_pointer()
-                    .hover(|s| s.bg(fg.opacity(0.18))).on_mouse_down(MouseButton::Left, stop)
-                    .tooltip(crate::tooltip::text("Download, verify and install the update. Running sessions reconnect when the window reopens."))
-                    .on_click(cx.listener(|this, _, window, cx| this.start_update(window, cx)))
-                    .child(optical(label)),
-            ).child(
-                div().id("update-menu").debug_selector(|| "update-menu".into())
-                    .h(px(22.0)).px_2().cursor_pointer().on_mouse_down(MouseButton::Left, stop)
-                    .tooltip(crate::tooltip::text("Release notes and update options"))
-                    .on_click(cx.listener(move |this, _, window, cx| {
-                        this.context_menu = Some(ContextMenu {
-                            position: point((window.viewport_size().width - px(330.0)).max(px(0.0)), px(TITLE_BAR_HEIGHT)),
-                            items: vec![
-                                ("Release notes".into(), MenuAction::OpenUrl(url.clone())),
-                                ("Dismiss until the next release".into(), MenuAction::DismissUpdate),
-                            ],
-                        });
-                        cx.notify();
-                    })).child(optical("⋯")),
-            );
-        }
-        let progress = self.env.windows.borrow().update.progress.clone();
-        if progress.busy() {
-            if self.release_notice.is_none() {
-                bar = bar.child(div().h(px(22.0)).px_2().child(optical(progress.label())));
-            }
-            if self.env.windows.borrow().update.job.is_some() {
-                bar = bar.child(
-                    div()
-                        .id("cancel-update")
-                        .debug_selector(|| "cancel-update".into())
-                        .h(px(22.0))
-                        .px_2()
-                        .cursor_pointer()
-                        .on_mouse_down(MouseButton::Left, stop)
-                        .on_click(cx.listener(|this, _, _, _| {
-                            if let Some(job) = &this.env.windows.borrow().update.job {
-                                let _ = job.signal("cancel");
-                            }
-                        }))
-                        .child(optical("Cancel")),
-                );
-            }
+        if window.viewport_size().width >= px(700.0) {
+            bar = bar.children(self.render_update_controls(cx));
         }
         if let Some(app) = self.folder_app() {
             let folder = self.open_in_folder(cx);
@@ -5951,6 +5973,9 @@ impl Render for WorkspaceView {
                 this.focus_active(w, cx);
             }))
             .child(title_bar)
+            .when(window.viewport_size().width < px(700.0), |d| {
+                d.children(self.render_update_controls(cx))
+            })
             .when_some(
                 match &self.env.windows.borrow().update.progress {
                     chda_core::self_update::UpdateProgress::Failed { message } => {

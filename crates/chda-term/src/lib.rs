@@ -13,6 +13,8 @@ mod shell_integration;
 mod vt;
 
 pub use chda_pty::ExitStatus;
+/// Process transport for session handoff; the UI stays above the PTY layer.
+pub use chda_pty::handoff;
 pub use frame::*;
 pub use graphics::{Image, ImageLayer, ImagePlacement};
 pub use input::*;
