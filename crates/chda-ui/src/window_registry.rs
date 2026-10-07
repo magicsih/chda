@@ -21,6 +21,8 @@ pub(crate) struct WindowRegistry {
     pub wake: std::sync::Arc<std::sync::Mutex<Vec<futures::channel::mpsc::UnboundedSender<()>>>>,
     pub events: Option<mpsc::Receiver<Incoming>>,
     pub started_at: Option<u64>,
+    pub quotas: std::rc::Rc<std::cell::RefCell<crate::status_bar::ProviderQuotas>>,
+    pub codex_polling: bool,
 }
 impl WindowRegistry {
     pub fn snapshot(&self) -> SavedSession {

@@ -2,6 +2,61 @@
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
+/// A missing installation/authentication is different from a failed refresh.
+#[derive(Clone, Debug, PartialEq)]
+pub enum CodexQuotaError {
+    NotInstalled,
+    SignInRequired,
+    Unsupported,
+    Retry {
+        /// Set only when this probe verified the account before a transport failure.
+        scope: Option<String>,
+        message: String,
+    },
+}
+
+impl CodexQuotaError {
+    pub fn scope(&self) -> Option<&str> {
+        match self {
+            Self::Retry { scope, .. } => scope.as_deref(),
+            _ => None,
+        }
+    }
+
+    pub fn label(&self) -> &'static str {
+        match self {
+            Self::NotInstalled => "Not installed",
+            Self::SignInRequired => "Sign in",
+            Self::Unsupported => "No quota",
+            Self::Retry { .. } => "Retrying",
+        }
+    }
+
+    pub fn details(&self) -> &str {
+        match self {
+            Self::NotInstalled => "Install the Codex CLI to show its account quota.",
+            Self::SignInRequired => "Sign in to the Codex CLI with ChatGPT to show account quota.",
+            Self::Unsupported => {
+                "This CLI or authentication mode does not provide an identifiable ChatGPT quota."
+            }
+            Self::Retry { message, .. } => message,
+        }
+    }
+
+    pub fn retry_after(&self, failures: usize) -> std::time::Duration {
+        let seconds = match self {
+            Self::Retry { .. } => match failures {
+                0 | 1 => 2,
+                2 => 5,
+                3 => 10,
+                _ => 30,
+            },
+            _ => 60,
+        };
+        std::time::Duration::from_secs(seconds)
+    }
+}
+
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct QuotaWindow {
     pub name: String,
@@ -187,12 +242,23 @@ pub fn reset_text(reset: Option<u64>, now_ms: u64) -> String {
 
 /// Read the local CLI account through the supported protocol; no token files,
 /// private provider endpoint, login, thread creation or model request.
-pub fn read_codex(executable: &std::path::Path, now: u64) -> Result<QuotaSnapshot, String> {
+pub fn read_codex(
+    executable: &std::path::Path,
+    now: u64,
+) -> Result<QuotaSnapshot, CodexQuotaError> {
+    read_codex_with_timeout(executable, now, std::time::Duration::from_secs(15))
+}
+
+pub(crate) fn read_codex_with_timeout(
+    executable: &std::path::Path,
+    now: u64,
+    timeout: std::time::Duration,
+) -> Result<QuotaSnapshot, CodexQuotaError> {
     use std::{
         io::{BufRead, BufReader, Read, Write},
         process::{Command, Stdio},
         sync::mpsc,
-        time::{Duration, Instant},
+        time::Instant,
     };
     let mut command = Command::new(executable);
     command
@@ -217,54 +283,151 @@ pub fn read_codex(executable: &std::path::Path, now: u64) -> Result<QuotaSnapsho
                 }
             }
         });
-        let deadline = Instant::now() + Duration::from_secs(5);
-        let mut request = |id: u64, method: &str, params: Value| -> std::io::Result<Value> {
+        let deadline = Instant::now() + timeout;
+        let mut request = |id: u64,
+                           method: &str,
+                           params: Value,
+                           scope: Option<String>|
+         -> Result<Value, CodexQuotaError> {
+            let transport_error = |error: std::io::Error| CodexQuotaError::Retry {
+                scope: scope.clone(),
+                message: format!("Codex {method}: {error}. Retrying automatically."),
+            };
             writeln!(
                 stdin,
                 "{}",
                 serde_json::json!({"id":id,"method":method,"params":params})
-            )?;
-            stdin.flush()?;
+            )
+            .map_err(transport_error)?;
+            stdin.flush().map_err(transport_error)?;
             loop {
                 let remaining = deadline.saturating_duration_since(Instant::now());
-                let line = rx.recv_timeout(remaining).map_err(|_| {
-                    std::io::Error::new(std::io::ErrorKind::TimedOut, "Codex quota query timed out")
-                })?;
+                if remaining.is_zero() {
+                    return Err(CodexQuotaError::Retry {
+                        scope: scope.clone(),
+                        message: format!(
+                            "Codex {method}: query timed out. Retrying automatically."
+                        ),
+                    });
+                }
+                let line = rx
+                    .recv_timeout(remaining)
+                    .map_err(|error| CodexQuotaError::Retry {
+                        scope: scope.clone(),
+                        message: format!(
+                            "Codex {method}: {}. Retrying automatically.",
+                            match error {
+                                mpsc::RecvTimeoutError::Timeout => "query timed out",
+                                mpsc::RecvTimeoutError::Disconnected => "CLI connection closed",
+                            }
+                        ),
+                    })?;
                 let Ok(value) = serde_json::from_str::<Value>(&line) else {
                     continue;
                 };
                 if value.get("id").and_then(Value::as_u64) == Some(id) {
                     if let Some(result) = value.get("result") {
                         if id == 1 {
-                            writeln!(stdin, "{}", serde_json::json!({"method":"initialized"}))?;
-                            stdin.flush()?;
+                            writeln!(stdin, "{}", serde_json::json!({"method":"initialized"}))
+                                .map_err(transport_error)?;
+                            stdin.flush().map_err(transport_error)?;
                         }
                         return Ok(result.clone());
                     }
-                    return Err(std::io::Error::other(
-                        "Codex account quota is unavailable or requires ChatGPT authentication",
-                    ));
+                    let code = value.pointer("/error/code").and_then(Value::as_i64);
+                    return Err(if code == Some(-32601) {
+                        CodexQuotaError::Unsupported
+                    } else {
+                        // An RPC rejection may be authentication-related. It does
+                        // not justify showing a prior account's quota as current.
+                        CodexQuotaError::Retry {
+                            scope: None,
+                            message: format!(
+                                "Codex {method} request failed (code {code:?}). Retrying automatically."
+                            ),
+                        }
+                    });
                 }
             }
         };
-        request(
-            1,
-            "initialize",
-            serde_json::json!({"clientInfo":{"name":"chda","version":env!("CARGO_PKG_VERSION")}}),
-        )?;
-        let account = request(2, "account/read", serde_json::json!({"refreshToken":false}))?;
-        let limits = request(3, "account/rateLimits/read", serde_json::json!({}))?;
-        codex_quota(&limits, &account, now).ok_or_else(|| {
-            std::io::Error::other("No supported ChatGPT quota report from the local CLI account")
-        })
+        Ok((|| {
+            request(
+                1,
+                "initialize",
+                serde_json::json!({"clientInfo":{"name":"chda","version":env!("CARGO_PKG_VERSION")}}),
+                None,
+            )?;
+            let account = request(
+                2,
+                "account/read",
+                serde_json::json!({"refreshToken":false}),
+                None,
+            )?;
+            let identity = match account.get("account") {
+                Some(Value::Null) => return Err(CodexQuotaError::SignInRequired),
+                Some(identity) => identity,
+                None => {
+                    return Err(CodexQuotaError::Retry {
+                        scope: None,
+                        message: "Codex did not return its account state. Retrying automatically."
+                            .into(),
+                    });
+                }
+            };
+            if identity.get("type").and_then(Value::as_str) != Some("chatgpt") {
+                return Err(CodexQuotaError::Unsupported);
+            }
+            let scope = identity
+                .get("email")
+                .and_then(Value::as_str)
+                .filter(|s| !s.is_empty())
+                .map(str::to_owned);
+            if scope.is_none() {
+                return Err(CodexQuotaError::Unsupported);
+            }
+            let limits = request(
+                3,
+                "account/rateLimits/read",
+                serde_json::json!({}),
+                scope.clone(),
+            )?;
+            codex_quota(&limits, &account, now).ok_or_else(|| CodexQuotaError::Retry {
+                scope,
+                message: "Waiting for a supported Codex quota report. Retrying automatically."
+                    .into(),
+            })
+        })())
     });
-    result.map_err(|e| e.to_string())
+    result.map_err(|error| CodexQuotaError::Retry {
+        scope: None,
+        message: format!("Could not start the Codex quota query: {error}. Retrying automatically."),
+    })?
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
     use serde_json::json;
+
+    #[test]
+    fn transient_queries_retry_promptly_without_retrying_authentication_in_a_loop() {
+        let transient = CodexQuotaError::Retry {
+            scope: None,
+            message: "timeout".into(),
+        };
+        let delays: Vec<_> = (1..=6)
+            .map(|failures| transient.retry_after(failures).as_secs())
+            .collect();
+        assert_eq!(delays, [2, 5, 10, 30, 30, 30]);
+        for error in [
+            CodexQuotaError::NotInstalled,
+            CodexQuotaError::SignInRequired,
+            CodexQuotaError::Unsupported,
+        ] {
+            assert_eq!(error.retry_after(1).as_secs(), 60);
+            assert_eq!(error.scope(), None);
+        }
+    }
     #[test]
     fn claude_keeps_windows_missing_data_and_session_scope() {
         let report = claude_quota(&json!({"session_id":"s", "rate_limits":{"five_hour":{"used_percentage":90.4,"resets_at":1000},"seven_day":{"used_percentage":100,"resets_at":2000}}}), Some(5), 100).unwrap();

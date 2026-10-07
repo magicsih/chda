@@ -74,6 +74,7 @@ Three layers, all run by `cargo test --workspace` (CI: the macOS job).
 | Menu actions: Settings opens config.toml, agent items explain themselves | `menus::settings_writes_a_missing_config_file`, `menus::agent_items_explain_why_nothing_ran` | |
 | Codex session resume with a minimal GUI PATH and a shell-configured install | `menus::codex_sessions_resume_with_the_login_shell_path` | |
 | Codex typed directly in a worktree terminal | `agents::directly_typed_codex_tracks_each_turn_and_exits` | |
+| Quota startup and restart wait for reports; empty Claude reports retain usage; multiple windows share one Codex query and retry after its original window closes | `quota::*` | |
 | Agent launch presets from the palette and the worktree menu | `menus::agent_presets_start_from_the_palette_and_the_sidebar_menu` | #16 |
 | Close buttons on single/inactive tabs; working/waiting splits, Cancel/Esc focus, real process shutdown and surviving tabs | `closing::tab_close_confirms_inactive_working_splits_and_preserves_cancelled_processes` | #108 |
 | Pane-only shortcut, completed/idle/shell immediate close, graph close, stable target ids and final restore cleanup | `closing::shortcut_closes_only_the_focused_pane_and_review_does_not_confirm`, `closing::immediate_tab_close_covers_shell_review_idle_and_graphs`, `closing::confirmed_close_never_targets_a_replacement_tab`, `closing::last_graph_shortcut_removes_restore_data` | #108 |
@@ -117,6 +118,11 @@ newly restored pane as live.
 A macOS integration test binds a real localhost listener and verifies its
 owning process, listener removal and unknown initial CPU. Quota parsing tests
 cover missing windows, multiple limits and account/session scope.
+Quota regressions also cover signed-out/API-key accounts, request ordering,
+helper-process cleanup and deadlines, account-safe transport failures,
+empty reports retaining their real observation time, and prompt retry delays.
+The quota scenarios use an isolated stand-in CLI and actual local IPC; they do
+not make model requests or prove provider availability.
 
 These tests do not replace native popup, narrow/light-theme, Pages layout
 and real CLI resume verification. Record final release evidence separately.

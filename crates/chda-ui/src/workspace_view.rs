@@ -367,6 +367,7 @@ impl WorkspaceView {
             this.on_sidebar_event(event.clone(), window, cx)
         });
         let adapters = Arc::clone(&env.adapters);
+        let quotas = env.windows.borrow().quotas.clone();
         let window_handle = window.window_handle();
         env.windows
             .borrow_mut()
@@ -452,7 +453,10 @@ impl WorkspaceView {
             bounds: None,
             quitting: false,
             self_weak: cx.entity().downgrade(),
-            status_bar: Default::default(),
+            status_bar: crate::status_bar::StatusBar {
+                quotas,
+                ..Default::default()
+            },
             pane_navigation: HashMap::new(),
             initializing_panes: HashSet::new(),
             env,
@@ -511,7 +515,8 @@ impl WorkspaceView {
         Self::schedule_refreshes(window, cx);
         Self::schedule_activity_ages(cx);
         if this.env.collect_telemetry {
-            Self::schedule_telemetry(window, cx);
+            Self::schedule_telemetry(cx);
+            this.start_codex_quota(cx);
         }
         Self::schedule_release_checks(window, cx);
         // Looking up apps and drawing their icons takes tens of milliseconds
@@ -873,9 +878,15 @@ impl WorkspaceView {
                         );
                         self.initializing_panes.remove(&pane);
                     }
-                    self.status_bar.report(report);
+                    self.status_bar.quotas.borrow_mut().report(report);
                     self.save_session();
                     cx.notify();
+                    let entries = self.env.windows.borrow().entries.clone();
+                    for entry in entries {
+                        if entry.window != window.window_handle() {
+                            let _ = entry.view.update(cx, |_, cx| cx.notify());
+                        }
+                    }
                 }
             }
             Incoming::Event(ev) => self.apply_hook_event(ev, window, cx),
@@ -1452,7 +1463,7 @@ impl WorkspaceView {
     }
 
     /// Repaint ages without syncing panes, writing sessions or polling git.
-    fn schedule_telemetry(window: &mut Window, cx: &mut Context<Self>) {
+    fn schedule_telemetry(cx: &mut Context<Self>) {
         let samplers: Arc<Mutex<HashMap<PaneId, platform::resources::Sampler>>> =
             Arc::new(Mutex::new(HashMap::new()));
         cx.spawn(async move |this, cx| {
@@ -1513,39 +1524,63 @@ impl WorkspaceView {
             }
         })
         .detach();
-        cx.spawn_in(window, async move |this, cx| {
+    }
+
+    pub(crate) fn start_codex_quota(&self, cx: &mut Context<Self>) {
+        let env = self.env.clone();
+        {
+            let mut registry = env.windows.borrow_mut();
+            if registry.codex_polling {
+                return;
+            }
+            registry.codex_polling = true;
+        }
+        // The task owns app state, not the first window. Closing that window
+        // must not stop refreshes in the remaining windows.
+        cx.spawn(async move |_, cx| {
+            let mut failures = 0usize;
             loop {
-                let executable = this.update(cx, |view, _| {
-                    chda_core::agents::which("codex", &view.env.search_path())
-                });
-                let Ok(executable) = executable else {
+                if env.windows.borrow().quitting || env.windows.borrow().entries.is_empty() {
                     break;
-                };
+                }
+                let executable = chda_core::agents::which("codex", &env.search_path());
                 let task = cx.background_spawn(async move {
                     executable
-                        .ok_or_else(|| "Codex CLI is not installed".into())
+                        .ok_or(chda_core::agents::quota::CodexQuotaError::NotInstalled)
                         .and_then(|path| chda_core::agents::quota::read_codex(&path, now_ms()))
                 });
                 let result = task.await;
-                if this
-                    .update(cx, |view, cx| {
-                        match result {
-                            Ok(quota) => {
-                                view.status_bar.report(quota);
-                                view.status_bar.codex_error = None;
-                            }
-                            Err(e) => view.status_bar.codex_error = Some(e),
-                        }
-                        cx.notify();
-                    })
-                    .is_err()
-                {
-                    break;
-                }
-                cx.background_executor()
-                    .timer(Duration::from_secs(60))
-                    .await;
+                let delay = match &result {
+                    Ok(_) => {
+                        failures = 0;
+                        Duration::from_secs(60)
+                    }
+                    Err(error) => {
+                        failures = if matches!(
+                            error,
+                            chda_core::agents::quota::CodexQuotaError::Retry { .. }
+                        ) {
+                            failures.saturating_add(1)
+                        } else {
+                            0
+                        };
+                        error.retry_after(failures)
+                    }
+                };
+                env.windows
+                    .borrow()
+                    .quotas
+                    .borrow_mut()
+                    .codex_result(result);
+                let entries = env.windows.borrow().entries.clone();
+                cx.update(|cx| {
+                    for entry in entries {
+                        let _ = entry.view.update(cx, |_, cx| cx.notify());
+                    }
+                });
+                cx.background_executor().timer(delay).await;
             }
+            env.windows.borrow_mut().codex_polling = false;
         })
         .detach();
     }
