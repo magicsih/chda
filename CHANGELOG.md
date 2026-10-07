@@ -4,6 +4,12 @@ All notable changes to chda. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); entries are
 generated from conventional commit messages by release-plz.
 
+## [0.1.20](https://github.com/magicsih/chda/compare/v0.1.19...v0.1.20) - 2026-10-07
+
+### Added
+
+- *(update)* install signed macOS updates while preserving live sessions ([#156](https://github.com/magicsih/chda/pull/156))
+
 ## [0.1.19](https://github.com/magicsih/chda/compare/v0.1.18...v0.1.19) - 2026-10-07
 
 ### Fixed
