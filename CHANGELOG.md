@@ -4,6 +4,13 @@ All notable changes to chda. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); entries are
 generated from conventional commit messages by release-plz.
 
+## [0.1.18](https://github.com/magicsih/chda/compare/v0.1.17...v0.1.18) - 2026-10-07
+
+### Fixed
+
+- *(sidebar)* reveal selected branches and collapse agent lists ([#146](https://github.com/magicsih/chda/pull/146))
+- *(status-bar)* keep quota reports stable during refreshes ([#144](https://github.com/magicsih/chda/pull/144))
+
 ## [0.1.17](https://github.com/magicsih/chda/compare/v0.1.16...v0.1.17) - 2026-10-06
 
 ### Fixed
