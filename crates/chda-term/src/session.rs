@@ -638,8 +638,8 @@ fn run(
         }
     }
 
-    stop.stop();
     if !owns_child {
+        stop.stop();
         return;
     }
     let status = match pty.try_wait() {
@@ -649,6 +649,9 @@ fn run(
             pty.wait().ok().flatten()
         }
     };
+    // Keep draining while a shell flushes its PTY during exit. Stopping the
+    // reader before wait can deadlock macOS tty teardown.
+    stop.stop();
     emit(Event::Exited(status));
 }
 
