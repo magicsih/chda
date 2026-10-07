@@ -14,6 +14,8 @@ pub struct Settings {
     pub font_features: FontFeatures,
     pub padding: Padding,
     pub colors: ColorConfig,
+    /// Minimum rendered text contrast; 1 disables adjustment.
+    pub minimum_contrast: f32,
     pub selection_background: Option<Rgb>,
     pub selection_foreground: Option<Rgb>,
     /// Scrollback limit in bytes.
@@ -88,6 +90,7 @@ impl Settings {
                 }),
                 cursor_blink: c.cursor_blink,
             },
+            minimum_contrast: c.minimum_contrast.unwrap_or(3.0),
             selection_background: c.selection_background.map(rgb),
             selection_foreground: c.selection_foreground.map(rgb),
             scrollback: c

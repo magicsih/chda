@@ -43,6 +43,8 @@ Three layers, all run by `cargo test --workspace` (CI: the macOS job).
 | S5 Plain terminal: tabs, splits, focus | `workspace::new_tab_split_and_close` | |
 | Font size shortcuts | `workspace::font_size_shortcuts_apply_to_every_pane` | #8 |
 | Scrollback search | `search::search_finds_steps_and_closes` | #6 |
+| Cached prompt background after theme change; readable colors and opt-out | `terminal_element::tests::theme_switch_keeps_cached_prompt_background_readable`, `terminal_element::tests::contrast_adjustment_preserves_readable_colors_and_can_be_disabled` | |
+| Minimum contrast reload preserves pane and unfinished input | `config::minimum_contrast_changes_apply_without_restarting_the_pane` | |
 | Live config reload, broken values kept out | `config::ghostty_and_chda_config_changes_apply_live` | #9 |
 | Ghostty's `config.ghostty` file name, live | `config::config_ghostty_wins_over_the_legacy_name_live` | #47 |
 | Session restore | `restore::tabs_splits_and_directories_come_back` | #10 |

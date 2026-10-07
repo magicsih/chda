@@ -53,3 +53,30 @@ fn config_ghostty_wins_over_the_legacy_name_live(cx: &mut TestAppContext) {
     h.cx.run_until_parked();
     assert_eq!(h.system.0.borrow().opened_files, vec![named]);
 }
+
+#[gpui::test]
+fn minimum_contrast_changes_apply_without_restarting_the_pane(cx: &mut TestAppContext) {
+    let mut h = Harness::open(cx, "contrast", |_| {});
+    h.wait_prompt();
+    let pane = h.read(|v, _| v.ws.focused_pane());
+    assert_eq!(h.read(|v, _| v.settings.minimum_contrast), 3.0);
+    h.type_text("still editing");
+    std::fs::write(&h.home.ghostty, "minimum-contrast = 1\n").unwrap();
+    h.wait_for("contrast disabled in the existing pane", |v, cx| {
+        v.settings.minimum_contrast == 1.0
+            && v.panes
+                .values()
+                .all(|(p, _)| p.read(cx).settings.minimum_contrast == 1.0)
+    });
+    assert_eq!(h.read(|v, _| v.ws.focused_pane()), pane);
+    assert!(h.read(|v, cx| v.focused_text(cx).contains("still editing")));
+    std::fs::write(&h.home.ghostty, "minimum-contrast = 4.5\n").unwrap();
+    h.wait_for("contrast raised in the existing pane", |v, cx| {
+        v.settings.minimum_contrast == 4.5
+            && v.panes
+                .values()
+                .all(|(p, _)| p.read(cx).settings.minimum_contrast == 4.5)
+    });
+    assert_eq!(h.read(|v, _| v.ws.focused_pane()), pane);
+    assert!(h.read(|v, cx| v.focused_text(cx).contains("still editing")));
+}
