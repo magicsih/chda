@@ -8,6 +8,7 @@ mod gitea;
 mod github;
 mod gitlab;
 mod graph;
+pub mod handoff;
 pub use graph::*;
 mod names;
 mod refresh;
@@ -41,3 +42,5 @@ pub use sidebar::*;
 pub use update::*;
 pub use watch::{FileWatcher, RepoWatcher};
 pub use workspace::*;
+
+pub mod self_update;

@@ -15,7 +15,8 @@ use chda_core::agents::{
     AgentAdapter, AgentId, CodexRunState, HookEvent, HookKind, SessionCache, SessionId, ipc,
     parse_codex_title,
 };
-use chda_core::release::{Release, ReleaseCheck, UPDATE_COMMAND, parse_latest};
+use chda_core::release::{Release, ReleaseCheck, parse_latest};
+mod upgrade;
 use chda_core::{
     ActiveTab, AgentEvent, AgentSessionRef, AgentStatus, Axis, Direction, FileWatcher, IdleAgent,
     Listing, Node, PaneId, RepoWatcher, SavedBounds, SavedWindow, TabId, TitleMode, Workspace,
@@ -461,6 +462,8 @@ impl WorkspaceView {
             initializing_panes: HashSet::new(),
             env,
         };
+        let registry = this.env.windows.clone();
+        window.on_window_should_close(cx, move |_, _| !registry.borrow().update.frozen);
         this.note_bounds(window);
         cx.observe_window_bounds(window, |this, window, _| {
             this.note_bounds(window);
@@ -519,6 +522,7 @@ impl WorkspaceView {
             this.start_codex_quota(cx);
         }
         Self::schedule_release_checks(window, cx);
+        Self::watch_update(window, cx);
         // Looking up apps and drawing their icons takes tens of milliseconds
         // on a cold start; do it after the first frame.
         cx.spawn(async move |this, cx| {
@@ -563,21 +567,30 @@ impl WorkspaceView {
             && let Some(dir) = env.data_dir.as_ref()
         {
             let (tx, rx) = mpsc::channel();
-            if ipc::serve(&ipc::socket_path(dir), tx.clone(), move || {
-                wake.lock()
-                    .unwrap()
-                    .retain(|sender| sender.unbounded_send(()).is_ok());
-            })
-            .is_ok()
-            {
-                let log = dir.join("events.jsonl");
-                if let Ok(text) = std::fs::read_to_string(&log) {
+            let journal = env.windows.borrow().update.journal.clone();
+            if let Ok(server) = ipc::serve_journaled(
+                &ipc::socket_path(dir),
+                tx.clone(),
+                move || {
+                    wake.lock()
+                        .unwrap()
+                        .retain(|sender| sender.unbounded_send(()).is_ok());
+                },
+                journal.as_deref(),
+            ) {
+                env.windows.borrow_mut().ipc_server = Some(server);
+                if !env.windows.borrow().update.adopting
+                    && let Ok(text) = ipc::take_fallback(dir)
+                {
                     for line in text.lines() {
-                        if let Ok(event) = serde_json::from_str::<HookEvent>(line) {
+                        if let Ok(quota) =
+                            serde_json::from_str::<chda_core::agents::quota::QuotaSnapshot>(line)
+                        {
+                            let _ = tx.send(Incoming::Quota(quota));
+                        } else if let Ok(event) = serde_json::from_str::<HookEvent>(line) {
                             let _ = tx.send(Incoming::Event(event));
                         }
                     }
-                    let _ = std::fs::remove_file(log);
                 }
                 env.windows.borrow_mut().events = Some(rx);
             }
@@ -812,14 +825,22 @@ impl WorkspaceView {
     }
 
     fn drain_hook_events(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        let incoming: Vec<Incoming> = self
-            .env
-            .windows
-            .borrow()
-            .events
-            .as_ref()
-            .map(|rx| rx.try_iter().collect())
-            .unwrap_or_default();
+        if self.env.windows.borrow().update.frozen {
+            return;
+        }
+        let mut incoming = {
+            let mut registry = self.env.windows.borrow_mut();
+            let mut items = std::mem::take(&mut registry.replay);
+            if let Some(rx) = &registry.events {
+                items.extend(rx.try_iter());
+            }
+            items
+        };
+        incoming.sort_by_key(|item| match item {
+            Incoming::Event(e) => e.timestamp,
+            Incoming::Quota(q) => q.observed_at,
+            Incoming::Request(..) => u64::MAX,
+        });
         for item in incoming {
             let raw = match &item {
                 Incoming::Quota(q) => q.pane,
@@ -903,6 +924,9 @@ impl WorkspaceView {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Reply {
+        if self.env.windows.borrow().update.frozen {
+            return Reply::err("chda is reconnecting; retry shortly");
+        }
         match request {
             Request::CreateWorktree {
                 cwd,
@@ -1917,20 +1941,40 @@ impl WorkspaceView {
             .collect();
         for p in panes {
             self.initializing_panes.insert(p.pane);
-            let command = match &p.agent {
-                Some(conversation) if self.config.restore_agents => {
-                    let cwd = p.cwd.clone().unwrap_or_default();
-                    match self.resume_argv(&cwd, conversation) {
-                        Ok(argv) => Some(argv),
-                        Err(why) => {
-                            notes.push(why);
-                            None
+            let adopting = self.env.windows.borrow().update.adopting;
+            let command = if adopting {
+                None
+            } else {
+                match &p.agent {
+                    Some(conversation) if self.config.restore_agents => {
+                        let cwd = p.cwd.clone().unwrap_or_default();
+                        match self.resume_argv(&cwd, conversation) {
+                            Ok(argv) => Some(argv),
+                            Err(why) => {
+                                notes.push(why);
+                                None
+                            }
                         }
                     }
+                    _ => None,
                 }
-                _ => None,
             };
-            if command.is_none() {
+            if adopting {
+                if let Some((meta, _)) = self
+                    .env
+                    .windows
+                    .borrow()
+                    .update
+                    .inherited
+                    .get(&p.pane.raw())
+                    && let Some(info) = self.ws.pane_mut(p.pane)
+                {
+                    info.title = meta.title.clone();
+                    info.agent = meta.agent.clone();
+                    info.agent_live = meta.agent_live;
+                }
+                self.initializing_panes.remove(&p.pane);
+            } else if command.is_none() {
                 self.ws.set_agent_session(p.pane, None);
             }
             self.open_pane(p.pane, p.cwd, command, window, cx);
@@ -2552,6 +2596,80 @@ impl WorkspaceView {
         (title, tooltip)
     }
 
+    fn render_update_controls(&self, cx: &mut Context<Self>) -> Option<AnyElement> {
+        let progress = self.env.windows.borrow().update.progress.clone();
+        if self.release_notice.is_none() && !progress.busy() {
+            return None;
+        }
+        let fg = hsla(self.settings.colors.foreground.unwrap_or_default());
+        let stop = |_: &MouseDownEvent, _: &mut Window, cx: &mut App| cx.stop_propagation();
+        let mut bar = div()
+            .flex()
+            .items_center()
+            .gap_2()
+            .px_2()
+            .py_1()
+            .min_w_0()
+            .text_sm()
+            .text_color(fg);
+        if let Some(release) = &self.release_notice {
+            let url = release.url.clone();
+            let progress = self.env.windows.borrow().update.progress.clone();
+            let label = if progress.busy() {
+                progress.label()
+            } else {
+                format!("Update to {}", release.version)
+            };
+            bar = bar.child(
+                div().id("update-notice").debug_selector(|| "update-notice".into())
+                    .h(px(22.0)).px_2().flex().items_center().rounded_md()
+                    .bg(fg.opacity(0.1)).text_color(fg).cursor_pointer()
+                    .hover(|s| s.bg(fg.opacity(0.18))).on_mouse_down(MouseButton::Left, stop)
+                    .tooltip(crate::tooltip::text("Download, verify and install the update. Running sessions reconnect when the window reopens."))
+                    .on_click(cx.listener(|this, _, window, cx| this.start_update(window, cx)))
+                    .child(optical(label)),
+            ).child(
+                div().id("update-menu").debug_selector(|| "update-menu".into())
+                    .h(px(22.0)).px_2().cursor_pointer().on_mouse_down(MouseButton::Left, stop)
+                    .tooltip(crate::tooltip::text("Release notes and update options"))
+                    .on_click(cx.listener(move |this, _, window, cx| {
+                        this.context_menu = Some(ContextMenu {
+                            position: point((window.viewport_size().width - px(330.0)).max(px(0.0)), px(TITLE_BAR_HEIGHT)),
+                            items: vec![
+                                ("Release notes".into(), MenuAction::OpenUrl(url.clone())),
+                                ("Dismiss until the next release".into(), MenuAction::DismissUpdate),
+                            ],
+                        });
+                        cx.notify();
+                    })).child(optical("⋯")),
+            );
+        }
+        let progress = self.env.windows.borrow().update.progress.clone();
+        if progress.busy() {
+            if self.release_notice.is_none() {
+                bar = bar.child(div().h(px(22.0)).px_2().child(optical(progress.label())));
+            }
+            if self.env.windows.borrow().update.job.is_some() {
+                bar = bar.child(
+                    div()
+                        .id("cancel-update")
+                        .debug_selector(|| "cancel-update".into())
+                        .h(px(22.0))
+                        .px_2()
+                        .cursor_pointer()
+                        .on_mouse_down(MouseButton::Left, stop)
+                        .on_click(cx.listener(|this, _, _, _| {
+                            if let Some(job) = &this.env.windows.borrow().update.job {
+                                let _ = job.signal("cancel");
+                            }
+                        }))
+                        .child(optical("Cancel")),
+                );
+            }
+        }
+        Some(bar.into_any_element())
+    }
+
     fn render_title_bar(&self, window: &Window, cx: &mut Context<Self>) -> AnyElement {
         let bg = hsla(self.settings.colors.background.unwrap_or_default());
         let fg = hsla(self.settings.colors.foreground.unwrap_or_default());
@@ -2644,48 +2762,8 @@ impl WorkspaceView {
                             .text_ellipsis(),
                     ),
             );
-        if let Some(release) = &self.release_notice {
-            let version = release.version.clone();
-            let url = release.url.clone();
-            bar = bar.child(
-                div()
-                    .id("update-notice")
-                    .debug_selector(|| "update-notice".into())
-                    .h(px(22.0))
-                    .px_2()
-                    .flex()
-                    .items_center()
-                    .rounded_md()
-                    .bg(fg.opacity(0.1))
-                    .text_color(fg)
-                    .cursor_pointer()
-                    .hover(|s| s.bg(fg.opacity(0.18)))
-                    .on_mouse_down(MouseButton::Left, stop)
-                    .tooltip(crate::tooltip::text(format!(
-                        "chda {version} is out; this is {}. Click for the release notes \
-                         and the update command.",
-                        env!("CARGO_PKG_VERSION")
-                    )))
-                    .on_click(cx.listener(move |this, _, window, cx| {
-                        let width = window.viewport_size().width;
-                        this.context_menu = Some(ContextMenu {
-                            position: point(width - px(330.0), px(TITLE_BAR_HEIGHT)),
-                            items: vec![
-                                ("Release notes".into(), MenuAction::OpenUrl(url.clone())),
-                                (
-                                    format!("Copy \"{UPDATE_COMMAND}\""),
-                                    MenuAction::Copy(UPDATE_COMMAND.into()),
-                                ),
-                                (
-                                    "Dismiss until the next release".into(),
-                                    MenuAction::DismissUpdate,
-                                ),
-                            ],
-                        });
-                        cx.notify();
-                    }))
-                    .child(optical(format!("Update to {}", release.version))),
-            );
+        if window.viewport_size().width >= px(700.0) {
+            bar = bar.children(self.render_update_controls(cx));
         }
         if let Some(app) = self.folder_app() {
             let folder = self.open_in_folder(cx);
@@ -2861,7 +2939,9 @@ impl WorkspaceView {
         if let Some(pane) = self.ws.focused_pane() {
             self.pane_navigation.insert(pane, order);
         }
-        self.reviewed_focused(cx);
+        if !self.env.windows.borrow().update.adopting {
+            self.reviewed_focused(cx);
+        }
         // ACTIVE labels depend on split focus, even when no agent status or
         // terminal output changed. Keep each row in sync with its click target.
         self.sync_panes(cx);
@@ -3169,6 +3249,7 @@ impl WorkspaceView {
     }
 
     fn add_repo(&mut self, _: &AddRepo, window: &mut Window, cx: &mut Context<Self>) {
+        let operation = self.env.windows.borrow().update.operation();
         let rx = cx.prompt_for_paths(PathPromptOptions {
             files: false,
             directories: true,
@@ -3176,6 +3257,7 @@ impl WorkspaceView {
             prompt: Some("Add repository".into()),
         });
         cx.spawn_in(window, async move |this, cx| {
+            let _operation = operation;
             let Ok(Ok(Some(paths))) = rx.await else {
                 return;
             };
@@ -3206,6 +3288,7 @@ impl WorkspaceView {
             .file_name()
             .map(|n| n.to_string_lossy().into_owned())
             .unwrap_or_else(|| path.to_string_lossy().into_owned());
+        let operation = self.env.windows.borrow().update.operation();
         let answer = window.prompt(
             PromptLevel::Info,
             &format!("{name} is not a git repository."),
@@ -3217,6 +3300,7 @@ impl WorkspaceView {
             cx,
         );
         cx.spawn(async move |this, cx| {
+            let _operation = operation;
             let Ok(choice) = answer.await else {
                 return;
             };
@@ -3232,11 +3316,13 @@ impl WorkspaceView {
     /// `git init` in a folder, then show it as a repository: added to the
     /// sidebar if it is not there yet, refreshed if it was a plain folder.
     fn init_git(&mut self, path: PathBuf, cx: &mut Context<Self>) {
+        let operation = self.env.windows.borrow().update.operation();
         let task = cx.background_spawn({
             let path = path.clone();
             async move { chda_core::init_repository(&path) }
         });
         cx.spawn(async move |this, cx| {
+            let _operation = operation;
             let result = task.await;
             let _ = this.update(cx, |view, cx| match result {
                 Ok(()) => {
@@ -3660,11 +3746,13 @@ impl WorkspaceView {
             .unwrap_or_else(|| "the branch".into());
         self.status_line = Some(format!("Updating {branch}\u{2026}"));
         cx.notify();
+        let operation = self.env.windows.borrow().update.operation();
         let task = cx.background_spawn({
             let worktree = worktree.clone();
             async move { chda_core::update_branch(&worktree, strategy) }
         });
         cx.spawn(async move |this, cx| {
+            let _operation = operation;
             let result = task.await;
             let _ = this.update(cx, |view, cx| {
                 use chda_core::{PullMode, UpdateOutcome};
@@ -3995,11 +4083,13 @@ impl WorkspaceView {
                     cx.notify();
                     return;
                 }
+                let operation = self.env.windows.borrow().update.operation();
                 let task = cx.background_spawn({
                     let repo = repo.clone();
                     async move { chda_core::merge_and_clean(&repo, &entry, force) }
                 });
                 cx.spawn(async move |this, cx| {
+                    let _operation = operation;
                     let result = task.await;
                     let _ = this.update(cx, |view, cx| {
                         view.status_line = Some(match result {
@@ -4055,6 +4145,7 @@ impl WorkspaceView {
                     cx.notify();
                     return;
                 }
+                let operation = self.env.windows.borrow().update.operation();
                 let task = cx.background_spawn({
                     let repo = repo.clone();
                     async move {
@@ -4065,6 +4156,7 @@ impl WorkspaceView {
                     }
                 });
                 cx.spawn(async move |this, cx| {
+                    let _operation = operation;
                     let results = task.await;
                     let _ = this.update(cx, |view, cx| {
                         let ok = results.iter().filter(|r| r.is_ok()).count();
@@ -4154,6 +4246,7 @@ impl WorkspaceView {
                     }
                     cx.notify();
                 });
+                let operation = self.env.windows.borrow().update.operation();
                 let task = cx.background_spawn({
                     let repo = repo.clone();
                     async move {
@@ -4170,6 +4263,7 @@ impl WorkspaceView {
                     }
                 });
                 cx.spawn(async move |this, cx| {
+                    let _operation = operation;
                     let result = task.await;
                     let _ = this.update(cx, |view, cx| {
                         view.sidebar.update(cx, |s, cx| {
@@ -4190,7 +4284,9 @@ impl WorkspaceView {
                         });
                         if result.is_ok() {
                             let repo = repo.clone();
+                            let operation = view.env.windows.borrow().update.operation();
                             cx.background_spawn(async move {
+                                let _operation = operation;
                                 if let Err(e) = chda_core::purge_trash(&repo) {
                                     eprintln!(
                                         "chda: emptying {}'s chda-trash: {e}",
@@ -4237,6 +4333,7 @@ impl WorkspaceView {
                 self.open_palette(items, 0, "Check out a branch", window, cx);
             }
             MenuAction::PruneMissing { repo, worktree } => {
+                let operation = self.env.windows.borrow().update.operation();
                 let task =
                     cx.background_spawn({
                         let repo = repo.clone();
@@ -4245,6 +4342,7 @@ impl WorkspaceView {
                         }
                     });
                 cx.spawn(async move |this, cx| {
+                    let _operation = operation;
                     let result = task.await;
                     let _ = this.update(cx, |view, cx| {
                         view.status_line = Some(match result {
@@ -4547,6 +4645,7 @@ impl WorkspaceView {
         let repo = sheet.repo.clone();
         let base = sheet.base.clone();
         let path = self.config.worktree_path(&repo, &branch);
+        let operation = self.env.windows.borrow().update.operation();
         let task = cx.background_spawn({
             let repo = repo.clone();
             let branch = branch.clone();
@@ -4565,6 +4664,7 @@ impl WorkspaceView {
             }
         });
         cx.spawn_in(window, async move |this, cx| {
+            let _operation = operation;
             let result = task.await;
             let _ = this.update_in(cx, |view, window, cx| {
                 match result {
@@ -5726,6 +5826,22 @@ impl Focusable for WorkspaceView {
 
 impl Render for WorkspaceView {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        if self.env.windows.borrow().update.frozen {
+            return div()
+                .size_full()
+                .flex()
+                .items_center()
+                .justify_center()
+                .p_4()
+                .text_center()
+                .bg(hsla(self.settings.colors.background.unwrap_or_default()))
+                .text_color(hsla(self.settings.colors.foreground.unwrap_or_default()))
+                .child(match &self.env.windows.borrow().update.progress {
+                    chda_core::self_update::UpdateProgress::Failed { message } => message.clone(),
+                    progress => progress.label(),
+                })
+                .into_any_element();
+        }
         let bg = hsla(self.settings.colors.background.unwrap_or_default());
         let fg = hsla(self.settings.colors.foreground.unwrap_or_default());
         let divider = blend(bg, fg, 0.2);
@@ -5879,6 +5995,26 @@ impl Render for WorkspaceView {
                 this.focus_active(w, cx);
             }))
             .child(title_bar)
+            .when(window.viewport_size().width < px(700.0), |d| {
+                d.children(self.render_update_controls(cx))
+            })
+            .when_some(
+                match &self.env.windows.borrow().update.progress {
+                    chda_core::self_update::UpdateProgress::Failed { message } => {
+                        Some(message.clone())
+                    }
+                    _ => None,
+                },
+                |d, message| {
+                    d.child(
+                        div()
+                            .p_2()
+                            .text_color(fg)
+                            .bg(fg.opacity(0.08))
+                            .child(message),
+                    )
+                },
+            )
             .child(
                 div()
                     .flex_1()
@@ -5933,6 +6069,7 @@ impl Render for WorkspaceView {
             .children(self.render_note_sheet(cx))
             .children(self.render_confirm(cx))
             .children(self.render_palette())
+            .into_any_element()
     }
 }
 

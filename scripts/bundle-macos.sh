@@ -44,6 +44,8 @@ cp "$out/icon/chda.icns" "$app/Contents/Resources/chda.icns"
 cp crates/chda-ui/assets/fonts/*.txt crates/chda-config/assets/themes-LICENSE.txt \
   "$app/Contents/Resources/"
 
+scripts/package-macos-updater.sh "$app"
+
 if [[ -n "${CHDA_SIGN_IDENTITY:-}" ]]; then
   codesign --force --options runtime --timestamp \
     --entitlements resources/entitlements.plist \
@@ -69,5 +71,10 @@ if [[ -n "${CHDA_SIGN_IDENTITY:-}" && ${#notarize[@]} -gt 0 ]]; then
   ditto -c -k --keepParent "$app" "$zip_path"
 fi
 
+codesign --verify --deep --strict "$app"
+if [[ -n "${CHDA_SIGN_IDENTITY:-}" ]]; then
+  : "${CHDA_SPARKLE_KEY_FILE:?A signed release requires a Sparkle signing key file}"
+  python3 scripts/generate-appcast.py "$version" "$out"
+fi
 shasum -a 256 "$zip_path"
 echo "$zip_path"

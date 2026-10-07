@@ -11,9 +11,6 @@ use serde::{Deserialize, Serialize};
 /// The one request the check makes.
 pub const LATEST_RELEASE_URL: &str = "https://api.github.com/repos/magicsih/chda/releases/latest";
 
-/// Shown with the notice; the cask is how most people install chda.
-pub const UPDATE_COMMAND: &str = "brew upgrade --cask chda";
-
 const DAY_MS: u64 = 24 * 60 * 60 * 1000;
 
 /// A published release.

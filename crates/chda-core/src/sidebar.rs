@@ -5,7 +5,7 @@ use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
 /// Agent activity in one worktree, as the status board shows it.
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub enum AgentStatus {
     #[default]
     Idle,

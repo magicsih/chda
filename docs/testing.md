@@ -129,3 +129,42 @@ not make model requests or prove provider availability.
 
 These tests do not replace native popup, narrow/light-theme, Pages layout
 and real CLI resume verification. Record final release evidence separately.
+
+## Session-preserving updates
+
+Run `cargo test --workspace`, `cargo clippy --workspace --all-targets -- -D warnings`,
+`python3 scripts/test-appcast.py` and `python3 scripts/sync-product-docs.py --check`.
+The macOS CI job also compiles the universal native helper against the pinned
+Sparkle framework; Linux and Windows continue to build without it.
+
+The Rust scenarios exercise duplicate clicks across windows, shared progress,
+waiting for active tasks while the original shell remains usable,
+failed handoff returning to the original live shell, provisional successor
+failure, rejection of unsupported inline-image state without killing the
+shell, snapshot fidelity and concurrent event journal/fallback delivery.
+
+For native acceptance on macOS, build `cargo build -p chda`, then run in a
+Python environment with `cryptography` installed:
+
+```sh
+python scripts/test-macos-update.py --identity "Developer ID Application: Your Name (TEAMID)"
+```
+
+The script uses that existing signing identity, generates and deletes an
+isolated test Ed25519 seed, and retains private logs/results under its printed
+temporary directory. It never updates `/Applications/chda.app`, changes
+production signing configuration or publishes a release. Its loopback feed
+exists only inside the test bundles. The seven cases cover official Sparkle
+installation, invalid signature, network error, cancellation, distinct broker
+and GUI processes with three surviving shell PIDs/two windows/a split and
+the original active window,
+installation failure recovery and a signed replacement executable that exits
+before preparation. Native success means the post-commit GUI also answers IPC.
+
+This is separate from notarization and production release acceptance. Before
+shipping, verify an administrator-owned app with the actual system approval
+and authentication-cancellation dialogs. Native narrow-window reconnection
+progress, recovered terminal text and error wrapping, and desktop/narrow Pages
+were visually checked during implementation; repeat them for release artifacts.
+Production Sparkle signing input must be registered before publishing the first
+updater-enabled release. See [decision 0011](decisions/0011-session-preserving-updates.md).

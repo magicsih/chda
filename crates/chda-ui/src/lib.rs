@@ -21,7 +21,9 @@ mod terminal_images;
 mod terminal_view;
 mod text_input;
 mod tooltip;
+mod upgrade;
 mod window_registry;
+pub use upgrade::run_broker;
 mod workspace_view;
 
 use gpui::{App, AppContext, Bounds, KeyBinding, WindowBounds, WindowOptions, point, px, size};
@@ -107,22 +109,91 @@ fn key_bindings() -> Vec<KeyBinding> {
 /// Start the application and open the main window with the user's Ghostty
 /// config.
 pub fn run(ghostty: chda_config::GhosttyConfig) {
+    run_inner(ghostty, None);
+}
+
+pub fn run_adopt(ghostty: chda_config::GhosttyConfig, fd: i32) -> std::io::Result<()> {
+    let inherited = upgrade::inherited(fd)?;
+    run_inner(ghostty, Some(inherited));
+    Ok(())
+}
+
+fn run_inner(
+    ghostty: chda_config::GhosttyConfig,
+    inherited: Option<(chda_core::handoff::Handoff, chda_term::handoff::Inherited)>,
+) {
     let env = std::rc::Rc::new(environment::Environment::for_user());
+    let mut reply = None;
+    let mut handoff_session = None;
+    let mut completed_update = None;
+    if let Some((state, inherited)) = inherited {
+        if state.recovery_error.is_none() {
+            completed_update = state.update.clone();
+        }
+        let mut registry = env.windows.borrow_mut();
+        registry.started_at = Some(state.started_at);
+        registry.update.adopting = true;
+        registry.update.frozen = true;
+        registry.update.progress = chda_core::self_update::UpdateProgress::Reconnecting;
+        if let Some(update) = &state.update {
+            registry.update.target = Some(update.target_exe.clone());
+            registry.update.journal = Some(update.directory.join("events.jsonl"));
+            if let Ok(text) = std::fs::read_to_string(update.directory.join("events.jsonl")) {
+                for line in text.lines() {
+                    if let Ok(q) =
+                        serde_json::from_str::<chda_core::agents::quota::QuotaSnapshot>(line)
+                    {
+                        registry
+                            .replay
+                            .push(chda_core::agents::control::Incoming::Quota(q));
+                    } else if let Ok(e) = serde_json::from_str::<chda_core::agents::HookEvent>(line)
+                    {
+                        registry
+                            .replay
+                            .push(chda_core::agents::control::Incoming::Event(e));
+                    }
+                }
+            }
+        }
+        if let Some(message) = state.recovery_error {
+            registry.update.progress = chda_core::self_update::UpdateProgress::Failed { message };
+        }
+        for (pane, pty) in state.panes.into_iter().zip(inherited.ptys) {
+            let session = chda_term::DetachedSession {
+                pty,
+                snapshot: pane.snapshot.clone(),
+                size: chda_term::Size {
+                    cols: pane.cols,
+                    rows: pane.rows,
+                },
+            };
+            registry.update.inherited.insert(pane.pane, (pane, session));
+        }
+        handoff_session = Some(state.session);
+        reply = Some(inherited.reply);
+    }
     gpui_platform::application().run(move |cx: &mut App| {
         fonts::register(cx);
         cx.bind_keys(key_bindings());
-        cx.on_action(|_: &Quit, cx| cx.quit());
+        let quitting_env = env.clone();
+        cx.on_action(move |_: &Quit, cx| {
+            if !quitting_env.windows.borrow().update.frozen {
+                cx.quit();
+            }
+        });
         menus::install(cx);
 
         let config = env.load_config();
-        let saved = config
-            .restore_session
-            .then(|| {
-                env.data_dir
-                    .as_deref()
-                    .and_then(chda_core::SavedSession::load)
-            })
-            .flatten();
+        let saved = handoff_session.take().or_else(|| {
+            config
+                .restore_session
+                .then(|| {
+                    env.data_dir
+                        .as_deref()
+                        .and_then(chda_core::SavedSession::load)
+                })
+                .flatten()
+        });
         let active = saved.as_ref().map_or(0, |s| s.active_window);
         let windows = saved
             .map(|s| s.windows.into_iter().map(Some).collect::<Vec<_>>())
@@ -147,6 +218,70 @@ pub fn run(ghostty: chda_config::GhosttyConfig) {
                 .expect("main window vanished");
         }
         cx.activate(true);
+        if let Some(reply) = reply.take() {
+            let env = env.clone();
+            let completed_update = completed_update.take();
+            cx.spawn(async move |cx| {
+                let deadline = std::time::Instant::now() + std::time::Duration::from_secs(25);
+                loop {
+                    let ready = cx.update(|cx| {
+                        let registry = env.windows.borrow();
+                        registry.update.inherited.is_empty()
+                            && registry.entries.iter().all(|e| {
+                                e.view
+                                    .upgrade()
+                                    .is_some_and(|v| v.read(cx).adoption_ready(cx))
+                            })
+                    });
+                    if ready {
+                        break;
+                    }
+                    if std::time::Instant::now() > deadline {
+                        std::process::exit(1);
+                    }
+                    cx.background_executor()
+                        .timer(std::time::Duration::from_millis(10))
+                        .await;
+                }
+                let committed = cx
+                    .background_spawn(
+                        async move { reply.prepared(std::time::Duration::from_secs(30)) },
+                    )
+                    .await;
+                if committed.is_err() {
+                    std::process::exit(1);
+                }
+                cx.update(|cx| {
+                    {
+                        let mut registry = env.windows.borrow_mut();
+                        if let Some(server) = &registry.ipc_server {
+                            let _ = server.journal_to(None);
+                        }
+                        registry.update.frozen = false;
+                        registry.update.adopting = false;
+                        if !matches!(
+                            registry.update.progress,
+                            chda_core::self_update::UpdateProgress::Failed { .. }
+                        ) {
+                            registry.update.progress =
+                                chda_core::self_update::UpdateProgress::Installed;
+                        }
+                    }
+                    let entries = env.windows.borrow().entries.clone();
+                    for e in entries {
+                        let _ = e.window.update(cx, |_, window, cx| {
+                            let _ = e
+                                .view
+                                .update(cx, |view, cx| view.finish_adoption(window, cx));
+                        });
+                    }
+                });
+                if let Some(handoff) = completed_update {
+                    platform::update::discard(platform::update::UpdateJob { handoff });
+                }
+            })
+            .detach();
+        }
     });
 }
 

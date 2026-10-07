@@ -21,6 +21,7 @@ jobs:
     steps:
       - uses: actions/checkout@v7
       - run: python3 scripts/test-product-docs.py
+      - run: python3 scripts/test-appcast.py
       - run: python3 scripts/sync-product-docs.py --check
 
   fmt:
@@ -85,6 +86,14 @@ jobs:
       - uses: Swatinem/rust-cache@v2
       - run: cargo clippy --workspace --all-targets -- -D warnings
       - run: cargo test --workspace
+      - name: Compile the pinned native updater
+        run: |
+          scripts/fetch-sparkle.sh
+          xcrun clang -fobjc-arc -Wall -Wextra -Wno-unused-parameter -Werror \
+            -arch arm64 -arch x86_64 -mmacosx-version-min=14.0 \
+            -F target/sparkle-2.10.0 -framework Cocoa -framework Sparkle \
+            -Wl,-rpath,@executable_path/../Frameworks \
+            crates/chda-ui/src/platform/update/updater.m -o "$RUNNER_TEMP/chda-updater"
       - run: cargo build --workspace --release
 
   linux:

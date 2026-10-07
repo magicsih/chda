@@ -23,6 +23,9 @@ pub(crate) struct WindowRegistry {
     pub started_at: Option<u64>,
     pub quotas: std::rc::Rc<std::cell::RefCell<crate::status_bar::ProviderQuotas>>,
     pub codex_polling: bool,
+    pub update: crate::upgrade::UpdateState,
+    pub replay: Vec<Incoming>,
+    pub ipc_server: Option<chda_core::agents::ipc::Server>,
 }
 impl WindowRegistry {
     pub fn snapshot(&self) -> SavedSession {

@@ -105,6 +105,7 @@ document do not run. Mermaid blocks inside Markdown become diagrams too.
 |---|---|
 | Terminal | Ghostty-accurate VT handling, true color, minimum text contrast of 3 by default (Ghostty `minimum-contrast` from 1 to 21; 1 disables adjustment), readable text even when a running agent retains its prompt background across a theme change, wide glyphs, IME input, mouse selection and reporting, scrollback search (`cmd-f`), cmd-click links and file paths, right-click actions on paths (reveal in Finder, open a tab or `cd` there, copy), drag and drop paths, inline images (Kitty graphics protocol), Mermaid diagrams in agent output rendered offline ("View diagram"), Markdown files previewed in the browser (right-click a `.md` path, or "Preview Markdown" in the palette), font size shortcuts, prompt jumping (`cmd-up` / `cmd-down`) |
 | Tabs and splits | Open another window with cmd-shift-n. Windows, terminal and Git tree tabs, splits, active focus, directories and exact supported agent conversations come back after restart. Previous working activity remains available separately from new runtime output. Every tab has a visible close button, including long labels and inactive tabs; cmd-w closes the focused pane. Working or waiting agents ask before stopping. |
+| App updates | In a configured, signed macOS release, click Update to download, verify and install with Sparkle. Progress is shared across windows; installation waits for current repository tasks and unfinished input before preserving sessions. macOS asks for administrator approval when required. Windows briefly reopen while running shells and agents, terminal text and scrollback, pane IDs, layouts and focus reconnect. Failed installation or startup reopens the retained signed app with the same sessions. Terminals that have used inline images block the update without stopping their processes. Release notes and version dismissal remain separate; automatic downloads and installs are off. v0.1.19 requires one manual update first. |
 | Title bar | The focused pane's repository and branch-note alias appear as repo - task; the branch is the fallback. Custom tab names remain on tabs without hiding the repository context. Hover for the repository, full note, branch and worktree path. Open the focused worktree in a chosen installed editor or Finder. |
 | Sidebar | Repositories and plain folders, worktrees, dirty / ahead / behind / conflict badges, lines added and removed against the default branch (click for a read-only diff tab), pull request state via `gh`, `glab` or `tea`, open-tab counts, an ACTIVE list in tab order with time since last terminal activity and an alias / branch-name toggle. ACTIVE and Idle Agents collapse independently, show their counts while collapsed, and remember the choice across restarts. Idle Agents lists live agents ready for another prompt with their repository, branch, tab and pane; click to focus or close that pane. Every badge explains itself on hover. Expand or collapse all repositories from the header. Drag a repository header above or below another to reorder the list; a line marks where it lands, the list scrolls near its edges, and the order is saved without moving folders or changing Git. Right-click a branch and choose "Add to Starred" to keep it in a STARRED list above ACTIVE, per repository and saved across restarts; click a starred row to go to its worktree, or its star to unstar it without leaving the current tab. Navigation highlights the exact ACTIVE tab and places its worktree as close to the top as the list allows without stealing terminal keyboard focus. ACTIVE branch labels update immediately when focus changes between split panes; background updates preserve deliberate collapse. Selecting a worktree reuses its most recently focused pane across windows. A working agent shows a spinning ring, an agent waiting for input an orange "!" badge on a tinted row, a finished turn a green dot, a live idle agent a yellow dot and a row with no live agent a gray dot. |
 | Worktrees | Create from a new or existing branch, delete with a safety check, merge-and-clean, bulk cleanup of merged branches, update a branch from its upstream when it is clean and no agent works in it (fast-forward; a diverged branch asks before a rebase or merge and never rewrites pushed commits); a note per branch saying what the task is (right-click "Edit note...", or `chda note <text>` inside the worktree), shown as the row's label and searchable in the palette Creation and note forms share labeled fields, a multiline note area, readable destination/context, explicit Cancel/Create/Save buttons and busy/error feedback. Cmd-V and Edit > Paste insert at the caret or replace selected text, including Unicode notes; single-line branch input flattens line breaks without submitting. |
@@ -161,12 +162,23 @@ transcripts are never stored. None of the agents' own settings files
 (`~/.claude/settings.json`, `~/.codex/config.toml`, `~/.gemini/settings.json`,
 `~/.copilot`, `~/.config/opencode`) are modified.
 
-chda makes one network request of its own: at most once a day it asks the
-GitHub API for the latest release (`api.github.com/repos/magicsih/chda/releases/latest`,
-nothing else attached) and, when it is newer, shows "Update to x.y.z" in the
-title bar with the release notes and `brew upgrade --cask chda`. Dismiss it
-and it stays away until the next release; `update-check = false` turns the
-check off.
+At most once a day, chda asks the GitHub API for the latest release
+(`api.github.com/repos/magicsih/chda/releases/latest`, nothing else attached).
+`update-check = false` disables that check. In a configured, signed macOS
+release, click **Update to x.y.z** to download, verify and install through
+Sparkle. Progress is shared across windows; administrator approval uses the
+macOS system dialog. Release notes and dismissal are in the adjacent menu.
+Downloads and installation never start automatically.
+
+Windows briefly reopen while the same shells and agents reconnect with their
+terminal text, scrollback, layouts and focus. A failed installation or new-app
+startup reopens the retained signed app with those sessions. Terminals that
+have used inline images block the update without stopping their processes;
+close those terminals before trying again. v0.1.19 users need one manual update
+to the first updater-enabled release: `brew upgrade --cask --greedy chda`, or
+download the [latest release](https://github.com/magicsih/chda/releases/latest).
+See [the update decision](docs/decisions/0011-session-preserving-updates.md)
+for release signing requirements and validation boundaries.
 
 Past sessions are listed under each worktree for Claude Code, Codex, Gemini CLI
 and Copilot CLI. OpenCode keeps its sessions in a database chda does not read.

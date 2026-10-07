@@ -4,6 +4,9 @@ use std::path::{Path, PathBuf};
 
 use crate::AgentStatus;
 
+/// Pane and tab ids are unique within the process.
+static NEXT_ID: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(1);
+
 /// Identifies a terminal pane across the workspace.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub struct PaneId(u64);
@@ -327,7 +330,7 @@ pub struct AgentSessionRef {
 }
 
 /// An agent's state in one pane.
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct PaneAgent {
     /// Agent id, e.g. `claude` or `codex`.
     pub agent: String,
@@ -365,8 +368,7 @@ impl Workspace {
     }
 
     fn next(&mut self) -> u64 {
-        static NEXT: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(1);
-        NEXT.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
+        NEXT_ID.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
     }
 
     pub fn tabs(&self) -> &[Tab] {
@@ -679,6 +681,15 @@ impl Workspace {
     /// Register a pane that is not in any tab yet (restore builds trees).
     pub(crate) fn add_pane(&mut self, info: PaneInfo) -> PaneId {
         let pane = PaneId(self.next());
+        self.panes.insert(pane, info);
+        pane
+    }
+
+    /// Register a pane under an id an earlier chda process gave it, so the
+    /// programs inside keep reporting to it; later ids come after it.
+    pub(crate) fn add_pane_with_id(&mut self, id: u64, info: PaneInfo) -> PaneId {
+        NEXT_ID.fetch_max(id + 1, std::sync::atomic::Ordering::Relaxed);
+        let pane = PaneId(id);
         self.panes.insert(pane, info);
         pane
     }

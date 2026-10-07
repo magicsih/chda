@@ -353,7 +353,7 @@ mod tests {
 
         fn finish(mut self) -> String {
             self.send("exit\n");
-            let status = self.pty.wait().unwrap();
+            let status = self.pty.wait().unwrap().unwrap();
             assert!(status.success(), "{status:?}");
             // Let the reader drain what the shell wrote last.
             std::thread::sleep(Duration::from_millis(100));

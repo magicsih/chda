@@ -15,3 +15,4 @@ new record rather than editing an accepted one.
 | 0008 | Terminal and read-only Git graph tabs have explicit content types; history is queried in the background and rendered incrementally |
 | 0009 | Keep live idle panes separate from shells and saved conversations; focus and close by pane ID |
 | 0010 | Own windows, recent pane navigation, IPC routing and saved working context at app scope |
+| 0011 | Session-preserving Sparkle updates: approved direction, handoff primitives implemented, updater integration pending |
