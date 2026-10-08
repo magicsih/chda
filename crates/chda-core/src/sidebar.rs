@@ -228,6 +228,8 @@ pub enum SortOrder {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct ActiveTab {
     pub agent_live: bool,
+    /// A terminal tab with no live agent in any of its split panes.
+    pub plain_terminal: bool,
     /// Actual branch name, available when the label is an alias.
     pub branch: Option<String>,
     pub tab: crate::TabId,

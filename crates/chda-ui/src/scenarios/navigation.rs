@@ -62,7 +62,8 @@ fn worktree_navigation_reuses_recent_panes_and_tracks_exact_tabs(cx: &mut TestAp
         assert_eq!(s.selected.as_ref(), Some(&a));
         assert_eq!(s.active_tab, v.ws.active_tab().map(|t| t.id));
     });
-    click(&mut h, "collapse-all");
+    click(&mut h, "repo-0");
+    click(&mut h, "repo-1");
     assert!(h.read(|v, cx| v.sidebar.read(cx).model.repos.iter().all(|r| r.collapsed)));
     // Background activity must not reveal the deliberately collapsed target.
     h.run("echo keep-collapsed", "keep-collapsed");

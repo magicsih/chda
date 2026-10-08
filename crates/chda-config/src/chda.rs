@@ -110,6 +110,8 @@ pub struct ChdaConfig {
     pub active_collapsed: bool,
     /// Hide live idle rows while keeping the header and count visible.
     pub idle_agents_collapsed: bool,
+    /// Hide registered folders and starred branches beneath PROJECT.
+    pub project_collapsed: bool,
     /// Agents offered in the sidebar and the palette, by id (`claude`,
     /// `codex`, `gemini`, `copilot`, `opencode`).
     pub agents: Vec<String>,
@@ -153,6 +155,7 @@ impl Default for ChdaConfig {
             active_label: ActiveLabel::Alias,
             active_collapsed: false,
             idle_agents_collapsed: false,
+            project_collapsed: false,
             agents: vec!["claude".into(), "codex".into()],
             sidebar_width: 280,
             sidebar_visible: true,
@@ -280,6 +283,7 @@ mod tests {
         c.active_label = ActiveLabel::Branch;
         c.active_collapsed = true;
         c.idle_agents_collapsed = true;
+        c.project_collapsed = true;
         c.save(&path).unwrap();
         let text = fs::read_to_string(&path).unwrap();
         assert!(text.contains("default-action = \"claude\""), "{text}");
@@ -298,6 +302,7 @@ mod tests {
         assert_eq!(c.active_label, ActiveLabel::Alias);
         assert!(!c.active_collapsed);
         assert!(!c.idle_agents_collapsed);
+        assert!(!c.project_collapsed);
         assert_eq!(
             c.repo_hosts.get(Path::new("/src/app")).map(String::as_str),
             Some("github.example.com")

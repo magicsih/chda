@@ -60,3 +60,13 @@ building with explicit unsupported resource inspection.
 Disk throughput and network traffic were considered and omitted: attribution
 and sampling cost are less reliable than the PTY subtree. The compact bar keeps
 quota, CPU, RSS and listener counts to leave room for terminal work.
+
+## Details popup
+
+Click Claude or Codex to open usage details above the bottom-left controls.
+Each reported quota window has its own 0–100% bar, numeric used percentage
+and reset time. Provider/account or exact session scope, source, observed age
+and stale or historical status remain visible. Missing reports show the
+loading, waiting or error reason and do not create a 0% bar. Session resource
+values retain their units; no unknown denominator is used for a bar. The
+popup is bounded by its owning window and scrolls internally.

@@ -173,6 +173,7 @@ impl StatusBar {
             };
             let mut item = div()
                 .id(provider)
+                .debug_selector(move || format!("usage-provider-{provider}"))
                 .flex()
                 .items_center()
                 .gap_1()
@@ -281,38 +282,154 @@ impl StatusBar {
         let fg = hsla(view.settings.colors.foreground.unwrap_or_default());
         let bg = hsla(view.settings.colors.background.unwrap_or_default());
         let quotas = self.quotas.borrow();
-        let mut lines: Vec<String> = quotas
-            .reports
-            .values()
-            .map(|q| format!("{}\n{}", q.provider, q.details(now_ms())))
+        let now = now_ms();
+        let pane = view.ws.focused_pane();
+        let mut reports: Vec<_> = quotas.reports.values().collect();
+        reports.sort_by(|a, b| (&a.provider, &a.scope).cmp(&(&b.provider, &b.scope)));
+        let mut content: Vec<AnyElement> = reports
+            .iter()
+            .enumerate()
+            .map(|(index, q)| {
+                let current = quotas
+                    .provider(&q.provider, pane)
+                    .is_some_and(|current| current.scope == q.scope);
+                let mut section =
+                    div()
+                        .flex()
+                        .flex_col()
+                        .gap_1()
+                        .child(
+                            div()
+                                .font_weight(gpui::FontWeight::BOLD)
+                                .child(format!("{} · {}", q.provider, q.scope)),
+                        )
+                        .child(div().text_xs().text_color(fg.opacity(0.7)).child(format!(
+                            "{} · observed {}s ago{}{}",
+                            q.source,
+                            now.saturating_sub(q.observed_at) / 1000,
+                            if q.stale(now) { " · stale" } else { "" },
+                            if current { "" } else { " · historical report" }
+                        )))
+                        .when(!q.account_known, |d| {
+                            d.child(div().text_xs().text_color(fg.opacity(0.7))
+                    .child("Account identity unavailable; each source session remains separate."))
+                        })
+                        .when(q.windows.is_empty(), |d| {
+                            d.child(div().text_xs().child(
+                                "Quota not reported for this session or authentication mode.",
+                            ))
+                        });
+                for (window_index, w) in q.windows.iter().enumerate() {
+                    let color: gpui::Hsla = if w.used_percent >= 90.0 {
+                        gpui::rgb(0xe07a5f).into()
+                    } else {
+                        fg.opacity(0.8)
+                    };
+                    section = section.child(
+                        div()
+                            .id(gpui::ElementId::Name(
+                                format!("quota-window-{index}-{window_index}").into(),
+                            ))
+                            .debug_selector(move || format!("quota-window-{index}-{window_index}"))
+                            .flex()
+                            .flex_col()
+                            .gap_1()
+                            .pt_1()
+                            .child(
+                                div()
+                                    .flex()
+                                    .items_center()
+                                    .gap_2()
+                                    .child(div().flex_1().min_w_0().child(w.name.clone()))
+                                    .child(
+                                        div()
+                                            .flex_shrink_0()
+                                            .child(format!("{:.0}% used", w.used_percent)),
+                                    ),
+                            )
+                            .child(
+                                div()
+                                    .w_full()
+                                    .h(px(7.0))
+                                    .rounded_sm()
+                                    .bg(fg.opacity(0.15))
+                                    .child(
+                                        div()
+                                            .w(gpui::relative(w.used_percent as f32 / 100.0))
+                                            .h_full()
+                                            .rounded_sm()
+                                            .bg(color),
+                                    ),
+                            )
+                            .child(
+                                div()
+                                    .text_xs()
+                                    .text_color(fg.opacity(0.7))
+                                    .child(reset_text(w.resets_at, now)),
+                            ),
+                    );
+                }
+                section.into_any_element()
+            })
             .collect();
-        lines.sort();
+        for provider in ["claude", "codex"] {
+            if !reports.iter().any(|q| q.provider == provider) {
+                content.push(
+                    div()
+                        .flex()
+                        .flex_col()
+                        .gap_1()
+                        .child(
+                            div().font_weight(gpui::FontWeight::BOLD).child(format!(
+                                "{provider} · {}",
+                                quotas.text(provider, pane, now)
+                            )),
+                        )
+                        .child(
+                            div()
+                                .text_xs()
+                                .text_color(fg.opacity(0.7))
+                                .child(quotas.details(provider, pane, now)),
+                        )
+                        .into_any_element(),
+                );
+            }
+        }
         if let CodexQuotaStatus::Failed(error) = &quotas.codex {
-            lines.push(format!("Codex: {}", error.details()));
+            content.push(
+                div()
+                    .text_xs()
+                    .child(format!("Codex · {}\n{}", error.label(), error.details()))
+                    .into_any_element(),
+            );
         }
         if let Some(resources) = &self.resources
-            && self.resource_pane == view.ws.focused_pane()
+            && self.resource_pane == pane
         {
-            lines.push(resources.details());
+            content.push(
+                div()
+                    .text_xs()
+                    .child(resources.details())
+                    .into_any_element(),
+            );
         }
         if let Some(error) = &self.resource_error {
-            lines.push(error.clone());
-        }
-        if lines.is_empty() {
-            lines.push(
-                "Usage reports are not available yet. No quota is inferred from token counts."
-                    .into(),
-            );
+            content.push(div().text_xs().child(error.clone()).into_any_element());
         }
         Some(
             gpui::deferred(
                 div()
+                    .id("usage-popup")
+                    .debug_selector(|| "usage-popup".into())
                     .absolute()
                     .bottom(px(30.0))
-                    .right_2()
+                    .left_2()
                     .w(px(480.0))
                     .max_w(gpui::relative(0.95))
                     .max_h(gpui::relative(0.7))
+                    .flex()
+                    .flex_col()
+                    .min_h_0()
                     .p_3()
                     .rounded_md()
                     .border_1()
@@ -335,6 +452,7 @@ impl StatusBar {
                             .child(
                                 div()
                                     .id("usage-close")
+                                    .debug_selector(|| "usage-close".into())
                                     .cursor_pointer()
                                     .px_2()
                                     .on_click(cx.listener(|view, _, _, cx| {
@@ -347,12 +465,14 @@ impl StatusBar {
                     .child(
                         div()
                             .id("usage-details-content")
+                            .flex_1()
+                            .min_h_0()
                             .overflow_y_scroll()
                             .max_h(px(380.0))
                             .flex()
                             .flex_col()
                             .gap_3()
-                            .children(lines.into_iter().map(|line| div().child(line))),
+                            .children(content),
                     ),
             )
             .into_any_element(),

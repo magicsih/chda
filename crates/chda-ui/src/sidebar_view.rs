@@ -27,6 +27,7 @@ pub enum SidebarEvent {
     /// pane each.
     ResumeSessions(Vec<SessionPick>),
     AddRepo,
+    /// Restore typing focus after a repository disclosure changes.
     RefocusTerminal,
     /// Folders were dropped on the sidebar: add them as repositories.
     AddRepos(Vec<PathBuf>),
@@ -36,9 +37,11 @@ pub enum SidebarEvent {
     FocusTab(chda_core::TabId),
     FocusPane(chda_core::PaneId),
     ClosePane(chda_core::PaneId),
+    CloseTab(chda_core::TabId),
     ToggleActiveLabel,
     ToggleActive,
     ToggleIdleAgents,
+    ToggleProject,
     /// The status dot of a worktree was clicked: go to its agent's pane.
     JumpToAgent(PathBuf),
     /// Open a read-only tab with the worktree's diff against its base.
@@ -94,6 +97,7 @@ impl Render for RepoDragPreview {
 
 /// Distance from the list's top or bottom edge that scrolls while dragging.
 const DRAG_SCROLL_EDGE: f32 = 32.0;
+const REPO_CONTEXT_HEIGHT: f32 = 32.0;
 
 /// A past agent session to resume, and the worktree it belongs to.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -204,6 +208,8 @@ pub struct SidebarView {
     pub active_label: chda_config::ActiveLabel,
     pub(crate) active_collapsed: bool,
     pub(crate) idle_agents_collapsed: bool,
+    pub(crate) project_collapsed: bool,
+    sticky_repo: Option<PathBuf>,
     /// The first session index has finished.
     pub sessions_loaded: bool,
     /// Labels and names of the agents chda knows.
@@ -246,6 +252,17 @@ pub fn status_color(status: AgentStatus) -> Hsla {
     }
 }
 
+fn pr_badge(pr: &PrInfo, bg: Hsla) -> (&'static str, Hsla) {
+    // Primer fgColor.open / done / closed, with the default light/dark modes.
+    let light = bg.l > 0.5;
+    let (icon, color) = match pr.state {
+        PrState::Open => ("\u{25cf}", if light { 0x1a7f37 } else { 0x3fb950 }),
+        PrState::Merged => ("\u{2713}", if light { 0x8250df } else { 0xab7df8 }),
+        PrState::Closed => ("\u{2715}", if light { 0xd1242f } else { 0xf85149 }),
+    };
+    (icon, gpui::rgb(color).into())
+}
+
 impl SidebarView {
     pub fn new(fg: Hsla, bg: Hsla, agents: Vec<AgentLabel>, cx: &mut Context<Self>) -> Self {
         Self {
@@ -253,6 +270,8 @@ impl SidebarView {
             active_label: Default::default(),
             active_collapsed: false,
             idle_agents_collapsed: false,
+            project_collapsed: false,
+            sticky_repo: None,
             sessions_loaded: false,
             agents,
             picked: Vec::new(),
@@ -299,16 +318,6 @@ impl SidebarView {
             self.reveal = Some(path);
             self.pending_navigation = false;
         }
-        cx.notify();
-    }
-
-    fn collapse_all(&mut self, collapsed: bool, cx: &mut Context<Self>) {
-        for repo in &mut self.model.repos {
-            repo.collapsed = collapsed;
-        }
-        self.reveal = None;
-        self.pending_navigation = false;
-        cx.emit(SidebarEvent::RefocusTerminal);
         cx.notify();
     }
 
@@ -388,6 +397,7 @@ impl SidebarView {
                     if let Some(r) = this.model.repo_mut(&path) {
                         r.collapsed = !r.collapsed;
                     }
+                    cx.emit(SidebarEvent::RefocusTerminal);
                     cx.notify();
                 })
             })
@@ -407,6 +417,8 @@ impl SidebarView {
                     .flex_1()
                     .min_w_0()
                     .overflow_hidden()
+                    .whitespace_nowrap()
+                    .text_ellipsis()
                     .font_weight(gpui::FontWeight::BOLD)
                     .child(repo.name.clone()),
             )
@@ -697,14 +709,7 @@ impl SidebarView {
             );
         }
         if let Some(pr) = &wt.pr {
-            let (icon, color): (&str, Hsla) = match (pr.state, pr.checks) {
-                (PrState::Merged, _) => ("\u{2713}", gpui::rgb(0xcba6f7).into()),
-                (PrState::Closed, _) => ("\u{2715}", fg.opacity(0.5)),
-                (PrState::Open, CheckState::Success) => ("\u{25cf}", gpui::rgb(0xa6e3a1).into()),
-                (PrState::Open, CheckState::Failure) => ("\u{25cf}", gpui::rgb(0xf38ba8).into()),
-                (PrState::Open, CheckState::Pending) => ("\u{25cb}", gpui::rgb(0xf9e2af).into()),
-                (PrState::Open, CheckState::None) => ("", fg.opacity(0.7)),
-            };
+            let (icon, color) = pr_badge(pr, self.bg);
             let url = pr.url.clone();
             badges.push(
                 div()
@@ -716,7 +721,15 @@ impl SidebarView {
                         cx.stop_propagation();
                         cx.emit(SidebarEvent::OpenUrl(url.clone()));
                     }))
+                    .flex()
+                    .gap_0p5()
                     .child(format!("{}{}", pr_reference(pr).1, icon))
+                    .child(div().text_color(fg.opacity(0.8)).child(match pr.checks {
+                        CheckState::Success => "✓",
+                        CheckState::Failure => "!",
+                        CheckState::Pending => "◌",
+                        CheckState::None => "",
+                    }))
                     .into_any_element(),
             );
         }
@@ -899,9 +912,16 @@ impl SidebarView {
                         return;
                     };
                     let viewport = scroll.bounds();
-                    // Align near the top even when the target is already
-                    // visible. List edges limit how high it can be placed.
-                    let delta = viewport.top() + gpui::px(8.0) - target.top();
+                    // Reserve the repository context strip at the upper edge.
+                    // Fully visible rows retain their exact scroll offset.
+                    let top = viewport.top() + gpui::px(REPO_CONTEXT_HEIGHT);
+                    let delta = if target.top() < top {
+                        top - target.top()
+                    } else if target.bottom() > viewport.bottom() {
+                        viewport.bottom() - target.bottom()
+                    } else {
+                        gpui::px(0.0)
+                    };
                     let scroll = scroll.clone();
                     let path = path.clone();
                     let this = this.clone();
@@ -1234,6 +1254,8 @@ impl Render for SidebarView {
             .model
             .active_tabs
             .iter()
+            .filter(|t| !t.plain_terminal)
+            .chain(self.model.active_tabs.iter().filter(|t| t.plain_terminal))
             .map(|t| {
                 let id = t.tab;
                 div()
@@ -1299,6 +1321,23 @@ impl Render for SidebarView {
                             }))
                             .child(activity_age(now, t.last_activity)),
                     )
+                    .when(t.plain_terminal, |d| {
+                        d.child(
+                            div()
+                                .id(ElementId::Name(format!("active-close-{id:?}").into()))
+                                .debug_selector(move || format!("active-close-{id:?}"))
+                                .flex_shrink_0()
+                                .px_1()
+                                .text_color(fg.opacity(0.7))
+                                .tooltip(crate::tooltip::text("Close terminal tab"))
+                                .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
+                                .on_click(cx.listener(move |_, _, _, cx| {
+                                    cx.stop_propagation();
+                                    cx.emit(SidebarEvent::CloseTab(id));
+                                }))
+                                .child("\u{00d7}"),
+                        )
+                    })
                     .into_any_element()
             })
             .collect();
@@ -1457,45 +1496,84 @@ impl Render for SidebarView {
                     .into_any_element()
             })
             .collect();
-        let list = div()
-            .id("sidebar")
+        let project_header = div()
+            .id("project-section-toggle")
+            .debug_selector(|| "project-section-toggle".into())
             .flex()
-            .flex_col()
-            .size_full()
-            .bg(self.bg)
-            .text_color(fg)
-            .text_sm()
-            .overflow_y_scroll()
-            .track_scroll(&self.scroll)
-            .on_drag_move(cx.listener(|this, e: &gpui::DragMoveEvent<RepoDrag>, _, cx| {
-                this.scroll_while_dragging(e, cx)
+            .items_center()
+            .px_2()
+            .pt_2()
+            .pb_1()
+            .text_xs()
+            .text_color(fg.opacity(0.6))
+            .cursor_pointer()
+            .hover(|s| s.bg(fg.opacity(0.08)))
+            .tooltip(crate::tooltip::text(if self.project_collapsed {
+                "Expand PROJECT"
+            } else {
+                "Collapse PROJECT"
             }))
+            .on_click(cx.listener(|_, _, _, cx| cx.emit(SidebarEvent::ToggleProject)))
             .child(
                 div()
-                    .flex()
-                    .flex_row()
-                    .items_center()
-                    .px_2()
-                    .py_1()
-                    .text_xs()
-                    .text_color(fg.opacity(0.6))
-                    .child(div().flex_1().child("WORKTREES"))
-                    .children([(false, "expand-all", "▾", "Expand all"), (true, "collapse-all", "▸", "Collapse all")].into_iter().map(|(collapsed, id, icon, tip)| {
-                        div().id(id).debug_selector(move || id.into()).px_1().rounded_sm().cursor_pointer()
-                            .tooltip(crate::tooltip::text(tip)).hover(|s| s.bg(fg.opacity(0.15)))
-                            .on_click(cx.listener(move |this, _, _, cx| this.collapse_all(collapsed, cx))).child(icon)
-                    }))
-                    .child(
-                        div()
-                            .id("add-repo")
-                            .px_1()
-                            .rounded_sm()
-                            .cursor_pointer()
-                            .hover(|s| s.bg(fg.opacity(0.15)))
-                            .on_click(cx.listener(|_, _, _, cx| cx.emit(SidebarEvent::AddRepo)))
-                            .child("+ repo"),
-                    ),
+                    .w_3()
+                    .child(if self.project_collapsed { "▸" } else { "▾" }),
             )
+            .child(div().flex_1().child("PROJECT"))
+            .child(div().px_1().child(self.model.repos.len().to_string()))
+            .child(
+                div()
+                    .id("add-repo")
+                    .debug_selector(|| "add-repo".into())
+                    .px_1()
+                    .rounded_sm()
+                    .cursor_pointer()
+                    .hover(|s| s.bg(fg.opacity(0.15)))
+                    .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
+                    .on_click(cx.listener(|_, _, _, cx| {
+                        cx.stop_propagation();
+                        cx.emit(SidebarEvent::AddRepo);
+                    }))
+                    .child("+ repo"),
+            );
+        let paths: Vec<_> = self
+            .model
+            .repos
+            .iter()
+            .map(|r| (r.path.clone(), r.collapsed))
+            .collect();
+        let scroll = self.scroll.clone();
+        let current = self.sticky_repo.clone();
+        let this = cx.entity().downgrade();
+        let repo_groups = div()
+            .flex()
+            .flex_col()
+            .children(repos)
+            .on_children_prepainted(move |bounds, window, _| {
+                let viewport = scroll.bounds();
+                let next = paths
+                    .iter()
+                    .zip(bounds)
+                    .find_map(|((path, collapsed), bounds)| {
+                        (!collapsed
+                            && bounds.top() < viewport.top()
+                            && bounds.bottom() > viewport.top() + gpui::px(REPO_CONTEXT_HEIGHT))
+                        .then(|| path.clone())
+                    });
+                if next == current {
+                    return;
+                }
+                let this = this.clone();
+                window.on_next_frame(move |_, cx| {
+                    let _ = this.update(cx, |s, cx| {
+                        if s.sticky_repo != next {
+                            s.sticky_repo = next;
+                            cx.notify();
+                        }
+                    });
+                });
+            });
+        let project = div().flex().flex_col().pl_2()
             .when(!starred.is_empty(), |d| {
                 d.child(
                     div()
@@ -1508,72 +1586,6 @@ impl Render for SidebarView {
                 )
                 .children(starred)
                 .child(div().h(gpui::px(6.0)))
-            })
-            .when(!active.is_empty(), |d| {
-                d.child(
-                    div()
-                        .id("active-section-toggle")
-                        .debug_selector(|| "active-section-toggle".into())
-                        .flex()
-                        .flex_row()
-                        .items_center()
-                        .px_2()
-                        .pt_2()
-                        .pb_1()
-                        .text_xs()
-                        .text_color(fg.opacity(0.6))
-                        .cursor_pointer()
-                        .hover(|s| s.bg(fg.opacity(0.08)))
-                        .tooltip(crate::tooltip::text(if self.active_collapsed {
-                            "Expand ACTIVE"
-                        } else {
-                            "Collapse ACTIVE"
-                        }))
-                        .on_click(cx.listener(|_, _, _, cx| cx.emit(SidebarEvent::ToggleActive)))
-                        .child(div().w_3().child(if self.active_collapsed { "▸" } else { "▾" }))
-                        .child(div().flex_1().child("ACTIVE"))
-                        .child(div().px_1().child(active.len().to_string()))
-                        .child(
-                            div()
-                                .id("active-label-toggle")
-                                .debug_selector(|| "active-label-toggle".into())
-                                .px_1()
-                                .cursor_pointer()
-                                .hover(|s| s.bg(fg.opacity(0.08)))
-                                .tooltip(crate::tooltip::text(
-                                    "Switch ACTIVE labels between branch aliases and branch names",
-                                ))
-                                .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
-                                .on_click(cx.listener(|_, _, _, cx| {
-                                    cx.stop_propagation();
-                                    cx.emit(SidebarEvent::ToggleActiveLabel)
-                                }))
-                                .child(match self.active_label {
-                                    chda_config::ActiveLabel::Alias => "Alias",
-                                    chda_config::ActiveLabel::Branch => "Branch",
-                                }),
-                        ),
-                )
-                .when(!self.active_collapsed, |d| d.children(active))
-                .child(div().h(gpui::px(6.0)))
-            })
-            .when(!idle.is_empty(), |d| {
-                d.child(div()
-                    .id("idle-section-toggle")
-                    .debug_selector(|| "idle-section-toggle".into())
-                    .flex().items_center().px_2().pt_2().pb_1().text_xs()
-                    .cursor_pointer().hover(|s| s.bg(fg.opacity(0.08)))
-                    .text_color(fg.opacity(0.6))
-                    .tooltip(crate::tooltip::text(if self.idle_agents_collapsed {
-                        "Expand Idle Agents"
-                    } else {
-                        "Collapse Idle Agents"
-                    }))
-                    .on_click(cx.listener(|_, _, _, cx| cx.emit(SidebarEvent::ToggleIdleAgents)))
-                    .child(div().w_3().child(if self.idle_agents_collapsed { "▸" } else { "▾" }))
-                    .child(div().flex_1().child("Idle Agents"))
-                    .child(div().px_1().child(idle.len().to_string())))
-                    .when(!self.idle_agents_collapsed, |d| d.children(idle))
             })
             .when(!self.picked.is_empty(), |d| {
                 let count = self.picked.len();
@@ -1626,7 +1638,7 @@ impl Render for SidebarView {
                         .child("Loading agent sessions\u{2026}"),
                 )
             })
-            .children(repos)
+            .child(repo_groups)
             .when(empty, |d| {
                 d.child(
                     div()
@@ -1643,11 +1655,139 @@ impl Render for SidebarView {
                         .child("3. Right-click the worktree to open a terminal or run Claude Code / Codex."),
                 )
             });
+        let list = div()
+            .id("sidebar")
+            .flex()
+            .flex_col()
+            .size_full()
+            .bg(self.bg)
+            .text_color(fg)
+            .text_sm()
+            .overflow_y_scroll()
+            .track_scroll(&self.scroll)
+            .on_drag_move(
+                cx.listener(|this, e: &gpui::DragMoveEvent<RepoDrag>, _, cx| {
+                    this.scroll_while_dragging(e, cx)
+                }),
+            )
+            .child(
+                div()
+                    .id("active-section-toggle")
+                    .debug_selector(|| "active-section-toggle".into())
+                    .flex()
+                    .flex_row()
+                    .items_center()
+                    .px_2()
+                    .pt_2()
+                    .pb_1()
+                    .text_xs()
+                    .text_color(fg.opacity(0.6))
+                    .cursor_pointer()
+                    .hover(|s| s.bg(fg.opacity(0.08)))
+                    .tooltip(crate::tooltip::text(if self.active_collapsed {
+                        "Expand ACTIVE"
+                    } else {
+                        "Collapse ACTIVE"
+                    }))
+                    .on_click(cx.listener(|_, _, _, cx| cx.emit(SidebarEvent::ToggleActive)))
+                    .child(
+                        div()
+                            .w_3()
+                            .child(if self.active_collapsed { "▸" } else { "▾" }),
+                    )
+                    .child(div().flex_1().child("ACTIVE"))
+                    .child(div().px_1().child(active.len().to_string()))
+                    .child(
+                        div()
+                            .id("active-label-toggle")
+                            .debug_selector(|| "active-label-toggle".into())
+                            .px_1()
+                            .cursor_pointer()
+                            .hover(|s| s.bg(fg.opacity(0.08)))
+                            .tooltip(crate::tooltip::text(
+                                "Switch ACTIVE labels between branch aliases and branch names",
+                            ))
+                            .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
+                            .on_click(cx.listener(|_, _, _, cx| {
+                                cx.stop_propagation();
+                                cx.emit(SidebarEvent::ToggleActiveLabel)
+                            }))
+                            .child(match self.active_label {
+                                chda_config::ActiveLabel::Alias => "Alias",
+                                chda_config::ActiveLabel::Branch => "Branch",
+                            }),
+                    ),
+            )
+            .when(!self.active_collapsed, |d| d.children(active))
+            .child(div().h(gpui::px(6.0)))
+            .child(
+                div()
+                    .id("idle-section-toggle")
+                    .debug_selector(|| "idle-section-toggle".into())
+                    .flex()
+                    .items_center()
+                    .px_2()
+                    .pt_2()
+                    .pb_1()
+                    .text_xs()
+                    .cursor_pointer()
+                    .hover(|s| s.bg(fg.opacity(0.08)))
+                    .text_color(fg.opacity(0.6))
+                    .tooltip(crate::tooltip::text(if self.idle_agents_collapsed {
+                        "Expand IDLE"
+                    } else {
+                        "Collapse IDLE"
+                    }))
+                    .on_click(cx.listener(|_, _, _, cx| cx.emit(SidebarEvent::ToggleIdleAgents)))
+                    .child(div().w_3().child(if self.idle_agents_collapsed {
+                        "▸"
+                    } else {
+                        "▾"
+                    }))
+                    .child(div().flex_1().child("IDLE"))
+                    .child(div().px_1().child(idle.len().to_string())),
+            )
+            .when(!self.idle_agents_collapsed, |d| d.children(idle))
+            .child(project_header)
+            .when(!self.project_collapsed, |d| d.child(project));
         div()
             .relative()
             .size_full()
             .on_drag_move(cx.listener(|this, e, _, cx| this.dragged.track(e, cx)))
             .child(list)
+            .when(!self.project_collapsed, |d| {
+                let repo = self
+                    .sticky_repo
+                    .as_ref()
+                    .and_then(|path| self.model.repos.iter().find(|r| &r.path == path));
+                d.when_some(repo, |d, repo| {
+                    d.child(
+                        div()
+                            .id("sticky-repo-context")
+                            .debug_selector(|| "sticky-repo-context".into())
+                            .absolute()
+                            .top_0()
+                            .left_0()
+                            .w_full()
+                            .h(gpui::px(REPO_CONTEXT_HEIGHT))
+                            .flex()
+                            .items_center()
+                            .px_3()
+                            .bg(self.bg)
+                            .border_b_1()
+                            .border_color(fg.opacity(0.15))
+                            .text_sm()
+                            .font_weight(gpui::FontWeight::BOLD)
+                            .overflow_hidden()
+                            .whitespace_nowrap()
+                            .text_ellipsis()
+                            .tooltip(crate::tooltip::text(
+                                repo.path.to_string_lossy().into_owned(),
+                            ))
+                            .child(repo.name.clone()),
+                    )
+                })
+            })
             .child(crate::external_drop::catcher(
                 cx.entity(),
                 |v: &mut Self| &mut v.dragged,
@@ -1695,6 +1835,38 @@ mod tests {
     #[test]
     fn busy_badges_explain_themselves() {
         assert_eq!(busy_tooltip("deleting"), "Deleting this worktree\u{2026}");
+    }
+
+    #[test]
+    fn pr_colors_follow_lifecycle_in_both_themes_for_every_check_state() {
+        for (bg, colors) in [
+            (0xffffff, [0x1a7f37, 0x8250df, 0xd1242f]),
+            (0x1e1e2e, [0x3fb950, 0xab7df8, 0xf85149]),
+        ] {
+            for (state, color) in [PrState::Open, PrState::Merged, PrState::Closed]
+                .into_iter()
+                .zip(colors)
+            {
+                for checks in [
+                    CheckState::Success,
+                    CheckState::Failure,
+                    CheckState::Pending,
+                    CheckState::None,
+                ] {
+                    let info = pr(state, checks, "https://github.com/org/repo/pull/1");
+                    assert_eq!(
+                        pr_badge(&info, gpui::rgb(bg).into()).1,
+                        gpui::rgb(color).into(),
+                        "{state:?}, {checks:?}"
+                    );
+                    assert!(pr_tooltip(&info).contains(match state {
+                        PrState::Open => "open",
+                        PrState::Merged => "merged",
+                        PrState::Closed => "closed",
+                    }));
+                }
+            }
+        }
     }
 
     fn pr(state: PrState, checks: CheckState, url: &str) -> PrInfo {

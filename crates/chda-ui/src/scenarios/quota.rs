@@ -4,6 +4,78 @@ use chda_core::agents::{control::Request, ipc, quota::claude_quota};
 use gpui::TestAppContext;
 use serde_json::json;
 
+#[gpui::test]
+fn details_open_above_both_left_controls_and_visualize_only_reported_windows(
+    cx: &mut TestAppContext,
+) {
+    let mut h = Harness::open(cx, "quota-details", |_| {});
+    h.wait_prompt();
+    for provider in ["claude", "codex"] {
+        h.cx.run_until_parked();
+        let selector = Box::leak(format!("usage-provider-{provider}").into_boxed_str());
+        let control = h.cx.debug_bounds(selector).unwrap();
+        h.cx.simulate_click(control.center(), gpui::Modifiers::none());
+        h.cx.run_until_parked();
+        let popup = h.cx.debug_bounds("usage-popup").unwrap();
+        assert!(
+            popup.left() <= gpui::px(16.0),
+            "popup is anchored to the left provider area: {popup:?}"
+        );
+        assert!(
+            popup.bottom() <= control.top() + gpui::px(2.0),
+            "trigger remains visible"
+        );
+        assert!(
+            h.cx.debug_bounds("quota-window-0-0").is_none(),
+            "unknown quota creates no bar"
+        );
+        let close = h.cx.debug_bounds("usage-close").unwrap().center();
+        h.cx.simulate_click(close, gpui::Modifiers::none());
+        h.cx.run_until_parked();
+    }
+    let report=claude_quota(&json!({"session_id":"details", "rate_limits":{"five_hour":{"used_percentage":0},"seven_day":{"used_percentage":99}}}),None,crate::terminal_view::now_ms()-300_001).unwrap();
+    h.view.update(&mut h.cx, |v, cx| {
+        v.status_bar.quotas.borrow_mut().report(report);
+        cx.notify();
+    });
+    h.cx.run_until_parked();
+    let at = h.cx.debug_bounds("usage-provider-claude").unwrap().center();
+    h.cx.simulate_click(at, gpui::Modifiers::none());
+    h.cx.run_until_parked();
+    for index in 0..2 {
+        assert!(
+            h.cx.debug_bounds(Box::leak(
+                format!("quota-window-0-{index}").into_boxed_str()
+            ))
+            .is_some()
+        );
+    }
+    h.cx.simulate_resize(gpui::size(gpui::px(640.0), gpui::px(420.0)));
+    h.cx.run_until_parked();
+    let popup = h.cx.debug_bounds("usage-popup").unwrap();
+    assert!(
+        popup.left() >= gpui::px(0.0)
+            && popup.right() <= gpui::px(640.0)
+            && popup.top() >= gpui::px(0.0)
+    );
+    let updated = claude_quota(
+        &json!({"session_id":"details","rate_limits":{"five_hour":{"used_percentage":100}}}),
+        None,
+        crate::terminal_view::now_ms(),
+    )
+    .unwrap();
+    h.view.update(&mut h.cx, |v, cx| {
+        v.status_bar.quotas.borrow_mut().report(updated);
+        cx.notify();
+    });
+    h.cx.run_until_parked();
+    assert!(h.cx.debug_bounds("quota-window-0-0").is_some());
+    assert!(
+        h.cx.debug_bounds("quota-window-0-1").is_none(),
+        "live update replaces the reported windows"
+    );
+}
+
 fn text(view: &crate::workspace_view::WorkspaceView, provider: &str) -> String {
     view.status_bar.quotas.borrow().text(
         provider,

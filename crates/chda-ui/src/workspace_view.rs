@@ -2138,6 +2138,12 @@ impl WorkspaceView {
                         chda_config::ActiveLabel::Branch => branch.clone().unwrap_or(title),
                     };
                     ActiveTab {
+                        plain_terminal: tab_ref.is_some_and(|t| {
+                            t.terminal().is_some()
+                                && t.panes()
+                                    .iter()
+                                    .all(|p| self.ws.pane(*p).is_none_or(|i| !i.agent_live))
+                        }),
                         agent_live: tab_ref.is_some_and(|t| {
                             t.panes()
                                 .iter()
@@ -2219,6 +2225,7 @@ impl WorkspaceView {
             s.active_label = self.config.active_label;
             s.active_collapsed = self.config.active_collapsed;
             s.idle_agents_collapsed = self.config.idle_agents_collapsed;
+            s.project_collapsed = self.config.project_collapsed;
             cx.notify();
         });
         self.sync_sidebar_selection(false, cx);
@@ -2906,6 +2913,16 @@ impl WorkspaceView {
         let cwd = self
             .focused_cwd()
             .or_else(|| self.ws.active_tab()?.graph_repo().map(Path::to_path_buf));
+        if navigation
+            && self.config.project_collapsed
+            && cwd
+                .as_ref()
+                .is_some_and(|cwd| self.sidebar.read(cx).model.worktree_for_path(cwd).is_some())
+        {
+            self.config.project_collapsed = false;
+            self.save_config();
+            self.sidebar.update(cx, |s, _| s.project_collapsed = false);
+        }
         self.sidebar.update(cx, |s, cx| {
             s.select_context(tab, cwd.as_deref(), navigation, cx)
         });
@@ -2968,6 +2985,14 @@ impl WorkspaceView {
 
     pub fn focus(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         self.focus_active(window, cx);
+    }
+
+    fn refocus_terminal(&self, window: &mut Window, cx: &mut App) {
+        if let Some(pane) = self.ws.focused_pane()
+            && let Some((terminal, _)) = self.panes.get(&pane)
+        {
+            window.focus(&terminal.read(cx).focus_handle(cx), cx);
+        }
     }
 
     /// Change the font size of every pane in the window. Each terminal
@@ -3365,13 +3390,7 @@ impl WorkspaceView {
     ) {
         self.context_menu = None;
         match event {
-            SidebarEvent::RefocusTerminal => {
-                if let Some(pane) = self.ws.focused_pane()
-                    && let Some((terminal, _)) = self.panes.get(&pane)
-                {
-                    window.focus(&terminal.read(cx).focus_handle(cx), cx);
-                }
-            }
+            SidebarEvent::RefocusTerminal => self.refocus_terminal(window, cx),
             SidebarEvent::OpenWorktree(path) => self.open_worktree(&path, window, cx),
             SidebarEvent::WorktreeMenu(path, position) => {
                 let repo = self
@@ -3602,6 +3621,13 @@ impl WorkspaceView {
                 self.save_config();
                 self.sync_panes(cx);
             }
+            SidebarEvent::ToggleProject => {
+                self.config.project_collapsed = !self.config.project_collapsed;
+                self.save_config();
+                self.sync_panes(cx);
+                self.refocus_terminal(window, cx);
+            }
+            SidebarEvent::CloseTab(tab) => self.request_close(CloseTarget::Tab(tab), window, cx),
             SidebarEvent::FocusTab(tab) => {
                 if self.ws.activate_tab_id(tab) {
                     self.focus_active(window, cx);
