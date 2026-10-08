@@ -2,7 +2,7 @@
 //! (optionally with `:line[:column]`) in the visible rows. Soft-wrapped rows
 //! are joined, so a long URL that wraps is found as a whole.
 //!
-//! Paths may contain spaces when quoted (`"My Notes/todo.md"`) or escaped
+//! Paths may contain spaces when parenthesized, quoted (`"My Notes/todo.md"`) or escaped
 //! with a backslash (`My\ Notes/todo.md`); `file://` URLs are paths too.
 //! Any word can name a file (`ls` prints bare names), so paths are only
 //! candidates: the caller keeps the first that exists.
@@ -60,7 +60,7 @@ static LINE_SUFFIX: LazyLock<Regex> =
     LazyLock::new(|| Regex::new(r"^(.+?):(\d+)(?::(\d+))?:?$").expect("valid suffix pattern"));
 
 /// Links covering cell `(x, y)` of the viewport, most specific first: an
-/// OSC 8 hyperlink, a URL, a quoted path, then the plain token. Paths are
+/// OSC 8 hyperlink, a URL, a quoted or parenthesized path, then the plain token. Paths are
 /// only candidates; the caller keeps the first that exists.
 pub fn links_at(frame: &Frame, x: u16, y: u16) -> Vec<Link> {
     if let Some(h) = frame
@@ -106,6 +106,36 @@ pub fn links_at(frame: &Frame, x: u16, y: u16) -> Vec<Link> {
             cells: line.cells(range.start, range.end),
             target,
         });
+    }
+    // Balanced outer bounds retain parentheses in filenames. Prefer the
+    // complete bounded candidate over a shorter token that also exists.
+    let mut stack = Vec::new();
+    let mut bounded = Vec::new();
+    for (offset, ch) in line.text.char_indices() {
+        match ch {
+            '(' => stack.push(offset + 1),
+            ')' => {
+                if let Some(start) = stack.pop()
+                    && (start..offset).contains(&byte)
+                {
+                    bounded.push(start..offset);
+                }
+            }
+            _ => {}
+        }
+    }
+    bounded.sort_by_key(|range| std::cmp::Reverse(range.len()));
+    for range in bounded {
+        let inner = &line.text[range.clone()];
+        if inner.trim() == inner
+            && !inner.contains(['"', '\''])
+            && let Some(target) = path_target(&inner.replace("\\ ", " "))
+        {
+            out.push(Link {
+                cells: line.cells(range.start, range.end),
+                target,
+            });
+        }
     }
     if let Some(m) = TOKEN
         .find_iter(&line.text)
@@ -396,6 +426,75 @@ mod tests {
         );
         assert!(link_at(&f, 2, 1).unwrap().cells == vec![(1, 0, 7)]);
         assert_eq!(link_at(&f, 3, 2).unwrap().cells, vec![(2, 0, 9)]);
+    }
+
+    #[test]
+    fn parenthesized_paths_cover_spaces_unicode_and_suffixes() {
+        for path in [
+            "/tmp/Notes Folder/workflow.html",
+            "작업 문서/설계안.md:12:5",
+            "/tmp/My Notes/file (draft).md",
+        ] {
+            let text = format!("Plan ({path}) next");
+            let f = frame(100, &[&text], &[]);
+            let expected = path_target(path).unwrap();
+            for x in 6..6 + path.chars().count() as u16 {
+                let links = links_at(&f, x, 0);
+                assert_eq!(
+                    links.first().map(|l| &l.target),
+                    Some(&expected),
+                    "{path} at {x}"
+                );
+                assert_eq!(
+                    links[0].cells,
+                    vec![(0, 6, 5 + path.chars().count() as u16)]
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn parenthesized_path_crosses_only_soft_wraps() {
+        let f = frame(
+            16,
+            &[
+                "Plan (/tmp/Notes",
+                " Folder/file.md)",
+                "Other (a b.md)",
+                "Broken (/tmp/A",
+                "B/file.md)",
+            ],
+            &[0],
+        );
+        for (x, y) in [(8, 0), (1, 1), (10, 1)] {
+            assert_eq!(
+                links_at(&f, x, y)[0].target,
+                path_target("/tmp/Notes Folder/file.md").unwrap()
+            );
+        }
+        assert_eq!(links_at(&f, 9, 2)[0].target, path_target("a b.md").unwrap());
+        assert_eq!(
+            links_at(&f, 10, 3)[0].target,
+            path_target("/tmp/A").unwrap()
+        );
+        assert_eq!(
+            links_at(&f, 3, 4)[0].target,
+            path_target("B/file.md").unwrap()
+        );
+    }
+
+    #[test]
+    fn parenthesized_adjacent_paths_and_urls_stay_distinct() {
+        let f = frame(100, &["(a b.md) (c d.md) (https://example.com/x)"], &[]);
+        assert_eq!(links_at(&f, 2, 0)[0].target, path_target("a b.md").unwrap());
+        assert_eq!(
+            links_at(&f, 11, 0)[0].target,
+            path_target("c d.md").unwrap()
+        );
+        assert_eq!(
+            links_at(&f, 25, 0)[0].target,
+            LinkTarget::Url("https://example.com/x".into())
+        );
     }
 
     #[test]

@@ -69,6 +69,7 @@ Three layers, all run by `cargo test --workspace` (CI: the macOS job).
 | Mermaid output: cmd-click and the palette open the offline viewer | `diagrams::mermaid_output_opens_in_the_offline_viewer` | #35 |
 | Right-click a folder in `ls -la`: open a tab there, `cd` there | `paths::ls_folder_opens_a_terminal_tab_and_cds_there` | #34 |
 | Right-click `src/main.rs:12:5`: reveal in Finder, copy relative path | `paths::compiler_error_path_reveals_the_file` | #34 |
+| Space-containing parenthesized paths, Unicode and soft wraps use the same complete target for hover, cmd-click and path menus | `paths::parenthesized_space_paths_hover_open_and_reveal_across_wraps` | #164 |
 | A quoted path with spaces is one link | `paths::quoted_path_with_spaces_is_one_link` | #34 |
 | Drop files on a pane: quoted paths pasted, even right after typing | `paths::dropped_files_paste_as_quoted_paths` | #17 |
 | Drop a folder on the sidebar: added as a repository | `paths::dropped_folder_on_the_sidebar_becomes_a_repository` | #17 |

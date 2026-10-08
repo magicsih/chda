@@ -138,6 +138,74 @@ fn compiler_error_path_reveals_the_file(cx: &mut gpui::TestAppContext) {
 }
 
 #[gpui::test]
+fn parenthesized_space_paths_hover_open_and_reveal_across_wraps(cx: &mut gpui::TestAppContext) {
+    let mut h = Harness::open(cx, "parenthesized-paths", |_| {});
+    h.wait_prompt();
+    let term = h.focused_terminal();
+    let cols = h.read(|_, cx| term.read(cx).frame().size.cols as usize);
+    std::fs::create_dir_all(h.home.home.join("Notes")).unwrap();
+    for name in ["workflow.html", "작업 문서/설계안.md"] {
+        let full = h
+            .home
+            .home
+            .join(format!("Notes Folder/{}{name}", "d/".repeat(cols / 2)));
+        std::fs::create_dir_all(full.parent().unwrap()).unwrap();
+        std::fs::write(&full, "example").unwrap();
+        h.run(
+            &format!("clear; printf '\\nPlan (%s)\\n' '{}'", full.display()),
+            name,
+        );
+        h.wait_for("the parenthesized output row", {
+            let term = term.clone();
+            move |_, cx| {
+                (0..term.read(cx).frame().size.rows)
+                    .any(|y| term.read(cx).frame().row_text(y).starts_with("Plan ("))
+            }
+        });
+        let segments = h.read(|_, cx| {
+            let frame = term.read(cx).frame();
+            let y = (0..frame.size.rows)
+                .find(|y| frame.row_text(*y).starts_with("Plan ("))
+                .unwrap();
+            chda_term::links_at(&frame, 7, y)[0].cells.clone()
+        });
+        assert!(segments.len() > 1, "fixture must soft-wrap");
+        for (row, start, end) in segments {
+            for col in [start, (start + end) / 2, end] {
+                let at = h.read(|_, cx| {
+                    let g = term.read(cx).geometry.unwrap();
+                    point(
+                        g.origin.x + g.cell_width * (f32::from(col) + 0.5),
+                        g.origin.y + g.line_height * (f32::from(row) + 0.5),
+                    )
+                });
+                h.cx.simulate_mouse_move(at, None, Modifiers::command());
+                assert_eq!(
+                    h.read(|_, cx| term.read(cx).hovered_link.as_ref().map(|l| l.open.clone())),
+                    Some(LinkOpen::Path {
+                        path: full.clone(),
+                        line: None,
+                        column: None,
+                        is_dir: false
+                    })
+                );
+                h.cx.simulate_click(at, Modifiers::command());
+                h.cx.run_until_parked();
+                assert_eq!(h.system.0.borrow().opened_files.last(), Some(&full));
+                h.cx.simulate_mouse_move(at, None, Modifiers::none());
+                right_click(&mut h, at);
+                choose(&mut h, "Copy absolute path");
+                assert_eq!(
+                    h.read(|_, cx| cx.read_from_clipboard().and_then(|c| c.text()))
+                        .as_deref(),
+                    Some(&*full.to_string_lossy())
+                );
+            }
+        }
+    }
+}
+
+#[gpui::test]
 fn quoted_path_with_spaces_is_one_link(cx: &mut gpui::TestAppContext) {
     let mut h = Harness::open(cx, "quoted", |home| {
         std::fs::create_dir_all(home.home.join("My Notes")).unwrap();
