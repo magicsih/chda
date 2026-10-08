@@ -44,6 +44,11 @@ pub enum Event {
     ClipboardWrite(String),
     /// Reply to [`Session::copy_selection`]; absent when nothing is selected.
     SelectionText(Option<String>),
+    /// Selection lookup without changing the clipboard; tagged by its caller.
+    SelectionRead {
+        request: u64,
+        text: Option<String>,
+    },
     /// Reply to [`Session::query_cwd`]: the foreground process's directory.
     Cwd(Option<std::path::PathBuf>),
     /// A shell prompt appeared, so the previous command finished.
@@ -118,6 +123,7 @@ enum Command {
     JumpToLastPrompt,
     Mouse(MouseInput),
     CopySelection,
+    ReadSelection(u64),
     FindLastDiagram,
     QueryCwd,
     Search(Option<SearchQuery>),
@@ -350,6 +356,10 @@ impl Session {
     /// Ask for the selected text; it arrives as [`Event::SelectionText`].
     pub fn copy_selection(&self) {
         self.send(Command::CopySelection);
+    }
+
+    pub fn read_selection(&self, request: u64) {
+        self.send(Command::ReadSelection(request));
     }
 
     /// Look for the last Mermaid diagram in the scrollback; the answer
@@ -804,6 +814,13 @@ fn handle_command(
         }
         Command::CopySelection => {
             replies.push(Event::SelectionText(term.selection_text().unwrap_or(None)));
+            false
+        }
+        Command::ReadSelection(request) => {
+            replies.push(Event::SelectionRead {
+                request,
+                text: term.selection_text().unwrap_or(None),
+            });
             false
         }
         Command::FindLastDiagram => {

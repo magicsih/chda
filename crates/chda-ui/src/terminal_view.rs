@@ -87,6 +87,15 @@ pub enum TerminalEvent {
         position: Point<Pixels>,
         at_prompt: bool,
     },
+    SelectionMenu {
+        position: Point<Pixels>,
+        link: Option<LinkOpen>,
+        at_prompt: bool,
+    },
+    SelectionRead {
+        request: u64,
+        text: Option<String>,
+    },
 }
 
 /// Where a link under the mouse goes.
@@ -534,6 +543,9 @@ impl TerminalView {
                     cx.write_to_clipboard(ClipboardItem::new_string(text))
                 }
                 Event::SelectionText(None) => {}
+                Event::SelectionRead { request, text } => {
+                    cx.emit(TerminalEvent::SelectionRead { request, text })
+                }
                 Event::LastDiagram(source) => cx.emit(TerminalEvent::ViewDiagram(source)),
                 Event::Search(status) => {
                     if let Some(bar) = &mut self.search {
@@ -628,6 +640,13 @@ impl TerminalView {
 
     pub fn frame(&self) -> Arc<Frame> {
         Arc::clone(&self.frame)
+    }
+
+    pub(crate) fn read_selection(&self, request: u64) {
+        self.session.read_selection(request);
+    }
+    pub(crate) fn copy_selection(&self) {
+        self.session.copy_selection();
     }
 
     /// Called by the element on every layout; tells the session when the
@@ -1100,6 +1119,17 @@ impl TerminalView {
             MouseButton::Left => event.modifiers.platform && event.modifiers.shift,
             _ => false,
         };
+        if wants_menu && self.frame.cells.iter().any(|c| c.selected) {
+            cx.emit(TerminalEvent::SelectionMenu {
+                position: event.position,
+                link: self
+                    .hover_cell
+                    .and_then(|(x, y)| self.link_at(x, y))
+                    .map(|l| l.open),
+                at_prompt: self.frame.at_prompt(),
+            });
+            return;
+        }
         if wants_menu
             && let Some((x, y)) = self.hover_cell
             && let Some(link) = self.link_at(x, y)

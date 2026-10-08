@@ -1,0 +1,54 @@
+[
+  {
+    "agent": "claude",
+    "version": "2.1.294",
+    "layout": "plain",
+    "columns": 100,
+    "rows": 35,
+    "original": "Sharing fixture draft.\n\nPreserve paragraphs and 안녕 🧭.\n\n| meaningful pipe",
+    "selected": "⏺ Sharing fixture draft.\n\n  Preserve paragraphs and 안녕 🧭.\n\n  | meaningful pipe",
+    "expected": "Sharing fixture draft.\n\nPreserve paragraphs and 안녕 🧭.\n\n| meaningful pipe",
+    "matched": true,
+    "ansi_sha256": "d5fbf34ef75e7c7f342ae8c4588cd6f40f839e7db190690fe813e4d10de3588a",
+    "external_model_requests": 0
+  },
+  {
+    "agent": "codex",
+    "version": "0.161.0",
+    "layout": "plain",
+    "columns": 100,
+    "rows": 35,
+    "original": "Sharing fixture draft.\n\nPreserve paragraphs and 안녕 🧭.\n\n| meaningful pipe",
+    "selected": "• Sharing fixture draft.\n\n  Preserve paragraphs and 안녕 🧭.\n\n  | meaningful pipe",
+    "expected": "Sharing fixture draft.\n\nPreserve paragraphs and 안녕 🧭.\n\n| meaningful pipe",
+    "matched": true,
+    "ansi_sha256": "2b33cad574e7fd3a0fa4ed92122e2ab793ad07b725cd8422cb175e447b9fa207",
+    "external_model_requests": 0
+  },
+  {
+    "agent": "claude",
+    "version": "2.1.294",
+    "layout": "markdown",
+    "columns": 100,
+    "rows": 35,
+    "original": "Sharing fixture draft.\n\nPreserve paragraphs and 안녕 🧭.\n\n| meaningful pipe\n\n> deliberate quote\n\n- intentional item",
+    "selected": "⏺ Sharing fixture draft.\n\n  Preserve paragraphs and 안녕 🧭.\n\n  | meaningful pipe\n\n  ▎ deliberate quote\n\n  - intentional item",
+    "expected": "⏺ Sharing fixture draft.\n\n  Preserve paragraphs and 안녕 🧭.\n\n  | meaningful pipe\n\n  ▎ deliberate quote\n\n  - intentional item",
+    "matched": false,
+    "ansi_sha256": "0abe976bee279aef483c5aad664ad6c97ed0068dbfa057045c216b55a547e5bd",
+    "external_model_requests": 0
+  },
+  {
+    "agent": "codex",
+    "version": "0.161.0",
+    "layout": "markdown",
+    "columns": 100,
+    "rows": 35,
+    "original": "Sharing fixture draft.\n\nPreserve paragraphs and 안녕 🧭.\n\n| meaningful pipe\n\n> deliberate quote\n\n- intentional item",
+    "selected": "• Sharing fixture draft.\n\n  Preserve paragraphs and 안녕 🧭.\n\n  | meaningful pipe\n\n  > deliberate quote\n\n  • intentional item",
+    "expected": "• Sharing fixture draft.\n\n  Preserve paragraphs and 안녕 🧭.\n\n  | meaningful pipe\n\n  > deliberate quote\n\n  • intentional item",
+    "matched": false,
+    "ansi_sha256": "3690a20816a8b4e0f1044b48eb1db6bd3db68d8c714ff9d6991c0b58a54284aa",
+    "external_model_requests": 0
+  }
+]

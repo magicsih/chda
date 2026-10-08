@@ -17,6 +17,7 @@ mod opencode;
 mod pricing;
 pub mod quota;
 mod session;
+mod sharing;
 pub mod statusline;
 mod usage;
 
@@ -39,6 +40,7 @@ pub use launch::{
 pub use mcp::mcp_main;
 pub use opencode::OpenCodeAdapter;
 pub use session::{AgentSession, SessionCache, SessionId};
+pub use sharing::{SharePreview, sharing_preview};
 pub use usage::{LimitUsage, ModelUsage, Usage, compact_tokens};
 
 /// Which agent a thing belongs to.

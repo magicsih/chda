@@ -21,6 +21,7 @@ mod agent_launch;
 mod agent_restart;
 mod children;
 mod notifications;
+mod sharing;
 mod upgrade;
 use chda_core::{
     ActiveTab, AgentEvent, AgentSessionRef, AgentStatus, Axis, Direction, FileWatcher, IdleAgent,
@@ -158,6 +159,11 @@ pub(crate) struct CloseFocus {
 
 #[derive(Clone, Debug)]
 pub(crate) enum MenuAction {
+    CopySelection(PaneId),
+    ShareSelection {
+        pane: PaneId,
+        identity: Option<(String, String)>,
+    },
     StopAndClose {
         target: CloseTarget,
         focus: CloseFocus,
@@ -311,6 +317,8 @@ pub struct WorkspaceView {
     sheet: Option<NewWorktreeSheet>,
     launch_sheet: Option<agent_launch::LaunchSheet>,
     note_sheet: Option<NoteSheet>,
+    pub(crate) share_sheet: Option<sharing::ShareSheet>,
+    share_generation: u64,
     pub(crate) confirm: Option<ConfirmSheet>,
     pub(crate) palette: Option<(Entity<Palette>, Subscription)>,
     /// Inline editor for a tab title.
@@ -465,6 +473,8 @@ impl WorkspaceView {
             sheet: None,
             launch_sheet: None,
             note_sheet: None,
+            share_sheet: None,
+            share_generation: 0,
             confirm: None,
             palette: None,
             renaming: None,
@@ -2691,6 +2701,33 @@ impl WorkspaceView {
                 self.open_path(path, *line, *column, cx);
             }
             TerminalEvent::ViewDiagram(source) => self.view_diagram(source.as_deref(), cx),
+            TerminalEvent::SelectionRead { request, text } => {
+                self.receive_share_selection(pane, *request, text.clone(), window, cx)
+            }
+            TerminalEvent::SelectionMenu {
+                position,
+                link,
+                at_prompt,
+            } => {
+                let mut items = vec![
+                    ("Copy".into(), MenuAction::CopySelection(pane)),
+                    (
+                        "Copy for sharing…".into(),
+                        MenuAction::ShareSelection {
+                            pane,
+                            identity: self.share_identity(pane),
+                        },
+                    ),
+                ];
+                if let Some(link) = link {
+                    let cwd = self.ws.pane(pane).and_then(|p| p.cwd.as_deref());
+                    items.extend(crate::link_menu::items(link, pane, cwd, *at_prompt));
+                }
+                self.context_menu = Some(ContextMenu {
+                    position: *position,
+                    items,
+                });
+            }
             TerminalEvent::LinkMenu {
                 link,
                 position,
@@ -3309,6 +3346,10 @@ impl WorkspaceView {
     }
 
     fn close_surface(&mut self, _: &CloseSurface, window: &mut Window, cx: &mut Context<Self>) {
+        if self.share_sheet.is_some() {
+            self.close_share_sheet(window, cx);
+            return;
+        }
         if self.confirm.is_some() || self.sheet.as_ref().is_some_and(|sheet| sheet.busy) {
             return;
         }
@@ -4399,6 +4440,21 @@ impl WorkspaceView {
     ) {
         self.context_menu = None;
         match action {
+            MenuAction::CopySelection(pane) => {
+                if let Some((term, _)) = self.panes.get(&pane) {
+                    term.read(cx).copy_selection();
+                }
+            }
+            MenuAction::ShareSelection { pane, identity } => {
+                if self.share_identity(pane) == identity {
+                    self.open_share_sheet(pane, window, cx);
+                } else {
+                    self.notify_error(
+                        "The selected conversation changed. Select its text again before copying."
+                            .into(),
+                    );
+                }
+            }
             MenuAction::StopAndClose { target, focus } => {
                 // Restore the original selection if the target disappeared meanwhile.
                 self.restore_close_focus(focus, window, cx);
@@ -5558,6 +5614,10 @@ impl WorkspaceView {
     }
 
     fn dismiss(&mut self, _: &Dismiss, window: &mut Window, cx: &mut Context<Self>) {
+        if self.share_sheet.is_some() {
+            self.close_share_sheet(window, cx);
+            return;
+        }
         if self.child_detail.is_some() {
             self.close_child_details(window, cx);
             return;
@@ -6206,6 +6266,14 @@ pub fn blend(a: Hsla, b: Hsla, t: f32) -> Hsla {
 
 #[cfg(test)]
 impl WorkspaceView {
+    /// Shell startup has reached the workspace, beyond the visible VT text.
+    pub(crate) fn focused_prompt_ready(&self, cx: &App) -> bool {
+        self.ws
+            .focused_pane()
+            .is_some_and(|p| !self.initializing_panes.contains(&p))
+            && self.focused_text(cx).contains("test%")
+    }
+
     /// The focused pane's visible text, rows joined with newlines.
     pub(crate) fn focused_text(&self, cx: &App) -> String {
         self.ws
@@ -6480,6 +6548,7 @@ impl Render for WorkspaceView {
             .children(self.render_palette())
             .children(self.render_notifications(cx))
             .children(self.render_child_details(cx))
+            .children(self.render_share_sheet(cx))
             .into_any_element()
     }
 }
