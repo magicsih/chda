@@ -55,7 +55,10 @@ struct SearchBar {
 #[derive(Clone, Debug, PartialEq)]
 pub enum TerminalEvent {
     /// The shell exited; the pane should go away.
-    Exited,
+    Exited {
+        status: Option<chda_term::ExitStatus>,
+        output: Option<Result<String, String>>,
+    },
     /// OSC 0/2 title; empty means cleared.
     Title(String),
     /// Working directory, from OSC 7 or the process fallback.
@@ -130,7 +133,21 @@ pub struct GridGeometry {
 
 const BLINK_INTERVAL: Duration = Duration::from_millis(600);
 
+pub(crate) struct TerminalPlan {
+    options: SessionOptions,
+    inherited: Option<chda_term::DetachedSession>,
+}
+
+pub(crate) struct PreparedTerminal {
+    session: Session,
+    events: mpsc::Receiver<Event>,
+    wake_rx: UnboundedReceiver<()>,
+    capture_exit_output: bool,
+}
+
 pub struct TerminalView {
+    final_output: Option<Result<String, String>>,
+    capture_exit_output: bool,
     session: Session,
     events: mpsc::Receiver<Event>,
     frame: Arc<Frame>,
@@ -173,22 +190,20 @@ impl TerminalView {
     pub(crate) fn child_pid(&self) -> Option<u32> {
         self.session.child_pid()
     }
-    pub fn new(
-        settings: Settings,
+    pub(crate) fn plan(
+        settings: &Settings,
         env: &crate::environment::Environment,
         pane_id: u64,
         cwd: Option<PathBuf>,
         command: Option<Vec<String>>,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) -> Self {
-        let (events_tx, events) = mpsc::channel();
-        let (wake_tx, wake_rx) = unbounded::<()>();
+        capture_exit_output: bool,
+    ) -> std::io::Result<TerminalPlan> {
         let mut options = SessionOptions {
             colors: settings.colors.clone(),
             scrollback: settings.scrollback,
             cwd: cwd.clone(),
             command,
+            capture_exit_output,
             ..Default::default()
         };
         if let Some(lang) = env.system.pane_locale() {
@@ -246,21 +261,60 @@ impl TerminalView {
                 options.env.extend(launch.env);
             }
         }
-        let inherited = env.windows.borrow_mut().update.inherited.remove(&pane_id);
+        let inherited = env
+            .windows
+            .borrow_mut()
+            .update
+            .inherited
+            .remove(&pane_id)
+            .map(|(_, detached)| detached);
+        if inherited.is_none() && env.windows.borrow().update.adopting {
+            return Err(std::io::Error::other(format!(
+                "Missing inherited terminal {pane_id}"
+            )));
+        }
+        Ok(TerminalPlan { options, inherited })
+    }
+
+    pub(crate) fn prepare(plan: TerminalPlan) -> std::io::Result<PreparedTerminal> {
+        let TerminalPlan {
+            mut options,
+            inherited,
+        } = plan;
+        let capture_exit_output = options.capture_exit_output;
+        let (events_tx, events) = mpsc::channel();
+        let (wake_tx, wake_rx) = unbounded::<()>();
         let wake = move || {
             let _ = wake_tx.unbounded_send(());
         };
         let session = match inherited {
-            Some((_, detached)) => {
+            Some(detached) => {
                 options.size = detached.size;
                 Session::prepare_adoption(options, detached, events_tx, wake)
             }
-            None if env.windows.borrow().update.adopting => {
-                panic!("missing inherited terminal {pane_id}")
-            }
             None => Session::spawn(options, events_tx, wake),
-        }
-        .expect("failed to prepare the terminal");
+        }?;
+        Ok(PreparedTerminal {
+            session,
+            events,
+            wake_rx,
+            capture_exit_output,
+        })
+    }
+
+    pub(crate) fn new(
+        prepared: PreparedTerminal,
+        settings: Settings,
+        cwd: Option<PathBuf>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> Self {
+        let PreparedTerminal {
+            session,
+            events,
+            wake_rx,
+            capture_exit_output,
+        } = prepared;
         let frame = session.frame();
 
         Self::drive(wake_rx, window, cx);
@@ -284,6 +338,8 @@ impl TerminalView {
         .detach();
 
         Self {
+            final_output: None,
+            capture_exit_output,
             session,
             events,
             frame,
@@ -337,6 +393,7 @@ impl TerminalView {
                 size: detached.size,
                 colors: self.settings.colors.clone(),
                 scrollback: self.settings.scrollback,
+                capture_exit_output: self.capture_exit_output,
                 ..Default::default()
             },
             detached,
@@ -357,6 +414,7 @@ impl TerminalView {
         self.frame = self.session.frame();
         self.grid = (Size { cols: 0, rows: 0 }, 0, 0);
         self.layout_cache = None;
+        self.final_output = None;
         Self::drive(wake_rx, window, cx);
         cx.notify();
         Ok(())
@@ -483,7 +541,11 @@ impl TerminalView {
                         cx.notify();
                     }
                 }
-                Event::Exited(_) => cx.emit(TerminalEvent::Exited),
+                Event::FinalOutput(output) => self.final_output = Some(output),
+                Event::Exited(status) => cx.emit(TerminalEvent::Exited {
+                    status,
+                    output: self.final_output.take(),
+                }),
             }
         }
     }

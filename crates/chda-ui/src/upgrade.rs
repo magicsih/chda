@@ -28,6 +28,7 @@ pub(crate) struct UpdateState {
     pub target: Option<PathBuf>,
     pub journal: Option<PathBuf>,
     pub adopting: bool,
+    pub adoption_failed: bool,
     pub inherited: HashMap<u64, (HandoffPane, DetachedSession)>,
     operations: Arc<AtomicUsize>,
 }
@@ -122,38 +123,91 @@ pub(crate) fn validate(state: &Handoff, terminals: usize) -> io::Result<()> {
         return Err(io::Error::other("Invalid window/terminal handoff"));
     }
     // Reject duplicated, absent or out-of-range IDs before constructing a GUI.
-    fn visit(node: &chda_core::SavedNode, ids: &mut Vec<u64>) -> io::Result<()> {
+    fn visit(
+        node: &chda_core::SavedNode,
+        ids: &mut Vec<u64>,
+        live: &mut Vec<u64>,
+    ) -> io::Result<()> {
         match node {
-            chda_core::SavedNode::Pane { pane: Some(id), .. }
-                if *id > 0 && *id < u64::MAX - 4096 =>
-            {
-                ids.push(*id)
+            chda_core::SavedNode::Pane {
+                pane: Some(id),
+                run,
+                ..
+            } if *id > 0 && *id < u64::MAX - 4096 => {
+                ids.push(*id);
+                if matches!(run.as_deref(), Some(chda_core::ManagedRun::Starting { .. })) {
+                    return Err(io::Error::other("A pane is still starting"));
+                }
+                if !run.as_deref().is_some_and(chda_core::ManagedRun::stopped) {
+                    live.push(*id);
+                }
             }
             chda_core::SavedNode::Pane { .. } => {
                 return Err(io::Error::other("Missing handoff pane ID"));
             }
             chda_core::SavedNode::Split { first, second, .. } => {
-                visit(first, ids)?;
-                visit(second, ids)?;
+                visit(first, ids, live)?;
+                visit(second, ids, live)?;
             }
         }
         Ok(())
     }
     let mut ids = Vec::new();
+    let mut live = Vec::new();
     for window in &state.session.windows {
         for tab in &window.tabs {
             if let chda_core::SavedTabContent::Terminal { root, .. } = &tab.content {
-                visit(root, &mut ids)?;
+                visit(root, &mut ids, &mut live)?;
             }
         }
     }
     ids.sort_unstable();
+    live.sort_unstable();
     let mut expected: Vec<_> = state.panes.iter().map(|p| p.pane).collect();
     expected.sort_unstable();
-    if ids != expected || ids.windows(2).any(|p| p[0] == p[1]) {
+    if live != expected || ids.windows(2).any(|p| p[0] == p[1]) {
         return Err(io::Error::other(
             "Window layout does not match the inherited terminals",
         ));
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    #[test]
+    fn stopped_panes_keep_layout_identity_without_inherited_ptys() {
+        let mut ws = chda_core::Workspace::new();
+        let (_, pane) = ws.new_tab();
+        ws.pane_mut(pane).unwrap().managed_run = Some(chda_core::ManagedRun::Stopped {
+            code: Some(7),
+            signal: None,
+            error: None,
+        });
+        let mut state = Handoff::default();
+        state.session.windows.push(ws.handoff_snapshot());
+        assert!(validate(&state, 0).is_ok());
+        state
+            .panes
+            .push(HandoffPane::new(pane.raw(), 80, 24, vec![]));
+        assert!(
+            validate(&state, 1).is_err(),
+            "stopped panes cannot consume a live descriptor"
+        );
+        state.panes.clear();
+        ws.pane_mut(pane).unwrap().managed_run =
+            Some(chda_core::ManagedRun::Starting { started_at: 1 });
+        state.session.windows[0] = ws.handoff_snapshot();
+        assert!(
+            validate(&state, 0).is_err(),
+            "updates wait for process preparation"
+        );
+        ws.pane_mut(pane).unwrap().managed_run = None;
+        state.session.windows[0] = ws.handoff_snapshot();
+        assert!(
+            validate(&state, 0).is_err(),
+            "live shells still require their exact descriptor"
+        );
+    }
 }

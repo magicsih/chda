@@ -30,7 +30,10 @@ pub use codex::{
 pub use copilot::CopilotAdapter;
 pub use gemini::GeminiAdapter;
 pub use hook::{HookEvent, HookKind, PANE_ENV, hook_main};
-pub use launch::{AgentLaunchContext, LaunchHistory, PermissionPolicy, permission_arguments};
+pub use launch::{
+    AgentLaunchContext, LaunchHistory, PermissionPolicy, permission_arguments,
+    validate_resume_options,
+};
 pub use mcp::mcp_main;
 pub use opencode::OpenCodeAdapter;
 pub use session::{AgentSession, SessionCache, SessionId};
@@ -123,16 +126,14 @@ pub trait AgentAdapter: Send + Sync {
         session::head_cwd(file)
     }
     /// Whether the agent still has the transcript of session `id`, so it can
-    /// be resumed. The default looks for a transcript whose file name ends
-    /// with the id, as Claude Code (`<id>.jsonl`) and Codex
-    /// (`rollout-<time>-<id>.jsonl`) name them.
+    /// be resumed. Claude uses exact filenames; Codex additionally confirms
+    /// the full session ID in rollout metadata. Other storage formats override it.
     fn has_session(&self, id: &SessionId) -> bool {
         !id.0.is_empty()
             && self.session_roots().iter().any(|root| {
-                session::jsonl_files(root).iter().any(|f| {
-                    f.file_stem()
-                        .is_some_and(|s| s.to_string_lossy().ends_with(id.0.as_str()))
-                })
+                session::jsonl_files(root)
+                    .iter()
+                    .any(|f| session::transcript_matches_id(f, self.id(), id))
             })
     }
     /// Parse one transcript file; `None` when it is not a session.

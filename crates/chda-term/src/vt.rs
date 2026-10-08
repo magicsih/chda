@@ -615,7 +615,7 @@ impl Terminal {
         Ok(out)
     }
 
-    fn screen_text(&self) -> Result<String> {
+    pub(crate) fn screen_text(&self) -> Result<String> {
         let opts = FormatterOptions::new()
             .with_format(Format::Plain)
             .with_unwrap(false)

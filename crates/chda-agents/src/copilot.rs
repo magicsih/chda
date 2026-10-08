@@ -99,6 +99,16 @@ impl AgentAdapter for CopilotAdapter {
             .collect()
     }
 
+    fn has_session(&self, id: &SessionId) -> bool {
+        !id.0.is_empty()
+            && !id.0.contains(['/', '\\'])
+            && !matches!(id.0.as_str(), "." | "..")
+            && self
+                .session_roots()
+                .iter()
+                .any(|root| root.join(&id.0).join("events.jsonl").is_file())
+    }
+
     /// The directory is in `session.start`'s `data.context.cwd`.
     fn session_cwd(&self, file: &Path) -> Option<PathBuf> {
         if file.file_name()? != "events.jsonl" {

@@ -53,6 +53,8 @@ pub enum Event {
     /// Reply to [`Session::find_last_diagram`]: the last Mermaid source in
     /// the scrollback, if any.
     LastDiagram(Option<String>),
+    /// Final screen and retained scrollback, only for opted-in managed runs.
+    FinalOutput(Result<String, String>),
     /// The child exited; the session is finished. The status is unknown
     /// for a child adopted from an earlier chda process.
     Exited(Option<ExitStatus>),
@@ -71,6 +73,7 @@ pub struct SessionOptions {
     pub command: Option<Vec<String>>,
     pub cwd: Option<std::path::PathBuf>,
     pub env: Vec<(String, String)>,
+    pub capture_exit_output: bool,
 }
 
 impl Default for SessionOptions {
@@ -83,6 +86,7 @@ impl Default for SessionOptions {
             colors: ColorConfig::default(),
             command: None,
             cwd: None,
+            capture_exit_output: false,
             env: vec![
                 ("TERM".into(), "xterm-256color".into()),
                 ("COLORTERM".into(), "truecolor".into()),
@@ -661,6 +665,11 @@ fn run(
     // Keep draining while a shell flushes its PTY during exit. Stopping the
     // reader before wait can deadlock macOS tty teardown.
     stop.stop();
+    if opts.capture_exit_output {
+        emit(Event::FinalOutput(
+            term.screen_text().map_err(|e| e.to_string()),
+        ));
+    }
     emit(Event::Exited(status));
 }
 
@@ -1023,6 +1032,48 @@ mod tests {
         p.wait_for(|e| matches!(e, Event::Exited(_)));
         let reply = p.session.detach().recv_timeout(Duration::from_secs(2));
         assert!(!matches!(reply, Ok(Ok(_))));
+    }
+
+    #[test]
+    fn opted_in_exit_output_retains_scrollback_before_the_exit_event() {
+        let mut p = Probe::spawn_with(SessionOptions {
+            command: Some(vec![
+                "/bin/sh".into(),
+                "-c".into(),
+                "i=0; while [ $i -lt 30 ]; do echo history-$i; i=$((i+1)); done; exit 7".into(),
+            ]),
+            capture_exit_output: true,
+            ..Default::default()
+        });
+        p.wait_for(|e| matches!(e, Event::Exited(_)));
+        let output = p
+            .seen
+            .iter()
+            .find_map(|e| {
+                if let Event::FinalOutput(text) = e {
+                    Some(text)
+                } else {
+                    None
+                }
+            })
+            .unwrap()
+            .as_ref()
+            .unwrap();
+        assert!(
+            output.contains("history-0"),
+            "retains output above the viewport"
+        );
+        assert!(output.contains("history-29"), "retains final output");
+        assert!(matches!(p.seen.last(),Some(Event::Exited(Some(status))) if status.code==7));
+        let mut plain = Probe::spawn(&["/bin/sh", "-c", "echo plain; exit 0"]);
+        plain.wait_for(|e| matches!(e, Event::Exited(_)));
+        assert!(
+            !plain
+                .seen
+                .iter()
+                .any(|e| matches!(e, Event::FinalOutput(_))),
+            "ordinary shells do not export history"
+        );
     }
 
     #[test]

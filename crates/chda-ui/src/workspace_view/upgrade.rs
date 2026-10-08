@@ -330,9 +330,11 @@ impl WorkspaceView {
     }
 
     pub(crate) fn adoption_ready(&self, cx: &App) -> bool {
-        self.panes
-            .values()
-            .all(|(p, _)| p.read(cx).adoption_ready())
+        !self.env.windows.borrow().update.adoption_failed
+            && self
+                .panes
+                .values()
+                .all(|(p, _)| p.read(cx).adoption_ready())
     }
     pub(crate) fn finish_adoption(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         for (pane, _) in self.panes.values() {

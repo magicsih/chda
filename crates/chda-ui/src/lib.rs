@@ -10,6 +10,7 @@ mod markdown_preview;
 mod menus;
 mod palette;
 mod platform;
+mod readonly_text;
 #[cfg(test)]
 mod scenarios;
 mod settings;

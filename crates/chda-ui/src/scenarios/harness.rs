@@ -236,6 +236,17 @@ impl Home {
         std::fs::set_permissions(&self.claude_bin, std::fs::Permissions::from_mode(0o755)).unwrap();
     }
 
+    pub fn codex_session(&self, cwd: &Path, id: &str) {
+        let dir = self.home.join(".codex/sessions");
+        std::fs::create_dir_all(&dir).unwrap();
+        let value = serde_json::json!({"type":"session_meta","payload":{"id":id,"cwd":cwd,"timestamp":"2026-10-01T10:00:00Z"}});
+        std::fs::write(
+            dir.join(format!("rollout-2026-10-01-{id}.jsonl")),
+            format!("{value}\n"),
+        )
+        .unwrap();
+    }
+
     /// Create a git repository with one commit under the home.
     pub fn repo(&self, name: &str) -> PathBuf {
         let repo = self.home.join("src").join(name);
@@ -382,7 +393,13 @@ fn open_window(
                         let codex = inner.id() == AgentId::Codex;
                         Box::new(TestAdapter {
                             inner,
-                            projects: claude.then(|| home.claude_projects.clone()),
+                            projects: if claude {
+                                Some(home.claude_projects.clone())
+                            } else if codex {
+                                Some(home.home.join(".codex/sessions"))
+                            } else {
+                                None
+                            },
                             bin: if claude {
                                 Some(home.claude_bin.clone())
                             } else if codex {

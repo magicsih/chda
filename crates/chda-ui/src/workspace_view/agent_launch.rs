@@ -13,6 +13,39 @@ pub(super) struct LaunchSheet {
 }
 
 impl WorkspaceView {
+    pub(super) fn open_managed_launch(
+        &mut self,
+        cwd: &Path,
+        agent: AgentId,
+        options: Vec<String>,
+        session: Option<SessionId>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let result = self
+            .launch_item(cwd, agent, options, session)
+            .and_then(|item| {
+                let argv = if item.context.session.is_some() {
+                    self.captured_resume_argv(&item.context)?
+                } else {
+                    self.captured_agent_argv(&item.context)?
+                };
+                Ok((item.context, argv))
+            });
+        match result {
+            Ok((context, argv)) => {
+                let pane = self.ws.new_tab().1;
+                let cwd = context.cwd.clone();
+                self.ws.pane_mut(pane).unwrap().agent_launch = Some(context);
+                self.open_pane(pane, Some(cwd), Some(argv), window, cx);
+                self.focus_active(window, cx);
+            }
+            Err(e) => {
+                self.notify_error(e);
+                cx.notify();
+            }
+        }
+    }
     pub(super) fn capture_launch_session(&mut self, pane: PaneId, agent: &str, session: &str) {
         if session.is_empty() {
             return;
@@ -74,6 +107,13 @@ impl WorkspaceView {
                 policy: PermissionPolicy::Inherit,
                 session,
                 managed: true,
+                reported_account_scope: self
+                    .status_bar
+                    .quotas
+                    .borrow()
+                    .provider(agent.as_str(), None)
+                    .filter(|report| report.account_known && !report.stale(now_ms()))
+                    .map(|report| report.scope.clone()),
             },
             captured: false,
         })
@@ -147,7 +187,13 @@ impl WorkspaceView {
         let argv = sheet
             .items
             .iter()
-            .map(|item| self.captured_agent_argv(&item.context))
+            .map(|item| {
+                if item.context.session.is_some() {
+                    self.captured_resume_argv(&item.context)
+                } else {
+                    self.captured_agent_argv(&item.context)
+                }
+            })
             .collect::<Result<Vec<_>, _>>();
         let argv = match argv {
             Ok(argv) => argv,
@@ -282,6 +328,11 @@ impl WorkspaceView {
                         .text_xs()
                         .child(format!("Resume exact session: {}", session.0)),
                 );
+            }
+            if let Some(scope) = &context.reported_account_scope {
+                section = section.child(div().text_xs().child(format!(
+                    "Account report at launch: {scope} · CLI authentication inherited"
+                )));
             }
             sections.push(section.into_any_element());
         }

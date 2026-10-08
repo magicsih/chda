@@ -89,6 +89,7 @@ fn codex_sessions_resume_with_the_login_shell_path(cx: &mut TestAppContext) {
     use crate::sidebar_view::{SessionPick, SidebarEvent};
     use std::os::unix::fs::PermissionsExt;
     let mut h = Harness::open(cx, "codex-path", |home| {
+        home.codex_session(&home.home, "saved-session");
         let bin = home.bin.join("codex");
         std::fs::create_dir_all(&home.bin).unwrap();
         std::fs::write(
