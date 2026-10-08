@@ -524,6 +524,7 @@ impl Harness {
         session: &str,
     ) {
         let event = HookEvent {
+            child: None,
             agent: agent.into(),
             session_id: session.into(),
             cwd: cwd.to_path_buf(),

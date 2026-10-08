@@ -3,6 +3,7 @@
 //!
 //! Platform-specific IPC code lives under `ipc`.
 
+mod children;
 mod claude;
 mod codex;
 pub mod control;
@@ -22,6 +23,7 @@ mod usage;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
+pub use children::{ChildActivity, ChildBoard, ChildEvent, ChildState, read_codex_children};
 pub use claude::ClaudeAdapter;
 pub use codex::{
     CODEX_TITLE_CONFIG, CODEX_TITLE_ENV, CodexAdapter, CodexRunState,

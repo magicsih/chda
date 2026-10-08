@@ -4,8 +4,12 @@
 //! after which the client reads one reply line. Newlines delimit messages;
 //! acknowledgement does not depend on closing either half of the socket.
 
+#[cfg(all(test, unix))]
+mod children_tests;
 mod process;
+mod rpc;
 pub use process::{capture_command, is_executable, with_process, write_private_atomic};
+pub use rpc::with_local_rpc;
 
 use std::path::{Path, PathBuf};
 
@@ -296,6 +300,7 @@ mod tests {
         let (tx, rx) = std::sync::mpsc::channel();
         let server = serve(&path, tx, || {}).unwrap();
         let event = HookEvent {
+            child: None,
             agent: "claude".into(),
             session_id: "live".into(),
             cwd: "/w".into(),
@@ -371,6 +376,7 @@ mod tests {
         })
         .unwrap();
         let event = HookEvent {
+            child: None,
             agent: "claude".into(),
             session_id: "s1".into(),
             cwd: "/w".into(),
@@ -398,6 +404,7 @@ mod tests {
             send(
                 &path,
                 &HookEvent {
+                    child: None,
                     kind: kinds[i % 3],
                     timestamp: i as u64,
                     ..event.clone()

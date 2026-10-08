@@ -6,6 +6,7 @@
 mod agent_launch;
 mod agent_restart;
 mod agents;
+mod children;
 mod closing;
 mod config;
 mod diagrams;

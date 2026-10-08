@@ -19,3 +19,4 @@ new record rather than editing an accepted one.
 | [0012](0012-window-notification-history.md) | 창별 알림 기록, 읽음 기준과 세션 보존 업데이트에서의 기록 전달 |
 | [0013](0013-captured-agent-launches.md) | 정확한 대화에 실행 파일·옵션·권한을 보존하는 관리 실행 |
 | [0014](0014-managed-process-restart.md) | 관리 프로세스 종료 정보와 이전 출력 보존, 동일 pane에서의 정확한 재시작 |
+| [0015](0015-provider-confirmed-child-activity.md) | Provider-confirmed child identity and lifecycle, exact-parent routing and bounded existing-daemon metadata queries |

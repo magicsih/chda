@@ -10,6 +10,7 @@ pub(crate) struct WindowEntry {
     pub view: WeakEntity<WorkspaceView>,
     pub saved: SavedWindow,
     pub panes: HashMap<PaneId, (PathBuf, u64)>,
+    pub sessions: HashMap<PaneId, (String, String, bool)>,
 }
 #[derive(Default)]
 pub(crate) struct WindowRegistry {
@@ -23,6 +24,9 @@ pub(crate) struct WindowRegistry {
     pub started_at: Option<u64>,
     pub quotas: std::rc::Rc<std::cell::RefCell<crate::status_bar::ProviderQuotas>>,
     pub codex_polling: bool,
+    pub child_polling: bool,
+    pub children: chda_core::agents::ChildBoard,
+    pub inherited_child_collapsed: std::collections::VecDeque<Vec<(String, String)>>,
     pub update: crate::upgrade::UpdateState,
     pub replay: Vec<Incoming>,
     pub ipc_server: Option<chda_core::agents::ipc::Server>,

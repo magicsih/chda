@@ -27,6 +27,11 @@ pub struct Handoff {
     /// Same order as session.windows; intentionally absent from cold saves.
     #[serde(default)]
     pub notifications: Vec<crate::notifications::NotificationQueue>,
+    #[serde(default)]
+    pub children: chda_agents::ChildBoard,
+    /// Per-window disclosure state, in session.windows order.
+    #[serde(default)]
+    pub child_collapsed: Vec<Vec<(String, String)>>,
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
@@ -173,6 +178,22 @@ mod tests {
             session: SavedSession::default(),
             panes: vec![first, HandoffPane::new(9, 100, 30, vec![0, 255, 10])],
             notifications: vec![notifications],
+            child_collapsed: vec![vec![("claude".into(), "parent".into())]],
+            children: {
+                let mut board = chda_agents::ChildBoard::default();
+                board.apply(chda_agents::ChildActivity {
+                    agent: "claude".into(),
+                    parent: "parent".into(),
+                    child: chda_agents::ChildEvent {
+                        id: "child".into(),
+                        label: Some("Explore".into()),
+                        state: chda_agents::ChildState::Working,
+                        started: true,
+                    },
+                    observed_at: 10,
+                });
+                board
+            },
             ..Default::default()
         };
         let decoded = Handoff::decode(&handoff.encode().unwrap()).unwrap();
