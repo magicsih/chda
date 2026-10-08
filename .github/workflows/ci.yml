@@ -22,6 +22,7 @@ jobs:
       - uses: actions/checkout@v7
       - run: python3 scripts/test-product-docs.py
       - run: python3 scripts/test-appcast.py
+      - run: python3 scripts/test-macos-release.py
       - run: python3 scripts/sync-product-docs.py --check
 
   fmt:
@@ -85,6 +86,7 @@ jobs:
           version: ${{ env.ZIG_VERSION }}
       - uses: Swatinem/rust-cache@v2
       - run: cargo clippy --workspace --all-targets -- -D warnings
+      - run: python3 scripts/test-macos-release.py
       - run: cargo test --workspace
       - name: Compile the pinned native updater
         run: |
