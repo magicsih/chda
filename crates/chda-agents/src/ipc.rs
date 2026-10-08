@@ -5,7 +5,7 @@
 //! acknowledgement does not depend on closing either half of the socket.
 
 mod process;
-pub use process::{capture_command, is_executable, with_process};
+pub use process::{capture_command, is_executable, with_process, write_private_atomic};
 
 use std::path::{Path, PathBuf};
 

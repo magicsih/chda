@@ -78,6 +78,8 @@ fn an_agent_creates_a_worktree_opens_tabs_and_lists_worktrees(cx: &mut TestAppCo
         git_out(&repo, &["config", "branch.agent/task.description"]),
         "Fix login redirect"
     );
+    assert!(reply.message.contains("confirm"));
+    h.confirm_agent_launch();
     h.wait_for("the agent's tab in the new worktree", {
         let path = path.clone();
         move |v, cx| {

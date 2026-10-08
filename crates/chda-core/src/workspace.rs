@@ -319,6 +319,8 @@ pub struct PaneInfo {
     /// The conversation of the agent running in the pane, kept until the
     /// agent ends so a restored session can reopen it.
     pub agent_session: Option<AgentSessionRef>,
+    /// Captured only for commands chda launched, never inferred from TUI text.
+    pub agent_launch: Option<chda_agents::AgentLaunchContext>,
 }
 
 /// An agent conversation: which agent and its session id.

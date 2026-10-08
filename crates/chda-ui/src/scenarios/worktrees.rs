@@ -297,6 +297,7 @@ fn picked_sessions_resume_in_one_tab(cx: &mut TestAppContext) {
         }
         s.resume_picked(cx);
     });
+    h.confirm_agent_launch();
     h.wait_for("one new tab running the three sessions", |v, cx| {
         let tabs = v.ws.tabs();
         tabs.len() == 2 && {

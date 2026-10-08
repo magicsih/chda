@@ -3,6 +3,7 @@
 //! real shells and git repositories under a temporary home. See
 //! docs/testing.md for the list and what each covers.
 
+mod agent_launch;
 mod agents;
 mod closing;
 mod config;

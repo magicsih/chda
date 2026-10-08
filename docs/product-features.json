@@ -50,9 +50,9 @@
     },
     {
       "area": "Agents",
-      "details": "Claude Code, Codex, Gemini CLI, GitHub Copilot CLI and OpenCode status from their own hooks on tabs, the ACTIVE list, worktree rows and the Dock badge; notifications that open the agent's pane; jump to the agent that waits (`cmd-shift-a`); session list ordered by the last message, with token usage and one-click resume; cmd-click several sessions to resume them side by side in one tab",
+      "details": "Claude Code, Codex, Gemini CLI, GitHub Copilot CLI and OpenCode status from their own hooks on tabs, the ACTIVE list, worktree rows and the Dock badge; notifications that open the agent's pane; jump to the agent that waits (`cmd-shift-a`); session list ordered by the last message, with token usage and one-click resume; cmd-click several sessions to resume them side by side in one tab; managed Claude Code and Codex launches show Use CLI configuration (the default) or explicit Bypass before starting, including presets, selected conversations and worktree default actions. Codex Bypass disables approvals and sandboxing. Conflicting preset permission options stop the launch without rewriting the preset. Captured executable, working directory, options and permission choice follow the exact conversation on resume and restore; inherited effective policy is shown as unobserved.",
       "title": "Agents you can see",
-      "summary": "Track Claude Code, Codex, Gemini CLI, Copilot CLI and OpenCode. Notifications open the right pane; past conversations resume together or side by side."
+      "summary": "Track Claude Code, Codex, Gemini CLI, Copilot CLI and OpenCode. Notifications open the right pane; past conversations resume together or side by side. Choose per-launch permissions for Claude Code and Codex; retain captured options when reopening a conversation."
     },
     {
       "area": "Status bar",

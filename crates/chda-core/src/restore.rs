@@ -77,6 +77,8 @@ pub enum SavedNode {
         /// That agent's session id.
         #[serde(default, skip_serializing_if = "Option::is_none")]
         session: Option<String>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        launch: Option<Box<chda_agents::AgentLaunchContext>>,
         /// The pane's id, kept only when handing running panes to a new
         /// chda process (their programs report to it).
         #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -99,6 +101,7 @@ pub struct RestoredPane {
     pub cwd: Option<PathBuf>,
     /// The agent conversation the pane had open.
     pub agent: Option<AgentSessionRef>,
+    pub launch: Option<chda_agents::AgentLaunchContext>,
 }
 
 /// Saved directories that no longer exist, with what replaced them.
@@ -196,6 +199,7 @@ impl Workspace {
                     repo: info.and_then(|i| i.repo.clone()),
                     agent: agent.as_ref().map(|a| a.agent.clone()),
                     session: agent.map(|a| a.session),
+                    launch: info.and_then(|i| i.agent_launch.clone()).map(Box::new),
                     pane: ids.then_some(p.raw()),
                 }
             }
@@ -263,6 +267,7 @@ impl Workspace {
                 repo,
                 agent,
                 session,
+                launch,
                 pane,
             } => {
                 let resolved = match cwd {
@@ -282,6 +287,7 @@ impl Workspace {
                     last_activity: *last_activity,
                     previous_activity: (*last_activity > 0).then_some(*last_activity),
                     agent_session: agent.clone(),
+                    agent_launch: launch.as_deref().cloned(),
                     ..Default::default()
                 };
                 let pane = match pane {
@@ -292,6 +298,7 @@ impl Workspace {
                     pane,
                     cwd: resolved,
                     agent,
+                    launch: launch.as_deref().cloned(),
                 });
                 Node::Leaf(pane)
             }

@@ -66,6 +66,7 @@ fn agent_presets_start_from_the_palette_and_the_sidebar_menu(cx: &mut TestAppCon
     h.keys("cmd-shift-p");
     h.type_text("Run Opus in app");
     h.keys("enter");
+    h.confirm_agent_launch();
     h.wait_for("the preset in a new tab", |v, cx| {
         v.ws.tabs().len() == 2 && v.focused_text(cx).contains("--model opus")
     });
@@ -77,6 +78,7 @@ fn agent_presets_start_from_the_palette_and_the_sidebar_menu(cx: &mut TestAppCon
         h.view
             .update(cx, |v, cx| v.run_menu_action(action, window, cx))
     });
+    h.confirm_agent_launch();
     h.wait_for("a second preset tab", |v, cx| {
         v.ws.tabs().len() == 3 && v.focused_text(cx).contains("--model opus")
     });
@@ -117,6 +119,7 @@ fn codex_sessions_resume_with_the_login_shell_path(cx: &mut TestAppContext) {
             );
         })
     });
+    h.confirm_agent_launch();
     h.wait_for("Codex to resume through the imported PATH", |v, cx| {
         v.ws.tabs().len() == 2 && v.focused_text(cx).contains("resume saved-session")
     });
