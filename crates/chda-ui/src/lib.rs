@@ -1,6 +1,7 @@
 //! GPUI views, elements and theme. The only crate that may depend on GPUI.
 
 mod diagram;
+mod diff_review;
 mod environment;
 mod external_drop;
 mod fonts;

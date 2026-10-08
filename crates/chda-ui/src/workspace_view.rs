@@ -21,6 +21,7 @@ mod agent_launch;
 mod agent_restart;
 mod children;
 mod notifications;
+mod review;
 mod sharing;
 mod upgrade;
 use chda_core::{
@@ -171,6 +172,7 @@ pub(crate) enum MenuAction {
     OpenTerminal(PathBuf),
     /// A read-only tab with the worktree's diff against its base.
     ViewDiff(PathBuf),
+    ReviewDiff(PathBuf),
     ViewGitTree(PathBuf),
     RunAgent(PathBuf, AgentId),
     /// Run the `agent-presets` entry with this name.
@@ -291,6 +293,7 @@ pub struct WorkspaceView {
     pub(crate) ws: Workspace,
     pub(crate) panes: HashMap<PaneId, (Entity<TerminalView>, Subscription)>,
     pub(crate) graphs: HashMap<TabId, Entity<crate::git_graph::GitGraphView>>,
+    pub(crate) reviews: HashMap<TabId, (Entity<crate::diff_review::DiffReviewView>, Subscription)>,
     previous_runs: HashMap<PaneId, Entity<crate::readonly_text::ReadOnlyText>>,
     previous_open: HashSet<PaneId>,
     owned_outputs: std::cell::RefCell<HashMap<PaneId, String>>,
@@ -449,6 +452,7 @@ impl WorkspaceView {
             ws,
             panes: HashMap::new(),
             graphs: HashMap::new(),
+            reviews: HashMap::new(),
             previous_runs: HashMap::new(),
             previous_open: HashSet::new(),
             owned_outputs: Default::default(),
@@ -787,6 +791,15 @@ impl WorkspaceView {
             graph.update(cx, |graph, cx| {
                 graph.background = bg;
                 graph.foreground = fg;
+                cx.notify();
+            });
+        }
+        for (review, _) in self.reviews.values() {
+            review.update(cx, |v, cx| {
+                v.background = bg;
+                v.foreground = fg;
+                v.font_family = settings.font_family.clone();
+                v.font_size = settings.font_size;
                 cx.notify();
             });
         }
@@ -2146,6 +2159,20 @@ impl WorkspaceView {
         for (id, repo) in graphs {
             self.create_graph_view(id, repo, cx);
         }
+        let reviews: Vec<_> = self
+            .ws
+            .tabs()
+            .iter()
+            .filter_map(|tab| match &tab.content {
+                chda_core::TabContent::DiffReview { worktree, base, .. } => {
+                    Some((tab.id, worktree.clone(), base.clone()))
+                }
+                _ => None,
+            })
+            .collect();
+        for (id, worktree, base) in reviews {
+            self.create_review_view(id, worktree, base, cx);
+        }
         if self.ws.is_empty() {
             self.new_tab(&NewTab, window, cx);
             return;
@@ -2434,7 +2461,7 @@ impl WorkspaceView {
     /// Directory new panes start in: the focused pane's.
     fn inherited_cwd(&self) -> Option<PathBuf> {
         self.focused_cwd()
-            .or_else(|| self.ws.active_tab()?.graph_repo().map(Path::to_path_buf))
+            .or_else(|| self.ws.active_tab()?.directory().map(Path::to_path_buf))
     }
 
     fn open_pane(
@@ -2795,7 +2822,7 @@ impl WorkspaceView {
     /// The folder the title bar opens: the root of the worktree the focused
     /// pane is in, else that pane's directory.
     pub(crate) fn open_in_folder(&self, cx: &App) -> Option<PathBuf> {
-        if let Some(repo) = self.ws.active_tab().and_then(|tab| tab.graph_repo()) {
+        if let Some(repo) = self.ws.active_tab().and_then(|tab| tab.directory()) {
             return Some(repo.to_path_buf());
         }
         let cwd = self.focused_cwd()?;
@@ -3214,7 +3241,7 @@ impl WorkspaceView {
         let tab = self.ws.active_tab().map(|t| t.id);
         let cwd = self
             .focused_cwd()
-            .or_else(|| self.ws.active_tab()?.graph_repo().map(Path::to_path_buf));
+            .or_else(|| self.ws.active_tab()?.directory().map(Path::to_path_buf));
         if navigation
             && self.config.project_collapsed
             && cwd
@@ -3444,6 +3471,7 @@ impl WorkspaceView {
                 let panes = tab.panes();
                 self.ws.close_tab(id);
                 self.graphs.remove(&id);
+                self.reviews.remove(&id);
                 for pane in panes {
                     self.panes.remove(&pane);
                 }
@@ -3762,6 +3790,7 @@ impl WorkspaceView {
                         format!("View diff against {base}"),
                         MenuAction::ViewDiff(path.clone()),
                     ));
+                    items.push(("Review diff…".into(), MenuAction::ReviewDiff(path.clone())));
                 }
                 items.extend(self.agent_launch_items(&path));
                 items.push((
@@ -4462,6 +4491,7 @@ impl WorkspaceView {
             }
             MenuAction::OpenTerminal(path) => self.open_tab_at(Some(path), None, window, cx),
             MenuAction::ViewDiff(path) => self.open_diff(&path, window, cx),
+            MenuAction::ReviewDiff(path) => self.open_review(&path, window, cx),
             MenuAction::ViewGitTree(repo) => self.open_git_graph(repo, window, cx),
             MenuAction::RunAgent(path, agent) => self.run_agent(&path, agent, None, window, cx),
             MenuAction::RunPreset(path, name) => self.run_preset(&path, &name, window, cx),
@@ -6332,6 +6362,11 @@ impl Render for WorkspaceView {
                     .graphs
                     .get(&tab.id)
                     .map(|graph| graph.clone().into_any_element())
+                    .unwrap_or_else(|| div().into_any_element()),
+                chda_core::TabContent::DiffReview { .. } => self
+                    .reviews
+                    .get(&tab.id)
+                    .map(|(view, _)| view.clone().into_any_element())
                     .unwrap_or_else(|| div().into_any_element()),
             },
             None => div().into_any_element(),

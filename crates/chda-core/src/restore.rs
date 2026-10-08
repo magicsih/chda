@@ -57,6 +57,11 @@ pub enum SavedTabContent {
     GitGraph {
         graph: PathBuf,
     },
+    DiffReview {
+        review: PathBuf,
+        repo: PathBuf,
+        base: String,
+    },
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
@@ -176,6 +181,15 @@ impl Workspace {
                         focused: index(terminal.focused).unwrap_or(0),
                         zoomed: terminal.zoomed.and_then(index),
                     },
+                    crate::TabContent::DiffReview {
+                        worktree,
+                        repo,
+                        base,
+                    } => SavedTabContent::DiffReview {
+                        review: worktree.clone(),
+                        repo: repo.clone(),
+                        base: base.clone(),
+                    },
                     crate::TabContent::GitGraph { repo } => SavedTabContent::GitGraph {
                         graph: repo.clone(),
                     },
@@ -232,6 +246,12 @@ impl Workspace {
         let mut report = RestoreReport::default();
         for tab in &saved.tabs {
             match &tab.content {
+                SavedTabContent::DiffReview { review, repo, base } => {
+                    let id = self.open_review(review.clone(), repo.clone(), base.clone());
+                    if let Some(title) = &tab.title {
+                        self.rename_tab(id, title);
+                    }
+                }
                 SavedTabContent::GitGraph { graph } => {
                     let id = self.open_graph(graph.clone());
                     if let Some(title) = &tab.title {
