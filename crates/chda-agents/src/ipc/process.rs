@@ -1,5 +1,15 @@
 //! Bounded local helper processes for agent discovery and telemetry.
 
+/// Protect a newly created local file before its first private byte is written.
+pub fn protect_file(_file: &std::fs::File) -> std::io::Result<()> {
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        _file.set_permissions(std::fs::Permissions::from_mode(0o600))?;
+    }
+    Ok(())
+}
+
 /// Atomically replace app-owned metadata; temporary files are private on Unix.
 pub fn write_private_atomic(path: &std::path::Path, bytes: &[u8]) -> std::io::Result<()> {
     use std::io::Write;

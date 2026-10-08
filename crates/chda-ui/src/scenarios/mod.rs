@@ -23,6 +23,7 @@ mod navigation;
 mod notifications;
 mod palette;
 mod paths;
+mod preparation;
 mod pull_requests;
 mod quota;
 mod redraw;

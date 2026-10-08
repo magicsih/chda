@@ -18,7 +18,9 @@ pub use read::{
     worktree_root,
 };
 
+mod preparation;
 mod review_diff;
+pub use preparation::{preparation_ignored_command, repository_directory};
 pub use review_diff::{
     DiffFile, DiffLine, DiffLineKind, ReviewDiff, parse_review_diff, review_base_command,
     review_diff_command,

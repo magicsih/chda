@@ -22,6 +22,9 @@ impl WorkspaceView {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        if self.require_preparation(cwd, window, cx) {
+            return;
+        }
         let result = self
             .launch_item(cwd, agent, options, session)
             .and_then(|item| {
@@ -128,6 +131,9 @@ impl WorkspaceView {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        if self.require_preparation(cwd, window, cx) {
+            return;
+        }
         if self.launch_sheet.is_some() {
             self.notify_error("Finish or cancel the current agent launch first".into());
             cx.notify();

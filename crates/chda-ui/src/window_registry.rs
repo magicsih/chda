@@ -14,6 +14,7 @@ pub(crate) struct WindowEntry {
 }
 #[derive(Default)]
 pub(crate) struct WindowRegistry {
+    pub preparations: HashMap<PathBuf, WeakEntity<WorkspaceView>>,
     pub reviews: Option<std::sync::Arc<chda_core::ReviewRepository>>,
     pub entries: Vec<WindowEntry>,
     pub active: Option<WindowId>,
