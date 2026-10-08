@@ -40,6 +40,9 @@ pub struct HookEvent {
     /// agent was started outside chda.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub pane: Option<u64>,
+    /// Provider-confirmed child; session_id remains the exact parent identity.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub child: Option<crate::ChildEvent>,
 }
 
 /// Environment variable chda sets in every pane's shell. Agents inherit it
@@ -74,7 +77,15 @@ pub(crate) fn now_ms() -> u64 {
 
 /// Map a Claude Code hook payload (stdin JSON) to an event.
 pub fn claude_event(payload: &Value) -> Option<HookEvent> {
-    let kind = match payload.get("hook_event_name")?.as_str()? {
+    let name = payload.get("hook_event_name")?.as_str()?;
+    let child_id = payload
+        .get("agent_id")
+        .and_then(Value::as_str)
+        .filter(|s| !s.is_empty());
+    let kind = match name {
+        "SubagentStart" if child_id.is_some() => HookKind::PromptSubmitted,
+        "SubagentStop" if child_id.is_some() => HookKind::Stopped,
+        "PreToolUse" | "PostToolUse" if child_id.is_some() => HookKind::PromptSubmitted,
         "SessionStart" => HookKind::SessionStart,
         "UserPromptSubmit" => HookKind::PromptSubmitted,
         "PermissionRequest" => HookKind::WaitingInput,
@@ -98,6 +109,21 @@ pub fn claude_event(payload: &Value) -> Option<HookEvent> {
         _ => return None,
     };
     Some(HookEvent {
+        child: child_id.map(|id| crate::ChildEvent {
+            id: id.to_owned(),
+            label: payload
+                .get("agent_type")
+                .and_then(Value::as_str)
+                .filter(|s| !s.is_empty())
+                .map(str::to_owned),
+            state: match kind {
+                HookKind::PromptSubmitted | HookKind::SessionStart => crate::ChildState::Working,
+                HookKind::WaitingInput => crate::ChildState::WaitingInput,
+                HookKind::SessionEnd => crate::ChildState::Ended,
+                HookKind::Idle | HookKind::Stopped => crate::ChildState::TurnComplete,
+            },
+            started: name == "SubagentStart",
+        }),
         agent: "claude".into(),
         session_id: payload.get("session_id")?.as_str()?.to_owned(),
         cwd: PathBuf::from(payload.get("cwd")?.as_str()?),
@@ -122,6 +148,7 @@ pub fn gemini_event(payload: &Value) -> Option<HookEvent> {
         _ => return None,
     };
     Some(HookEvent {
+        child: None,
         agent: "gemini".into(),
         session_id: payload.get("session_id")?.as_str()?.to_owned(),
         cwd: PathBuf::from(payload.get("cwd")?.as_str()?),
@@ -147,6 +174,7 @@ pub fn copilot_event(event: &str, payload: &Value) -> Option<HookEvent> {
         _ => return None,
     };
     Some(HookEvent {
+        child: None,
         agent: "copilot".into(),
         session_id: payload.get("sessionId")?.as_str()?.to_owned(),
         cwd: PathBuf::from(payload.get("cwd")?.as_str()?),
@@ -160,6 +188,7 @@ pub fn copilot_event(event: &str, payload: &Value) -> Option<HookEvent> {
 /// plugin already reduces OpenCode's bus events to a [`HookKind`].
 pub fn opencode_event(payload: &Value) -> Option<HookEvent> {
     Some(HookEvent {
+        child: None,
         agent: "opencode".into(),
         session_id: payload.get("session_id")?.as_str()?.to_owned(),
         cwd: PathBuf::from(payload.get("cwd")?.as_str()?),
@@ -182,6 +211,7 @@ pub fn codex_event(payload: &Value, cwd: &Path) -> Option<HookEvent> {
         .and_then(Value::as_str)?
         .to_owned();
     Some(HookEvent {
+        child: None,
         agent: "codex".into(),
         session_id,
         cwd: payload
@@ -227,6 +257,17 @@ pub fn hook_main(args: &[String]) -> i32 {
         _ => None,
     };
     if let Some(mut event) = event {
+        if event.agent == "codex" {
+            let root = std::env::var_os("CODEX_HOME")
+                .map(PathBuf::from)
+                .or_else(|| std::env::var_os("HOME").map(|h| PathBuf::from(h).join(".codex")));
+            if let Some((parent, child)) =
+                root.and_then(|r| crate::children::codex_notify_child(&r, &event.session_id))
+            {
+                event.session_id = parent;
+                event.child = Some(child);
+            }
+        }
         event.pane = std::env::var(PANE_ENV).ok().and_then(|v| v.parse().ok());
         deliver(&event);
     }
@@ -366,6 +407,7 @@ mod tests {
         );
         assert!(opencode_event(&json!({"kind": "nope", "session_id": "s", "cwd": "/w"})).is_none());
         let line = serde_json::to_string(&HookEvent {
+            child: None,
             pane: Some(7),
             ..old
         })

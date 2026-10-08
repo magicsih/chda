@@ -175,6 +175,7 @@ fn old_hook_events_do_not_make_restored_panes_live(cx: &mut TestAppContext) {
     h.wait_prompt();
     let pane = h.read(|v, _| v.ws.focused_pane().unwrap());
     let event = HookEvent {
+        child: None,
         agent: "claude".into(),
         session_id: "old-process".into(),
         cwd: h.home.home.clone(),
@@ -263,6 +264,7 @@ fn multiple_windows_share_navigation_routes_and_restore_each_layout(cx: &mut Tes
     );
     assert_eq!(env.windows.borrow().active, Some(handle.window_id()));
     let event = HookEvent {
+        child: None,
         agent: "claude".into(),
         session_id: "conversation-two".into(),
         cwd: repo.clone(),
@@ -286,6 +288,7 @@ fn multiple_windows_share_navigation_routes_and_restore_each_layout(cx: &mut Tes
     // Closing the original window must not tear down another window's receiver.
     h.cx.update(|window, _| window.remove_window());
     let event = HookEvent {
+        child: None,
         kind: HookKind::PromptSubmitted,
         ..event
     };

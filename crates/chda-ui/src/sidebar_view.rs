@@ -38,6 +38,7 @@ pub enum SidebarEvent {
     FocusPane(chda_core::PaneId),
     ClosePane(chda_core::PaneId),
     CloseTab(chda_core::TabId),
+    ChildDetails(chda_core::agents::ChildActivity),
     ToggleActiveLabel,
     ToggleActive,
     ToggleIdleAgents,
@@ -117,6 +118,17 @@ pub struct AgentLabel {
     /// e.g. `Claude Code`.
     pub name: String,
     pub color: Hsla,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) struct ChildGroup {
+    pub pane: chda_core::PaneId,
+    pub tab: chda_core::TabId,
+    pub agent: String,
+    pub session: String,
+    pub label: String,
+    pub idle: bool,
+    pub children: Vec<chda_core::agents::ChildActivity>,
 }
 
 /// Label colors, by adapter order.
@@ -205,6 +217,8 @@ fn busy_tooltip(busy: &str) -> String {
 
 pub struct SidebarView {
     pub model: Sidebar,
+    pub(crate) child_groups: Vec<ChildGroup>,
+    pub(crate) child_collapsed: std::collections::HashSet<(String, String)>,
     pub active_label: chda_config::ActiveLabel,
     pub(crate) active_collapsed: bool,
     pub(crate) idle_agents_collapsed: bool,
@@ -264,9 +278,45 @@ fn pr_badge(pr: &PrInfo, bg: Hsla) -> (&'static str, Hsla) {
 }
 
 impl SidebarView {
+    fn render_children(&self, group: &ChildGroup, now: u64, cx: &mut Context<Self>) -> AnyElement {
+        let key = (group.agent.clone(), group.session.clone());
+        let collapsed = self.child_collapsed.contains(&key);
+        let active = group
+            .children
+            .iter()
+            .filter(|e| e.child.state.active())
+            .count();
+        let fg = self.fg;
+        let pane = group.pane.raw();
+        div().flex().flex_col().min_w_0()
+            .child(div().id(ElementId::Name(format!("children-toggle-{pane}").into())).debug_selector(move || format!("children-toggle-{pane}"))
+                .pl_4().pr_2().py_0p5().flex().gap_1().text_xs().text_color(fg.opacity(0.7)).cursor_pointer()
+                .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
+                .on_click(cx.listener(move |s, _, _, cx| { cx.stop_propagation(); if !s.child_collapsed.remove(&key) { s.child_collapsed.insert(key.clone()); } cx.emit(SidebarEvent::RefocusTerminal); cx.notify(); }))
+                .child(if collapsed { "▸" } else { "▾" })
+                .child(format!("{} · {active} active · {} children", group.agent, group.children.len()))
+                .tooltip(crate::tooltip::text(format!("{}\nExact parent: {}\nCounts reflect provider reports; usage is already included in the existing session total.", group.label, group.session))))
+            .when(!collapsed, |d| d.children(group.children.iter().map(|entry| {
+                let child = entry.clone();
+                let id = entry.child.id.clone();
+                let state = entry.child.state;
+                let label = entry.child.label.clone().unwrap_or_else(|| entry.child.id.clone());
+                let age = activity_age(now, entry.observed_at);
+                div().id(ElementId::Name(format!("child-{pane}-{id}").into())).debug_selector(move || format!("child-{pane}-{id}"))
+                    .pl_6().pr_2().py_0p5().flex().flex_col().min_w_0().text_xs().cursor_pointer().hover(|s| s.bg(fg.opacity(0.08)))
+                    .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
+                    .on_click(cx.listener(move |_, _, _, cx| { cx.stop_propagation(); cx.emit(SidebarEvent::ChildDetails(child.clone())); }))
+                    .child(div().min_w_0().overflow_hidden().whitespace_nowrap().text_ellipsis().text_color(fg).child(label))
+                    .child(div().text_color(fg.opacity(0.65)).child(format!("{} · reported {age} ago", state.label())))
+                    .into_any_element()
+            })))
+            .into_any_element()
+    }
     pub fn new(fg: Hsla, bg: Hsla, agents: Vec<AgentLabel>, cx: &mut Context<Self>) -> Self {
         Self {
             model: Sidebar::new(),
+            child_groups: Vec::new(),
+            child_collapsed: Default::default(),
             active_label: Default::default(),
             active_collapsed: false,
             idle_agents_collapsed: false,
@@ -1258,7 +1308,7 @@ impl Render for SidebarView {
             .chain(self.model.active_tabs.iter().filter(|t| t.plain_terminal))
             .map(|t| {
                 let id = t.tab;
-                div()
+                let row = div()
                     .id(ElementId::Name(format!("active:{:?}", t.tab).into()))
                     .debug_selector(move || format!("active-{id:?}"))
                     .when(t.status == AgentStatus::WaitingInput, |d| {
@@ -1338,6 +1388,18 @@ impl Render for SidebarView {
                                 .child("\u{00d7}"),
                         )
                     })
+                    .into_any_element();
+                div()
+                    .flex()
+                    .flex_col()
+                    .min_w_0()
+                    .child(row)
+                    .children(
+                        self.child_groups
+                            .iter()
+                            .filter(|g| g.tab == id && !g.idle)
+                            .map(|g| self.render_children(g, now, cx)),
+                    )
                     .into_any_element()
             })
             .collect();
@@ -1492,6 +1554,12 @@ impl Render for SidebarView {
                                     .flex_shrink_0()
                                     .child(format!("pane {}", entry.pane_index)),
                             ),
+                    )
+                    .children(
+                        self.child_groups
+                            .iter()
+                            .filter(|g| g.pane == pane && g.idle)
+                            .map(|g| self.render_children(g, now, cx)),
                     )
                     .into_any_element()
             })

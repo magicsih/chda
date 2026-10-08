@@ -244,6 +244,7 @@ impl Server {
             return Reply::err("say which agent you are with `agent`");
         };
         let event = HookEvent {
+            child: None,
             agent,
             // One `chda mcp` process serves one agent session.
             session_id: format!("mcp-{}", std::process::id()),

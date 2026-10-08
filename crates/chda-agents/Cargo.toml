@@ -12,6 +12,7 @@ libc.workspace = true
 memchr.workspace = true
 serde.workspace = true
 serde_json.workspace = true
+tungstenite.workspace = true
 
 [lints]
 workspace = true

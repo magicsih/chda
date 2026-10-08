@@ -18,13 +18,17 @@ use crate::{
 
 pub struct ClaudeAdapter;
 
-const HOOK_EVENTS: [&str; 6] = [
+const HOOK_EVENTS: [&str; 10] = [
     "SessionStart",
     "UserPromptSubmit",
     "Stop",
     "Notification",
     "PermissionRequest",
     "SessionEnd",
+    "SubagentStart",
+    "SubagentStop",
+    "PreToolUse",
+    "PostToolUse",
 ];
 
 /// Where the per-launch settings file lives under the data dir.

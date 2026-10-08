@@ -1,0 +1,19 @@
+# 0015 — Provider-confirmed child activity
+
+Approved scope: [design 1.0](../design/2026-10-08-macos-next-release/design.md), #161.
+
+Child status is independent of the parent's turn status and usage. The app owns a bounded `ChildBoard` keyed by provider, exact parent session and child identity. Provider timestamps reject late observations; equal timestamps prefer the more settled state. Confirmed end remains ended until an explicit start. Child rows never contribute tokens to the existing provider usage aggregation.
+
+Claude `SubagentStart`, tool hooks, permission hooks and `SubagentStop` identify a child through `agent_id` under the parent `session_id`. The hook bridge retains only identity, type and reduced status. A finished response means Turn complete, rather than proof of process exit. Main-conversation tool events do not alter parent status through this path. Prompts, tool arguments and assistant responses are omitted from the status event.
+
+Codex 0.161's `app-server proxy` forwards raw bytes to the existing interactive daemon's WebSocket control socket. chda performs the WebSocket handshake with tungstenite 0.30.0, then initializes and requests metadata-only `thread/list` pages with `parentThreadId` and `useStateDbOnly`. It does not start a quota server, resume a conversation, subscribe to turns or invoke a model. Current runtime status supplies working, waiting or turn completion. NotLoaded/SystemError and missing observations remain Unknown; absence does not prove shutdown. Exact rollout metadata also identifies child notify senders so they cannot overwrite their parent conversation ID. Older/unavailable transports leave the existing top-level integration intact.
+
+The bounded helper has one deadline covering handshake and requests, limits frames/messages and total bytes, suppresses stderr and provider error bodies, and always terminates/reaps its own proxy process group. The existing daemon remains owned by the CLI. This helper participates in update quiescence.
+
+Each window projects child groups beneath the owning ACTIVE or IDLE parent, in stable arrival order. Disclosure changes do not reorder tabs or repositories. A row may focus a dedicated pane only when exactly one live provider/session match is registered across windows. Otherwise a read-only detail view preserves the current conversation and restores focus when dismissed. Waiting transitions add one notification; duplicate state reports do not duplicate it.
+
+Child reports and per-window disclosure states belong to live handoff and are absent from cold session saves. A cold restart cannot infer a live child from transcript recency. The existing prepared/commit PTY contract remains unchanged.
+
+Validation includes provider parsing/privacy fixtures, exact-parent and late-event state tests, a faithful raw-byte WebSocket proxy fixture, transport rejection/deadline/reaping tests, sidebar interactions and multi-window routing. An explicit installed-CLI capability probe accepted the exact-parent metadata query without model calls. That capability check uses a synthetic empty parent; actual child lifecycle and native layout remain separate integrated macOS checks.
+
+Primary protocol sources: [Claude hooks](https://code.claude.com/docs/en/hooks), [Codex thread API](https://github.com/openai/codex/blob/rust-v0.161.0/codex-rs/app-server-protocol/src/protocol/v2/thread.rs), [Codex child source](https://github.com/openai/codex/blob/rust-v0.161.0/codex-rs/protocol/src/protocol.rs), [byte proxy](https://github.com/openai/codex/blob/rust-v0.161.0/codex-rs/stdio-to-uds/src/lib.rs), [WebSocket control transport](https://github.com/openai/codex/blob/rust-v0.161.0/codex-rs/app-server-transport/src/transport/unix_socket.rs).

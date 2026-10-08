@@ -177,6 +177,7 @@ impl WorkspaceView {
         self.env.windows.borrow_mut().update.progress = UpdateProgress::Preparing;
         let mut state = Handoff {
             started_at,
+            children: self.env.windows.borrow().children.clone(),
             update: Some(job.handoff.clone()),
             ..Default::default()
         };
@@ -194,6 +195,14 @@ impl WorkspaceView {
                 saved.bounds = view.bounds;
                 state.session.windows.push(saved);
                 state.notifications.push(view.notifications.clone());
+                state.child_collapsed.push(
+                    view.sidebar
+                        .read(cx)
+                        .child_collapsed
+                        .iter()
+                        .cloned()
+                        .collect(),
+                );
                 for tab in view.ws.tabs() {
                     for pane in tab.panes() {
                         if let Some((terminal, _)) = view.panes.get(&pane) {

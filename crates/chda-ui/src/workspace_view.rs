@@ -19,6 +19,7 @@ use chda_core::notifications::Severity;
 use chda_core::release::{Release, ReleaseCheck, parse_latest};
 mod agent_launch;
 mod agent_restart;
+mod children;
 mod notifications;
 mod upgrade;
 use chda_core::{
@@ -325,6 +326,8 @@ pub struct WorkspaceView {
     pub(crate) notifications: chda_core::notifications::NotificationQueue,
     pub(crate) notifications_open: bool,
     notification_focus: Option<gpui::WeakFocusHandle>,
+    pub(crate) child_detail: Option<chda_core::agents::ChildActivity>,
+    child_focus: Option<gpui::WeakFocusHandle>,
     /// The title last given to the OS window.
     window_title: String,
     /// A session save for new terminal activity is scheduled.
@@ -384,6 +387,15 @@ impl WorkspaceView {
             .inherited_notifications
             .pop_front()
             .unwrap_or_default();
+        let child_collapsed = env
+            .windows
+            .borrow_mut()
+            .inherited_child_collapsed
+            .pop_front()
+            .unwrap_or_default();
+        sidebar.update(cx, |s, _| {
+            s.child_collapsed = child_collapsed.into_iter().collect()
+        });
         let window_handle = window.window_handle();
         env.windows
             .borrow_mut()
@@ -393,6 +405,7 @@ impl WorkspaceView {
                 view: cx.entity().downgrade(),
                 saved: SavedWindow::default(),
                 panes: HashMap::new(),
+                sessions: HashMap::new(),
             });
         Self::start_hook_receiver(env.clone(), window, cx);
         if env.windows.borrow().entries.len() == 1 {
@@ -461,6 +474,8 @@ impl WorkspaceView {
             base_fetched: HashMap::new(),
             notifications,
             notifications_open: false,
+            child_detail: None,
+            child_focus: None,
             notification_focus: None,
             window_title: String::new(),
             activity_save_pending: false,
@@ -881,9 +896,16 @@ impl WorkspaceView {
                 registry
                     .entries
                     .iter()
-                    .find(|entry| match raw {
-                        Some(raw) => entry.panes.keys().any(|p| p.raw() == raw),
-                        None => Some(entry.window.window_id()) == registry.active,
+                    .find(|entry| match &item {
+                        Incoming::Event(event) if event.child.is_some() => {
+                            entry.sessions.values().any(|(agent, session, _)| {
+                                agent == &event.agent && session == &event.session_id
+                            })
+                        }
+                        _ => match raw {
+                            Some(raw) => entry.panes.keys().any(|p| p.raw() == raw),
+                            None => Some(entry.window.window_id()) == registry.active,
+                        },
                     })
                     .cloned()
             };
@@ -1077,6 +1099,18 @@ impl WorkspaceView {
     }
 
     fn apply_hook_event(&mut self, ev: HookEvent, window: &mut Window, cx: &mut Context<Self>) {
+        if let Some(child) = ev.child.clone() {
+            self.apply_child_activity(
+                chda_core::agents::ChildActivity {
+                    agent: ev.agent,
+                    parent: ev.session_id,
+                    child,
+                    observed_at: ev.timestamp,
+                },
+                cx,
+            );
+            return;
+        }
         if let Some(run) = ev
             .pane
             .and_then(|raw| self.ws.pane_by_raw(raw))
@@ -1712,6 +1746,7 @@ impl WorkspaceView {
                 cx.background_executor().timer(STATUS_REFRESH).await;
                 ticks += 1;
                 let alive = this.update(cx, |view, cx| {
+                    view.poll_children(cx);
                     if view.sidebar_visible {
                         view.refresh_all(cx);
                         if ticks
@@ -2181,6 +2216,27 @@ impl WorkspaceView {
             .find(|e| e.view == self.self_weak)
         {
             entry.saved = saved;
+            entry.sessions = self
+                .ws
+                .tabs()
+                .iter()
+                .flat_map(|t| t.panes())
+                .filter_map(|p| {
+                    let info = self.ws.pane(p)?;
+                    let session = info
+                        .agent_session
+                        .as_ref()
+                        .map(|s| (s.agent.clone(), s.session.clone()))
+                        .or_else(|| {
+                            let launch = info.agent_launch.as_ref()?;
+                            Some((
+                                launch.agent.as_str().to_owned(),
+                                launch.session.as_ref()?.0.clone(),
+                            ))
+                        })?;
+                    Some((p, (session.0, session.1, info.agent_live)))
+                })
+                .collect();
             entry.panes =
                 self.ws
                     .tabs()
@@ -2353,6 +2409,7 @@ impl WorkspaceView {
             cx.notify();
         });
         self.sync_sidebar_selection(false, cx);
+        self.sync_children(cx);
         self.save_session();
         // The title bar also depends on refreshed worktree metadata.
         cx.notify();
@@ -2530,6 +2587,7 @@ impl WorkspaceView {
         };
         self.apply_hook_event(
             HookEvent {
+                child: None,
                 agent: "codex".into(),
                 session_id: String::new(),
                 cwd,
@@ -3602,6 +3660,7 @@ impl WorkspaceView {
     ) {
         self.context_menu = None;
         match event {
+            SidebarEvent::ChildDetails(child) => self.open_child_details(child, window, cx),
             SidebarEvent::RefocusTerminal => self.refocus_terminal(window, cx),
             SidebarEvent::OpenWorktree(path) => self.open_worktree(&path, window, cx),
             SidebarEvent::WorktreeMenu(path, position) => {
@@ -5499,6 +5558,10 @@ impl WorkspaceView {
     }
 
     fn dismiss(&mut self, _: &Dismiss, window: &mut Window, cx: &mut Context<Self>) {
+        if self.child_detail.is_some() {
+            self.close_child_details(window, cx);
+            return;
+        }
         if self.notifications_open {
             self.close_notifications(window, cx);
             return;
@@ -6416,6 +6479,7 @@ impl Render for WorkspaceView {
             .children(self.render_confirm(cx))
             .children(self.render_palette())
             .children(self.render_notifications(cx))
+            .children(self.render_child_details(cx))
             .into_any_element()
     }
 }
