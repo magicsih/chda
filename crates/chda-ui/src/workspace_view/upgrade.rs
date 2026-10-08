@@ -132,6 +132,8 @@ impl WorkspaceView {
                     view.sheet.is_some()
                         || view.launch_sheet.is_some()
                         || view.note_sheet.is_some()
+                        || view.preparation_editor.is_some()
+                        || !view.preparation_jobs.is_empty()
                         || view.share_sheet.is_some()
                         || view.reviews.values().any(|(v, _)| v.read(cx).pending())
                         || view.confirm.is_some()

@@ -28,6 +28,7 @@ Three layers, all run by `cargo test --workspace` (CI: the macOS job).
 | Scenario | Test | Issues |
 |---|---|---|
 | S1 New work: create a worktree from the sheet | `worktrees::create_then_delete_a_worktree_in_one_go` | |
+| Preparation imports wait for confirmation; copy/setup/open order, failure/edit/retry keep existing edits, owned cancellation and explicit skip retain agent permissions, background completion preserves other input, MCP cannot bypass the gate | `preparation::*`, `chda-core` `preparation::tests::*` | #163 |
 | S2 Watching agents: status per pane, ACTIVE list, Dock badge, notification, jump, notification click | `agents::hook_events_drive_status_badge_jump_and_notification_click` | #12, #13, #25 |
 | Title-bar notification history: consecutive events, unread arrivals while open, Escape typing focus, exact source pane, hidden sidebar, narrow bounds, per-window isolation and cold restart | `notifications::*`, `chda-core` `notifications::tests::*`, `handoff::tests::handoff_round_trips_with_binary_snapshots` | #155 |
 | Gemini CLI, Copilot CLI and OpenCode report status like Claude Code | `agents::gemini_copilot_and_opencode_report_like_claude_code` | #20 |
