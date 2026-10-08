@@ -114,7 +114,7 @@ fn active_labels_and_clicks_follow_split_focus_across_branches(cx: &mut TestAppC
 }
 
 #[gpui::test]
-fn navigation_places_the_worktree_as_high_as_the_list_allows(cx: &mut TestAppContext) {
+fn navigation_reveals_only_clipped_rows_and_keeps_repository_context(cx: &mut TestAppContext) {
     use super::harness::git;
     use crate::sidebar_view::SidebarEvent;
 
@@ -138,7 +138,16 @@ fn navigation_places_the_worktree_as_high_as_the_list_allows(cx: &mut TestAppCon
             );
             paths.push(path);
         }
-        std::fs::write(&home.config, format!("repos = [\"{}\"]\n", repo.display())).unwrap();
+        let other = home.repo("other-app");
+        std::fs::write(
+            &home.config,
+            format!(
+                "repos = [\"{}\", \"{}\"]\n",
+                repo.display(),
+                other.display()
+            ),
+        )
+        .unwrap();
     });
     h.wait_prompt();
     h.cx.simulate_resize(gpui::size(px(960.0), px(480.0)));
@@ -151,9 +160,57 @@ fn navigation_places_the_worktree_as_high_as_the_list_allows(cx: &mut TestAppCon
             cx.notify();
         })
     });
-    for path in [&paths[6], &paths[23], &paths[0]] {
+    // New tabs must not change ACTIVE's height while measuring reveal deltas.
+    click_row(&mut h, "active-section-toggle");
+    for (path, position) in [
+        (&paths[6], 0),
+        (&paths[23], 0),
+        (&paths[0], 1),
+        (&paths[6], 2),
+        (&paths[6], 3),
+    ] {
         h.cx.run_until_parked();
+        if position != 0 {
+            let scroll = h.read(|v, cx| v.sidebar.read(cx).scroll.clone());
+            if position == 1 {
+                scroll.set_offset(point(px(0.0), -scroll.max_offset().y));
+            } else {
+                let row =
+                    h.cx.debug_bounds(Box::leak(format!("wt:{}", path.display()).into_boxed_str()))
+                        .unwrap();
+                let viewport = scroll.bounds();
+                let delta = if position == 2 {
+                    viewport.top() + px(16.0) - row.top()
+                } else {
+                    viewport.bottom() + px(8.0) - row.bottom()
+                };
+                scroll.set_offset(point(
+                    px(0.0),
+                    (scroll.offset().y + delta).clamp(-scroll.max_offset().y, px(0.0)),
+                ));
+            }
+            h.cx.run_until_parked();
+            h.cx.update(|window, cx| window.simulate_next_frame(cx));
+            h.cx.run_until_parked();
+        }
         let selector = Box::leak(format!("wt:{}", path.display()).into_boxed_str());
+        let before = h.cx.debug_bounds(selector).unwrap();
+        let (offset, viewport, max) = h.read(|v, cx| {
+            let s = v.sidebar.read(cx);
+            (
+                s.scroll.offset().y,
+                s.scroll.bounds(),
+                s.scroll.max_offset().y,
+            )
+        });
+        let delta = if before.top() < viewport.top() + px(32.0) {
+            viewport.top() + px(32.0) - before.top()
+        } else if before.bottom() > viewport.bottom() {
+            viewport.bottom() - before.bottom()
+        } else {
+            px(0.0)
+        };
+        let expected = (offset + delta).clamp(-max, px(0.0));
         h.cx.update(|window, cx| {
             h.view.update(cx, |v, cx| {
                 v.on_sidebar_event(SidebarEvent::OpenWorktree(path.clone()), window, cx)
@@ -165,6 +222,8 @@ fn navigation_places_the_worktree_as_high_as_the_list_allows(cx: &mut TestAppCon
         // scheduled after the target's layout, as the native platform does.
         h.cx.update(|window, cx| window.simulate_next_frame(cx));
         h.cx.run_until_parked();
+        h.cx.update(|window, cx| window.simulate_next_frame(cx));
+        h.cx.run_until_parked();
         let after = h.cx.debug_bounds(selector).unwrap();
         let viewport = h.read(|v, cx| v.sidebar.read(cx).scroll.bounds());
         h.read(|v, cx| {
@@ -172,12 +231,15 @@ fn navigation_places_the_worktree_as_high_as_the_list_allows(cx: &mut TestAppCon
             let offset = sidebar.scroll.offset().y;
             let max = sidebar.scroll.max_offset().y;
             assert!(max > px(0.0), "fixture has a scrollable list");
-            let expected = (offset + viewport.top() + px(8.0) - after.top()).clamp(-max, px(0.0));
             assert_eq!(sidebar.selected.as_ref(), Some(path));
             assert!((offset - expected).abs() < px(2.0),
-                "navigation aligns near the top, clamped at list edges: actual {:?}, expected {expected:?}", sidebar.scroll.offset());
+                "visible rows retain their offset; clipped rows move only to their edge: actual {:?}, expected {expected:?}", sidebar.scroll.offset());
         });
         assert!(after.top() >= viewport.top() && after.bottom() <= viewport.bottom());
+        if h.cx.debug_bounds("repo-0").unwrap().top() < viewport.top() {
+            assert!(h.cx.debug_bounds("sticky-repo-context").is_some());
+            assert!(after.top() >= viewport.top() + px(32.0));
+        }
         // A background refresh must not move the list back to this target.
         let scroll = h.read(|v, cx| v.sidebar.read(cx).scroll.clone());
         scroll.set_offset(point(px(0.0), px(0.0)));
@@ -256,6 +318,101 @@ fn agent_sections_collapse_independently_and_persist(cx: &mut TestAppContext) {
         let sidebar = v.sidebar.read(cx);
         !sidebar.active_collapsed && sidebar.idle_agents_collapsed
     });
+}
+
+#[gpui::test]
+fn project_is_a_peer_section_and_collapses_without_hiding_active(cx: &mut TestAppContext) {
+    use super::harness::wait_until;
+    let mut h = Harness::open(cx, "project-section", |home| {
+        let repo = home.repo("app");
+        let folder = home.home.join("plain-folder");
+        std::fs::create_dir(&folder).unwrap();
+        std::fs::write(
+            &home.config,
+            format!(
+                "repos = [\"{}\", \"{}\"]\n",
+                repo.display(),
+                folder.display()
+            ),
+        )
+        .unwrap();
+    });
+    h.wait_prompt();
+    h.wait_for("both registered folders", |v, cx| {
+        v.sidebar.read(cx).model.repos.len() == 2
+    });
+    h.cx.run_until_parked();
+    let active = h.cx.debug_bounds("active-section-toggle").unwrap();
+    let idle =
+        h.cx.debug_bounds("idle-section-toggle")
+            .expect("empty IDLE still has a header");
+    let project =
+        h.cx.debug_bounds("project-section-toggle")
+            .expect("PROJECT is the third peer section");
+    assert!(active.top() < idle.top() && idle.top() < project.top());
+    assert!(h.cx.debug_bounds("repo-0").unwrap().top() >= project.bottom());
+    assert!(h.cx.debug_bounds("repo-1").is_some());
+    assert!(
+        h.cx.debug_bounds("expand-all").is_none() && h.cx.debug_bounds("collapse-all").is_none()
+    );
+    click_row(&mut h, "project-section-toggle");
+    assert!(h.cx.debug_bounds("repo-0").is_none());
+    assert!(h.cx.debug_bounds("active-section-toggle").is_some());
+    assert!(h.cx.debug_bounds("add-repo").is_some());
+    assert!(saved(&h).contains("project-collapsed = true"));
+    let (mut cx2, view2) = h.reopen();
+    wait_until(
+        &mut cx2,
+        &view2,
+        "collapsed PROJECT restoration",
+        |v, cx| v.sidebar.read(cx).model.repos.len() == 2,
+    );
+    cx2.run_until_parked();
+    assert!(cx2.debug_bounds("repo-0").is_none());
+    assert!(cx2.debug_bounds("project-section-toggle").is_some());
+    click_row(&mut h, "project-section-toggle");
+    assert!(h.cx.debug_bounds("repo-0").is_some());
+}
+
+#[gpui::test]
+fn plain_terminal_rows_follow_agents_and_close_the_exact_background_tab(cx: &mut TestAppContext) {
+    use chda_core::agents::HookKind;
+    let mut h = Harness::open(cx, "plain-active", |_| {});
+    h.wait_prompt();
+    let shell = h.read(|v, _| v.ws.active_tab().unwrap().id);
+    h.keys("cmd-t");
+    h.wait_prompt();
+    let (agent, pane) =
+        h.read(|v, _| (v.ws.active_tab().unwrap().id, v.ws.focused_pane().unwrap()));
+    h.hook(Some(pane.raw()), &h.home.home, HookKind::PromptSubmitted);
+    h.wait_for("live agent", |v, _| v.ws.pane(pane).unwrap().agent_live);
+    h.keys("cmd-d");
+    h.wait_prompt();
+    h.cx.run_until_parked();
+    let bounds = |h: &mut Harness, id| {
+        h.cx.debug_bounds(Box::leak(format!("active-{id:?}").into_boxed_str()))
+            .unwrap()
+    };
+    let agent_top = bounds(&mut h, agent).top();
+    let shell_top = bounds(&mut h, shell).top();
+    assert!(
+        agent_top < shell_top,
+        "agent split comes before ordinary shells"
+    );
+    assert!(
+        h.cx.debug_bounds(Box::leak(
+            format!("active-close-{agent:?}").into_boxed_str()
+        ))
+        .is_none()
+    );
+    click_row(&mut h, &format!("active-close-{shell:?}"));
+    assert_eq!(
+        h.read(|v, _| v.ws.active_tab().unwrap().id),
+        agent,
+        "closing background shell does not activate it"
+    );
+    assert!(h.read(|v, _| !v.ws.tabs().iter().any(|t| t.id == shell)));
+    assert!(h.read(|v, _| v.confirm.is_none()));
 }
 
 fn width(h: &Harness) -> u32 {

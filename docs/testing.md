@@ -34,7 +34,8 @@ Three layers, all run by `cargo test --workspace` (CI: the macOS job).
 | S3 Resuming: a worktree lists its agent sessions | `worktrees::worktree_lists_its_agent_sessions` | #41 |
 | S3 Resuming several sessions side by side, newest message first | `worktrees::picked_sessions_resume_in_one_tab` | #30 |
 | S4 Finishing: merge into main and clean up | `worktrees::merge_into_main_and_clean_up` | |
-| ACTIVE branch labels and click targets follow split focus, worktree navigation aligns near the top with edge clamping, and independent ACTIVE/Idle Agents collapse survives refresh and restart | `sidebar::active_labels_and_clicks_follow_split_focus_across_branches`, `sidebar::navigation_places_the_worktree_as_high_as_the_list_allows`, `sidebar::agent_sections_collapse_independently_and_persist` | |
+| ACTIVE branch labels and click targets follow split focus, worktree navigation reveals clipped rows with minimal movement and repository context, and independent ACTIVE/Idle Agents collapse survives refresh and restart | `sidebar::active_labels_and_clicks_follow_split_focus_across_branches`, `sidebar::navigation_reveals_only_clipped_rows_and_keeps_repository_context`, `sidebar::agent_sections_collapse_independently_and_persist` | |
+| PROJECT groups repositories, folders and starred entries, with independent persisted collapse; plain terminal rows follow live agents and close the exact tab | `sidebar::project_is_a_peer_section_and_collapses_without_hiding_active`, `sidebar::plain_terminal_rows_follow_agents_and_close_the_exact_background_tab` | #151, #152, #154 |
 | ACTIVE rows stay in tab order, activity ages and saved alias/branch toggle | `sidebar::active_tabs_stay_in_place_and_labels_toggle_persistently`, `sidebar::activity_ages_refresh_without_output_or_session_writes` | #100 |
 | Repository drag reordering: down/up, collapsed groups, no click on drag, drops outside or on itself, external folder drop afterwards, refresh and restart | `reorder::dragging_repository_headers_reorders_and_persists` | #130 |
 | STARRED branches: menu starring without duplicates, same branch name in two repositories, navigation and tab reuse, one-click unstar, missing worktree, restart | `starred::starred_branches_navigate_unstar_in_one_click_and_persist` | #129 |
@@ -78,6 +79,7 @@ Three layers, all run by `cargo test --workspace` (CI: the macOS job).
 | Menu actions: Settings opens config.toml, agent items explain themselves | `menus::settings_writes_a_missing_config_file`, `menus::agent_items_explain_why_nothing_ran` | |
 | Codex session resume with a minimal GUI PATH and a shell-configured install | `menus::codex_sessions_resume_with_the_login_shell_path` | |
 | Codex typed directly in a worktree terminal | `agents::directly_typed_codex_tracks_each_turn_and_exits` | |
+| Provider details anchor above the left controls, represent only reported windows and update within a narrow window | `quota::details_open_above_both_left_controls_and_visualize_only_reported_windows` | #153 |
 | Quota startup and restart wait for reports; empty Claude reports retain usage; multiple windows share one Codex query and retry after its original window closes | `quota::*` | |
 | Agent launch presets from the palette and the worktree menu | `menus::agent_presets_start_from_the_palette_and_the_sidebar_menu` | #16 |
 | Close buttons on single/inactive tabs; working/waiting splits, Cancel/Esc focus, real process shutdown and surviving tabs | `closing::tab_close_confirms_inactive_working_splits_and_preserves_cancelled_processes` | #108 |
