@@ -18,7 +18,7 @@ fn supported_launches_show_the_inherited_policy_before_starting(cx: &mut TestApp
         1,
         "no process starts before the launch choice"
     );
-    h.confirm_agent_launch();
+    h.keys("enter");
     h.wait_for("inherited Claude command", |v, cx| {
         v.focused_text(cx).contains("fake-claude")
     });

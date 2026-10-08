@@ -296,12 +296,6 @@ impl WorkspaceView {
                     .justify_center()
                     .bg(gpui::black().opacity(0.35))
                     .occlude()
-                    .on_key_down(cx.listener(|this, event: &gpui::KeyDownEvent, window, cx| {
-                        if event.keystroke.key == "enter" && !event.keystroke.modifiers.modified() {
-                            this.start_agent_launch(window, cx);
-                            cx.stop_propagation();
-                        }
-                    }))
                     .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
                     .child(
                         div()

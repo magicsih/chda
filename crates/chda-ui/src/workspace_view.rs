@@ -6055,6 +6055,15 @@ impl Render for WorkspaceView {
             .bg(bg)
             .key_context("Workspace")
             .track_focus(&self.focus_handle)
+            .on_key_down(cx.listener(|this, event: &gpui::KeyDownEvent, window, cx| {
+                if this.launch_sheet.is_some()
+                    && event.keystroke.key == "enter"
+                    && !event.keystroke.modifiers.modified()
+                {
+                    this.start_agent_launch(window, cx);
+                    cx.stop_propagation();
+                }
+            }))
             .on_action(cx.listener(Self::new_tab))
             .on_action(cx.listener(|this, _: &NewWindow, _, cx| {
                 let ghostty = chda_config::load(&this.env.ghostty, this.config.theme.as_deref());
