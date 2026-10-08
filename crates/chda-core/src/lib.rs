@@ -11,6 +11,7 @@ mod graph;
 pub mod handoff;
 pub use graph::*;
 mod names;
+pub mod notifications;
 mod refresh;
 pub mod release;
 pub mod resources;

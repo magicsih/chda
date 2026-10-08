@@ -142,7 +142,7 @@ fn starred_branches_navigate_unstar_in_one_click_and_persist(cx: &mut TestAppCon
     click(&mut h, "starred-2".into());
     assert_eq!(h.read(|v, _| v.ws.focused_pane()), focused);
     assert!(
-        h.read(|v, _| v.status_line.clone())
+        h.read(|v, _| v.notifications.latest().map(str::to_owned))
             .is_some_and(|s| s.contains("No worktree has feat/x checked out"))
     );
 

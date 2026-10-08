@@ -15,7 +15,9 @@ use chda_core::agents::{
     AgentAdapter, AgentId, CodexRunState, HookEvent, HookKind, SessionCache, SessionId, ipc,
     parse_codex_title,
 };
+use chda_core::notifications::Severity;
 use chda_core::release::{Release, ReleaseCheck, parse_latest};
+mod notifications;
 mod upgrade;
 use chda_core::{
     ActiveTab, AgentEvent, AgentSessionRef, AgentStatus, Axis, Direction, FileWatcher, IdleAgent,
@@ -314,8 +316,9 @@ pub struct WorkspaceView {
     pr_fetched: HashMap<PathBuf, std::time::Instant>,
     /// Last `origin/<default>` fetch per repository.
     base_fetched: HashMap<PathBuf, std::time::Instant>,
-    /// Message shown briefly at the bottom of the sidebar.
-    pub(crate) status_line: Option<String>,
+    pub(crate) notifications: chda_core::notifications::NotificationQueue,
+    pub(crate) notifications_open: bool,
+    notification_focus: Option<gpui::WeakFocusHandle>,
     /// The title last given to the OS window.
     window_title: String,
     /// A session save for new terminal activity is scheduled.
@@ -325,7 +328,7 @@ pub struct WorkspaceView {
     ghostty_sources: Vec<PathBuf>,
     /// Watches the Ghostty config files and `config.toml`.
     config_watcher: Option<FileWatcher>,
-    /// The last reload found a broken config; its message is on the status line.
+    /// The last reload found a broken config; repeated polls do not add events.
     config_problem: Option<String>,
     /// The theme palette shows a theme that is not the configured one yet.
     previewing_theme: bool,
@@ -369,6 +372,12 @@ impl WorkspaceView {
         });
         let adapters = Arc::clone(&env.adapters);
         let quotas = env.windows.borrow().quotas.clone();
+        let notifications = env
+            .windows
+            .borrow_mut()
+            .inherited_notifications
+            .pop_front()
+            .unwrap_or_default();
         let window_handle = window.window_handle();
         env.windows
             .borrow_mut()
@@ -440,7 +449,9 @@ impl WorkspaceView {
             forges: None,
             pr_fetched: HashMap::new(),
             base_fetched: HashMap::new(),
-            status_line: None,
+            notifications,
+            notifications_open: false,
+            notification_focus: None,
             window_title: String::new(),
             activity_save_pending: false,
             ghostty_paths: env.ghostty.clone(),
@@ -717,10 +728,12 @@ impl WorkspaceView {
         self.ghostty_sources = ghostty.sources;
         self.watch_config_files();
         let problem = (!problems.is_empty()).then(|| problems.join(" "));
-        if problem.is_some() {
-            self.status_line = problem.clone();
-        } else if self.config_problem.is_some() && self.status_line == self.config_problem {
-            self.status_line = None;
+        if problem != self.config_problem {
+            if let Some(message) = &problem {
+                self.notify_error(message.clone());
+            } else if self.config_problem.is_some() {
+                self.notify("Configuration reloaded successfully".into());
+            }
         }
         self.config_problem = problem;
         cx.notify();
@@ -1213,6 +1226,22 @@ impl WorkspaceView {
             pane: pane.map(PaneId::raw),
             worktree: worktree.clone(),
         };
+        if matches!(status, AgentStatus::WaitingInput | AgentStatus::Review) {
+            let (severity, message) = match status {
+                AgentStatus::WaitingInput => {
+                    (Severity::Warning, format!("{agent} is waiting in {name}"))
+                }
+                _ => (Severity::Success, format!("{agent} finished in {name}")),
+            };
+            let mut context = self.notification_pane_context(pane);
+            context.repository = Some(worktree.clone());
+            let key = format!(
+                "agent:{}:{}:{:?}:{}:{status:?}",
+                ev.agent, ev.session_id, ev.pane, ev.timestamp
+            );
+            self.notifications
+                .record_once(key, ev.timestamp, severity, message, context);
+        }
         match status {
             AgentStatus::WaitingInput if self.config.notifications => {
                 self.env.system.notify(
@@ -1385,7 +1414,7 @@ impl WorkspaceView {
     ) {
         let panes = self.ws.attention_panes();
         if panes.is_empty() {
-            self.status_line = Some("No agent is waiting".into());
+            self.notify("No agent is waiting".into());
             cx.notify();
             return;
         }
@@ -1993,7 +2022,7 @@ impl WorkspaceView {
             return;
         }
         if !notes.is_empty() {
-            self.status_line = Some(format!("Restored the last session; {}", notes.join("; ")));
+            self.notify(format!("Restored the last session; {}", notes.join("; ")));
         }
         self.focus_active(window, cx);
     }
@@ -2479,7 +2508,7 @@ impl WorkspaceView {
     /// Render a Mermaid diagram in the browser from a local page.
     fn view_diagram(&mut self, source: Option<&str>, cx: &mut Context<Self>) {
         let Some(source) = source else {
-            self.status_line = Some("No Mermaid diagram in this pane's output".into());
+            self.notify("No Mermaid diagram in this pane's output".into());
             return;
         };
         let Some(dir) = self.env.data_dir.as_ref().map(|d| d.join("diagrams")) else {
@@ -2487,7 +2516,7 @@ impl WorkspaceView {
         };
         match crate::diagram::write_page(&dir, source) {
             Ok(page) => self.env.system.open_file(&page, cx),
-            Err(e) => self.status_line = Some(format!("diagram: {e}")),
+            Err(e) => self.notify_error(format!("diagram: {e}")),
         }
     }
 
@@ -2519,12 +2548,12 @@ impl WorkspaceView {
     /// Open the focused worktree in the app with `id` and remember the app.
     pub(crate) fn open_folder_in(&mut self, id: &str, cx: &mut Context<Self>) {
         let Some(folder) = self.open_in_folder(cx) else {
-            self.status_line = Some("No folder to open: the focused pane has no directory".into());
+            self.notify("No folder to open: the focused pane has no directory".into());
             cx.notify();
             return;
         };
         if let Err(e) = self.env.system.open_folder_in(id, &folder) {
-            self.status_line = Some(format!("Could not open {}: {e}", folder.display()));
+            self.notify_error(format!("Could not open {}: {e}", folder.display()));
         }
         if self.config.open_in.as_deref() != Some(id) {
             self.config.open_in = Some(id.to_owned());
@@ -2772,6 +2801,7 @@ impl WorkspaceView {
         if window.viewport_size().width >= px(700.0) {
             bar = bar.children(self.render_update_controls(cx));
         }
+        bar = bar.child(self.render_notification_button(cx));
         if let Some(app) = self.folder_app() {
             let folder = self.open_in_folder(cx);
             let folder_name = folder
@@ -2844,7 +2874,7 @@ impl WorkspaceView {
         };
         match crate::markdown_preview::write_page(&dir, file) {
             Ok(page) => self.env.system.open_file(&page, cx),
-            Err(e) => self.status_line = Some(format!("Markdown preview: {e}")),
+            Err(e) => self.notify_error(format!("Markdown preview: {e}")),
         }
         cx.notify();
     }
@@ -2874,7 +2904,7 @@ impl WorkspaceView {
             .stderr(std::process::Stdio::null())
             .spawn()
         {
-            self.status_line = Some(format!("editor `{program}`: {e}"));
+            self.notify_error(format!("editor `{program}`: {e}"));
         }
     }
 
@@ -3302,7 +3332,7 @@ impl WorkspaceView {
             Ok(repo) => self.add_to_sidebar(repo, cx),
             Err(_) if path.is_dir() => self.ask_about_folder(path, window, cx),
             Err(e) => {
-                self.status_line = Some(format!("{}: {e}", path.display()));
+                self.notify_error(format!("{}: {e}", path.display()));
                 cx.notify();
             }
         }
@@ -3358,7 +3388,12 @@ impl WorkspaceView {
                     }
                 }
                 Err(e) => {
-                    view.status_line = Some(format!("git init in {}: {e}", path.display()));
+                    view.notify_repo(
+                        format!("git init in {}: {e}", path.display()),
+                        Severity::Error,
+                        &path,
+                        None,
+                    );
                     cx.notify();
                 }
             });
@@ -3585,9 +3620,9 @@ impl WorkspaceView {
                             .file_name()
                             .map(|n| n.to_string_lossy().into_owned())
                             .unwrap_or_else(|| repo.display().to_string());
-                        self.status_line = Some(format!(
+                        self.notify_repo(format!(
                             "No worktree has {branch} checked out in {name}. Right-click {name} for \"New worktree from branch...\"."
-                        ));
+                        ), Severity::Info, &repo, None);
                     }
                 }
             }
@@ -3672,10 +3707,15 @@ impl WorkspaceView {
             .worktree_for_path(path)
             .is_some_and(|(_, w)| w.missing && w.path == path);
         if missing {
-            self.status_line = Some(format!(
-                "{} no longer exists. Right-click the worktree to remove it.",
-                path.display()
-            ));
+            self.notify_repo(
+                format!(
+                    "{} no longer exists. Right-click the worktree to remove it.",
+                    path.display()
+                ),
+                Severity::Warning,
+                path,
+                None,
+            );
             cx.notify();
             return;
         }
@@ -3770,7 +3810,8 @@ impl WorkspaceView {
             .worktree_for_path(&worktree)
             .and_then(|(_, w)| w.branch.clone())
             .unwrap_or_else(|| "the branch".into());
-        self.status_line = Some(format!("Updating {branch}\u{2026}"));
+        let notification =
+            self.begin_repo_notification(format!("Updating {branch}\u{2026}"), &worktree);
         cx.notify();
         let operation = self.env.windows.borrow().update.operation();
         let task = cx.background_spawn({
@@ -3782,7 +3823,12 @@ impl WorkspaceView {
             let result = task.await;
             let _ = this.update(cx, |view, cx| {
                 use chda_core::{PullMode, UpdateOutcome};
-                view.status_line = Some(match result {
+                let severity = match &result {
+                    Ok(UpdateOutcome::UpToDate | UpdateOutcome::Updated { .. }) => Severity::Success,
+                    Err(_) => Severity::Error,
+                    _ => Severity::Warning,
+                };
+                let message = match result {
                     Ok(UpdateOutcome::UpToDate) => format!("{branch} is up to date with its upstream"),
                     Ok(UpdateOutcome::Updated { mode, commits }) => match mode {
                         PullMode::FastForward => {
@@ -3834,7 +3880,8 @@ impl WorkspaceView {
                         format!("{branch} has diverged from its upstream")
                     }
                     Err(e) => format!("Updating {branch}: {e}"),
-                });
+                };
+                view.notify_repo(message, severity, &worktree, Some(notification));
                 view.refresh_repo(repo, cx);
                 cx.notify();
             });
@@ -3896,7 +3943,7 @@ impl WorkspaceView {
             .executable(&self.env.home(), &self.env.search_path())
             .is_some()
         {
-            self.status_line = Some(format!("{} is not on PATH", adapter.display_name()));
+            self.notify_error(format!("{} is not on PATH", adapter.display_name()));
             cx.notify();
             return;
         }
@@ -3912,7 +3959,7 @@ impl WorkspaceView {
         let adapter = AgentId::parse(&preset.agent)
             .and_then(|id| self.adapters.iter().find(|a| a.id() == id));
         let Some(adapter) = adapter else {
-            self.status_line = Some(format!("Preset {name}: unknown agent {:?}", preset.agent));
+            self.notify_error(format!("Preset {name}: unknown agent {:?}", preset.agent));
             cx.notify();
             return;
         };
@@ -3920,7 +3967,7 @@ impl WorkspaceView {
             .executable(&self.env.home(), &self.env.search_path())
             .is_some()
         {
-            self.status_line = Some(format!("{} is not on PATH", adapter.display_name()));
+            self.notify_error(format!("{} is not on PATH", adapter.display_name()));
             cx.notify();
             return;
         }
@@ -3968,7 +4015,7 @@ impl WorkspaceView {
         }
         missing.dedup();
         if !missing.is_empty() {
-            self.status_line = Some(format!("{} is not on PATH", missing.join(", ")));
+            self.notify_error(format!("{} is not on PATH", missing.join(", ")));
         }
         if launches.is_empty() {
             cx.notify();
@@ -4083,7 +4130,12 @@ impl WorkspaceView {
                     return;
                 };
                 if let Some(busy) = &entry.busy {
-                    self.status_line = Some(format!("{}: already {busy}", entry.path.display()));
+                    self.notify_repo(
+                        format!("{}: already {busy}", entry.path.display()),
+                        Severity::Info,
+                        &entry.path,
+                        None,
+                    );
                     cx.notify();
                     return;
                 }
@@ -4118,12 +4170,18 @@ impl WorkspaceView {
                     let _operation = operation;
                     let result = task.await;
                     let _ = this.update(cx, |view, cx| {
-                        view.status_line = Some(match result {
+                        let severity = if result.is_ok() {
+                            Severity::Success
+                        } else {
+                            Severity::Error
+                        };
+                        let message = match result {
                             Ok(r) => {
                                 format!("Merged {} and removed {}", r.branch, r.removed.display())
                             }
                             Err(e) => e.to_string(),
-                        });
+                        };
+                        view.notify_repo(message, severity, &worktree, None);
                         view.refresh_repo(repo, cx);
                         cx.notify();
                     });
@@ -4145,7 +4203,12 @@ impl WorkspaceView {
                     .cloned()
                     .collect();
                 if stale.is_empty() {
-                    self.status_line = Some("No merged, clean worktrees to remove".into());
+                    self.notify_repo(
+                        "No merged, clean worktrees to remove".into(),
+                        Severity::Info,
+                        &repo,
+                        None,
+                    );
                     cx.notify();
                     return;
                 }
@@ -4190,11 +4253,17 @@ impl WorkspaceView {
                             .iter()
                             .filter_map(|r| r.as_ref().err().map(|e| e.to_string()))
                             .collect();
-                        view.status_line = Some(if errors.is_empty() {
+                        let severity = if errors.is_empty() {
+                            Severity::Success
+                        } else {
+                            Severity::Error
+                        };
+                        let message = if errors.is_empty() {
                             format!("Removed {ok} worktree(s)")
                         } else {
                             format!("Removed {ok}; failed: {}", errors.join("; "))
-                        });
+                        };
+                        view.notify_repo(message, severity, &repo, None);
                         view.refresh_repo(repo, cx);
                         cx.notify();
                     });
@@ -4217,7 +4286,12 @@ impl WorkspaceView {
                     return;
                 };
                 if let Some(busy) = &entry.busy {
-                    self.status_line = Some(format!("{}: already {busy}", entry.path.display()));
+                    self.notify_repo(
+                        format!("{}: already {busy}", entry.path.display()),
+                        Severity::Info,
+                        &entry.path,
+                        None,
+                    );
                     cx.notify();
                     return;
                 }
@@ -4304,10 +4378,20 @@ impl WorkspaceView {
                             }
                             cx.notify();
                         });
-                        view.status_line = Some(match &result {
-                            Ok(()) => format!("Deleted {}", worktree.display()),
-                            Err(e) => e.to_string(),
-                        });
+                        let severity = if result.is_ok() {
+                            Severity::Success
+                        } else {
+                            Severity::Error
+                        };
+                        view.notify_repo(
+                            match &result {
+                                Ok(()) => format!("Deleted {}", worktree.display()),
+                                Err(e) => e.to_string(),
+                            },
+                            severity,
+                            &worktree,
+                            None,
+                        );
                         if result.is_ok() {
                             let repo = repo.clone();
                             let operation = view.env.windows.borrow().update.operation();
@@ -4340,7 +4424,12 @@ impl WorkspaceView {
                     .unwrap_or_default();
                 let branches = chda_core::unchecked_branches(&repo, &worktrees).unwrap_or_default();
                 if branches.is_empty() {
-                    self.status_line = Some("Every local branch already has a worktree".into());
+                    self.notify_repo(
+                        "Every local branch already has a worktree".into(),
+                        Severity::Info,
+                        &repo,
+                        None,
+                    );
                     cx.notify();
                     return;
                 }
@@ -4371,10 +4460,20 @@ impl WorkspaceView {
                     let _operation = operation;
                     let result = task.await;
                     let _ = this.update(cx, |view, cx| {
-                        view.status_line = Some(match result {
-                            Ok(p) => format!("Removed the record of {}", p.display()),
-                            Err(e) => e.to_string(),
-                        });
+                        let severity = if result.is_ok() {
+                            Severity::Success
+                        } else {
+                            Severity::Error
+                        };
+                        view.notify_repo(
+                            match result {
+                                Ok(p) => format!("Removed the record of {}", p.display()),
+                                Err(e) => e.to_string(),
+                            },
+                            severity,
+                            &repo,
+                            None,
+                        );
                         view.refresh_repo(repo, cx);
                         cx.notify();
                     });
@@ -4419,7 +4518,7 @@ impl WorkspaceView {
                     let mut check = ReleaseCheck::load(&file);
                     check.dismiss();
                     if let Err(e) = check.save(&file) {
-                        self.status_line = Some(format!("Could not save the dismissal: {e}"));
+                        self.notify_error(format!("Could not save the dismissal: {e}"));
                     }
                 }
                 self.release_notice = None;
@@ -4465,10 +4564,10 @@ impl WorkspaceView {
             return;
         }
         if self.sidebar.read(cx).model.is_folder(&repo) {
-            self.status_line = Some(format!(
+            self.notify_repo(format!(
                 "{} is a plain folder. Right-click it and pick \"{INIT_GIT}\" to make worktrees.",
                 repo.display()
-            ));
+            ), Severity::Info, &repo, None);
             cx.notify();
             return;
         }
@@ -4697,8 +4796,12 @@ impl WorkspaceView {
                     Ok(note_error) => {
                         view.sheet = None;
                         if let Some(e) = note_error {
-                            view.status_line =
-                                Some(format!("Created {branch}, but saving its note failed: {e}"));
+                            view.notify_repo(
+                                format!("Created {branch}, but saving its note failed: {e}"),
+                                Severity::Warning,
+                                &path,
+                                None,
+                            );
                         }
                         view.refresh_repo(repo, cx);
                         let command = view.default_action_argv(&path);
@@ -4926,7 +5029,7 @@ impl WorkspaceView {
                 .map_or(Ok(()), std::fs::create_dir_all)
                 .and_then(|()| std::fs::write(&path, ""))
         {
-            self.status_line = Some(format!("{}: {e}", path.display()));
+            self.notify_error(format!("{}: {e}", path.display()));
             cx.notify();
             return;
         }
@@ -4957,7 +5060,7 @@ impl WorkspaceView {
             .filter(|i| matches!(i.command, PaletteCommand::ResumeSession { .. }))
             .collect();
         if items.is_empty() {
-            self.status_line = Some("No agent sessions in the sidebar's worktrees yet".into());
+            self.notify("No agent sessions in the sidebar's worktrees yet".into());
             cx.notify();
             return;
         }
@@ -5112,7 +5215,7 @@ impl WorkspaceView {
                         self.open_tab_at(Some(path), None, window, cx);
                     }
                     Err(e) => {
-                        self.status_line = Some(e.to_string());
+                        self.notify_error(e.to_string());
                         cx.notify();
                     }
                 }
@@ -5156,6 +5259,10 @@ impl WorkspaceView {
     }
 
     fn dismiss(&mut self, _: &Dismiss, window: &mut Window, cx: &mut Context<Self>) {
+        if self.notifications_open {
+            self.close_notifications(window, cx);
+            return;
+        }
         if self.sheet.as_ref().is_some_and(|sheet| sheet.busy) {
             return;
         }
@@ -5167,7 +5274,6 @@ impl WorkspaceView {
             || self.note_sheet.take().is_some()
             || self.palette.take().is_some()
             || self.context_menu.take().is_some()
-            || self.status_line.take().is_some()
         {
             self.restore_theme(cx);
             self.focus_active(window, cx);
@@ -5751,41 +5857,6 @@ impl WorkspaceView {
     }
 }
 
-impl WorkspaceView {
-    fn render_status_line(&self, cx: &mut Context<Self>) -> Option<AnyElement> {
-        let s = self.status_line.clone()?;
-        let bg = hsla(self.settings.colors.background.unwrap_or_default());
-        let fg = hsla(self.settings.colors.foreground.unwrap_or_default());
-        Some(
-            div()
-                .flex()
-                .flex_row()
-                .items_start()
-                .gap_1()
-                .px_2()
-                .py_1()
-                .text_xs()
-                .text_color(fg.opacity(0.8))
-                .bg(blend(bg, fg, 0.1))
-                .child(div().flex_1().min_w_0().child(s))
-                .child(
-                    div()
-                        .id("status-close")
-                        .px_1()
-                        .rounded_sm()
-                        .cursor_pointer()
-                        .hover(|s| s.bg(fg.opacity(0.15)))
-                        .on_click(cx.listener(|this, _, _, cx| {
-                            this.status_line = None;
-                            cx.notify();
-                        }))
-                        .child("\u{2715}"),
-                )
-                .into_any_element(),
-        )
-    }
-}
-
 /// Mix `a` towards `b` by `t`.
 /// Text in the title bar, nudged down so its ink, not its line box, sits on
 /// the window buttons' center line: the UI font's ascent is taller than its
@@ -5886,14 +5957,6 @@ impl Render for WorkspaceView {
             None => div().into_any_element(),
         };
         let sidebar_width = px(self.sidebar_width(window));
-        // The status line sits under the sidebar, or under the panes when
-        // the sidebar is hidden.
-        let mut status = self.render_status_line(cx);
-        let main_status = if self.sidebar_visible {
-            None
-        } else {
-            status.take()
-        };
         let main = div()
             .flex_1()
             .min_w_0()
@@ -5901,8 +5964,7 @@ impl Render for WorkspaceView {
             .flex()
             .flex_col()
             .children(self.render_tab_bar(cx))
-            .child(div().flex_1().min_h_0().w_full().child(content))
-            .children(main_status);
+            .child(div().flex_1().min_h_0().w_full().child(content));
         let title_bar = self.render_title_bar(window, cx);
         div()
             .size_full()
@@ -6065,7 +6127,6 @@ impl Render for WorkspaceView {
                                             .cached(StyleRefinement::default().size_full()),
                                     ),
                                 )
-                                .children(status)
                                 .child(self.render_sidebar_grip(divider, cx)),
                         )
                     })
@@ -6095,6 +6156,7 @@ impl Render for WorkspaceView {
             .children(self.render_note_sheet(cx))
             .children(self.render_confirm(cx))
             .children(self.render_palette())
+            .children(self.render_notifications(cx))
             .into_any_element()
     }
 }

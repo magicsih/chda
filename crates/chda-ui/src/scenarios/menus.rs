@@ -28,7 +28,7 @@ fn agent_items_explain_why_nothing_ran(cx: &mut TestAppContext) {
     h.cx.run_until_parked();
     assert!(h.read(|v, _| v.palette.is_none()));
     assert!(
-        h.read(|v, _| v.status_line.clone())
+        h.read(|v, _| v.notifications.latest().map(str::to_owned))
             .is_some_and(|s| s.contains("No agent sessions"))
     );
 
@@ -36,7 +36,7 @@ fn agent_items_explain_why_nothing_ran(cx: &mut TestAppContext) {
     h.cx.dispatch_action(RunClaude);
     h.cx.run_until_parked();
     assert!(
-        h.read(|v, _| v.status_line.clone())
+        h.read(|v, _| v.notifications.latest().map(str::to_owned))
             .is_some_and(|s| s.contains("not on PATH"))
     );
     assert_eq!(h.read(|v, _| v.ws.tabs().len()), 1);
@@ -121,8 +121,8 @@ fn codex_sessions_resume_with_the_login_shell_path(cx: &mut TestAppContext) {
         v.ws.tabs().len() == 2 && v.focused_text(cx).contains("resume saved-session")
     });
     assert!(h.read(|v, _| {
-        v.status_line
-            .as_deref()
+        v.notifications
+            .latest()
             .is_none_or(|s| !s.contains("not on PATH"))
     }));
     assert!(h.read(|v, cx| v.focused_text(cx)).contains("fake-codex"));

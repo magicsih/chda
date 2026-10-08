@@ -16,6 +16,7 @@ mod input;
 mod mcp;
 mod menus;
 mod navigation;
+mod notifications;
 mod palette;
 mod paths;
 mod pull_requests;

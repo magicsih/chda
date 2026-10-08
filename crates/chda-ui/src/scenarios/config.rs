@@ -20,8 +20,8 @@ fn ghostty_and_chda_config_changes_apply_live(cx: &mut TestAppContext) {
     // A value Ghostty would reject keeps the previous settings.
     std::fs::write(&h.home.ghostty, "font-size = huge\n").unwrap();
     h.wait_for("a message about the broken value", |v, _| {
-        v.status_line
-            .as_deref()
+        v.notifications
+            .latest()
             .is_some_and(|s| s.contains("font-size = huge"))
     });
     assert_eq!(h.read(|v, _| v.settings.font_size), px(18.0));

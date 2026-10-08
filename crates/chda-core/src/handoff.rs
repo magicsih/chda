@@ -24,6 +24,9 @@ pub struct Handoff {
     pub update: Option<UpdateHandoff>,
     #[serde(default)]
     pub recovery_error: Option<String>,
+    /// Same order as session.windows; intentionally absent from cold saves.
+    #[serde(default)]
+    pub notifications: Vec<crate::notifications::NotificationQueue>,
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
@@ -150,13 +153,31 @@ mod tests {
             seen: false,
         });
         first.agent_live = true;
+        let mut notifications = crate::notifications::NotificationQueue::default();
+        notifications.record(
+            1,
+            crate::notifications::Severity::Info,
+            "retained".into(),
+            Default::default(),
+            None,
+        );
+        notifications.mark_open();
+        notifications.record(
+            2,
+            crate::notifications::Severity::Error,
+            "unread".into(),
+            Default::default(),
+            None,
+        );
         let handoff = Handoff {
             session: SavedSession::default(),
             panes: vec![first, HandoffPane::new(9, 100, 30, vec![0, 255, 10])],
+            notifications: vec![notifications],
             ..Default::default()
         };
         let decoded = Handoff::decode(&handoff.encode().unwrap()).unwrap();
         assert_eq!(decoded, handoff);
+        assert_eq!(decoded.notifications[0].unread(), 1);
         let bytes = handoff.encode().unwrap();
         assert!(Handoff::decode(&bytes[..bytes.len() - 1]).is_err());
     }

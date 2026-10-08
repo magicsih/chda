@@ -133,6 +133,7 @@ fn run_inner(
         let mut registry = env.windows.borrow_mut();
         registry.started_at = Some(state.started_at);
         registry.update.adopting = true;
+        registry.inherited_notifications = state.notifications.into_iter().collect();
         registry.update.frozen = true;
         registry.update.progress = chda_core::self_update::UpdateProgress::Reconnecting;
         if let Some(update) = &state.update {

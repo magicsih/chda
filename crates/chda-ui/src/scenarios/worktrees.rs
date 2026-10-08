@@ -115,9 +115,9 @@ fn create_then_delete_a_worktree_in_one_go(cx: &mut TestAppContext) {
         }
     });
     assert!(
-        h.read(|v, _| v.status_line.as_deref() == Some(&format!("Deleted {}", path.display()))),
+        h.read(|v, _| v.notifications.latest() == Some(&format!("Deleted {}", path.display()))),
         "no error: {:?}",
-        h.read(|v, _| v.status_line.clone())
+        h.read(|v, _| v.notifications.latest().map(str::to_owned))
     );
     assert_eq!(h.read(|v, _| v.ws.tabs().len()), 1, "its terminal closed");
     let branch = std::process::Command::new("git")
@@ -160,8 +160,8 @@ fn missing_worktree_is_marked_and_pruned(cx: &mut TestAppContext) {
     let g = gone.clone();
     h.cx.update(|window, cx| h.view.update(cx, |v, cx| v.open_worktree(&g, window, cx)));
     assert!(h.read(|v, _| {
-        v.status_line
-            .as_deref()
+        v.notifications
+            .latest()
             .is_some_and(|s| s.contains("no longer exists"))
     }));
     assert_eq!(
@@ -503,7 +503,7 @@ fn update_branch_from_upstream_when_safe(cx: &mut TestAppContext) {
             .update(cx, |v, cx| v.run_menu_action(action, window, cx))
     });
     h.wait_for("the fast-forward", |v, _| {
-        v.status_line.as_deref() == Some("Fast-forwarded main by 1 commit(s)")
+        v.notifications.latest() == Some("Fast-forwarded main by 1 commit(s)")
     });
     assert_eq!(head(&repo), head(&other));
 
@@ -530,7 +530,7 @@ fn update_branch_from_upstream_when_safe(cx: &mut TestAppContext) {
     assert!(h.read(|v, _| v.confirm.as_ref().unwrap().lines[1].contains("rebase")));
     h.cx.update(|window, cx| h.view.update(cx, |v, cx| v.confirm_action(window, cx)));
     h.wait_for("the rebase", |v, _| {
-        v.status_line.as_deref() == Some("Rebased main on 1 new upstream commit(s)")
+        v.notifications.latest() == Some("Rebased main on 1 new upstream commit(s)")
     });
     assert_eq!(rev(&repo, "HEAD~1"), head(&other), "local commit on top");
 }

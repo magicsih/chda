@@ -81,7 +81,11 @@ fn agent_conversations_reopen_in_their_panes(cx: &mut TestAppContext) {
         assert_eq!(conversation.map(|a| a.session).as_deref(), Some("s1"));
         assert!(v.ws.pane(panes[1]).unwrap().agent_session.is_none());
         assert!(v.ws.pane(panes[2]).unwrap().agent_session.is_none());
-        let note = v.status_line.clone().unwrap_or_default();
+        let note = v
+            .notifications
+            .latest()
+            .map(str::to_owned)
+            .unwrap_or_default();
         assert!(note.contains("session gone is gone"), "{note}");
     });
     wait_until(&mut cx2, &view2, "shells in the other panes", |v, cx| {

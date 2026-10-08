@@ -16,3 +16,4 @@ new record rather than editing an accepted one.
 | 0009 | Keep live idle panes separate from shells and saved conversations; focus and close by pane ID |
 | 0010 | Own windows, recent pane navigation, IPC routing and saved working context at app scope |
 | 0011 | Session-preserving Sparkle updates: approved direction, handoff primitives implemented, updater integration pending |
+| [0012](0012-window-notification-history.md) | 창별 알림 기록, 읽음 기준과 세션 보존 업데이트에서의 기록 전달 |

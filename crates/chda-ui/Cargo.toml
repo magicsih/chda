@@ -13,6 +13,7 @@ chda-config.workspace = true
 chda-core.workspace = true
 chda-term.workspace = true
 serde_json.workspace = true
+time = "0.3.55"
 futures.workspace = true
 gpui.workspace = true
 gpui_platform.workspace = true

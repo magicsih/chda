@@ -930,6 +930,7 @@ dependencies = [
  "pulldown-cmark",
  "serde_json",
  "sysinfo",
+ "time",
 ]
 
 [[package]]
