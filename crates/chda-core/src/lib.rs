@@ -31,10 +31,11 @@ pub use restore::*;
 pub mod agents {
     pub use chda_agents::hook::data_dir;
     pub use chda_agents::{
-        AgentAdapter, AgentId, AgentSession, CODEX_TITLE_CONFIG, CODEX_TITLE_ENV, CodexRunState,
-        HookEvent, HookInstallReport, HookKind, LimitUsage, ModelUsage, PANE_ENV, SessionCache,
-        SessionId, Usage, adapters, codex_notify_config, command_argv, compact_tokens, ipc,
-        parse_codex_title,
+        AgentAdapter, AgentId, AgentLaunchContext, AgentSession, CODEX_TITLE_CONFIG,
+        CODEX_TITLE_ENV, CodexRunState, HookEvent, HookInstallReport, HookKind, LaunchHistory,
+        LimitUsage, ModelUsage, PANE_ENV, PermissionPolicy, SessionCache, SessionId, Usage,
+        adapters, codex_notify_config, command_argv, compact_tokens, ipc, parse_codex_title,
+        permission_arguments,
     };
     pub use chda_agents::{control, quota, statusline, which};
 }

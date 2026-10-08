@@ -17,6 +17,7 @@ use chda_core::agents::{
 };
 use chda_core::notifications::Severity;
 use chda_core::release::{Release, ReleaseCheck, parse_latest};
+mod agent_launch;
 mod notifications;
 mod upgrade;
 use chda_core::{
@@ -303,6 +304,7 @@ pub struct WorkspaceView {
     /// the window.
     title_drag: bool,
     sheet: Option<NewWorktreeSheet>,
+    launch_sheet: Option<agent_launch::LaunchSheet>,
     note_sheet: Option<NoteSheet>,
     pub(crate) confirm: Option<ConfirmSheet>,
     pub(crate) palette: Option<(Entity<Palette>, Subscription)>,
@@ -441,6 +443,7 @@ impl WorkspaceView {
             release_notice: None,
             title_drag: false,
             sheet: None,
+            launch_sheet: None,
             note_sheet: None,
             confirm: None,
             palette: None,
@@ -903,6 +906,7 @@ impl WorkspaceView {
                     && let Some(pane) = self.panes.keys().copied().find(|p| p.raw() == raw)
                 {
                     if let Some(session) = report.session.clone() {
+                        self.capture_launch_session(pane, &report.provider, &session);
                         self.ws.set_agent_session(
                             pane,
                             Some(AgentSessionRef {
@@ -971,12 +975,15 @@ impl WorkspaceView {
                 }
                 self.refresh_repo(repo.clone(), cx);
                 if open {
-                    let command = match agent {
-                        Some(agent) => self.agent_argv(&path, agent, None),
-                        None => self.default_action_argv(&path),
-                    };
-                    self.open_tab_at(Some(path.clone()), command, window, cx);
-                    message.push_str(" and opened a tab there");
+                    match agent {
+                        Some(agent) => self.run_agent(&path, agent, None, window, cx),
+                        None => self.open_default_action(&path, window, cx),
+                    }
+                    message.push_str(if self.launch_sheet.is_some() {
+                        "; confirm the agent's launch options in chda"
+                    } else {
+                        " and opened a tab there"
+                    });
                 }
                 Reply::ok(
                     message,
@@ -987,13 +994,20 @@ impl WorkspaceView {
                 if !path.is_dir() {
                     return Reply::err(format!("{} is not a directory", path.display()));
                 }
-                let command = match self.requested_agent(agent.as_deref()) {
-                    Ok(agent) => agent.and_then(|agent| self.agent_argv(&path, agent, None)),
+                let agent = match self.requested_agent(agent.as_deref()) {
+                    Ok(agent) => agent,
                     Err(reply) => return reply,
                 };
-                self.open_tab_at(Some(path.clone()), command, window, cx);
+                match agent {
+                    Some(agent) => self.run_agent(&path, agent, None, window, cx),
+                    None => self.open_tab_at(Some(path.clone()), None, window, cx),
+                }
                 Reply::ok(
-                    format!("Opened a tab in {}", path.display()),
+                    if self.launch_sheet.is_some() {
+                        "Confirm the agent's launch options in chda".into()
+                    } else {
+                        format!("Opened a tab in {}", path.display())
+                    },
                     serde_json::json!({ "path": path }),
                 )
             }
@@ -1074,6 +1088,11 @@ impl WorkspaceView {
             && let Some(pane) = ev.pane.and_then(|raw| self.ws.pane_by_raw(raw))
         {
             self.initializing_panes.remove(&pane);
+        }
+        if ev.kind != HookKind::SessionEnd
+            && let Some(pane) = ev.pane.and_then(|raw| self.ws.pane_by_raw(raw))
+        {
+            self.capture_launch_session(pane, &ev.agent, &ev.session_id);
         }
         // SessionStart also fires on compaction/resume within a running
         // conversation. It must not turn an existing busy session idle.
@@ -1977,7 +1996,12 @@ impl WorkspaceView {
                 match &p.agent {
                     Some(conversation) if self.config.restore_agents => {
                         let cwd = p.cwd.clone().unwrap_or_default();
-                        match self.resume_argv(&cwd, conversation) {
+                        let argv = if let Some(context) = &p.launch {
+                            self.captured_agent_argv(context)
+                        } else {
+                            self.resume_argv(&cwd, conversation)
+                        };
+                        match argv {
                             Ok(argv) => Some(argv),
                             Err(why) => {
                                 notes.push(why);
@@ -3788,8 +3812,7 @@ impl WorkspaceView {
             self.focus_active(window, cx);
             return;
         }
-        let command = self.default_action_argv(path);
-        self.open_tab_at(Some(path.to_path_buf()), command, window, cx);
+        self.open_default_action(path, window, cx);
     }
 
     /// Fetch and bring in the worktree's upstream. A diverged branch is not
@@ -3897,6 +3920,17 @@ impl WorkspaceView {
     ) -> Option<Vec<String>> {
         let adapter = self.adapters.iter().find(|a| a.id() == agent)?;
         let executable = adapter.executable(&self.env.home(), &self.env.search_path())?;
+        self.agent_argv_for_executable(cwd, agent, resume, &executable)
+    }
+
+    fn agent_argv_for_executable(
+        &self,
+        cwd: &Path,
+        agent: AgentId,
+        resume: Option<&SessionId>,
+        executable: &Path,
+    ) -> Option<Vec<String>> {
+        let adapter = self.adapters.iter().find(|a| a.id() == agent)?;
         let original = adapter.launch_command(cwd, resume, &Self::hook_bin());
         let mut args: Vec<std::ffi::OsString> = original.get_args().map(Into::into).collect();
         if agent == AgentId::Claude
@@ -3921,11 +3955,12 @@ impl WorkspaceView {
         Some(chda_core::agents::command_argv(&cmd))
     }
 
-    /// What `default-action` runs in a new worktree's first tab; `None` is
-    /// the login shell.
-    fn default_action_argv(&self, cwd: &Path) -> Option<Vec<String>> {
-        let agent = AgentId::parse(self.config.default_action.agent()?)?;
-        self.agent_argv(cwd, agent, None)
+    fn open_default_action(&mut self, cwd: &Path, window: &mut Window, cx: &mut Context<Self>) {
+        if let Some(agent) = self.config.default_action.agent().and_then(AgentId::parse) {
+            self.run_agent(cwd, agent, None, window, cx);
+        } else {
+            self.open_tab_at(Some(cwd.to_path_buf()), None, window, cx);
+        }
     }
 
     fn run_agent(
@@ -3947,8 +3982,12 @@ impl WorkspaceView {
             cx.notify();
             return;
         }
-        let argv = self.agent_argv(cwd, agent, resume.as_ref());
-        self.open_tab_at(Some(cwd.to_path_buf()), argv, window, cx);
+        if matches!(agent, AgentId::Claude | AgentId::Codex) {
+            self.show_agent_launch(cwd, agent, Vec::new(), resume, window, cx);
+        } else {
+            let argv = self.agent_argv(cwd, agent, resume.as_ref());
+            self.open_tab_at(Some(cwd.to_path_buf()), argv, window, cx);
+        }
     }
 
     /// Start the `agent-presets` entry called `name` in a new tab at `cwd`.
@@ -3971,7 +4010,13 @@ impl WorkspaceView {
             cx.notify();
             return;
         }
-        let argv = self.agent_argv(cwd, adapter.id(), None).map(|mut argv| {
+        let agent = adapter.id();
+        let options = preset.args.clone();
+        if matches!(agent, AgentId::Claude | AgentId::Codex) {
+            self.show_agent_launch(cwd, agent, options, None, window, cx);
+            return;
+        }
+        let argv = self.agent_argv(cwd, agent, None).map(|mut argv| {
             argv.extend(preset.args.iter().cloned());
             argv
         });
@@ -3993,6 +4038,42 @@ impl WorkspaceView {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        if self.launch_sheet.is_some() {
+            self.notify_error("Finish or cancel the current agent launch first".into());
+            cx.notify();
+            return;
+        }
+        if picks.iter().any(|pick| {
+            matches!(
+                AgentId::parse(&pick.agent),
+                Some(AgentId::Claude | AgentId::Codex)
+            )
+        }) {
+            let items = picks
+                .into_iter()
+                .filter_map(|pick| AgentId::parse(&pick.agent).map(|agent| (agent, pick)))
+                .map(|(agent, pick)| {
+                    self.launch_item(
+                        &pick.worktree,
+                        agent,
+                        Vec::new(),
+                        Some(SessionId(pick.session)),
+                    )
+                })
+                .collect::<Result<Vec<_>, _>>();
+            match items {
+                Ok(items) if !items.is_empty() => {
+                    self.launch_sheet = Some(agent_launch::LaunchSheet { items, error: None });
+                    self.notifications_open = false;
+                    self.notification_focus = None;
+                    window.focus(&self.focus_handle, cx);
+                }
+                Err(e) => self.notify_error(e),
+                _ => {}
+            }
+            cx.notify();
+            return;
+        }
         let mut launches = Vec::new();
         let mut missing = Vec::new();
         for pick in picks {
@@ -4804,8 +4885,7 @@ impl WorkspaceView {
                             );
                         }
                         view.refresh_repo(repo, cx);
-                        let command = view.default_action_argv(&path);
-                        view.open_tab_at(Some(path), command, window, cx);
+                        view.open_default_action(&path, window, cx);
                     }
                     Err(e) => {
                         if let Some(sheet) = &mut view.sheet {
@@ -5271,6 +5351,7 @@ impl WorkspaceView {
             return;
         }
         if self.sheet.take().is_some()
+            || self.launch_sheet.take().is_some()
             || self.note_sheet.take().is_some()
             || self.palette.take().is_some()
             || self.context_menu.take().is_some()
@@ -6153,6 +6234,7 @@ impl Render for WorkspaceView {
             .child(self.status_bar.render(self, window, cx))
             .children(self.status_bar.details(self, cx))
             .children(self.render_sheet(cx))
+            .children(self.render_agent_launch(cx))
             .children(self.render_note_sheet(cx))
             .children(self.render_confirm(cx))
             .children(self.render_palette())

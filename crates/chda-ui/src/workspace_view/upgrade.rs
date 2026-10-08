@@ -130,6 +130,7 @@ impl WorkspaceView {
             || entries.iter().any(|entry| {
                 let pending = |view: &Self| {
                     view.sheet.is_some()
+                        || view.launch_sheet.is_some()
                         || view.note_sheet.is_some()
                         || view.confirm.is_some()
                         || view.palette.is_some()

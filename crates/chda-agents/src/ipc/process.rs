@@ -1,5 +1,51 @@
 //! Bounded local helper processes for agent discovery and telemetry.
 
+/// Atomically replace app-owned metadata; temporary files are private on Unix.
+pub fn write_private_atomic(path: &std::path::Path, bytes: &[u8]) -> std::io::Result<()> {
+    use std::io::Write;
+    let parent = path
+        .parent()
+        .ok_or_else(|| std::io::Error::other("Missing metadata directory"))?;
+    std::fs::create_dir_all(parent)?;
+    static NEXT: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+    let mut options = std::fs::OpenOptions::new();
+    options.create_new(true).write(true);
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::OpenOptionsExt;
+        options.mode(0o600);
+    }
+    let mut prepared = None;
+    for _ in 0..128 {
+        let id = NEXT.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        let temporary = parent.join(format!(".chda-metadata-{}-{id}", std::process::id()));
+        match options.open(&temporary) {
+            Ok(file) => {
+                prepared = Some((temporary, file));
+                break;
+            }
+            Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => continue,
+            Err(e) => return Err(e),
+        }
+    }
+    let (temporary, mut file) = prepared.ok_or_else(|| {
+        std::io::Error::new(
+            std::io::ErrorKind::AlreadyExists,
+            "Could not reserve a private metadata file",
+        )
+    })?;
+    let result = (|| {
+        file.write_all(bytes)?;
+        file.sync_all()?;
+        drop(file);
+        std::fs::rename(&temporary, path)
+    })();
+    if result.is_err() {
+        let _ = std::fs::remove_file(temporary);
+    }
+    result
+}
+
 /// Follow symlinks and reject directories, broken links and non-executable files.
 pub fn is_executable(path: &std::path::Path) -> bool {
     let Ok(metadata) = std::fs::metadata(path) else {
@@ -175,6 +221,25 @@ done
     }
 
     const ACCOUNT: &str = r#"{"account":{"type":"chatgpt","email":"test@example.test"}}"#;
+
+    #[test]
+    fn metadata_replacement_is_private_and_leaves_no_partial_file() {
+        let cli = Cli::new(ACCOUNT, "exit 0");
+        let path = cli.root.join("record.json");
+        super::write_private_atomic(&path, b"first").unwrap();
+        super::write_private_atomic(&path, b"replacement").unwrap();
+        assert_eq!(std::fs::read(&path).unwrap(), b"replacement");
+        assert_eq!(
+            std::fs::metadata(&path).unwrap().permissions().mode() & 0o777,
+            0o600
+        );
+        assert!(!std::fs::read_dir(&cli.root).unwrap().any(|e| {
+            e.unwrap()
+                .file_name()
+                .to_string_lossy()
+                .starts_with(".chda-metadata-")
+        }));
+    }
 
     #[test]
     fn quota_probe_uses_only_the_account_protocol_and_reaps_the_cli() {

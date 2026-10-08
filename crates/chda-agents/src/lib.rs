@@ -10,6 +10,7 @@ mod copilot;
 mod gemini;
 pub mod hook;
 pub mod ipc;
+mod launch;
 mod mcp;
 mod opencode;
 mod pricing;
@@ -29,6 +30,7 @@ pub use codex::{
 pub use copilot::CopilotAdapter;
 pub use gemini::GeminiAdapter;
 pub use hook::{HookEvent, HookKind, PANE_ENV, hook_main};
+pub use launch::{AgentLaunchContext, LaunchHistory, PermissionPolicy, permission_arguments};
 pub use mcp::mcp_main;
 pub use opencode::OpenCodeAdapter;
 pub use session::{AgentSession, SessionCache, SessionId};

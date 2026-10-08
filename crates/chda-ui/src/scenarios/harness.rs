@@ -450,6 +450,18 @@ impl Harness {
         self.cx.run_until_parked();
     }
 
+    /// Confirm the actual launch sheet without bypassing the UI choice.
+    pub fn confirm_agent_launch(&mut self) {
+        self.cx.run_until_parked();
+        let bounds = self
+            .cx
+            .debug_bounds("launch-start")
+            .expect("launch sheet Start");
+        self.cx
+            .simulate_click(bounds.center(), gpui::Modifiers::default());
+        self.cx.run_until_parked();
+    }
+
     /// Wait for the focused pane's shell prompt.
     pub fn wait_prompt(&mut self) {
         self.wait_for("a shell prompt", |v, cx| {
