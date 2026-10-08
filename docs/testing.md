@@ -44,6 +44,7 @@ Three layers, all run by `cargo test --workspace` (CI: the macOS job).
 | Live idle agents: pane focus, mixed-state splits, targeted process cleanup, exit and restored-history exclusion | `idle_agents::*`, `agents::directly_typed_codex_tracks_each_turn_and_exits` | #112 |
 | S5 Plain terminal: tabs, splits, focus | `workspace::new_tab_split_and_close` | |
 | Font size shortcuts | `workspace::font_size_shortcuts_apply_to_every_pane` | #8 |
+| Sharing selection: actual VT selection/context action, untouched clipboard until confirmation, Unicode and multiline editing, cancel/typing focus, exact conversation revalidation | `sharing::*`, `chda-agents` `sharing::tests::*`, `chda-term` selection tests | #158 |
 | Scrollback search | `search::search_finds_steps_and_closes` | #6 |
 | Cached prompt background after theme change; readable colors and opt-out | `terminal_element::tests::theme_switch_keeps_cached_prompt_background_readable`, `terminal_element::tests::contrast_adjustment_preserves_readable_colors_and_can_be_disabled` | |
 | Minimum contrast reload preserves pane and unfinished input | `config::minimum_contrast_changes_apply_without_restarting_the_pane` | |

@@ -1341,6 +1341,20 @@ mod tests {
     }
 
     #[test]
+    fn selection_unwraps_only_soft_lines_and_keeps_code_indent_and_wide_text() {
+        let mut term = term();
+        term.resize(Size { cols: 10, rows: 8 }, 8, 16).unwrap();
+        term.feed("abcdefghijklmnopqrst\r\n    a | b\r\n안녕 🧭".as_bytes());
+        term.select(&mouse(MouseAction::Down { click_count: 1 }, 0, 0))
+            .unwrap();
+        term.select(&mouse(MouseAction::Drag, 6, 3)).unwrap();
+        assert_eq!(
+            term.selection_text().unwrap().as_deref(),
+            Some("abcdefghijklmnopqrst\n    a | b\n안녕 🧭")
+        );
+    }
+
+    #[test]
     fn mouse_reports_follow_tracking_mode() {
         let mut term = term();
         term.resize(Size { cols: 20, rows: 5 }, 8, 16).unwrap();
