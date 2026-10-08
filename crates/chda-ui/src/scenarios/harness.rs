@@ -481,9 +481,7 @@ impl Harness {
 
     /// Wait for the focused pane's shell prompt.
     pub fn wait_prompt(&mut self) {
-        self.wait_for("a shell prompt", |v, cx| {
-            v.focused_text(cx).contains("test%")
-        });
+        self.wait_for("a shell prompt", |v, cx| v.focused_prompt_ready(cx));
     }
 
     /// Run a command in the focused pane and wait until `expect` shows.

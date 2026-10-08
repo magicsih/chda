@@ -6266,6 +6266,14 @@ pub fn blend(a: Hsla, b: Hsla, t: f32) -> Hsla {
 
 #[cfg(test)]
 impl WorkspaceView {
+    /// Shell startup has reached the workspace, beyond the visible VT text.
+    pub(crate) fn focused_prompt_ready(&self, cx: &App) -> bool {
+        self.ws
+            .focused_pane()
+            .is_some_and(|p| !self.initializing_panes.contains(&p))
+            && self.focused_text(cx).contains("test%")
+    }
+
     /// The focused pane's visible text, rows joined with newlines.
     pub(crate) fn focused_text(&self, cx: &App) -> String {
         self.ws
