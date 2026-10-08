@@ -3,89 +3,146 @@ name: Release
 on:
   push:
     tags: ["v*"]
+  workflow_dispatch:
+    inputs:
+      stage:
+        description: Build a signed draft, publish the same draft, or repair Homebrew
+        required: true
+        type: choice
+        options: [build, publish, cask]
+      tag:
+        description: Exact stable candidate tag, for example v0.1.21
+        required: true
+        type: string
+      sha:
+        description: Full 40-character candidate commit SHA
+        required: true
+        type: string
+      config_sha256:
+        description: SHA-256 of the isolated native test configuration
+        required: true
+        type: string
+      native_evidence:
+        description: Sanitized native evidence JSON; before-build or before-deploy (unused for cask)
+        required: false
+        type: string
 
 permissions:
-  contents: write
+  contents: read
+
+concurrency:
+  group: chda-macos-release-${{ inputs.tag || github.ref_name }}
+  cancel-in-progress: false
 
 env:
   CARGO_TERM_COLOR: always
   ZIG_VERSION: 0.15.2
 
 jobs:
+  candidate:
+    name: Register candidate only
+    if: github.event_name == 'push'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Record candidate without building or publishing
+        run: |
+          printf 'Candidate: %s at %s\n' "$GITHUB_REF_NAME" "$GITHUB_SHA" >> "$GITHUB_STEP_SUMMARY"
+          printf 'Dispatch Release from main with fresh native evidence to build a signed draft.\n' >> "$GITHUB_STEP_SUMMARY"
+
   macos:
-    name: macOS app
+    name: Explicit macOS release stage
+    if: github.event_name == 'workflow_dispatch'
     runs-on: macos-latest
+    timeout-minutes: 90
+    permissions:
+      contents: write
     env:
       DEVELOPER_DIR: /Applications/Xcode_26.3.app/Contents/Developer
+      GH_TOKEN: ${{ github.token }}
+      RELEASE_TAG: ${{ inputs.tag }}
+      RELEASE_SHA: ${{ inputs.sha }}
+      RELEASE_CONFIG_SHA256: ${{ inputs.config_sha256 }}
+      RELEASE_STAGE: ${{ inputs.stage }}
+      NATIVE_EVIDENCE: ${{ inputs.native_evidence }}
     steps:
-      - uses: actions/checkout@v7
-      - uses: dtolnay/rust-toolchain@master
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: main
+          fetch-depth: 0
+      - name: Select the validated tag with the main verifier
+        run: |
+          cp scripts/macos-release.py "$RUNNER_TEMP/chda-release-gate.py"
+          cp scripts/verify-macos-update.swift "$RUNNER_TEMP/verify-macos-update.swift"
+          python3 "$RUNNER_TEMP/chda-release-gate.py" select
+      - name: Validate native evidence before preparing a build
+        if: inputs.stage == 'build'
+        run: python3 "$RUNNER_TEMP/chda-release-gate.py" check-build
+      - uses: dtolnay/rust-toolchain@7e38f4b43b4db5c8dd498af069a4f6196df1d067
+        if: inputs.stage == 'build'
         with:
           toolchain: 1.98.1
           targets: aarch64-apple-darwin, x86_64-apple-darwin
-      - uses: mlugg/setup-zig@v2
+      - uses: mlugg/setup-zig@d1434d08867e3ee9daa34448df10607b98908d29 # v2.2.1
+        if: inputs.stage == 'build'
         with:
           version: ${{ env.ZIG_VERSION }}
-      - uses: Swatinem/rust-cache@v2
-      - name: Import signing certificate
-        if: ${{ env.APPLE_CERTIFICATE_P12 != '' }}
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+        if: inputs.stage == 'build'
+      - name: Prepare existing signing credentials
+        if: inputs.stage == 'build'
         env:
           APPLE_CERTIFICATE_P12: ${{ secrets.APPLE_CERTIFICATE_P12 }}
           APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
-        run: |
-          echo "$APPLE_CERTIFICATE_P12" | base64 --decode > cert.p12
-          security create-keychain -p ci build.keychain
-          security default-keychain -s build.keychain
-          security unlock-keychain -p ci build.keychain
-          # A new keychain locks after 5 idle minutes; the build takes longer,
-          # and codesign would then wait for a password nobody can type.
-          security set-keychain-settings build.keychain
-          security import cert.p12 -k build.keychain -P "$APPLE_CERTIFICATE_PASSWORD" -T /usr/bin/codesign
-          security set-key-partition-list -S apple-tool:,apple: -s -k ci build.keychain
-          rm cert.p12
-      - name: Write notarization API key
-        if: ${{ env.APPLE_API_KEY_P8 != '' }}
-        env:
+          CHDA_SIGN_IDENTITY: ${{ secrets.CHDA_SIGN_IDENTITY }}
           APPLE_API_KEY_P8: ${{ secrets.APPLE_API_KEY_P8 }}
-        run: |
-          mkdir -p "$RUNNER_TEMP/keys"
-          printf '%s' "$APPLE_API_KEY_P8" > "$RUNNER_TEMP/keys/AuthKey.p8"
-      - name: Prepare Sparkle signing input
-        env:
+          APPLE_API_KEY_ID: ${{ secrets.APPLE_API_KEY_ID }}
+          APPLE_API_ISSUER_ID: ${{ secrets.APPLE_API_ISSUER_ID }}
           SPARKLE_ED_KEY: ${{ secrets.SPARKLE_ED_KEY }}
           CHDA_SPARKLE_PUBLIC_KEY: ${{ vars.SPARKLE_PUBLIC_KEY }}
         run: |
-          test -n "$SPARKLE_ED_KEY" && test -n "$CHDA_SPARKLE_PUBLIC_KEY"
+          set -euo pipefail
+          for name in APPLE_CERTIFICATE_P12 CHDA_SIGN_IDENTITY APPLE_API_KEY_P8 APPLE_API_KEY_ID APPLE_API_ISSUER_ID SPARKLE_ED_KEY CHDA_SPARKLE_PUBLIC_KEY; do
+            if [ -z "${!name}" ]; then
+              printf 'Required signing input is missing: %s\n' "$name" >&2
+              exit 1
+            fi
+          done
           umask 077
-          printf '%s' "$SPARKLE_ED_KEY" > "$RUNNER_TEMP/sparkle.key"
-      - name: Bundle, sign and notarize
+          printf '%s' "$APPLE_CERTIFICATE_P12" | base64 --decode > "$RUNNER_TEMP/chda-cert.p12"
+          security create-keychain -p ci "$RUNNER_TEMP/chda-build.keychain-db"
+          security default-keychain -s "$RUNNER_TEMP/chda-build.keychain-db"
+          security unlock-keychain -p ci "$RUNNER_TEMP/chda-build.keychain-db"
+          security set-keychain-settings "$RUNNER_TEMP/chda-build.keychain-db"
+          security import "$RUNNER_TEMP/chda-cert.p12" -k "$RUNNER_TEMP/chda-build.keychain-db" -P "$APPLE_CERTIFICATE_PASSWORD" -T /usr/bin/codesign
+          security set-key-partition-list -S apple-tool:,apple: -s -k ci "$RUNNER_TEMP/chda-build.keychain-db"
+          printf '%s' "$APPLE_API_KEY_P8" > "$RUNNER_TEMP/chda-notary.p8"
+          printf '%s' "$SPARKLE_ED_KEY" > "$RUNNER_TEMP/chda-sparkle.key"
+      - name: Recheck freshness, bundle, sign and notarize
+        if: inputs.stage == 'build'
         timeout-minutes: 45
         env:
           CHDA_SIGN_IDENTITY: ${{ secrets.CHDA_SIGN_IDENTITY }}
           CHDA_SPARKLE_PUBLIC_KEY: ${{ vars.SPARKLE_PUBLIC_KEY }}
-          CHDA_SPARKLE_KEY_FILE: ${{ runner.temp }}/sparkle.key
-          APPLE_API_KEY_P8: ${{ secrets.APPLE_API_KEY_P8 != '' && format('{0}/keys/AuthKey.p8', runner.temp) || '' }}
+          CHDA_SPARKLE_KEY_FILE: ${{ runner.temp }}/chda-sparkle.key
+          APPLE_API_KEY_P8: ${{ runner.temp }}/chda-notary.p8
           APPLE_API_KEY_ID: ${{ secrets.APPLE_API_KEY_ID }}
           APPLE_API_ISSUER_ID: ${{ secrets.APPLE_API_ISSUER_ID }}
-        run: scripts/bundle-macos.sh "${GITHUB_REF_NAME#v}"
-      - name: Publish release
         run: |
-          scripts/release-notes.sh "$GITHUB_REF_NAME" > notes.md
-          if [ -s notes.md ]; then
-            gh release create "$GITHUB_REF_NAME" target/bundle/chda-*.zip target/bundle/appcast.xml \
-              --title "chda $GITHUB_REF_NAME" --notes-file notes.md
-          else
-            gh release create "$GITHUB_REF_NAME" target/bundle/chda-*.zip target/bundle/appcast.xml \
-              --title "chda $GITHUB_REF_NAME" --generate-notes
-          fi
-        env:
-          GH_TOKEN: ${{ github.token }}
-      - name: Update Homebrew cask
-        if: ${{ env.RELEASE_TOKEN != '' }}
+          set -euo pipefail
+          python3 "$RUNNER_TEMP/chda-release-gate.py" check-build
+          scripts/bundle-macos.sh "${RELEASE_TAG#v}"
+      - name: Retain signed assets and checksums in a draft
+        if: inputs.stage == 'build'
+        run: python3 "$RUNNER_TEMP/chda-release-gate.py" draft
+      - name: Publish identical assets or repair only Homebrew
+        if: inputs.stage == 'publish' || inputs.stage == 'cask'
         env:
           RELEASE_TOKEN: ${{ secrets.RELEASE_TOKEN }}
-          GH_TOKEN: ${{ secrets.RELEASE_TOKEN }}
-        run: scripts/update-cask.sh "${GITHUB_REF_NAME#v}" target/bundle/chda-*.zip
+        run: python3 "$RUNNER_TEMP/chda-release-gate.py" "$RELEASE_STAGE"
       - name: Remove ephemeral signing input
-        if: always()
-        run: rm -f "$RUNNER_TEMP/sparkle.key"
+        if: always() && inputs.stage == 'build'
+        run: |
+          rm -f "$RUNNER_TEMP/chda-cert.p12" "$RUNNER_TEMP/chda-notary.p8" "$RUNNER_TEMP/chda-sparkle.key"
+          if [ -f "$RUNNER_TEMP/chda-build.keychain-db" ]; then
+            security delete-keychain "$RUNNER_TEMP/chda-build.keychain-db"
+          fi

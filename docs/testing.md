@@ -141,6 +141,11 @@ and real CLI resume verification. Record final release evidence separately.
 
 ## Session-preserving updates
 
+Release workflow policy tests are `python3 scripts/test-macos-release.py`.
+They exercise synthetic source/evidence/artifact and promotion failures, not
+native UI, signing or public release proof. See [macOS release operations](releasing.md)
+for the distinct native review, before-build, before-deploy and artifact gates.
+
 Run `cargo test --workspace`, `cargo clippy --workspace --all-targets -- -D warnings`,
 `python3 scripts/test-appcast.py` and `python3 scripts/sync-product-docs.py --check`.
 The macOS CI job also compiles the universal native helper against the pinned
