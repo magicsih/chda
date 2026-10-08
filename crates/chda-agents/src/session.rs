@@ -178,6 +178,79 @@ pub(crate) fn head_cwd(file: &Path) -> Option<PathBuf> {
     None
 }
 
+/// Never treat a filename suffix or a partial UUID as an exact conversation.
+pub(crate) fn transcript_matches_id(file: &Path, agent: AgentId, id: &SessionId) -> bool {
+    use std::io::{BufRead, Read};
+    let Some(stem) = file.file_stem().and_then(|s| s.to_str()) else {
+        return false;
+    };
+    if id.0.is_empty() {
+        return false;
+    }
+    if stem == id.0 {
+        return true;
+    }
+    if agent != AgentId::Codex || !stem.starts_with("rollout-") || !stem.ends_with(&id.0) {
+        return false;
+    }
+    let Ok(file) = std::fs::File::open(file) else {
+        return false;
+    };
+    let reader = std::io::BufReader::new(file.take(512 * 1024));
+    for line in reader.split(b'\n').take(50).filter_map(Result::ok) {
+        let Ok(value) = serde_json::from_slice::<serde_json::Value>(&line) else {
+            continue;
+        };
+        if value["type"] == "session_meta" {
+            return value["payload"]["id"]
+                .as_str()
+                .or_else(|| value["payload"]["session_id"].as_str())
+                == Some(id.0.as_str());
+        }
+    }
+    false
+}
+
+/// Read only a bounded top-level metadata prefix, leaving message bodies alone.
+pub(crate) fn head_metadata_field(file: &Path, field: &str) -> Option<String> {
+    use serde::de::{MapAccess, Visitor};
+    use std::io::Read;
+    struct Field<'a> {
+        key: &'a str,
+        found: &'a mut Option<String>,
+    }
+    impl<'de> Visitor<'de> for Field<'_> {
+        type Value = ();
+        fn expecting(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
+            f.write_str("session metadata")
+        }
+        fn visit_map<M: MapAccess<'de>>(self, mut map: M) -> Result<Self::Value, M::Error> {
+            while let Some(key) = map.next_key::<String>()? {
+                if key == self.key {
+                    *self.found = Some(map.next_value::<String>()?);
+                    // Stop deliberately before serde consumes/validates the
+                    // remaining map: this reads metadata, not message bodies.
+                    return Err(serde::de::Error::custom("metadata extracted"));
+                }
+                map.next_value::<serde::de::IgnoredAny>()?;
+            }
+            Ok(())
+        }
+    }
+    let file = std::fs::File::open(file).ok()?;
+    let mut parser =
+        serde_json::Deserializer::from_reader(std::io::BufReader::new(file.take(512 * 1024)));
+    let mut found = None;
+    let _ = serde::Deserializer::deserialize_map(
+        &mut parser,
+        Field {
+            key: field,
+            found: &mut found,
+        },
+    );
+    found
+}
+
 /// Iterate the lines of a transcript that contain any of `needles`, without
 /// reading the whole file into memory. Lines that fail to decode are skipped.
 pub(crate) fn matching_lines(
@@ -271,6 +344,46 @@ pub(crate) fn parse_rfc3339_ms(s: &str) -> Option<u64> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn resume_requires_the_exact_provider_identity_not_a_filename_suffix() {
+        let dir = std::env::temp_dir().join(format!("chda-exact-session-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let claude = dir.join("other-s1.jsonl");
+        std::fs::write(&claude, "{}").unwrap();
+        assert!(!transcript_matches_id(
+            &claude,
+            AgentId::Claude,
+            &SessionId("s1".into())
+        ));
+        assert!(transcript_matches_id(
+            &claude,
+            AgentId::Claude,
+            &SessionId("other-s1".into())
+        ));
+        let codex = dir.join("rollout-time-parent-session.jsonl");
+        std::fs::write(
+            &codex,
+            r#"{"type":"session_meta","payload":{"id":"parent-session"}}"#,
+        )
+        .unwrap();
+        assert!(transcript_matches_id(
+            &codex,
+            AgentId::Codex,
+            &SessionId("parent-session".into())
+        ));
+        assert!(!transcript_matches_id(
+            &codex,
+            AgentId::Codex,
+            &SessionId("session".into())
+        ));
+        assert!(!transcript_matches_id(
+            &codex,
+            AgentId::Claude,
+            &SessionId("parent-session".into())
+        ));
+        std::fs::remove_dir_all(dir).unwrap();
+    }
 
     #[test]
     fn cache_parses_only_wanted_sessions_and_survives_a_restart() {

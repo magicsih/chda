@@ -84,6 +84,75 @@ pub struct AgentLaunchContext {
     pub policy: PermissionPolicy,
     pub session: Option<SessionId>,
     pub managed: bool,
+    /// A provider account report observed at launch, not an effective auth claim.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub reported_account_scope: Option<String>,
+}
+
+/// One-shot conversation/worktree routing cannot override an exact resume.
+pub fn validate_resume_options(agent: AgentId, options: &[String]) -> Result<(), String> {
+    let mut index = 0;
+    while let Some(arg) = options.get(index) {
+        if arg == "--" {
+            break;
+        }
+        let flag = arg.split('=').next().unwrap_or(arg);
+        let conflict = match agent {
+            AgentId::Claude => {
+                matches!(
+                    flag,
+                    "--resume"
+                        | "-r"
+                        | "--continue"
+                        | "-c"
+                        | "--fork-session"
+                        | "--session-id"
+                        | "--from-pr"
+                        | "--worktree"
+                        | "-w"
+                ) || (!flag.starts_with("--") && flag.starts_with("-r") && flag.len() > 2)
+            }
+            AgentId::Codex => matches!(flag, "--last" | "--all" | "--fork" | "--cd" | "-C"),
+            _ => false,
+        };
+        if conflict {
+            return Err(format!(
+                "Recorded option {flag} changes conversation or directory routing and cannot override this exact resume. The captured options were preserved; no new conversation was started."
+            ));
+        }
+        if !arg.contains('=') && scalar_option(agent, flag) {
+            index += 1;
+        }
+        index += 1;
+    }
+    Ok(())
+}
+
+fn scalar_option(agent: AgentId, flag: &str) -> bool {
+    matches!(
+        flag,
+        "--model"
+            | "-m"
+            | "--settings"
+            | "--append-system-prompt"
+            | "--system-prompt"
+            | "--resume"
+            | "-r"
+            | "--profile"
+            | "-p"
+            | "--effort"
+            | "--session-id"
+            | "--cd"
+            | "-C"
+            | "--agent"
+            | "--agents"
+            | "--json-schema"
+    ) || (agent == AgentId::Claude && flag == "--permission-mode")
+        || (agent == AgentId::Codex
+            && matches!(
+                flag,
+                "-a" | "--ask-for-approval" | "-s" | "--sandbox" | "-c" | "--config"
+            ))
 }
 
 /// Preserve preset arguments and reject explicit policy conflicts. Inherit
@@ -166,24 +235,7 @@ pub fn permission_arguments(
             conflicting.push(flag.to_owned());
         }
         // A scalar option value is data even when it resembles another flag.
-        if inline.is_none()
-            && matches!(
-                flag,
-                "--model"
-                    | "-m"
-                    | "--settings"
-                    | "--append-system-prompt"
-                    | "--system-prompt"
-                    | "--resume"
-                    | "-r"
-                    | "--profile"
-                    | "-p"
-                    | "--effort"
-                    | "--session-id"
-                    | "--cd"
-                    | "-C"
-            )
-        {
+        if inline.is_none() && !takes_policy_value && scalar_option(agent, flag) {
             i += 1;
         }
         i += 1;
@@ -215,6 +267,28 @@ mod tests {
     use super::*;
     fn args(s: &[&str]) -> Vec<String> {
         s.iter().map(|s| (*s).into()).collect()
+    }
+    #[test]
+    fn exact_resume_rejects_routing_overrides_but_preserves_option_values() {
+        for (agent, options) in [
+            (AgentId::Claude, args(&["--continue"])),
+            (AgentId::Claude, args(&["--session-id=other"])),
+            (AgentId::Claude, args(&["--fork-session"])),
+            (AgentId::Codex, args(&["--last"])),
+            (AgentId::Codex, args(&["--cd", "elsewhere"])),
+        ] {
+            assert!(validate_resume_options(agent, &options).is_err());
+        }
+        for agent in [AgentId::Claude, AgentId::Codex] {
+            assert!(validate_resume_options(agent, &args(&["--model", "saved-model"])).is_ok());
+            assert!(
+                validate_resume_options(
+                    agent,
+                    &args(&["--append-system-prompt", "--continue", "--", "--last"])
+                )
+                .is_ok()
+            );
+        }
     }
     #[test]
     fn default_policy_preserves_arguments_and_bypass_is_explicit() {
@@ -324,6 +398,7 @@ mod tests {
             policy: PermissionPolicy::Bypass,
             session: Some(SessionId("exact-session".into())),
             managed: true,
+            reported_account_scope: Some("account@example.test".into()),
         };
         assert_eq!(
             serde_json::from_str::<AgentLaunchContext>(&serde_json::to_string(&context).unwrap())

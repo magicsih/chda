@@ -4,6 +4,7 @@
 //! docs/testing.md for the list and what each covers.
 
 mod agent_launch;
+mod agent_restart;
 mod agents;
 mod closing;
 mod config;

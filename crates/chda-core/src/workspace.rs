@@ -321,6 +321,9 @@ pub struct PaneInfo {
     pub agent_session: Option<AgentSessionRef>,
     /// Captured only for commands chda launched, never inferred from TUI text.
     pub agent_launch: Option<chda_agents::AgentLaunchContext>,
+    pub managed_run: Option<crate::ManagedRun>,
+    /// App-owned basename of the previous run's private, read-only output.
+    pub previous_run: Option<String>,
 }
 
 /// An agent conversation: which agent and its session id.

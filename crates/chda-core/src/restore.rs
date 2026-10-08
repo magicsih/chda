@@ -79,6 +79,10 @@ pub enum SavedNode {
         session: Option<String>,
         #[serde(default, skip_serializing_if = "Option::is_none")]
         launch: Option<Box<chda_agents::AgentLaunchContext>>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        run: Option<Box<crate::ManagedRun>>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        previous_run: Option<String>,
         /// The pane's id, kept only when handing running panes to a new
         /// chda process (their programs report to it).
         #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -102,6 +106,7 @@ pub struct RestoredPane {
     /// The agent conversation the pane had open.
     pub agent: Option<AgentSessionRef>,
     pub launch: Option<chda_agents::AgentLaunchContext>,
+    pub run: Option<crate::ManagedRun>,
 }
 
 /// Saved directories that no longer exist, with what replaced them.
@@ -200,6 +205,8 @@ impl Workspace {
                     agent: agent.as_ref().map(|a| a.agent.clone()),
                     session: agent.map(|a| a.session),
                     launch: info.and_then(|i| i.agent_launch.clone()).map(Box::new),
+                    run: info.and_then(|i| i.managed_run.clone()).map(Box::new),
+                    previous_run: info.and_then(|i| i.previous_run.clone()),
                     pane: ids.then_some(p.raw()),
                 }
             }
@@ -268,6 +275,8 @@ impl Workspace {
                 agent,
                 session,
                 launch,
+                run,
+                previous_run,
                 pane,
             } => {
                 let resolved = match cwd {
@@ -288,6 +297,8 @@ impl Workspace {
                     previous_activity: (*last_activity > 0).then_some(*last_activity),
                     agent_session: agent.clone(),
                     agent_launch: launch.as_deref().cloned(),
+                    managed_run: run.as_deref().cloned(),
+                    previous_run: previous_run.clone(),
                     ..Default::default()
                 };
                 let pane = match pane {
@@ -299,6 +310,7 @@ impl Workspace {
                     cwd: resolved,
                     agent,
                     launch: launch.as_deref().cloned(),
+                    run: run.as_deref().cloned(),
                 });
                 Node::Leaf(pane)
             }

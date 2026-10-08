@@ -10,12 +10,14 @@ mod gitlab;
 mod graph;
 pub mod handoff;
 pub use graph::*;
+mod managed_run;
 mod names;
 pub mod notifications;
 mod refresh;
 pub mod release;
 pub mod resources;
 mod restore;
+pub use managed_run::ManagedRun;
 mod sidebar;
 mod update;
 mod watch;
@@ -35,7 +37,7 @@ pub mod agents {
         CODEX_TITLE_ENV, CodexRunState, HookEvent, HookInstallReport, HookKind, LaunchHistory,
         LimitUsage, ModelUsage, PANE_ENV, PermissionPolicy, SessionCache, SessionId, Usage,
         adapters, codex_notify_config, command_argv, compact_tokens, ipc, parse_codex_title,
-        permission_arguments,
+        permission_arguments, validate_resume_options,
     };
     pub use chda_agents::{control, quota, statusline, which};
 }

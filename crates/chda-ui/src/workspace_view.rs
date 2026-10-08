@@ -18,6 +18,7 @@ use chda_core::agents::{
 use chda_core::notifications::Severity;
 use chda_core::release::{Release, ReleaseCheck, parse_latest};
 mod agent_launch;
+mod agent_restart;
 mod notifications;
 mod upgrade;
 use chda_core::{
@@ -283,6 +284,9 @@ pub struct WorkspaceView {
     pub(crate) ws: Workspace,
     pub(crate) panes: HashMap<PaneId, (Entity<TerminalView>, Subscription)>,
     pub(crate) graphs: HashMap<TabId, Entity<crate::git_graph::GitGraphView>>,
+    previous_runs: HashMap<PaneId, Entity<crate::readonly_text::ReadOnlyText>>,
+    previous_open: HashSet<PaneId>,
+    owned_outputs: std::cell::RefCell<HashMap<PaneId, String>>,
     focus_handle: FocusHandle,
     pub(crate) sidebar: Entity<SidebarView>,
     _sidebar_sub: Subscription,
@@ -424,6 +428,9 @@ impl WorkspaceView {
             ws,
             panes: HashMap::new(),
             graphs: HashMap::new(),
+            previous_runs: HashMap::new(),
+            previous_open: HashSet::new(),
+            owned_outputs: Default::default(),
             focus_handle: cx.focus_handle(),
             sidebar,
             _sidebar_sub: sidebar_sub,
@@ -758,6 +765,12 @@ impl WorkspaceView {
                 cx.notify();
             });
         }
+        for previous in self.previous_runs.values() {
+            previous.update(cx, |view, cx| {
+                view.settings = settings.clone();
+                cx.notify();
+            });
+        }
         self.settings = settings;
     }
 
@@ -1064,6 +1077,15 @@ impl WorkspaceView {
     }
 
     fn apply_hook_event(&mut self, ev: HookEvent, window: &mut Window, cx: &mut Context<Self>) {
+        if let Some(run) = ev
+            .pane
+            .and_then(|raw| self.ws.pane_by_raw(raw))
+            .and_then(|pane| self.ws.pane(pane))
+            .and_then(|info| info.managed_run.as_ref())
+            && (run.stopped() || run.started_at().is_some_and(|at| ev.timestamp < at))
+        {
+            return;
+        }
         // An old pane ID must never fall back to a replacement shell in its worktree.
         if ev
             .pane
@@ -1988,19 +2010,57 @@ impl WorkspaceView {
             })
             .collect();
         for p in panes {
-            self.initializing_panes.insert(p.pane);
+            if let Some(file) = self
+                .ws
+                .pane(p.pane)
+                .and_then(|info| info.previous_run.clone())
+            {
+                self.owned_outputs.borrow_mut().insert(p.pane, file);
+            }
             let adopting = self.env.windows.borrow().update.adopting;
+            if p.run.as_ref().is_some_and(chda_core::ManagedRun::stopped) {
+                self.ws.end_agent(p.pane);
+                continue;
+            }
+            if !adopting && p.launch.is_some() && !self.config.restore_agents {
+                if let Some(info) = self.ws.pane_mut(p.pane) {
+                    info.agent_launch = None;
+                    info.managed_run = None;
+                }
+            } else if !adopting && let Some(context) = &p.launch {
+                let result = self.captured_resume_argv(context);
+                match result {
+                    Ok(command) => {
+                        self.initializing_panes.insert(p.pane);
+                        self.ws.pane_mut(p.pane).unwrap().managed_run =
+                            Some(chda_core::ManagedRun::Starting {
+                                started_at: now_ms(),
+                            });
+                        self.open_pane(
+                            p.pane,
+                            Some(context.cwd.clone()),
+                            Some(command),
+                            window,
+                            cx,
+                        );
+                    }
+                    Err(error) => {
+                        let info = self.ws.pane_mut(p.pane).unwrap();
+                        info.cwd = Some(context.cwd.clone());
+                        info.managed_run = Some(chda_core::ManagedRun::failed(error));
+                        self.ws.end_agent(p.pane);
+                    }
+                }
+                continue;
+            }
+            self.initializing_panes.insert(p.pane);
             let command = if adopting {
                 None
             } else {
                 match &p.agent {
                     Some(conversation) if self.config.restore_agents => {
                         let cwd = p.cwd.clone().unwrap_or_default();
-                        let argv = if let Some(context) = &p.launch {
-                            self.captured_agent_argv(context)
-                        } else {
-                            self.resume_argv(&cwd, conversation)
-                        };
+                        let argv = self.resume_argv(&cwd, conversation);
                         match argv {
                             Ok(argv) => Some(argv),
                             Err(why) => {
@@ -2137,11 +2197,20 @@ impl WorkspaceView {
             && !registry.restoring
             && let Some(dir) = self.env.data_dir.as_deref()
         {
-            let _ = registry.snapshot().save(dir);
+            let snapshot = registry.snapshot();
+            if snapshot.save(dir).is_ok() {
+                self.prune_owned_outputs(&snapshot, dir);
+            }
         }
     }
 
     fn sync_panes(&mut self, cx: &mut Context<Self>) {
+        self.previous_runs
+            .retain(|pane, _| self.ws.pane(*pane).is_some());
+        self.previous_open
+            .retain(|pane| self.ws.pane(*pane).is_some());
+        self.initializing_panes
+            .retain(|pane| self.ws.pane(*pane).is_some());
         let panes: Vec<(PaneId, PathBuf)> = self
             .ws
             .tabs()
@@ -2193,9 +2262,11 @@ impl WorkspaceView {
                     ActiveTab {
                         plain_terminal: tab_ref.is_some_and(|t| {
                             t.terminal().is_some()
-                                && t.panes()
-                                    .iter()
-                                    .all(|p| self.ws.pane(*p).is_none_or(|i| !i.agent_live))
+                                && t.panes().iter().all(|p| {
+                                    self.ws
+                                        .pane(*p)
+                                        .is_none_or(|i| !i.agent_live && i.agent_launch.is_none())
+                                })
                         }),
                         agent_live: tab_ref.is_some_and(|t| {
                             t.panes()
@@ -2311,9 +2382,82 @@ impl WorkspaceView {
             info.cwd = cwd.clone();
         }
         let settings = self.settings.clone();
-        let env = std::rc::Rc::clone(&self.env);
-        let view =
-            cx.new(|cx| TerminalView::new(settings, &env, pane.raw(), cwd, command, window, cx));
+        let managed = self
+            .ws
+            .pane(pane)
+            .and_then(|p| p.agent_launch.as_ref())
+            .is_some_and(|c| c.managed);
+        let result = TerminalView::plan(
+            &settings,
+            &self.env,
+            pane.raw(),
+            cwd.clone(),
+            command,
+            managed,
+        )
+        .and_then(TerminalView::prepare);
+        let prepared = match result {
+            Ok(prepared) => prepared,
+            Err(e) => {
+                self.initializing_panes.remove(&pane);
+                if self.env.windows.borrow().update.adopting {
+                    self.env.windows.borrow_mut().update.adoption_failed = true;
+                }
+                if let Some(info) = self.ws.pane_mut(pane) {
+                    info.managed_run = Some(chda_core::ManagedRun::failed(format!(
+                        "Could not start process: {e}"
+                    )));
+                    info.agent_live = false;
+                }
+                self.notify_error(format!("Could not start the pane: {e}"));
+                self.sync_panes(cx);
+                return;
+            }
+        };
+        self.attach_terminal(pane, prepared, settings, cwd, window, cx);
+    }
+
+    fn attach_terminal(
+        &mut self,
+        pane: PaneId,
+        prepared: crate::terminal_view::PreparedTerminal,
+        settings: Settings,
+        cwd: Option<PathBuf>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if !self.env.windows.borrow().update.adopting
+            && let Some(context) = self
+                .ws
+                .pane(pane)
+                .and_then(|p| p.agent_launch.clone())
+                .filter(|c| c.managed)
+        {
+            self.ws
+                .set_agent_status(pane, context.agent.as_str(), AgentStatus::Idle, now_ms());
+            self.ws.pane_mut(pane).unwrap().agent_live = true;
+            self.initializing_panes.remove(&pane);
+            if let Some(session) = context.session {
+                self.ws.set_agent_session(
+                    pane,
+                    Some(AgentSessionRef {
+                        agent: context.agent.as_str().into(),
+                        session: session.0,
+                    }),
+                );
+            }
+        }
+        if let Some(info) = self.ws.pane_mut(pane)
+            && info.agent_launch.as_ref().is_some_and(|c| c.managed)
+        {
+            let started_at = info
+                .managed_run
+                .as_ref()
+                .and_then(chda_core::ManagedRun::started_at)
+                .unwrap_or_else(now_ms);
+            info.managed_run = Some(chda_core::ManagedRun::Running { started_at });
+        }
+        let view = cx.new(|cx| TerminalView::new(prepared, settings, cwd, window, cx));
         let sub = cx.subscribe_in(&view, window, move |this, _, event, window, cx| {
             this.on_pane_event(pane, event, window, cx)
         });
@@ -2334,7 +2478,7 @@ impl WorkspaceView {
             return;
         };
         let previous = parse_codex_title(&info.title);
-        let ending = matches!(event, TerminalEvent::Prompt | TerminalEvent::Exited)
+        let ending = matches!(event, TerminalEvent::Prompt | TerminalEvent::Exited { .. })
             || matches!(event, TerminalEvent::Title(t) if t.is_empty());
         let kind = if ending {
             if previous.is_none()
@@ -2407,7 +2551,16 @@ impl WorkspaceView {
     ) {
         self.apply_codex_terminal_event(pane, event, window, cx);
         match event {
-            TerminalEvent::Exited => {
+            TerminalEvent::Exited { status, output } => {
+                if self
+                    .ws
+                    .pane(pane)
+                    .and_then(|p| p.agent_launch.as_ref())
+                    .is_some_and(|c| c.managed)
+                {
+                    self.managed_exit(pane, status.as_ref(), output.as_ref(), window, cx);
+                    return;
+                }
                 self.ws.close_pane(pane);
                 self.panes.remove(&pane);
                 if self.ws.is_empty() {
@@ -3985,8 +4138,7 @@ impl WorkspaceView {
         if matches!(agent, AgentId::Claude | AgentId::Codex) {
             self.show_agent_launch(cwd, agent, Vec::new(), resume, window, cx);
         } else {
-            let argv = self.agent_argv(cwd, agent, resume.as_ref());
-            self.open_tab_at(Some(cwd.to_path_buf()), argv, window, cx);
+            self.open_managed_launch(cwd, agent, Vec::new(), resume, window, cx);
         }
     }
 
@@ -4016,11 +4168,7 @@ impl WorkspaceView {
             self.show_agent_launch(cwd, agent, options, None, window, cx);
             return;
         }
-        let argv = self.agent_argv(cwd, agent, None).map(|mut argv| {
-            argv.extend(preset.args.iter().cloned());
-            argv
-        });
-        self.open_tab_at(Some(cwd.to_path_buf()), argv, window, cx);
+        self.open_managed_launch(cwd, agent, options, None, window, cx);
     }
 
     /// The presets that can run: those naming an agent chda knows.
@@ -4089,9 +4237,19 @@ impl WorkspaceView {
                 missing.push(adapter.display_name().to_owned());
                 continue;
             }
-            let session = SessionId(pick.session);
-            if let Some(argv) = self.agent_argv(&pick.worktree, adapter.id(), Some(&session)) {
-                launches.push((pick.worktree, argv));
+            match self
+                .launch_item(
+                    &pick.worktree,
+                    adapter.id(),
+                    Vec::new(),
+                    Some(SessionId(pick.session)),
+                )
+                .and_then(|item| {
+                    self.captured_resume_argv(&item.context)
+                        .map(|argv| (item.context, argv))
+                }) {
+                Ok(launch) => launches.push(launch),
+                Err(e) => self.notify_error(e),
             }
         }
         missing.dedup();
@@ -4103,13 +4261,15 @@ impl WorkspaceView {
             return;
         }
         let aspect = self.tab_aspect(window);
-        for (i, (cwd, argv)) in launches.into_iter().enumerate() {
+        for (i, (context, argv)) in launches.into_iter().enumerate() {
             let pane = if i == 0 {
                 Some(self.ws.new_tab().1)
             } else {
                 self.ws.split_largest(aspect)
             };
             if let Some(pane) = pane {
+                let cwd = context.cwd.clone();
+                self.ws.pane_mut(pane).unwrap().agent_launch = Some(context);
                 self.open_pane(pane, Some(cwd), Some(argv), window, cx);
             }
         }
@@ -5481,8 +5641,16 @@ impl WorkspaceView {
         Some(bar.into_any_element())
     }
 
-    fn render_node(&self, node: &Node, divider: Hsla) -> AnyElement {
+    fn render_node(&self, node: &Node, divider: Hsla, cx: &mut Context<Self>) -> AnyElement {
         match node {
+            Node::Leaf(pane)
+                if self
+                    .ws
+                    .pane(*pane)
+                    .is_some_and(|info| info.managed_run.is_some()) =>
+            {
+                self.render_managed_pane(*pane, cx)
+            }
             Node::Leaf(pane) => match self.panes.get(pane) {
                 // Cached: redrawing the window (tab bar spinner, another
                 // pane's output) reuses a pane's last frame unless it changed.
@@ -5500,8 +5668,8 @@ impl WorkspaceView {
                 first,
                 second,
             } => {
-                let first = self.render_node(first, divider);
-                let second = self.render_node(second, divider);
+                let first = self.render_node(first, divider, cx);
+                let second = self.render_node(second, divider, cx);
                 let (container, first_box, line) = match axis {
                     Axis::Horizontal => (
                         div().flex_row(),
@@ -6026,8 +6194,8 @@ impl Render for WorkspaceView {
         let content = match self.ws.active_tab() {
             Some(tab) => match &tab.content {
                 chda_core::TabContent::Terminal(terminal) => match terminal.zoomed {
-                    Some(pane) => self.render_node(&Node::Leaf(pane), divider),
-                    None => self.render_node(&terminal.root, divider),
+                    Some(pane) => self.render_node(&Node::Leaf(pane), divider, cx),
+                    None => self.render_node(&terminal.root, divider, cx),
                 },
                 chda_core::TabContent::GitGraph { .. } => self
                     .graphs

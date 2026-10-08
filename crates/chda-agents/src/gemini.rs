@@ -127,6 +127,10 @@ impl AgentAdapter for GeminiAdapter {
         gemini_dir().map(|d| d.join("tmp")).into_iter().collect()
     }
 
+    fn has_session(&self, id: &SessionId) -> bool {
+        !id.0.is_empty() && self.session_roots().iter().any(|root| has_chat(root, id))
+    }
+
     /// Gemini CLI keeps one folder per project directory and records that
     /// directory in its `.project_root` file.
     fn session_dirs(&self, worktrees: &[PathBuf]) -> Vec<PathBuf> {
@@ -170,6 +174,27 @@ fn project_root(project_dir: &Path) -> Option<PathBuf> {
     let text = fs::read_to_string(project_dir.join(".project_root")).ok()?;
     let root = text.trim();
     (!root.is_empty()).then(|| PathBuf::from(root))
+}
+
+fn has_chat(root: &Path, id: &SessionId) -> bool {
+    fs::read_dir(root)
+        .into_iter()
+        .flatten()
+        .flatten()
+        .any(|project| {
+            fs::read_dir(project.path().join("chats"))
+                .into_iter()
+                .flatten()
+                .flatten()
+                .any(|entry| {
+                    let path = entry.path();
+                    matches!(
+                        path.extension().and_then(|s| s.to_str()),
+                        Some("json" | "jsonl")
+                    ) && crate::session::head_metadata_field(&path, "sessionId").as_deref()
+                        == Some(id.0.as_str())
+                })
+        })
 }
 
 /// Text of a user message, if it is a prompt rather than a tool response or
@@ -254,6 +279,25 @@ pub fn parse_chat(file: &Path, cwd: &Path) -> Option<AgentSession> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn resume_confirms_full_metadata_id_for_legacy_json_and_jsonl() {
+        let dir = std::env::temp_dir().join(format!("chda-gemini-resume-{}", std::process::id()));
+        let chats = dir.join("project/chats");
+        fs::create_dir_all(&chats).unwrap();
+        for extension in ["json", "jsonl"] {
+            let file = chats.join(format!("session-time-short.{extension}"));
+            fs::write(
+                &file,
+                r#"{"sessionId":"full-identity","messages":[{"content":"not retained"}]}"#,
+            )
+            .unwrap();
+            assert!(has_chat(&dir, &SessionId("full-identity".into())));
+            assert!(!has_chat(&dir, &SessionId("identity".into())));
+            assert!(!has_chat(&dir, &SessionId("short".into())));
+            fs::remove_file(file).unwrap();
+        }
+        fs::remove_dir_all(dir).unwrap();
+    }
 
     #[test]
     fn parses_a_chat_log_and_adds_hooks_to_the_system_defaults() {
