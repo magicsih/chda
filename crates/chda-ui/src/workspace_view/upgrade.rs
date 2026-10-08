@@ -192,6 +192,7 @@ impl WorkspaceView {
                 let mut saved = view.ws.handoff_snapshot();
                 saved.bounds = view.bounds;
                 state.session.windows.push(saved);
+                state.notifications.push(view.notifications.clone());
                 for tab in view.ws.tabs() {
                     for pane in tab.panes() {
                         if let Some((terminal, _)) = view.panes.get(&pane) {

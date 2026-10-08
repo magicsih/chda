@@ -26,6 +26,8 @@ pub(crate) struct WindowRegistry {
     pub update: crate::upgrade::UpdateState,
     pub replay: Vec<Incoming>,
     pub ipc_server: Option<chda_core::agents::ipc::Server>,
+    pub inherited_notifications:
+        std::collections::VecDeque<chda_core::notifications::NotificationQueue>,
 }
 impl WindowRegistry {
     pub fn snapshot(&self) -> SavedSession {

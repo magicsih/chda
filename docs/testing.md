@@ -29,6 +29,7 @@ Three layers, all run by `cargo test --workspace` (CI: the macOS job).
 |---|---|---|
 | S1 New work: create a worktree from the sheet | `worktrees::create_then_delete_a_worktree_in_one_go` | |
 | S2 Watching agents: status per pane, ACTIVE list, Dock badge, notification, jump, notification click | `agents::hook_events_drive_status_badge_jump_and_notification_click` | #12, #13, #25 |
+| Title-bar notification history: consecutive events, unread arrivals while open, Escape typing focus, exact source pane, hidden sidebar, narrow bounds, per-window isolation and cold restart | `notifications::*`, `chda-core` `notifications::tests::*`, `handoff::tests::handoff_round_trips_with_binary_snapshots` | #155 |
 | Gemini CLI, Copilot CLI and OpenCode report status like Claude Code | `agents::gemini_copilot_and_opencode_report_like_claude_code` | #20 |
 | An agent creates a worktree, opens tabs and lists worktrees through `chda mcp` | `mcp::an_agent_creates_a_worktree_opens_tabs_and_lists_worktrees` | #22 |
 | S3 Resuming: a worktree lists its agent sessions | `worktrees::worktree_lists_its_agent_sessions` | #41 |
