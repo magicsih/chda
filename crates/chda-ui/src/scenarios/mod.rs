@@ -11,6 +11,7 @@ mod closing;
 mod config;
 mod diagrams;
 mod diff;
+mod diff_review;
 mod folders;
 mod git_graph;
 mod harness;

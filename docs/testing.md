@@ -176,3 +176,7 @@ progress, recovered terminal text and error wrapping, and desktop/narrow Pages
 were visually checked during implementation; repeat them for release artifacts.
 Production Sparkle signing input must be registered before publishing the first
 updater-enabled release. See [decision 0011](decisions/0011-session-preserving-updates.md).
+
+## Private Diff review
+
+`scenarios::diff_review` uses isolated repositories, real shells and native GPUI entities. It covers discovery beside the existing pager; old/new range entry; refresh preserving a draft; stale edits retaining their original anchor; restored virtual tabs without additional PTYs; failed saves and draft copying; fresh batch previews; changed diff and exact conversation rejection; manual clipboard handoff preserving unfinished terminal input. `chda-core::review::tests` and `chda-git::review_diff::tests` cover exact context attachment, private storage, optimistic window conflicts, path and hunk parsing, external-helper exclusion and handoff serialization. These tests do not count as pixel or actual macOS review rounds.

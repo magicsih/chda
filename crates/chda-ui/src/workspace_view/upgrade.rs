@@ -133,6 +133,7 @@ impl WorkspaceView {
                         || view.launch_sheet.is_some()
                         || view.note_sheet.is_some()
                         || view.share_sheet.is_some()
+                        || view.reviews.values().any(|(v, _)| v.read(cx).pending())
                         || view.confirm.is_some()
                         || view.palette.is_some()
                         || view.renaming.is_some()

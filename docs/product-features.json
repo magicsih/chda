@@ -8,7 +8,7 @@
     },
     {
       "area": "Tabs and splits",
-      "details": "Open another window with cmd-shift-n. Windows, terminal and Git tree tabs, splits, active focus, directories and exact supported agent conversations come back after restart. Previous working activity remains available separately from new runtime output. Every tab has a visible close button, including long labels and inactive tabs; cmd-w closes the focused pane. Working or waiting agents ask before stopping.",
+      "details": "Open another window with cmd-shift-n. Windows, terminal, Git tree and Diff review tabs, splits, active focus, directories and exact supported agent conversations come back after restart. Previous working activity remains available separately from new runtime output. Every tab has a visible close button, including long labels and inactive tabs; cmd-w closes the focused pane. Working or waiting agents ask before stopping.",
       "title": "Keep your place, close safely",
       "summary": "Restore windows, layouts and supported agent conversations. Keep previous working context and close one pane or a whole tab safely."
     },
@@ -47,6 +47,12 @@
       "details": "Right-click a repository and choose \"View Git tree\" for a read-only commit graph with parent connections, subjects, short hashes and local / remote branches, tags and HEAD. History loads in pages as you scroll; refresh or retry without opening a shell. One graph tab per repository; graph tabs restore after a restart.",
       "title": "Read the Git tree",
       "summary": "Choose View Git tree from the repository menu for commit connections, subjects, short hashes and branch, tag and HEAD labels. Browse in a read-only tab, refresh and restore it after restarting."
+    },
+    {
+      "area": "Diff review",
+      "title": "Review changes with private notes",
+      "summary": "Choose Review diff from a worktree menu. Select old or new lines, add private notes and preview a batch for an exact live agent conversation. Copy and focus its pane, then paste when ready.",
+      "details": "One native review tab per worktree keeps the existing diff pager available. Browse a unified diff with old/new line numbers and a file list that collapses in narrow windows; Shift-click selects a range within one hunk. Add, edit and resolve local notes. Exact unchanged context reconnects after refresh; missing or ambiguous locations stay Stale and require explicit reattachment. Renames keep both path identities; binary and metadata-only changes have no text anchors. Notes persist privately across restarts; failed saves keep editable drafts. Send review notes previews selected notes against a freshly read diff, including original locations for stale notes. Choose an exact live provider/conversation in the same Git worktree. Copy and go to agent rechecks the diff, notes and target, copies plain text and focuses its pane. Paste manually; direct delivery is unavailable. Working and approval-waiting input is never cleared, pasted into or automatically submitted. Copying does not resolve notes or claim delivery; changed conversations block the copy. Open editors and previews defer session-preserving updates."
     },
     {
       "area": "Agents",
