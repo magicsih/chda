@@ -42,4 +42,4 @@
 | `review-640.png` | `e225754e5a0636e7355ec9dba80482e780c61fcf0e97330ddb6535bd5729a69b` |
 | `review-390.png` | `a04f3240c68689db1288e2b2009dc2786ccc8d16175e6f043dad46dd3c87108a` |
 
-승인 상태는 **사람 검토 대기**다.
+사람 승인은 [approval.md](approval.md)에 기록했다(커밋 `371f938`).
