@@ -294,6 +294,8 @@ class PromotionTests(unittest.TestCase):
         self.state = {'draft': True, 'prerelease': False, 'tag_name': 'v0.1.21'}
         self.previous_tag = 'v0.1.20'
         self.mutations = []
+        self.signed_archive_checks = []
+        self.signed_archive_failure = False
 
     def git(self, *args):
         return self.original_command('git', *args)
@@ -331,13 +333,18 @@ class PromotionTests(unittest.TestCase):
             for path in self.assets.iterdir():
                 shutil.copy2(path, root / path.name)
 
+        def signed_archive(_root, tag):
+            self.signed_archive_checks.append(tag)
+            if self.signed_archive_failure:
+                raise ValueError('Synthetic signed archive verification failed')
+
         with contextlib.redirect_stdout(io.StringIO()), \
                 patch.dict(os.environ, env), patch.object(sys, 'argv', [str(SCRIPT), stage]), \
                 patch.object(release, 'command', self.command), \
                 patch.object(release, 'gh_release', lambda _tag: self.state), \
                 patch.object(release, 'download', download), \
                 patch.object(release, 'frozen_exception', lambda: exception), \
-                patch.object(release, 'native_archive'), \
+                patch.object(release, 'native_archive', signed_archive), \
                 patch.object(release, 'update_cask', lambda *_: self.mutations.append('cask')), \
                 patch.object(release, 'datetime', wraps=datetime) as clock:
             clock.now.return_value = now
@@ -372,6 +379,7 @@ class PromotionTests(unittest.TestCase):
     def test_publish_same_draft_once_then_retry_or_cask_without_rebuilding(self):
         self.run_stage('publish')
         self.assertEqual(self.mutations, ['upload', 'publish', 'cask'])
+        self.assertEqual(self.signed_archive_checks, ['v0.1.21'])
         self.mutations.clear()
         self.run_stage('publish')
         self.assertEqual(self.mutations, ['cask'])
@@ -419,6 +427,19 @@ class PromotionTests(unittest.TestCase):
         self.mutations.clear()
         self.run_stage('cask', exception=record)
         self.assertEqual(self.mutations, ['cask'])
+        self.assertEqual(self.signed_archive_checks, ['v0.1.21', 'v0.1.21'])
+
+    def test_exception_cannot_publish_when_signed_archive_verification_fails(self):
+        record = exception_record(self.sha, self.tree)
+        before = exception_evidence(record, sha=self.sha, tree=self.tree)
+        release.make_manifest(self.assets, before, now=NOW - timedelta(minutes=1))
+        after = exception_evidence(record, 'before-deploy', sha=self.sha, tree=self.tree)
+        after['artifact_sha256'] = release.hash_file(self.assets / release.archive_name('v0.1.21'))
+        self.signed_archive_failure = True
+        with self.assertRaisesRegex(ValueError, 'signed archive verification failed'):
+            self.run_stage('publish', after, exception=record)
+        self.assertEqual(self.mutations, [])
+        self.assertTrue(self.state['draft'])
 
     def test_exception_modified_archive_cannot_publish(self):
         record = exception_record(self.sha, self.tree)
@@ -452,6 +473,21 @@ class PromotionTests(unittest.TestCase):
             self.assertEqual(gate.with_suffix('.exception.json').stat().st_mode & 0o777, 0o600)
             with self.assertRaises(ValueError):
                 release.freeze_exception('v0.1.21')
+
+    def test_main_record_original_bytes_are_not_whitespace_normalized(self):
+        record = json.dumps(json.loads(exception_record(self.sha, self.tree)),
+                            sort_keys=True, indent=2, ensure_ascii=False) + '\n'
+        doc = self.repo / release.EXCEPTION_PATH
+        doc.parent.mkdir(parents=True)
+        for number, noncanonical in enumerate((' \n' + record, record + '\n')):
+            doc.write_text(noncanonical)
+            self.git('add', str(doc.relative_to(self.repo)))
+            self.git('commit', '-m', 'chore: synthetic noncanonical approval')
+            gate = self.root / ('gate-%d.py' % number)
+            with self.subTest(number=number), patch.object(release, '__file__', str(gate)):
+                with self.assertRaises(ValueError):
+                    release.freeze_exception('v0.1.21')
+                self.assertFalse(gate.with_suffix('.exception.json').exists())
 
 
 class CaskTests(unittest.TestCase):

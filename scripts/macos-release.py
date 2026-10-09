@@ -359,14 +359,21 @@ def freeze_exception(tag):
                            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
     if found.returncode:
         return
-    text = command('git', 'show', 'HEAD:' + EXCEPTION_PATH) + '\n'
-    # Preserve the canonical committed bytes, including exactly one final newline.
+    require(int(command('git', 'cat-file', '-s', 'HEAD:' + EXCEPTION_PATH)) <= 65536,
+            'Exception record exceeds the metadata limit')
+    body = subprocess.run(['git', 'show', 'HEAD:' + EXCEPTION_PATH], check=True,
+                          stdout=subprocess.PIPE, stderr=subprocess.PIPE).stdout
+    require(len(body) <= 65536, 'Exception record exceeds the metadata limit')
+    text = body.decode('utf-8')
+    # Validate and freeze the exact committed bytes, without whitespace normalization.
     record = read_json_text(text)
     require(text == json.dumps(record, sort_keys=True, indent=2, ensure_ascii=False) + '\n',
             'The committed exception record must use canonical JSON encoding')
-    with path.open('x', encoding='utf-8') as handle:
-        handle.write(text)
-    path.chmod(0o600)
+    fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+    with os.fdopen(fd, 'wb') as handle:
+        handle.write(body)
+        handle.flush()
+        os.fsync(handle.fileno())
 
 
 def frozen_exception():
