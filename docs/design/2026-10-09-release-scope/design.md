@@ -1,6 +1,6 @@
 # 다음 macOS 릴리스 범위 재검토 — 1.2
 
-- 상태: 검토 대기. 범위 변경을 아직 적용하지 않았다.
+- 상태: A 승인. [정확한 승인 기록](approval.md). 기존 검수·서명·공개 조건은 유지한다.
 - 정본: 이 문서. [시각 검토](review.html).
 - 연결: [승인 1.0](../2026-10-08-macos-next-release/approval.md),
   [승인 1.1](../2026-10-09-codex-shared-server/approval.md),
