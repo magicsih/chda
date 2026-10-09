@@ -58,7 +58,7 @@ fn background_title_spinners_and_output_do_not_redraw_the_window(cx: &mut TestAp
     assert_eq!(sidebar.get(), s, "spinner and output redrew the sidebar");
     assert_eq!(h.read(|v, _| v.ws.tab_title(&v.ws.tabs()[0])), tab_title);
 
-    // ACTIVE still learns the new activity time for its next age tick.
+    // Sessions still learns the new activity time for its next age tick.
     let pane = h.read(|v, _| v.ws.tabs()[0].panes()[0]);
     let at = h.read(|v, _| v.ws.pane(pane).unwrap().last_activity);
     assert!(at > 0);
@@ -66,9 +66,9 @@ fn background_title_spinners_and_output_do_not_redraw_the_window(cx: &mut TestAp
         v.sidebar
             .read(cx)
             .model
-            .active_tabs
+            .sessions
             .iter()
-            .any(|t| t.last_activity == at)
+            .any(|r| r.last_activity == at)
     }));
 
     // The turn ending is a real change again.

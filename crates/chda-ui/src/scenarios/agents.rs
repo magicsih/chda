@@ -1,4 +1,4 @@
-//! Agent status per pane: tab dots, the ACTIVE list, the Dock badge,
+//! Agent status per pane: tab dots, the Sessions list, the Dock badge,
 //! notifications, "go to waiting agent" and notification clicks.
 
 use chda_core::AgentStatus;
@@ -26,9 +26,17 @@ fn hook_events_drive_status_badge_jump_and_notification_click(cx: &mut TestAppCo
             .is_some_and(|a| a.status == AgentStatus::WaitingInput)
     });
     h.read(|v, cx| {
-        let active = &v.sidebar.read(cx).model.active_tabs;
-        let row = active.iter().find(|t| t.tab == v.ws.tabs()[0].id).unwrap();
-        assert_eq!(row.status, AgentStatus::WaitingInput, "ACTIVE list agrees");
+        let sessions = &v.sidebar.read(cx).model.sessions;
+        let row = sessions
+            .iter()
+            .find(|r| r.key == chda_core::SessionKey::Pane(first))
+            .unwrap();
+        assert_eq!(
+            row.status,
+            Some(AgentStatus::WaitingInput),
+            "Sessions agrees"
+        );
+        assert_eq!(row.status_label(), "Waiting for input");
     });
     assert_eq!(h.system.0.borrow().badge, 1, "one unseen waiting agent");
     {
@@ -114,12 +122,11 @@ fn gemini_copilot_and_opencode_report_like_claude_code(cx: &mut TestAppContext) 
             })
         });
         h.wait_for("the live agent becomes idle after review", move |v, cx| {
-            v.sidebar
-                .read(cx)
-                .model
-                .idle_agents
-                .iter()
-                .any(|r| r.pane == pane && r.agent == agent)
+            v.sidebar.read(cx).model.sessions.iter().any(|r| {
+                r.key == chda_core::SessionKey::Pane(pane)
+                    && r.live_idle()
+                    && r.agent.as_deref() == Some(agent)
+            })
         });
         h.hook_from(agent, Some(pane.raw()), &home, HookKind::SessionEnd, "s");
         h.wait_for("the session to end", move |v, _| {
@@ -341,7 +348,7 @@ fn working_spinner_turns_only_while_an_agent_works(cx: &mut TestAppContext) {
         !h.read(|v, _| v.spinning),
         "no timer without a working agent"
     );
-    // Only the once-a-second ACTIVE age tick repaints the sidebar now.
+    // Only the once-a-second Sessions age tick repaints the sidebar now.
     while notices.next().now_or_never().is_some() {}
     let mut repaints = 0;
     for _ in 0..16 {

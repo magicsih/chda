@@ -15,14 +15,15 @@ fn click_row(h: &mut Harness, selector: &str) {
 }
 
 #[gpui::test]
-fn active_labels_and_clicks_follow_split_focus_across_branches(cx: &mut TestAppContext) {
+fn split_agent_rows_keep_their_own_labels_and_follow_pane_focus(cx: &mut TestAppContext) {
     use super::harness::git;
     use crate::sidebar_view::SidebarEvent;
+    use chda_core::SessionKey;
     use chda_core::agents::HookKind;
 
     let mut main = std::path::PathBuf::new();
     let mut feature = main.clone();
-    let mut h = Harness::open(cx, "active-focus", |home| {
+    let mut h = Harness::open(cx, "split-labels", |home| {
         main = home.repo("app");
         feature = home.home.join("feature");
         git(
@@ -52,7 +53,7 @@ fn active_labels_and_clicks_follow_split_focus_across_branches(cx: &mut TestAppC
         })
     });
     h.wait_prompt();
-    let (tab, first) = h.read(|v, _| (v.ws.active_tab().unwrap().id, v.ws.focused_pane().unwrap()));
+    let first = h.read(|v, _| v.ws.focused_pane().unwrap());
     h.hook(Some(first.raw()), &main, HookKind::PromptSubmitted);
     h.wait_for("the first pane working", |v, _| {
         v.ws.pane(first).unwrap().agent.is_some()
@@ -69,48 +70,55 @@ fn active_labels_and_clicks_follow_split_focus_across_branches(cx: &mut TestAppC
         v.sidebar
             .read(cx)
             .model
-            .idle_agents
+            .sessions
             .iter()
-            .any(|r| r.pane == second)
+            .any(|r| r.key == SessionKey::Pane(second) && r.live_idle())
     });
+    let labels = |h: &Harness| {
+        h.read(|v, cx| {
+            v.sidebar
+                .read(cx)
+                .model
+                .sessions
+                .iter()
+                .filter(|r| matches!(r.key, SessionKey::Pane(_)))
+                .map(|r| (r.key, r.title.clone()))
+                .collect::<Vec<_>>()
+        })
+    };
+    let expected = vec![
+        (SessionKey::Pane(first), "main".to_owned()),
+        (SessionKey::Pane(second), "feature".to_owned()),
+    ];
+    assert_eq!(
+        labels(&h),
+        expected,
+        "each agent row names its own pane's branch"
+    );
+    // Moving the split focus without output moves only the highlights.
     h.keys("cmd-alt-left");
     h.read(|v, cx| {
         assert_eq!(v.ws.focused_pane(), Some(first));
         let sidebar = v.sidebar.read(cx);
-        let row = sidebar
-            .model
-            .active_tabs
-            .iter()
-            .find(|r| r.tab == tab)
-            .unwrap();
-        assert_eq!(
-            row.branch.as_deref(),
-            Some("main"),
-            "ACTIVE follows focus even without new output or agent status"
-        );
-        assert_eq!(row.title, "main");
+        assert_eq!(sidebar.focused_session(), Some(SessionKey::Pane(first)));
         assert_eq!(sidebar.selected.as_ref(), Some(&main));
     });
+    assert_eq!(labels(&h), expected);
     h.keys("cmd-t");
     h.wait_prompt();
-    click_row(&mut h, &format!("active-{tab:?}"));
+    click_row(&mut h, &format!("session-pane-{}", first.raw()));
     h.read(|v, cx| {
         assert_eq!(v.ws.focused_pane(), Some(first));
         assert_eq!(v.sidebar.read(cx).selected.as_ref(), Some(&main));
     });
-    click_row(&mut h, &format!("idle-{}", second.raw()));
+    click_row(&mut h, &format!("session-pane-{}", second.raw()));
     h.read(|v, cx| {
         assert_eq!(v.ws.focused_pane(), Some(second));
         let sidebar = v.sidebar.read(cx);
-        let row = sidebar
-            .model
-            .active_tabs
-            .iter()
-            .find(|r| r.tab == tab)
-            .unwrap();
-        assert_eq!(row.branch.as_deref(), Some("feature"));
+        assert_eq!(sidebar.focused_session(), Some(SessionKey::Pane(second)));
         assert_eq!(sidebar.selected.as_ref(), Some(&feature));
     });
+    assert_eq!(labels(&h), expected);
 }
 
 #[gpui::test]
@@ -160,8 +168,8 @@ fn navigation_reveals_only_clipped_rows_and_keeps_repository_context(cx: &mut Te
             cx.notify();
         })
     });
-    // New tabs must not change ACTIVE's height while measuring reveal deltas.
-    click_row(&mut h, "active-section-toggle");
+    // New tabs must not change Sessions' height while measuring reveal deltas.
+    click_row(&mut h, "sessions-section-toggle");
     for (path, position) in [
         (&paths[6], 0),
         (&paths[23], 0),
@@ -171,7 +179,7 @@ fn navigation_reveals_only_clipped_rows_and_keeps_repository_context(cx: &mut Te
     ] {
         h.cx.run_until_parked();
         if position != 0 {
-            let scroll = h.read(|v, cx| v.sidebar.read(cx).scroll.clone());
+            let scroll = h.read(|v, cx| v.sidebar.read(cx).project_scroll.clone());
             if position == 1 {
                 scroll.set_offset(point(px(0.0), -scroll.max_offset().y));
             } else {
@@ -198,9 +206,9 @@ fn navigation_reveals_only_clipped_rows_and_keeps_repository_context(cx: &mut Te
         let (offset, viewport, max) = h.read(|v, cx| {
             let s = v.sidebar.read(cx);
             (
-                s.scroll.offset().y,
-                s.scroll.bounds(),
-                s.scroll.max_offset().y,
+                s.project_scroll.offset().y,
+                s.project_scroll.bounds(),
+                s.project_scroll.max_offset().y,
             )
         });
         let delta = if before.top() < viewport.top() + px(32.0) {
@@ -225,15 +233,15 @@ fn navigation_reveals_only_clipped_rows_and_keeps_repository_context(cx: &mut Te
         h.cx.update(|window, cx| window.simulate_next_frame(cx));
         h.cx.run_until_parked();
         let after = h.cx.debug_bounds(selector).unwrap();
-        let viewport = h.read(|v, cx| v.sidebar.read(cx).scroll.bounds());
+        let viewport = h.read(|v, cx| v.sidebar.read(cx).project_scroll.bounds());
         h.read(|v, cx| {
             let sidebar = v.sidebar.read(cx);
-            let offset = sidebar.scroll.offset().y;
-            let max = sidebar.scroll.max_offset().y;
+            let offset = sidebar.project_scroll.offset().y;
+            let max = sidebar.project_scroll.max_offset().y;
             assert!(max > px(0.0), "fixture has a scrollable list");
             assert_eq!(sidebar.selected.as_ref(), Some(path));
             assert!((offset - expected).abs() < px(2.0),
-                "visible rows retain their offset; clipped rows move only to their edge: actual {:?}, expected {expected:?}", sidebar.scroll.offset());
+                "visible rows retain their offset; clipped rows move only to their edge: actual {:?}, expected {expected:?}", sidebar.project_scroll.offset());
         });
         assert!(after.top() >= viewport.top() && after.bottom() <= viewport.bottom());
         if h.cx.debug_bounds("repo-0").unwrap().top() < viewport.top() {
@@ -241,7 +249,7 @@ fn navigation_reveals_only_clipped_rows_and_keeps_repository_context(cx: &mut Te
             assert!(after.top() >= viewport.top() + px(32.0));
         }
         // A background refresh must not move the list back to this target.
-        let scroll = h.read(|v, cx| v.sidebar.read(cx).scroll.clone());
+        let scroll = h.read(|v, cx| v.sidebar.read(cx).project_scroll.clone());
         scroll.set_offset(point(px(0.0), px(0.0)));
         h.run("echo still-here", "still-here");
         assert_eq!(scroll.offset().y, px(0.0));
@@ -249,79 +257,7 @@ fn navigation_reveals_only_clipped_rows_and_keeps_repository_context(cx: &mut Te
 }
 
 #[gpui::test]
-fn agent_sections_collapse_independently_and_persist(cx: &mut TestAppContext) {
-    use super::harness::wait_until;
-    use crate::terminal_view::TerminalEvent;
-    use chda_core::agents::HookKind;
-
-    let mut h = Harness::open(cx, "section-collapse", |_| {});
-    h.wait_prompt();
-    let (tab, pane) = h.read(|v, _| (v.ws.active_tab().unwrap().id, v.ws.focused_pane().unwrap()));
-    h.hook(Some(pane.raw()), &h.home.home, HookKind::SessionStart);
-    h.wait_for("the live idle row", |v, cx| {
-        v.sidebar.read(cx).model.idle_agents.len() == 1
-    });
-    let active_selector = Box::leak(format!("active-{tab:?}").into_boxed_str());
-    let idle_selector = Box::leak(format!("idle-{}", pane.raw()).into_boxed_str());
-    click_row(&mut h, "active-section-toggle");
-    assert!(h.cx.debug_bounds(active_selector).is_none());
-    assert!(h.cx.debug_bounds(idle_selector).is_some());
-    let label = h.read(|v, _| v.config.active_label);
-    click_row(&mut h, "active-label-toggle");
-    assert_ne!(h.read(|v, _| v.config.active_label), label);
-    assert!(
-        h.read(|v, _| v.config.active_collapsed),
-        "label toggle never expands its parent"
-    );
-    click_row(&mut h, "idle-section-toggle");
-    assert!(h.cx.debug_bounds(idle_selector).is_none());
-    assert!(h.cx.debug_bounds("active-section-toggle").is_some());
-    assert!(h.cx.debug_bounds("idle-section-toggle").is_some());
-    let config = chda_config::ChdaConfig::load(&h.home.config).unwrap();
-    assert!(config.active_collapsed && config.idle_agents_collapsed);
-    assert_eq!(h.read(|v, _| v.ws.focused_pane()), Some(pane));
-    let terminal = h.focused_terminal();
-    h.cx.update(|_, cx| {
-        terminal.update(cx, |_, cx| {
-            cx.emit(TerminalEvent::Activity(crate::terminal_view::now_ms()))
-        })
-    });
-    h.cx.run_until_parked();
-    assert!(h.cx.debug_bounds(active_selector).is_none());
-    assert!(h.cx.debug_bounds(idle_selector).is_none());
-    click_row(&mut h, "active-section-toggle");
-    assert!(h.cx.debug_bounds(active_selector).is_some());
-    assert!(h.cx.debug_bounds(idle_selector).is_none());
-    click_row(&mut h, "active-section-toggle");
-    // Restore does not restore agent life, but it retains both preferences.
-    let (mut cx2, view2) = h.reopen();
-    wait_until(&mut cx2, &view2, "saved section preferences", |v, cx| {
-        let sidebar = v.sidebar.read(cx);
-        sidebar.active_collapsed
-            && sidebar.idle_agents_collapsed
-            && !sidebar.model.active_tabs.is_empty()
-    });
-    cx2.run_until_parked();
-    assert!(cx2.debug_bounds("active-section-toggle").is_some());
-    let restored_tab = view2.read_with(&cx2, |v, _| v.ws.active_tab().unwrap().id);
-    assert!(
-        cx2.debug_bounds(Box::leak(
-            format!("active-{restored_tab:?}").into_boxed_str()
-        ))
-        .is_none()
-    );
-    // Live configuration changes also apply independently.
-    let mut config = chda_config::ChdaConfig::load(&h.home.config).unwrap();
-    config.active_collapsed = false;
-    config.save(&h.home.config).unwrap();
-    wait_until(&mut cx2, &view2, "live section preference", |v, cx| {
-        let sidebar = v.sidebar.read(cx);
-        !sidebar.active_collapsed && sidebar.idle_agents_collapsed
-    });
-}
-
-#[gpui::test]
-fn project_is_a_peer_section_and_collapses_without_hiding_active(cx: &mut TestAppContext) {
+fn project_is_a_peer_section_and_collapses_without_hiding_sessions(cx: &mut TestAppContext) {
     use super::harness::wait_until;
     let mut h = Harness::open(cx, "project-section", |home| {
         let repo = home.repo("app");
@@ -342,14 +278,16 @@ fn project_is_a_peer_section_and_collapses_without_hiding_active(cx: &mut TestAp
         v.sidebar.read(cx).model.repos.len() == 2
     });
     h.cx.run_until_parked();
-    let active = h.cx.debug_bounds("active-section-toggle").unwrap();
-    let idle =
-        h.cx.debug_bounds("idle-section-toggle")
-            .expect("empty IDLE still has a header");
+    let sessions = h.cx.debug_bounds("sessions-section-toggle").unwrap();
     let project =
         h.cx.debug_bounds("project-section-toggle")
-            .expect("PROJECT is the third peer section");
-    assert!(active.top() < idle.top() && idle.top() < project.top());
+            .expect("PROJECT is the second peer section");
+    assert!(sessions.top() < project.top());
+    assert!(
+        h.cx.debug_bounds("active-section-toggle").is_none()
+            && h.cx.debug_bounds("idle-section-toggle").is_none(),
+        "Sessions replaces ACTIVE and IDLE"
+    );
     assert!(h.cx.debug_bounds("repo-0").unwrap().top() >= project.bottom());
     assert!(h.cx.debug_bounds("repo-1").is_some());
     assert!(
@@ -357,7 +295,8 @@ fn project_is_a_peer_section_and_collapses_without_hiding_active(cx: &mut TestAp
     );
     click_row(&mut h, "project-section-toggle");
     assert!(h.cx.debug_bounds("repo-0").is_none());
-    assert!(h.cx.debug_bounds("active-section-toggle").is_some());
+    assert!(h.cx.debug_bounds("sessions-section-toggle").is_some());
+    assert!(h.cx.debug_bounds("sessions-list").is_some());
     assert!(h.cx.debug_bounds("add-repo").is_some());
     assert!(saved(&h).contains("project-collapsed = true"));
     let (mut cx2, view2) = h.reopen();
@@ -389,23 +328,28 @@ fn plain_terminal_rows_follow_agents_and_close_the_exact_background_tab(cx: &mut
     h.keys("cmd-d");
     h.wait_prompt();
     h.cx.run_until_parked();
-    let bounds = |h: &mut Harness, id| {
-        h.cx.debug_bounds(Box::leak(format!("active-{id:?}").into_boxed_str()))
-            .unwrap()
-    };
-    let agent_top = bounds(&mut h, agent).top();
-    let shell_top = bounds(&mut h, shell).top();
+    let bounds =
+        |h: &mut Harness, selector: String| h.cx.debug_bounds(Box::leak(selector.into_boxed_str()));
+    let agent_top = bounds(&mut h, format!("session-pane-{}", pane.raw()))
+        .unwrap()
+        .top();
+    let shell_top = bounds(&mut h, format!("session-tab-{shell:?}"))
+        .unwrap()
+        .top();
     assert!(
         agent_top < shell_top,
         "agent split comes before ordinary shells"
     );
     assert!(
-        h.cx.debug_bounds(Box::leak(
-            format!("active-close-{agent:?}").into_boxed_str()
-        ))
-        .is_none()
+        bounds(&mut h, format!("session-tab-{agent:?}")).is_none(),
+        "a tab with an agent pane is listed by its agent"
     );
-    click_row(&mut h, &format!("active-close-{shell:?}"));
+    assert!(bounds(&mut h, format!("session-close-tab-{agent:?}")).is_none());
+    assert!(
+        bounds(&mut h, format!("session-close-pane-{}", pane.raw())).is_none(),
+        "a working agent's pane does not close from its row"
+    );
+    click_row(&mut h, &format!("session-close-tab-{shell:?}"));
     assert_eq!(
         h.read(|v, _| v.ws.active_tab().unwrap().id),
         agent,
@@ -518,7 +462,7 @@ fn the_title_bar_button_collapses_and_expands_the_sidebar(cx: &mut TestAppContex
 }
 
 #[gpui::test]
-fn active_tabs_stay_in_place_and_labels_toggle_persistently(cx: &mut TestAppContext) {
+fn session_rows_stay_in_place_and_labels_toggle_persistently(cx: &mut TestAppContext) {
     use super::harness::{git, wait_until};
     use crate::sidebar_view::SidebarEvent;
     use crate::terminal_view::TerminalEvent;
@@ -545,11 +489,11 @@ fn active_tabs_stay_in_place_and_labels_toggle_persistently(cx: &mut TestAppCont
         })
     });
     h.wait_prompt();
-    h.wait_for("the ACTIVE branch alias", |v, cx| {
+    h.wait_for("the Sessions branch alias", |v, cx| {
         v.sidebar
             .read(cx)
             .model
-            .active_tabs
+            .sessions
             .iter()
             .any(|t| t.title == "Fix login")
     });
@@ -574,7 +518,7 @@ fn active_tabs_stay_in_place_and_labels_toggle_persistently(cx: &mut TestAppCont
             terminal.update(cx, |_, cx| cx.emit(TerminalEvent::Activity(at)));
         });
         h.read(|v, cx| {
-            let rows = &v.sidebar.read(cx).model.active_tabs;
+            let rows = &v.sidebar.read(cx).model.sessions;
             assert_eq!(rows.iter().map(|r| r.tab).collect::<Vec<_>>(), order);
             let tab =
                 v.ws.tabs()
@@ -595,13 +539,13 @@ fn active_tabs_stay_in_place_and_labels_toggle_persistently(cx: &mut TestAppCont
     }
     // Use the actual header button, rather than invoking the handler directly.
     h.cx.run_until_parked();
-    let at = h.cx.debug_bounds("active-label-toggle").unwrap().center();
+    let at = h.cx.debug_bounds("sessions-label-toggle").unwrap().center();
     h.cx.simulate_click(at, Modifiers::none());
     h.cx.run_until_parked();
     assert_eq!(h.read(|v, _| v.config.active_label), ActiveLabel::Branch);
     assert!(saved(&h).contains("active-label = \"branch\""));
     h.read(|v, cx| {
-        let rows = &v.sidebar.read(cx).model.active_tabs;
+        let rows = &v.sidebar.read(cx).model.sessions;
         assert_eq!(rows.iter().map(|r| r.tab).collect::<Vec<_>>(), order);
         assert!(
             rows.iter()
@@ -613,13 +557,13 @@ fn active_tabs_stay_in_place_and_labels_toggle_persistently(cx: &mut TestAppCont
     wait_until(
         &mut cx2,
         &view2,
-        "restored ACTIVE branch labels",
+        "restored Sessions branch labels",
         |v, cx| {
             v.config.active_label == ActiveLabel::Branch
                 && v.sidebar
                     .read(cx)
                     .model
-                    .active_tabs
+                    .sessions
                     .iter()
                     .any(|r| r.title == "main")
         },
@@ -635,14 +579,14 @@ fn active_tabs_stay_in_place_and_labels_toggle_persistently(cx: &mut TestAppCont
             && v.sidebar
                 .read(cx)
                 .model
-                .active_tabs
+                .sessions
                 .iter()
                 .any(|r| r.title == "Fix login")
     });
     // Removing the note outside chda falls back to the actual branch name.
     git(&repo, &["config", "--unset", "branch.main.description"]);
     h.wait_for("alias fallback after the note is removed", |v, cx| {
-        let rows = &v.sidebar.read(cx).model.active_tabs;
+        let rows = &v.sidebar.read(cx).model.sessions;
         rows.iter().any(|r| r.branch.as_deref() == Some("main"))
             && rows
                 .iter()
@@ -663,7 +607,7 @@ fn activity_ages_refresh_without_output_or_session_writes(cx: &mut TestAppContex
     });
     h.cx.run_until_parked();
     let sidebar = h.read(|v, _| v.sidebar.clone());
-    let before = h.read(|v, cx| v.sidebar.read(cx).model.active_tabs.clone());
+    let before = h.read(|v, cx| v.sidebar.read(cx).model.sessions.clone());
     let session = std::fs::read(h.home.data.join("session.json")).unwrap();
     let mut notices = h.cx.cx.notifications(&sidebar);
     h.cx.executor().advance_clock(Duration::from_secs(1));
@@ -673,7 +617,7 @@ fn activity_ages_refresh_without_output_or_session_writes(cx: &mut TestAppContex
         "idle ages repaint each second"
     );
     assert_eq!(
-        h.read(|v, cx| v.sidebar.read(cx).model.active_tabs.clone()),
+        h.read(|v, cx| v.sidebar.read(cx).model.sessions.clone()),
         before,
         "a clock tick does not create activity or reorder rows"
     );

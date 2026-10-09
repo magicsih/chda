@@ -1,7 +1,7 @@
 //! Live idle sessions stay distinct from shells and saved conversations (#112).
 use super::harness::Harness;
 use chda_core::agents::HookKind;
-use chda_core::{AgentSessionRef, AgentStatus, PaneId};
+use chda_core::{AgentSessionRef, AgentStatus, PaneId, SessionKey, SessionRow};
 use gpui::{Modifiers, TestAppContext};
 use std::process::Command;
 
@@ -14,14 +14,25 @@ fn click(h: &mut Harness, selector: &str) {
     h.cx.simulate_click(at, Modifiers::none());
     h.cx.run_until_parked();
 }
+/// Live idle agent rows, in Sessions order.
+fn idle_rows(v: &crate::workspace_view::WorkspaceView, cx: &gpui::App) -> Vec<SessionRow> {
+    v.sidebar
+        .read(cx)
+        .model
+        .sessions
+        .iter()
+        .filter(|r| r.live_idle())
+        .cloned()
+        .collect()
+}
 fn rows(h: &Harness) -> Vec<PaneId> {
     h.read(|v, cx| {
-        v.sidebar
-            .read(cx)
-            .model
-            .idle_agents
+        idle_rows(v, cx)
             .iter()
-            .map(|r| r.pane)
+            .filter_map(|r| match r.key {
+                SessionKey::Pane(pane) => Some(pane),
+                SessionKey::Tab(_) => None,
+            })
             .collect()
     })
 }
@@ -51,7 +62,7 @@ fn idle_rows_follow_live_panes_and_preserve_mixed_state_attention(cx: &mut TestA
     emit(&mut h, working, HookKind::PromptSubmitted);
     emit(&mut h, waiting, HookKind::WaitingInput);
     h.wait_for("one live idle and two active agents", |v, cx| {
-        v.sidebar.read(cx).model.idle_agents.len() == 1
+        idle_rows(v, cx).len() == 1
             && v.ws
                 .pane(working)
                 .unwrap()
@@ -68,35 +79,36 @@ fn idle_rows_follow_live_panes_and_preserve_mixed_state_attention(cx: &mut TestA
     h.cx.run_until_parked();
     let name =
         h.cx.debug_bounds(Box::leak(
-            format!("idle-name-{}", first.raw()).into_boxed_str(),
+            format!("session-label-pane-{}", first.raw()).into_boxed_str(),
         ))
         .unwrap();
     assert!(
         f32::from(name.size.width) > 40.0,
         "idle name remains readable at minimum width: {name:?}"
     );
-    // The dot and the agent name share one line.
+    // The status icon and the label share one line.
     let bounds = |h: &mut Harness, kind: &str| {
         h.cx.debug_bounds(Box::leak(
-            format!("idle-{kind}-{}", first.raw()).into_boxed_str(),
+            format!("session-{kind}-pane-{}", first.raw()).into_boxed_str(),
         ))
         .unwrap()
     };
-    let (dot, label) = (bounds(&mut h, "dot"), bounds(&mut h, "label"));
+    let (dot, label) = (bounds(&mut h, "status"), bounds(&mut h, "label"));
     assert!(
         dot.top() < label.bottom() && label.top() < dot.bottom() && dot.right() <= label.left(),
         "dot {dot:?} sits left of the name {label:?}"
     );
     h.read(|v, cx| {
-        let r = &v.sidebar.read(cx).model.idle_agents[0];
-        assert_eq!(r.agent, "claude");
+        let r = &idle_rows(v, cx)[0];
+        assert_eq!(r.agent.as_deref(), Some("claude"));
         assert_eq!(r.pane_index, 1);
+        assert!(r.shares_tab, "three agents share the split tab");
         assert_eq!(
             r.since, 0,
             "startup alone does not timestamp idle readiness"
         );
-        assert!(!r.tab.is_empty());
-        assert!(!r.location.is_empty());
+        assert!(!r.tab_title.is_empty());
+        assert!(!r.location().is_empty());
     });
     // SessionStart on compaction of the same conversation keeps its work.
     emit(&mut h, working, HookKind::SessionStart);
@@ -122,12 +134,12 @@ fn idle_rows_follow_live_panes_and_preserve_mixed_state_attention(cx: &mut TestA
     }));
     // Clicking the idle row must choose its pane rather than the tab's
     // higher-priority working/waiting pane, and preserve their attention.
-    click(&mut h, &format!("idle-{}", first.raw()));
+    click(&mut h, &format!("session-pane-{}", first.raw()));
     assert_eq!(pane(&h), first);
     assert_eq!(h.system.0.borrow().badge, 1);
     emit(&mut h, first, HookKind::PromptSubmitted);
     h.wait_for("the idle pane starts work", |v, cx| {
-        v.sidebar.read(cx).model.idle_agents.is_empty()
+        idle_rows(v, cx).is_empty()
     });
     h.keys("cmd-2");
     emit(&mut h, first, HookKind::Stopped);
@@ -161,7 +173,7 @@ fn idle_rows_follow_live_panes_and_preserve_mixed_state_attention(cx: &mut TestA
         })
     });
     assert_eq!(rows(&h), vec![first]);
-    let since = h.read(|v, cx| v.sidebar.read(cx).model.idle_agents[0].since);
+    let since = h.read(|v, cx| idle_rows(v, cx)[0].since);
     assert!(since > 0);
     emit(&mut h, working, HookKind::Stopped);
     h.wait_for("second unread completion", |v, _| {
@@ -188,17 +200,10 @@ fn idle_rows_follow_live_panes_and_preserve_mixed_state_attention(cx: &mut TestA
     for _ in 0..2 {
         emit(&mut h, first, HookKind::Idle);
     }
-    h.wait_for("no duplicates", |v, cx| {
-        v.sidebar.read(cx).model.idle_agents.len() == 2
-    });
-    assert_eq!(
-        h.read(|v, cx| v.sidebar.read(cx).model.idle_agents[0].since),
-        since
-    );
+    h.wait_for("no duplicates", |v, cx| idle_rows(v, cx).len() == 2);
+    assert_eq!(h.read(|v, cx| idle_rows(v, cx)[0].since), since);
     emit(&mut h, first, HookKind::SessionEnd);
-    h.wait_for("ended agent removed", |v, cx| {
-        v.sidebar.read(cx).model.idle_agents.len() == 1
-    });
+    h.wait_for("ended agent removed", |v, cx| idle_rows(v, cx).len() == 1);
     assert_eq!(rows(&h), vec![working]);
     assert!(h.read(|v, _| v.ws.pane(first).unwrap().agent.is_none()));
     assert!(h.read(|v, _| v.ws.pane(plain).unwrap().agent.is_none()));
@@ -250,7 +255,7 @@ fn idle_close_targets_only_its_pane_and_tab_close_still_confirms(cx: &mut TestAp
     emit(&mut h, idle, HookKind::SessionStart);
     emit(&mut h, working, HookKind::PromptSubmitted);
     h.wait_for("idle close row", |v, cx| {
-        v.sidebar.read(cx).model.idle_agents.len() == 1
+        idle_rows(v, cx).len() == 1
             && v.ws
                 .pane(working)
                 .unwrap()
@@ -262,12 +267,12 @@ fn idle_close_targets_only_its_pane_and_tab_close_still_confirms(cx: &mut TestAp
     click(&mut h, "tab-close-0");
     assert!(h.read(|v, _| v.confirm.is_some()));
     h.keys("escape");
-    click(&mut h, &format!("idle-close-{}", idle.raw()));
+    click(&mut h, &format!("session-close-pane-{}", idle.raw()));
     assert_eq!(pane(&h), working, "close does not click the parent row");
     h.wait_for("only the idle shell is terminated", |v, cx| {
         v.ws.pane(idle).is_none()
             && v.ws.pane(working).is_some()
-            && v.sidebar.read(cx).model.idle_agents.is_empty()
+            && idle_rows(v, cx).is_empty()
             && !Command::new("kill")
                 .args(["-0", &pid.to_string()])
                 .output()
@@ -358,9 +363,7 @@ fn saved_conversations_output_age_and_shell_prompts_do_not_create_live_idle(
     super::harness::wait_until(&mut cx2, &view2, "restored shell", |v, cx| {
         v.sidebar.read(cx).sessions_loaded
     });
-    assert!(view2.read_with(&cx2, |v, cx| {
-        v.sidebar.read(cx).model.idle_agents.is_empty()
-    }));
+    assert!(view2.read_with(&cx2, |v, cx| { idle_rows(v, cx).is_empty() }));
 }
 
 #[gpui::test]
@@ -410,7 +413,7 @@ fn idle_sessions_in_one_worktree_keep_context_and_ignore_replaced_session_end(
         "codex-live",
     );
     h.wait_for("two live sessions in one worktree", |v, cx| {
-        v.sidebar.read(cx).model.idle_agents.len() == 2
+        idle_rows(v, cx).len() == 2
     });
     h.hook_from(
         "claude",
@@ -435,12 +438,12 @@ fn idle_sessions_in_one_worktree_keep_context_and_ignore_replaced_session_end(
             .is_some_and(|s| s.session == "barrier")
     });
     h.read(|v, cx| {
-        let rows = &v.sidebar.read(cx).model.idle_agents;
+        let rows = idle_rows(v, cx);
         assert_eq!(
-            rows.iter().map(|r| r.pane).collect::<Vec<_>>(),
-            vec![first, second]
+            rows.iter().map(|r| r.key).collect::<Vec<_>>(),
+            vec![SessionKey::Pane(first), SessionKey::Pane(second)]
         );
-        assert!(rows.iter().all(|r| r.location == "app / main"));
+        assert!(rows.iter().all(|r| r.location() == "app / main"));
         assert_eq!(rows[0].pane_index, 1);
         assert_eq!(rows[1].pane_index, 2);
         assert_eq!(
@@ -461,7 +464,7 @@ fn idle_sessions_in_one_worktree_keep_context_and_ignore_replaced_session_end(
         "replacement",
     );
     h.wait_for("replacement really ends", |v, cx| {
-        v.sidebar.read(cx).model.idle_agents.len() == 1
+        idle_rows(v, cx).len() == 1
     });
     assert_eq!(rows(&h), vec![second]);
 }
