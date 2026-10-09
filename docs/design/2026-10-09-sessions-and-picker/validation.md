@@ -6,9 +6,16 @@
 
 - GitHub의 열린 이슈 18개를 다시 조회했다. 이 설계는 #181, #182와
   v0.1.22 검수 계약을 다룬다. #173과 #14는 각자의 기록에서 처리한다.
-- 사용자가 #182의 네 가지 결정(에이전트 pane마다 한 행, PROJECT 강조는
-  마지막 직접 선택 유지, Sessions 최대 40%, 둘 다 접혀 있었을 때만 접힘
-  이전)을 골랐고, 본문과 시안에 반영했다.
+- 사용자가 #182의 네 가지 결정(에이전트 pane마다 한 행, PROJECT 강조,
+  Sessions 최대 40%, 둘 다 접혀 있었을 때만 접힘 이전)을 골랐고, 본문과
+  시안에 반영했다.
+- 첫 검토(커밋 `53601de`)에서 사용자가 결정 2를 바꿨다: “엑티브 세션에서
+  누르면 프로젝트 폴더의 특정 브랜치로 포커스 되는 것도 유지해야한다.
+  프로젝트의 네비게이터의 포커스가 바뀌는건 괜찮다. 엑티브세션들 사이에서
+  네비게이팅 하는것이 힘들어서 추가한 스펙이다.” 이에 따라 PROJECT 강조는
+  포커스한 세션의 브랜치를 따라가고 PROJECT 영역 안에서만 최소 이동하며,
+  Sessions 영역은 어떤 경우에도 스스로 스크롤하지 않도록 본문·시안·조건을
+  고쳤다.
 - 근거로 인용한 현재 코드를 읽어 확인했다: 사이드바의 단일 `ScrollHandle`,
   `focus_active` → `sync_sidebar_selection(true)` → `select_context`의
   PROJECT 펼침·reveal 예약, Add repo의 `cx.prompt_for_paths` 직접 호출,
@@ -31,8 +38,8 @@
 
 | 증거 | SHA-256 |
 | --- | --- |
-| `review-1440.png` | `0f2cae99ab7f84c29a017f99f2084264078e43fb9a639dd5ef6a7a06fdf72be6` |
-| `review-640.png` | `9c5e1454f1adc30d958fc166cf645f11a466c87ad7e97fbd0e3c0cfc2e6ebc2f` |
-| `review-390.png` | `7ae4d81671a85cdbf1463e909cbe1959e7f29515f3a26af8f7480f0e985de265` |
+| `review-1440.png` | `e169f7d7cffd306aae2180e4db7c17990ad03b95f57c24a51ade3dee9cfee7b2` |
+| `review-640.png` | `e225754e5a0636e7355ec9dba80482e780c61fcf0e97330ddb6535bd5729a69b` |
+| `review-390.png` | `a04f3240c68689db1288e2b2009dc2786ccc8d16175e6f043dad46dd3c87108a` |
 
 승인 상태는 **사람 검토 대기**다.
