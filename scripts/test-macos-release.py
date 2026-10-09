@@ -142,6 +142,87 @@ class EvidenceTests(unittest.TestCase):
             release.read_json_text(' ' * 65537)
 
 
+def exception_record(sha=SHA, tree=TREE):
+    return json.dumps({
+        'schema': 1, 'tag': 'v0.1.21', 'sha': sha, 'tree': tree,
+        'config_sha256': CONFIG, 'owner': 'magicsih',
+        'owner_instruction': '이제 좀 공개해라 좀',
+        'accepted_interpretation': 'publish-with-incomplete-native-validation',
+        'accepted_at': timestamp(20), 'blocked_evidence_sha256': 'b' * 64,
+        'independent_assessment_sha256': 'c' * 64,
+        'incomplete_checks': sorted(release.ARTIFACT_CHECKS | {
+            'three-native-review-rounds', 'before-build-native-e2e',
+            'before-deploy-native-e2e'}),
+    }, sort_keys=True)
+
+
+def exception_evidence(record, stage='before-build', sha=SHA, tree=TREE):
+    approval = json.loads(record)
+    data = {
+        'schema': 2, 'platform': 'macos', 'stage': stage,
+        'candidate': dict(tag='v0.1.21', sha=sha, tree=tree, config_sha256=CONFIG),
+        'native_result': 'blocked', 'incomplete_checks': approval['incomplete_checks'],
+        'exception_sha256': hashlib.sha256(record.encode()).hexdigest(),
+        'checked_at': timestamp(2),
+    }
+    if stage == 'before-deploy':
+        data.update(checked_at=timestamp(), artifact_sha256='a' * 64)
+    return data
+
+
+class ExceptionEvidenceTests(unittest.TestCase):
+    def verify(self, data, record=None, **kwargs):
+        return release.validate_evidence(
+            data, 'v0.1.21', SHA, TREE, CONFIG, data['stage'], now=NOW,
+            exception_record=record, **kwargs)
+
+    def test_exact_recorded_exception_preserves_blocked_result(self):
+        record = exception_record()
+        data = exception_evidence(record)
+        self.assertEqual(self.verify(data, record), data)
+        self.assertEqual(data['native_result'], 'blocked')
+        self.assertNotIn('rounds', data)
+        after = exception_evidence(record, 'before-deploy')
+        self.verify(after, record, built_at=timestamp(1), artifact_sha256='a' * 64)
+
+    def test_no_main_record_wrong_record_or_candidate_cannot_authorize(self):
+        record = exception_record()
+        data = exception_evidence(record)
+        for other in (None, exception_record(sha='9' * 40), record + '\n'):
+            with self.subTest(record=other), self.assertRaises(ValueError):
+                self.verify(data, other)
+        other = copy.deepcopy(data)
+        other['candidate']['tree'] = '9' * 40
+        with self.assertRaises(ValueError):
+            self.verify(other, record)
+        with self.assertRaises(ValueError):
+            release.validate_evidence(data, 'v0.1.22', SHA, TREE, CONFIG,
+                                      'before-build', now=NOW, exception_record=record)
+
+    def test_cannot_claim_passes_hide_incomplete_checks_or_publish_private_fields(self):
+        record = exception_record()
+        for mutate in (
+            lambda d: d.update(native_result='passed'),
+            lambda d: d['incomplete_checks'].remove('gui-ipc'),
+            lambda d: d.update(rounds=[]),
+            lambda d: d.update(path='/Users/private'),
+            lambda d: d.update(checked_at=timestamp(-1)),
+            lambda d: d.update(checked_at=timestamp(61)),
+        ):
+            data = exception_evidence(record)
+            mutate(data)
+            with self.subTest(mutate=mutate), self.assertRaises(ValueError):
+                self.verify(data, record)
+
+    def test_exception_still_requires_exact_archive_and_post_build_readback(self):
+        record = exception_record()
+        data = exception_evidence(record, 'before-deploy')
+        with self.assertRaises(ValueError):
+            self.verify(data, record, built_at=timestamp(1), artifact_sha256='d' * 64)
+        with self.assertRaises(ValueError):
+            self.verify(data, record, built_at=timestamp(-1), artifact_sha256='a' * 64)
+
+
 class ArtifactTests(unittest.TestCase):
     def test_manifest_binds_archive_appcast_source_and_evidence(self):
         with tempfile.TemporaryDirectory() as folder:
@@ -239,7 +320,7 @@ class PromotionTests(unittest.TestCase):
             return ''
         self.fail('Unexpected command in synthetic promotion test')
 
-    def run_stage(self, stage, data=None, now=NOW):
+    def run_stage(self, stage, data=None, now=NOW, exception=None):
         env = {'GITHUB_REPOSITORY': release.REPO, 'GITHUB_EVENT_NAME': 'workflow_dispatch',
                'GITHUB_REF': 'refs/heads/main', 'RELEASE_TAG': 'v0.1.21',
                'RELEASE_SHA': self.sha, 'RELEASE_CONFIG_SHA256': CONFIG,
@@ -255,6 +336,7 @@ class PromotionTests(unittest.TestCase):
                 patch.object(release, 'command', self.command), \
                 patch.object(release, 'gh_release', lambda _tag: self.state), \
                 patch.object(release, 'download', download), \
+                patch.object(release, 'frozen_exception', lambda: exception), \
                 patch.object(release, 'native_archive'), \
                 patch.object(release, 'update_cask', lambda *_: self.mutations.append('cask')), \
                 patch.object(release, 'datetime', wraps=datetime) as clock:
@@ -319,6 +401,57 @@ class PromotionTests(unittest.TestCase):
         with patch.dict(os.environ, {'GITHUB_EVENT_NAME': 'push'}):
             with self.assertRaises(ValueError):
                 release.workflow_context()
+
+    def test_exception_promotion_retains_blocked_result_and_same_signed_asset_checks(self):
+        record = exception_record(self.sha, self.tree)
+        self.before = exception_evidence(record, sha=self.sha, tree=self.tree)
+        release.make_manifest(self.assets, self.before, now=NOW - timedelta(minutes=1))
+        after = exception_evidence(record, 'before-deploy', sha=self.sha, tree=self.tree)
+        after['artifact_sha256'] = release.hash_file(self.assets / release.archive_name('v0.1.21'))
+        with self.assertRaises(ValueError):
+            self.run_stage('publish', after)
+        self.assertEqual(self.mutations, [])
+        self.run_stage('publish', after, exception=record)
+        self.assertEqual(self.mutations, ['upload', 'publish', 'cask'])
+        deployed = release.read_json(self.assets / 'before-deploy.json')
+        self.assertEqual(deployed['native_result'], 'blocked')
+        self.assertEqual(deployed, after)
+        self.mutations.clear()
+        self.run_stage('cask', exception=record)
+        self.assertEqual(self.mutations, ['cask'])
+
+    def test_exception_modified_archive_cannot_publish(self):
+        record = exception_record(self.sha, self.tree)
+        before = exception_evidence(record, sha=self.sha, tree=self.tree)
+        release.make_manifest(self.assets, before, now=NOW - timedelta(minutes=1))
+        after = exception_evidence(record, 'before-deploy', sha=self.sha, tree=self.tree)
+        archive = self.assets / release.archive_name('v0.1.21')
+        after['artifact_sha256'] = release.hash_file(archive)
+        archive.write_bytes(b'tampered')
+        with self.assertRaises(ValueError):
+            self.run_stage('publish', after, exception=record)
+        self.assertEqual(self.mutations, [])
+
+    def test_main_record_is_frozen_before_candidate_checkout_and_cannot_be_replaced(self):
+        record = json.dumps(json.loads(exception_record(self.sha, self.tree)),
+                            sort_keys=True, indent=2, ensure_ascii=False) + '\n'
+        doc = self.repo / release.EXCEPTION_PATH
+        doc.parent.mkdir(parents=True)
+        doc.write_text(record)
+        gate = self.root / 'gate.py'
+        with patch.object(release, '__file__', str(gate)):
+            # An uncommitted candidate/working-directory file cannot authorize publication.
+            release.freeze_exception('v0.1.21')
+            self.assertIsNone(release.frozen_exception())
+            self.git('add', str(doc.relative_to(self.repo)))
+            self.git('commit', '-m', 'chore: synthetic main approval')
+            release.freeze_exception('v0.1.21')
+            self.git('switch', '--detach', self.sha)
+            self.assertFalse(doc.exists())
+            self.assertEqual(release.frozen_exception(), record)
+            self.assertEqual(gate.with_suffix('.exception.json').stat().st_mode & 0o777, 0o600)
+            with self.assertRaises(ValueError):
+                release.freeze_exception('v0.1.21')
 
 
 class CaskTests(unittest.TestCase):

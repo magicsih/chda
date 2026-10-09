@@ -27,6 +27,9 @@ FEATURES = frozenset(('Terminal', 'Tabs and splits', 'App updates', 'Title bar',
                       'Diff review', 'Agents', 'Status bar', 'Palette', 'Config'))
 ARTIFACT_CHECKS = frozenset(('signed-launch', 'session-preserving-update',
                             'gui-ipc', 'shell-pid-preservation'))
+EXCEPTION_CHECKS = ARTIFACT_CHECKS | frozenset((
+    'three-native-review-rounds', 'before-build-native-e2e', 'before-deploy-native-e2e'))
+EXCEPTION_PATH = 'docs/releases/v0.1.21-native-input-exception.json'
 SPARKLE = 'http://www.andymatuschak.org/xml-namespaces/sparkle'
 
 
@@ -134,10 +137,62 @@ def validate_run(run, implementer, now, is_round=False):
     return start, end
 
 
+def validate_exception(data, record_text, tag, sha, tree, config, stage, now,
+                       built_at, artifact_sha256, fresh):
+    require(tag == 'v0.1.21' and record_text is not None,
+            'This release has no recorded owner exception')
+    record = read_json_text(record_text)
+    fields(record, ('schema', 'tag', 'sha', 'tree', 'config_sha256', 'owner',
+                    'owner_instruction', 'accepted_interpretation', 'accepted_at',
+                    'blocked_evidence_sha256', 'independent_assessment_sha256',
+                    'incomplete_checks'))
+    require(type(record['schema']) is int and record['schema'] == 1
+            and record['owner'] == 'magicsih'
+            and record['owner_instruction'] == '이제 좀 공개해라 좀'
+            and record['accepted_interpretation'] == 'publish-with-incomplete-native-validation',
+            'Unsupported owner exception record')
+    require((record['tag'], record['sha'], record['tree'], record['config_sha256'])
+            == (tag, sha, tree, config), 'The owner exception identifies another candidate')
+    for name in ('blocked_evidence_sha256', 'independent_assessment_sha256'):
+        digest(record[name])
+    unique_items(record['incomplete_checks'], EXCEPTION_CHECKS)
+    names = ('schema', 'platform', 'stage', 'candidate', 'native_result',
+             'incomplete_checks', 'exception_sha256', 'checked_at')
+    if stage == 'before-deploy':
+        names += ('artifact_sha256',)
+    fields(data, names)
+    require(type(data['schema']) is int and data['schema'] == 2
+            and data['platform'] == 'macos' and data['stage'] == stage
+            and data['native_result'] == 'blocked',
+            'An exception must retain the incomplete native validation result')
+    candidate(data['candidate'], tag, sha, tree, config)
+    unique_items(data['incomplete_checks'], EXCEPTION_CHECKS)
+    require(data['incomplete_checks'] == record['incomplete_checks'],
+            'The exception cannot omit or change incomplete checks')
+    digest(data['exception_sha256'])
+    require(data['exception_sha256'] == hashlib.sha256(record_text.encode('utf-8')).hexdigest(),
+            'Exception evidence differs from the main approval record')
+    checked = instant(data['checked_at'])
+    require(instant(record['accepted_at']) <= checked <= now,
+            'Invalid or future exception readback timestamps')
+    require(not fresh or now - checked <= timedelta(minutes=60),
+            'Exception readback is older than 60 minutes; refresh before this action')
+    if stage == 'before-deploy':
+        digest(data['artifact_sha256'])
+        require(artifact_sha256 is not None and data['artifact_sha256'] == artifact_sha256,
+                'Exception readback must identify the exact immutable draft archive')
+        require(built_at is not None and checked >= instant(built_at),
+                'Deploy readback must occur after the signed draft build')
+    return data
+
+
 def validate_evidence(data, tag, sha, tree, config, stage, now=None,
-                      built_at=None, artifact_sha256=None, fresh=True):
+                      built_at=None, artifact_sha256=None, fresh=True, exception_record=None):
     now = now or datetime.now(timezone.utc)
     require(stage in ('before-build', 'before-deploy'), 'Unsupported native gate')
+    if isinstance(data, dict) and data.get('schema') == 2:
+        return validate_exception(data, exception_record, tag, sha, tree, config, stage,
+                                  now, built_at, artifact_sha256, fresh)
     names = ('schema', 'platform', 'stage', 'candidate', 'implementer_sha256', 'rounds', 'run')
     if stage == 'before-deploy':
         names += ('signed_artifact',)
@@ -275,6 +330,8 @@ def check_source(tag, sha, config):
 
 
 def check_round_commits(data):
+    if data['schema'] == 2:
+        return  # The validated owner exception records zero qualified native reviews.
     for review in data['rounds']:
         digest(review['sha'], 40)
         found = subprocess.run(['git', 'cat-file', '-e', review['sha'] + '^{commit}'],
@@ -290,6 +347,41 @@ def workflow_context():
             and os.environ.get('GITHUB_EVENT_NAME') == 'workflow_dispatch'
             and os.environ.get('GITHUB_REF') == 'refs/heads/main',
             'Release mutations require an explicit dispatch on this repository main')
+
+
+def freeze_exception(tag):
+    """Copy only the authoritative main record before candidate checkout."""
+    path = Path(__file__).with_suffix('.exception.json')
+    require(not path.exists(), 'A frozen exception record already exists')
+    if tag != 'v0.1.21':
+        return
+    found = subprocess.run(['git', 'cat-file', '-e', 'HEAD:' + EXCEPTION_PATH],
+                           stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    if found.returncode:
+        return
+    text = command('git', 'show', 'HEAD:' + EXCEPTION_PATH) + '\n'
+    # Preserve the canonical committed bytes, including exactly one final newline.
+    record = read_json_text(text)
+    require(text == json.dumps(record, sort_keys=True, indent=2, ensure_ascii=False) + '\n',
+            'The committed exception record must use canonical JSON encoding')
+    with path.open('x', encoding='utf-8') as handle:
+        handle.write(text)
+    path.chmod(0o600)
+
+
+def frozen_exception():
+    path = Path(__file__).with_suffix('.exception.json')
+    if not path.exists():
+        return None
+    require(path.is_file() and not path.is_symlink(), 'Invalid frozen exception file')
+    with path.open('rb') as handle:
+        body = handle.read(65537)
+    require(len(body) <= 65536, 'Exception record exceeds the metadata limit')
+    return body.decode('utf-8')
+
+
+def evidence_completed(data):
+    return data['checked_at'] if data['schema'] == 2 else data['run']['completed_at']
 
 
 def download(root, tag):
@@ -363,19 +455,25 @@ def main():
     if args.action == 'select':
         # This copy of the verifier came from main, before candidate checkout.
         # No candidate-controlled code runs before tag/ancestry/version validation.
+        require(command('git', 'rev-parse', 'HEAD') == command('git', 'rev-parse', 'origin/main'),
+                'The verifier and exception record must start at the checked-out main')
+        freeze_exception(tag)
         command('git', 'switch', '--detach', sha)
         print('Selected exact main candidate ' + tag)
         return
     require(command('git', 'rev-parse', 'HEAD') == sha, 'The checkout must be the exact candidate')
+    approval = frozen_exception()
     existing = gh_release(tag)
     if args.action in ('check-build', 'draft'):
         require(existing is None, 'A release already exists: verify/publish the same draft; do not rebuild')
         before = read_json_text(os.environ['NATIVE_EVIDENCE'])
-        validate_evidence(before, tag, sha, tree, config, 'before-build', fresh=args.action == 'check-build')
+        validate_evidence(before, tag, sha, tree, config, 'before-build',
+                          fresh=args.action == 'check-build', exception_record=approval)
         check_round_commits(before)
         if args.action == 'check-build':
-            validate_evidence(before, tag, sha, tree, config, 'before-build')
-            print('Native before-build evidence validated for ' + tag)
+            validate_evidence(before, tag, sha, tree, config, 'before-build', exception_record=approval)
+            print(('Recorded native exception' if before['schema'] == 2 else 'Native before-build evidence')
+                  + ' validated for ' + tag)
             return
         root = Path('target/bundle')
         native_archive(root, tag)
@@ -383,6 +481,13 @@ def main():
         assets = [root / name for name in (*manifest['assets'], 'manifest.json', 'SHA256SUMS')]
         notes = command('bash', 'scripts/release-notes.sh', tag)
         require(bool(notes), 'The release-plz changelog section is empty')
+        if before['schema'] == 2:
+            notes = ('Native UI validation is incomplete in this release. The owner requested publication '
+                     'after the input-tool blocker was reported. CI, Developer ID signing, notarization '
+                     'and update-signature verification remain required. '
+                     '[Recorded exception](https://github.com/%s/blob/main/%s).\n\n'
+                     'The Codex shared-server warning remains unresolved '
+                     '([#173](https://github.com/%s/issues/173)).\n\n' % (REPO, EXCEPTION_PATH, REPO)) + notes
         with tempfile.TemporaryDirectory() as folder:
             notes_path = Path(folder) / 'notes.md'
             notes_path.write_text(notes + '\n', encoding='utf-8')
@@ -401,8 +506,8 @@ def main():
         manifest = read_json(root / 'manifest.json')
         validate_assets(root, manifest, tag, sha, tree, config)
         before = read_json(root / 'before-build.json')
-        validate_evidence(before, tag, sha, tree, config, 'before-build', fresh=False)
-        require(instant(before['run']['completed_at']) <= instant(manifest['built_at']),
+        validate_evidence(before, tag, sha, tree, config, 'before-build', fresh=False, exception_record=approval)
+        require(instant(evidence_completed(before)) <= instant(manifest['built_at']),
                 'Build evidence was recorded after the artifact build')
         check_round_commits(before)
         if args.action == 'cask':
@@ -414,10 +519,16 @@ def main():
         archive_sha = manifest['assets'][archive_name(tag)]['sha256']
         validate_evidence(after, tag, sha, tree, config, 'before-deploy',
                           artifact_sha256=archive_sha, built_at=manifest['built_at'],
-                          fresh=bool(existing['draft']))
-        require(after['rounds'] == before['rounds'] and after['implementer_sha256'] == before['implementer_sha256']
-                and after['run']['evidence_sha256'] != before['run']['evidence_sha256'],
-                'Build and deploy evidence must share the same reviews and distinct E2E runs')
+                          fresh=bool(existing['draft']), exception_record=approval)
+        require(after['schema'] == before['schema'], 'Build and deploy evidence formats differ')
+        if before['schema'] == 2:
+            require(after['exception_sha256'] == before['exception_sha256']
+                    and instant(after['checked_at']) > instant(before['checked_at']),
+                    'Exception stages must share the same approval and distinct readbacks')
+        else:
+            require(after['rounds'] == before['rounds'] and after['implementer_sha256'] == before['implementer_sha256']
+                    and after['run']['evidence_sha256'] != before['run']['evidence_sha256'],
+                    'Build and deploy evidence must share the same reviews and distinct E2E runs')
         check_round_commits(after)
         native_archive(root, tag)
         after_path = root / 'before-deploy.json'
@@ -432,7 +543,7 @@ def main():
             # before making the already built draft public.
             prevent_downgrade(tag)
             validate_evidence(after, tag, sha, tree, config, 'before-deploy',
-                              artifact_sha256=archive_sha, built_at=manifest['built_at'])
+                              artifact_sha256=archive_sha, built_at=manifest['built_at'], exception_record=approval)
             command('gh', 'release', 'edit', tag, '--repo', REPO, '--draft=false', '--latest')
         latest(tag)
         update_cask(root, tag)

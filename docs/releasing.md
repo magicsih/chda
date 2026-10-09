@@ -7,6 +7,12 @@ release-plz PR이 workspace 버전과 CHANGELOG를 갱신하고, 병합 후 태�
 이 절차는 [승인된 설계 1.0의 적용·운영](design/2026-10-08-macos-next-release/design.md#7-적용운영복구)을 구현한다.
 개인 공개 macOS 앱이며 Seorilabs 모바일 마켓의 증거 형식을 사용하지 않는다.
 
+v0.1.21에 한해 차단 상태를 전달받은 뒤 사용자가 공개를 재지시했다.
+[후속 예외 기록](releases/v0.1.21-native-input-exception.md)에 범위와 미완료 항목을
+보존한다. schema 2는 정확한 후보와 main의 승인 기록에만 묶이며 결과를
+`blocked`로 유지한다. 기존 서명·공증·ZIP·동일 draft 공개 검사는 유지한다.
+아래의 정상 schema 1 조건을 통과했다는 뜻이 아니다.
+
 ## 후보와 실제 검수
 
 기능 구현과 CI가 통과한 후보를 실제 macOS 개발 실행 환경에서 세 번 검수한다.
