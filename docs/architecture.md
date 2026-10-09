@@ -113,7 +113,7 @@ the visible sidebar eight times a second; panes stay cached and the timer
 stops when no agent works or the system asks to reduce motion. A pane's output notifies only
 its own view. Its title (agents such as Codex animate it while working) and
 its once-a-second activity time do not redraw the window unless a tab label
-or agent status changes; ACTIVE ages pick up the time on their own
+or agent status changes; Sessions ages pick up the time on their own
 one-second tick, and the session file saves it at most once every five
 seconds (and on quit). The OS window title is set only when its text changes.
 
@@ -160,13 +160,23 @@ title bar stays and no apps are listed yet.
 
 ## Sidebar and agents
 
-ACTIVE and Idle Agents have independent header toggles and counts. Their
-`active-collapsed` and `idle-agents-collapsed` preferences are saved in
-`config.toml`. Navigation reveals the selected worktree near the top of the
-scroll viewport, clamped to the list edges, once per navigation; background
-refreshes preserve manual scrolling and repository collapse. ACTIVE labels
-are derived again when split focus changes, so the branch shown in a row
-continues to match the pane that clicking it will focus.
+The sidebar has two peer sections with their own scroll handles
+([ADR 0019](decisions/0019-unified-sessions.md)). Sessions lists
+`chda-core::SessionRow`s built by `session_rows`: one per agent pane
+(`agent_live` or a chda launch) and one per other tab, terminals last, in tab
+and pane order; a status change never changes a row's key or place, and
+terminal output only updates activity times in place. Sessions takes its
+content height up to 40% of the sidebar and is scrolled only by the user.
+PROJECT takes the rest; its highlight follows the focused pane's worktree.
+User focus changes (`focus_active`) reveal that worktree inside PROJECT,
+moving only a clipped row to the nearest edge below the sticky repository
+name; restoring focus after closing or dismissing something, window
+activation, startup restore and agents' `chda mcp` requests
+(`restore_focus`) only update the highlight. Only explicit PROJECT
+navigation expands a collapsed PROJECT section. `sessions-collapsed` and
+`project-collapsed` are saved in `config.toml`; a missing
+`sessions-collapsed` is derived from the earlier `active-collapsed` and
+`idle-agents-collapsed` keys without rewriting the file.
 
 `chda-core::Sidebar` holds registered repositories, their worktrees with git
 badges and branch notes (git's own `branch.<name>.description`, so other git
@@ -219,7 +229,7 @@ the largest pane, split along its longer side (`Workspace::split_largest`). The 
 
 Every pane's shell gets `CHDA_PANE_ID`. Agents inherit it and `chda hook`
 sends it back, so status is tracked per pane as well as per worktree: tabs
-and the ACTIVE list show the most urgent status of their panes, the Dock badge
+show the most urgent status of their panes and Sessions each agent pane's own, the Dock badge
 counts waiting agents the user has not looked at, and a notification click
 (through `UNUserNotificationCenter` in the app bundle) focuses that pane.
 

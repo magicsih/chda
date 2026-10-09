@@ -1,6 +1,8 @@
 # 0009: Keep live idle agents distinct from saved conversations
 
-Status: accepted (2026-10-05)
+Status: accepted (2026-10-05). Sidebar presentation amended by
+[0019](0019-unified-sessions.md): live idle agents are rows of the Sessions
+list instead of a separate IDLE section.
 
 ## Context
 
