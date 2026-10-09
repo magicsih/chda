@@ -99,6 +99,8 @@ pub struct StarredBranch {
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(default, rename_all = "kebab-case")]
 pub struct ChdaConfig {
+    /// Opt-in preparation for new worktrees; approval is stored separately in private app data.
+    pub repo_preparation: BTreeMap<PathBuf, PreparationPlan>,
     /// Registered repositories (main worktree paths).
     pub repos: Vec<PathBuf>,
     /// Template with `{repo_parent}`, `{repo_name}` and `{branch}`.
@@ -148,6 +150,7 @@ pub struct ChdaConfig {
 impl Default for ChdaConfig {
     fn default() -> Self {
         Self {
+            repo_preparation: BTreeMap::new(),
             repos: Vec::new(),
             worktree_path_template: DEFAULT_WORKTREE_TEMPLATE.into(),
             default_action: DefaultAction::Terminal,
@@ -171,6 +174,19 @@ impl Default for ChdaConfig {
             update_check: true,
             starred: Vec::new(),
         }
+    }
+}
+
+/// Explicit commands in order and regular gitignored files relative to the primary checkout.
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(default, rename_all = "kebab-case")]
+pub struct PreparationPlan {
+    pub commands: Vec<String>,
+    pub files: Vec<PathBuf>,
+}
+impl PreparationPlan {
+    pub fn is_empty(&self) -> bool {
+        self.commands.is_empty() && self.files.is_empty()
     }
 }
 
@@ -284,6 +300,13 @@ mod tests {
         c.active_collapsed = true;
         c.idle_agents_collapsed = true;
         c.project_collapsed = true;
+        c.repo_preparation.insert(
+            "/src/app".into(),
+            PreparationPlan {
+                commands: vec!["printf 'two words'\ntrue".into(), "npm ci".into()],
+                files: vec!["local/한글 space.env".into(), "local/new\nline.env".into()],
+            },
+        );
         c.save(&path).unwrap();
         let text = fs::read_to_string(&path).unwrap();
         assert!(text.contains("default-action = \"claude\""), "{text}");

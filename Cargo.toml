@@ -51,6 +51,8 @@ gix = { version = "0.88.0", default-features = false, features = ["status", "rev
 portable-pty = "0.9.0"
 
 block2 = "0.6"
+cap-std = "4.0.3"
+cap-fs-ext = "4.0.3"
 futures = "0.3.31"
 libc = "0.2"
 memchr = "2.7"

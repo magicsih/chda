@@ -222,6 +222,14 @@ pub fn remotes(repo: &Path) -> io::Result<Vec<RemoteInfo>> {
     Ok(out)
 }
 
+/// The actual repository work directory containing `cwd`, including nested repositories.
+pub fn worktree_root(cwd: &std::path::Path) -> std::io::Result<std::path::PathBuf> {
+    let repo = gix::discover(cwd).map_err(std::io::Error::other)?;
+    repo.workdir()
+        .ok_or_else(|| std::io::Error::other("A working tree is required"))?
+        .canonicalize()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

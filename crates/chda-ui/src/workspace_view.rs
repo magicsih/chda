@@ -21,6 +21,8 @@ mod agent_launch;
 mod agent_restart;
 mod children;
 mod notifications;
+pub(crate) mod preparation;
+mod review;
 mod sharing;
 mod upgrade;
 use chda_core::{
@@ -171,11 +173,14 @@ pub(crate) enum MenuAction {
     OpenTerminal(PathBuf),
     /// A read-only tab with the worktree's diff against its base.
     ViewDiff(PathBuf),
+    ReviewDiff(PathBuf),
     ViewGitTree(PathBuf),
     RunAgent(PathBuf, AgentId),
     /// Run the `agent-presets` entry with this name.
     RunPreset(PathBuf, String),
     NewWorktree(PathBuf),
+    EditPreparation(PathBuf),
+    PreparationRun(PathBuf),
     /// New worktree on a new branch starting at `base`'s HEAD.
     NewWorktreeFrom {
         repo: PathBuf,
@@ -291,6 +296,7 @@ pub struct WorkspaceView {
     pub(crate) ws: Workspace,
     pub(crate) panes: HashMap<PaneId, (Entity<TerminalView>, Subscription)>,
     pub(crate) graphs: HashMap<TabId, Entity<crate::git_graph::GitGraphView>>,
+    pub(crate) reviews: HashMap<TabId, (Entity<crate::diff_review::DiffReviewView>, Subscription)>,
     previous_runs: HashMap<PaneId, Entity<crate::readonly_text::ReadOnlyText>>,
     previous_open: HashSet<PaneId>,
     owned_outputs: std::cell::RefCell<HashMap<PaneId, String>>,
@@ -317,6 +323,10 @@ pub struct WorkspaceView {
     sheet: Option<NewWorktreeSheet>,
     launch_sheet: Option<agent_launch::LaunchSheet>,
     note_sheet: Option<NoteSheet>,
+    preparation_editor: Option<preparation::PreparationEditor>,
+    preparation_open: Option<PathBuf>,
+    pub(crate) preparation_jobs: HashMap<PathBuf, preparation::PreparationJob>,
+    preparation_generation: u64,
     pub(crate) share_sheet: Option<sharing::ShareSheet>,
     share_generation: u64,
     pub(crate) confirm: Option<ConfirmSheet>,
@@ -422,14 +432,27 @@ impl WorkspaceView {
             let restore = config.restore_session;
             cx.on_window_closed(move |cx, _| {
                 let mut registry = registry.borrow_mut();
-                if registry.quitting {
-                    return;
-                }
                 let windows = cx.windows();
-                registry.entries.retain(|e| windows.contains(&e.window));
-                if restore && let Some(dir) = directory.as_deref() {
-                    let _ = registry.snapshot().save(dir);
+                let closed: Vec<_> = registry
+                    .entries
+                    .iter()
+                    .filter(|e| !windows.contains(&e.window))
+                    .map(|e| e.view.clone())
+                    .collect();
+                if !registry.quitting {
+                    registry.entries.retain(|e| windows.contains(&e.window));
+                    if restore && let Some(dir) = directory.as_deref() {
+                        let _ = registry.snapshot().save(dir);
+                    }
                 }
+                drop(registry);
+                cx.defer(move |cx| {
+                    for view in closed {
+                        let _ = view.update(cx, |v, cx| {
+                            v.stop_preparations(cx);
+                        });
+                    }
+                });
             })
             .detach();
         }
@@ -449,6 +472,7 @@ impl WorkspaceView {
             ws,
             panes: HashMap::new(),
             graphs: HashMap::new(),
+            reviews: HashMap::new(),
             previous_runs: HashMap::new(),
             previous_open: HashSet::new(),
             owned_outputs: Default::default(),
@@ -473,6 +497,10 @@ impl WorkspaceView {
             sheet: None,
             launch_sheet: None,
             note_sheet: None,
+            preparation_editor: None,
+            preparation_open: None,
+            preparation_jobs: HashMap::new(),
+            preparation_generation: 0,
             share_sheet: None,
             share_generation: 0,
             confirm: None,
@@ -516,11 +544,20 @@ impl WorkspaceView {
             this.save_session();
         })
         .detach();
-        cx.on_app_quit(|this, _| {
+        cx.on_app_quit(|this, cx| {
             this.save_session();
             this.quitting = true;
             this.env.windows.borrow_mut().quitting = true;
-            async {}
+            let finished = this.stop_preparations(cx);
+            let executor = cx.background_executor().clone();
+            async move {
+                while finished
+                    .iter()
+                    .any(|flag| !flag.load(std::sync::atomic::Ordering::Acquire))
+                {
+                    executor.timer(Duration::from_millis(25)).await;
+                }
+            }
         })
         .detach();
         this.start_notification_clicks(window, cx);
@@ -790,6 +827,15 @@ impl WorkspaceView {
                 cx.notify();
             });
         }
+        for (review, _) in self.reviews.values() {
+            review.update(cx, |v, cx| {
+                v.background = bg;
+                v.foreground = fg;
+                v.font_family = settings.font_family.clone();
+                v.font_size = settings.font_size;
+                cx.notify();
+            });
+        }
         for previous in self.previous_runs.values() {
             previous.update(cx, |view, cx| {
                 view.settings = settings.clone();
@@ -1019,11 +1065,19 @@ impl WorkspaceView {
                     message.push_str(&format!("; saving its note failed: {e}"));
                 }
                 self.refresh_repo(repo.clone(), cx);
-                if open {
-                    match agent {
-                        Some(agent) => self.run_agent(&path, agent, None, window, cx),
-                        None => self.open_default_action(&path, window, cx),
-                    }
+                let launch_agent =
+                    agent.or_else(|| self.config.default_action.agent().and_then(AgentId::parse));
+                let preparation = self.after_worktree_created(
+                    repo.clone(),
+                    path.clone(),
+                    (open, launch_agent),
+                    None,
+                    window,
+                    cx,
+                );
+                if preparation {
+                    message.push_str("; review preparation in chda before opening the worktree");
+                } else if open {
                     message.push_str(if self.launch_sheet.is_some() {
                         "; confirm the agent's launch options in chda"
                     } else {
@@ -1043,6 +1097,12 @@ impl WorkspaceView {
                     Ok(agent) => agent,
                     Err(reply) => return reply,
                 };
+                if self.require_preparation(&path, window, cx) {
+                    return Reply::ok(
+                        "Finish or explicitly skip worktree preparation in chda first",
+                        serde_json::json!({"path": path, "preparation_pending": true}),
+                    );
+                }
                 match agent {
                     Some(agent) => self.run_agent(&path, agent, None, window, cx),
                     None => self.open_tab_at(Some(path.clone()), None, window, cx),
@@ -1906,6 +1966,7 @@ impl WorkspaceView {
                     cx.notify();
                 });
                 view.sync_panes(cx);
+                view.sync_preparation_busy(cx);
                 // New worktrees can have sessions the last index skipped.
                 if view.worktree_paths(cx) != before {
                     view.refresh_sessions(cx);
@@ -2145,6 +2206,20 @@ impl WorkspaceView {
             .collect();
         for (id, repo) in graphs {
             self.create_graph_view(id, repo, cx);
+        }
+        let reviews: Vec<_> = self
+            .ws
+            .tabs()
+            .iter()
+            .filter_map(|tab| match &tab.content {
+                chda_core::TabContent::DiffReview { worktree, base, .. } => {
+                    Some((tab.id, worktree.clone(), base.clone()))
+                }
+                _ => None,
+            })
+            .collect();
+        for (id, worktree, base) in reviews {
+            self.create_review_view(id, worktree, base, cx);
         }
         if self.ws.is_empty() {
             self.new_tab(&NewTab, window, cx);
@@ -2434,7 +2509,7 @@ impl WorkspaceView {
     /// Directory new panes start in: the focused pane's.
     fn inherited_cwd(&self) -> Option<PathBuf> {
         self.focused_cwd()
-            .or_else(|| self.ws.active_tab()?.graph_repo().map(Path::to_path_buf))
+            .or_else(|| self.ws.active_tab()?.directory().map(Path::to_path_buf))
     }
 
     fn open_pane(
@@ -2795,7 +2870,7 @@ impl WorkspaceView {
     /// The folder the title bar opens: the root of the worktree the focused
     /// pane is in, else that pane's directory.
     pub(crate) fn open_in_folder(&self, cx: &App) -> Option<PathBuf> {
-        if let Some(repo) = self.ws.active_tab().and_then(|tab| tab.graph_repo()) {
+        if let Some(repo) = self.ws.active_tab().and_then(|tab| tab.directory()) {
             return Some(repo.to_path_buf());
         }
         let cwd = self.focused_cwd()?;
@@ -3073,7 +3148,9 @@ impl WorkspaceView {
         if window.viewport_size().width >= px(700.0) {
             bar = bar.children(self.render_update_controls(cx));
         }
-        bar = bar.child(self.render_notification_button(cx));
+        bar = bar
+            .children(self.render_preparation_badge(cx))
+            .child(self.render_notification_button(cx));
         if let Some(app) = self.folder_app() {
             let folder = self.open_in_folder(cx);
             let folder_name = folder
@@ -3214,7 +3291,7 @@ impl WorkspaceView {
         let tab = self.ws.active_tab().map(|t| t.id);
         let cwd = self
             .focused_cwd()
-            .or_else(|| self.ws.active_tab()?.graph_repo().map(Path::to_path_buf));
+            .or_else(|| self.ws.active_tab()?.directory().map(Path::to_path_buf));
         if navigation
             && self.config.project_collapsed
             && cwd
@@ -3340,12 +3417,23 @@ impl WorkspaceView {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        if command.is_none()
+            && cwd
+                .as_deref()
+                .is_some_and(|cwd| self.require_preparation(cwd, window, cx))
+        {
+            return;
+        }
         let (_, pane) = self.ws.new_tab();
         self.open_pane(pane, cwd, command, window, cx);
         self.focus_active(window, cx);
     }
 
     fn close_surface(&mut self, _: &CloseSurface, window: &mut Window, cx: &mut Context<Self>) {
+        if self.preparation_open.is_some() || self.preparation_editor.is_some() {
+            self.close_preparation(window, cx);
+            return;
+        }
         if self.share_sheet.is_some() {
             self.close_share_sheet(window, cx);
             return;
@@ -3444,6 +3532,7 @@ impl WorkspaceView {
                 let panes = tab.panes();
                 self.ws.close_tab(id);
                 self.graphs.remove(&id);
+                self.reviews.remove(&id);
                 for pane in panes {
                     self.panes.remove(&pane);
                 }
@@ -3762,6 +3851,7 @@ impl WorkspaceView {
                         format!("View diff against {base}"),
                         MenuAction::ViewDiff(path.clone()),
                     ));
+                    items.push(("Review diff…".into(), MenuAction::ReviewDiff(path.clone())));
                 }
                 items.extend(self.agent_launch_items(&path));
                 items.push((
@@ -3858,6 +3948,10 @@ impl WorkspaceView {
                         (
                             "New worktree from branch...".into(),
                             MenuAction::PickBranch(repo.clone()),
+                        ),
+                        (
+                            "Worktree preparation…".into(),
+                            MenuAction::EditPreparation(repo.clone()),
                         ),
                         (
                             "Clean up merged worktrees...".into(),
@@ -4224,6 +4318,9 @@ impl WorkspaceView {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        if self.require_preparation(cwd, window, cx) {
+            return;
+        }
         let Some(adapter) = self.adapters.iter().find(|a| a.id() == agent) else {
             return;
         };
@@ -4244,6 +4341,9 @@ impl WorkspaceView {
 
     /// Start the `agent-presets` entry called `name` in a new tab at `cwd`.
     fn run_preset(&mut self, cwd: &Path, name: &str, window: &mut Window, cx: &mut Context<Self>) {
+        if self.require_preparation(cwd, window, cx) {
+            return;
+        }
         let Some(preset) = self.config.agent_presets.iter().find(|p| p.name == name) else {
             return;
         };
@@ -4462,10 +4562,13 @@ impl WorkspaceView {
             }
             MenuAction::OpenTerminal(path) => self.open_tab_at(Some(path), None, window, cx),
             MenuAction::ViewDiff(path) => self.open_diff(&path, window, cx),
+            MenuAction::ReviewDiff(path) => self.open_review(&path, window, cx),
             MenuAction::ViewGitTree(repo) => self.open_git_graph(repo, window, cx),
             MenuAction::RunAgent(path, agent) => self.run_agent(&path, agent, None, window, cx),
             MenuAction::RunPreset(path, name) => self.run_preset(&path, &name, window, cx),
             MenuAction::NewWorktree(repo) => self.open_sheet(repo, window, cx),
+            MenuAction::EditPreparation(repo) => self.edit_preparation(repo, window, cx),
+            MenuAction::PreparationRun(path) => self.show_preparation(path, window, cx),
             MenuAction::NewWorktreeFrom { repo, base } => {
                 self.open_sheet_from(repo, Some(base), window, cx)
             }
@@ -5126,6 +5229,8 @@ impl WorkspaceView {
         let repo = sheet.repo.clone();
         let base = sheet.base.clone();
         let path = self.config.worktree_path(&repo, &branch);
+        let navigation = self.env.windows.borrow().navigation;
+        let launch_agent = self.config.default_action.agent().and_then(AgentId::parse);
         let operation = self.env.windows.borrow().update.operation();
         let task = cx.background_spawn({
             let repo = repo.clone();
@@ -5159,8 +5264,15 @@ impl WorkspaceView {
                                 None,
                             );
                         }
-                        view.refresh_repo(repo, cx);
-                        view.open_default_action(&path, window, cx);
+                        view.refresh_repo(repo.clone(), cx);
+                        view.after_worktree_created(
+                            repo,
+                            path,
+                            (true, launch_agent),
+                            Some(navigation),
+                            window,
+                            cx,
+                        );
                     }
                     Err(e) => {
                         if let Some(sheet) = &mut view.sheet {
@@ -5614,6 +5726,10 @@ impl WorkspaceView {
     }
 
     fn dismiss(&mut self, _: &Dismiss, window: &mut Window, cx: &mut Context<Self>) {
+        if self.preparation_open.is_some() || self.preparation_editor.is_some() {
+            self.close_preparation(window, cx);
+            return;
+        }
         if self.share_sheet.is_some() {
             self.close_share_sheet(window, cx);
             return;
@@ -6333,6 +6449,11 @@ impl Render for WorkspaceView {
                     .get(&tab.id)
                     .map(|graph| graph.clone().into_any_element())
                     .unwrap_or_else(|| div().into_any_element()),
+                chda_core::TabContent::DiffReview { .. } => self
+                    .reviews
+                    .get(&tab.id)
+                    .map(|(view, _)| view.clone().into_any_element())
+                    .unwrap_or_else(|| div().into_any_element()),
             },
             None => div().into_any_element(),
         };
@@ -6544,6 +6665,7 @@ impl Render for WorkspaceView {
             .children(self.render_sheet(cx))
             .children(self.render_agent_launch(cx))
             .children(self.render_note_sheet(cx))
+            .children(self.render_preparation(cx))
             .children(self.render_confirm(cx))
             .children(self.render_palette())
             .children(self.render_notifications(cx))

@@ -13,11 +13,15 @@ pub use graph::*;
 mod managed_run;
 mod names;
 pub mod notifications;
+mod preparation;
 mod refresh;
 pub mod release;
 pub mod resources;
 mod restore;
+mod review;
 pub use managed_run::ManagedRun;
+pub use preparation::*;
+pub use review::*;
 mod sidebar;
 mod update;
 mod watch;
@@ -43,6 +47,7 @@ pub mod agents {
     pub use chda_agents::{control, quota, statusline, which};
 }
 pub use chda_git::PullMode;
+pub use chda_git::worktree_root;
 pub use sidebar::*;
 pub use update::*;
 pub use watch::{FileWatcher, RepoWatcher};

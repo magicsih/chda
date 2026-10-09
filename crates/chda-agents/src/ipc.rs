@@ -8,7 +8,9 @@
 mod children_tests;
 mod process;
 mod rpc;
-pub use process::{capture_command, is_executable, with_process, write_private_atomic};
+pub use process::{
+    capture_command, is_executable, protect_file, with_process, write_private_atomic,
+};
 pub use rpc::with_local_rpc;
 
 use std::path::{Path, PathBuf};

@@ -217,7 +217,7 @@ impl Node {
     }
 }
 
-/// A tab is either a terminal split tree or a read-only repository graph.
+/// A terminal split tree, repository history or local diff review.
 #[derive(Clone, Debug, PartialEq)]
 pub struct Tab {
     pub id: TabId,
@@ -229,7 +229,14 @@ pub struct Tab {
 #[derive(Clone, Debug, PartialEq)]
 pub enum TabContent {
     Terminal(TerminalTab),
-    GitGraph { repo: PathBuf },
+    GitGraph {
+        repo: PathBuf,
+    },
+    DiffReview {
+        worktree: PathBuf,
+        repo: PathBuf,
+        base: String,
+    },
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -244,14 +251,14 @@ impl Tab {
     pub fn terminal(&self) -> Option<&TerminalTab> {
         match &self.content {
             TabContent::Terminal(terminal) => Some(terminal),
-            TabContent::GitGraph { .. } => None,
+            TabContent::GitGraph { .. } | TabContent::DiffReview { .. } => None,
         }
     }
 
     fn terminal_mut(&mut self) -> Option<&mut TerminalTab> {
         match &mut self.content {
             TabContent::Terminal(terminal) => Some(terminal),
-            TabContent::GitGraph { .. } => None,
+            TabContent::GitGraph { .. } | TabContent::DiffReview { .. } => None,
         }
     }
 
@@ -262,8 +269,17 @@ impl Tab {
     pub fn graph_repo(&self) -> Option<&Path> {
         match &self.content {
             TabContent::GitGraph { repo } => Some(repo),
-            TabContent::Terminal(_) => None,
+            TabContent::Terminal(_) | TabContent::DiffReview { .. } => None,
         }
+    }
+    pub fn review_worktree(&self) -> Option<&Path> {
+        match &self.content {
+            TabContent::DiffReview { worktree, .. } => Some(worktree),
+            _ => None,
+        }
+    }
+    pub fn directory(&self) -> Option<&Path> {
+        self.graph_repo().or_else(|| self.review_worktree())
     }
 
     pub fn panes(&self) -> Vec<PaneId> {
@@ -416,6 +432,12 @@ impl Workspace {
         if let Some(t) = &tab.custom_title {
             return t.clone();
         }
+        if let Some(worktree) = tab.review_worktree() {
+            return format!(
+                "Diff review · {}",
+                worktree.file_name().unwrap_or_default().to_string_lossy()
+            );
+        }
         if let Some(repo) = tab.graph_repo() {
             return format!(
                 "Git tree · {}",
@@ -440,6 +462,9 @@ impl Workspace {
 
     /// Repository (main worktree path) a tab belongs to, from its focused pane.
     pub fn tab_repo(&self, tab: &Tab) -> Option<PathBuf> {
+        if let TabContent::DiffReview { repo, .. } = &tab.content {
+            return Some(repo.clone());
+        }
         tab.graph_repo().map(Path::to_path_buf).or_else(|| {
             tab.focused_pane()
                 .and_then(|pane| self.panes.get(&pane))
@@ -658,6 +683,43 @@ impl Workspace {
             Tab {
                 id,
                 content: TabContent::GitGraph { repo },
+                custom_title: None,
+            },
+        );
+        self.active = Some(id);
+        id
+    }
+
+    /// Reuse one read-only review per worktree, without creating a terminal.
+    pub fn open_review(&mut self, worktree: PathBuf, repo: PathBuf, base: String) -> TabId {
+        if let Some(tab) = self
+            .tabs
+            .iter_mut()
+            .find(|t| t.review_worktree() == Some(worktree.as_path()))
+        {
+            let id = tab.id;
+            tab.content = TabContent::DiffReview {
+                worktree,
+                repo,
+                base,
+            };
+            self.activate_tab_id(id);
+            return id;
+        }
+        let id = TabId(self.next());
+        let at = self
+            .active_index()
+            .map(|i| i + 1)
+            .unwrap_or(self.tabs.len());
+        self.tabs.insert(
+            at,
+            Tab {
+                id,
+                content: TabContent::DiffReview {
+                    worktree,
+                    repo,
+                    base,
+                },
                 custom_title: None,
             },
         );

@@ -28,6 +28,7 @@ Three layers, all run by `cargo test --workspace` (CI: the macOS job).
 | Scenario | Test | Issues |
 |---|---|---|
 | S1 New work: create a worktree from the sheet | `worktrees::create_then_delete_a_worktree_in_one_go` | |
+| Preparation imports wait for confirmation; copy/setup/open order, failure/edit/retry keep existing edits, owned cancellation and explicit skip retain agent permissions, background completion preserves other input, MCP cannot bypass the gate | `preparation::*`, `chda-core` `preparation::tests::*` | #163 |
 | S2 Watching agents: status per pane, ACTIVE list, Dock badge, notification, jump, notification click | `agents::hook_events_drive_status_badge_jump_and_notification_click` | #12, #13, #25 |
 | Title-bar notification history: consecutive events, unread arrivals while open, Escape typing focus, exact source pane, hidden sidebar, narrow bounds, per-window isolation and cold restart | `notifications::*`, `chda-core` `notifications::tests::*`, `handoff::tests::handoff_round_trips_with_binary_snapshots` | #155 |
 | Gemini CLI, Copilot CLI and OpenCode report status like Claude Code | `agents::gemini_copilot_and_opencode_report_like_claude_code` | #20 |
@@ -140,6 +141,11 @@ and real CLI resume verification. Record final release evidence separately.
 
 ## Session-preserving updates
 
+Release workflow policy tests are `python3 scripts/test-macos-release.py`.
+They exercise synthetic source/evidence/artifact and promotion failures, not
+native UI, signing or public release proof. See [macOS release operations](releasing.md)
+for the distinct native review, before-build, before-deploy and artifact gates.
+
 Run `cargo test --workspace`, `cargo clippy --workspace --all-targets -- -D warnings`,
 `python3 scripts/test-appcast.py` and `python3 scripts/sync-product-docs.py --check`.
 The macOS CI job also compiles the universal native helper against the pinned
@@ -176,3 +182,7 @@ progress, recovered terminal text and error wrapping, and desktop/narrow Pages
 were visually checked during implementation; repeat them for release artifacts.
 Production Sparkle signing input must be registered before publishing the first
 updater-enabled release. See [decision 0011](decisions/0011-session-preserving-updates.md).
+
+## Private Diff review
+
+`scenarios::diff_review` uses isolated repositories, real shells and native GPUI entities. It covers discovery beside the existing pager; old/new range entry; refresh preserving a draft; stale edits retaining their original anchor; restored virtual tabs without additional PTYs; failed saves and draft copying; fresh batch previews; changed diff and exact conversation rejection; manual clipboard handoff preserving unfinished terminal input. `chda-core::review::tests` and `chda-git::review_diff::tests` cover exact context attachment, private storage, optimistic window conflicts, path and hunk parsing, external-helper exclusion and handoff serialization. These tests do not count as pixel or actual macOS review rounds.
