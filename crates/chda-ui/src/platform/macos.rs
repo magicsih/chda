@@ -196,11 +196,24 @@ pub fn restore_windows() {
 /// its open panel service fails.
 pub fn open_panel() -> Option<Retained<NSOpenPanel>> {
     MainThreadMarker::new()?;
+    // Debug builds can simulate the service failure for the native release
+    // check (docs/testing.md); release builds never read the variable.
+    #[cfg(debug_assertions)]
+    if simulates_unavailable_picker(std::env::var_os("CHDA_QA_FOLDER_PICKER").as_deref()) {
+        return None;
+    }
     // SAFETY: `+[NSOpenPanel openPanel]` takes no arguments and runs on the
     // main thread (checked above). It can return nil, which the generated
     // binding declares impossible and objc2 turns into a panic; receiving
     // an optional turns nil into `None`.
     unsafe { msg_send![NSOpenPanel::class(), openPanel] }
+}
+
+/// `CHDA_QA_FOLDER_PICKER=unavailable` makes a debug build's open panel
+/// fail to appear, as when the open panel service cannot inspect the app.
+#[cfg(debug_assertions)]
+fn simulates_unavailable_picker(value: Option<&std::ffi::OsStr>) -> bool {
+    value.is_some_and(|v| v == "unavailable")
 }
 
 /// Show `panel` (from [`open_panel`]) for choosing folders, with GPUI's
@@ -321,6 +334,18 @@ mod tests {
             picked.try_recv(),
             Ok(Some(FolderPick::Unavailable(_)))
         ));
+    }
+
+    #[cfg(debug_assertions)]
+    #[test]
+    fn only_the_unavailable_value_simulates_a_failed_picker() {
+        use std::ffi::OsStr;
+        assert!(simulates_unavailable_picker(Some(OsStr::new(
+            "unavailable"
+        ))));
+        assert!(!simulates_unavailable_picker(None));
+        assert!(!simulates_unavailable_picker(Some(OsStr::new(""))));
+        assert!(!simulates_unavailable_picker(Some(OsStr::new("1"))));
     }
 
     #[test]
