@@ -1,16 +1,17 @@
 //! macOS: AppKit and the UserNotifications framework.
 
-use std::cell::RefCell;
-use std::path::Path;
+use std::cell::{Cell, RefCell};
+use std::path::{Path, PathBuf};
 
 use block2::{DynBlock, RcBlock};
-use objc2::AllocAnyThread;
+use futures::channel::oneshot;
 use objc2::rc::Retained;
 use objc2::runtime::{Bool, NSObject, NSObjectProtocol, ProtocolObject};
-use objc2::{MainThreadMarker, MainThreadOnly, define_class, msg_send};
+use objc2::{AllocAnyThread, ClassType, MainThreadMarker, MainThreadOnly, define_class, msg_send};
 use objc2_app_kit::{
     NSApplication, NSBitmapImageFileType, NSBitmapImageRep, NSCompositingOperation,
-    NSDeviceRGBColorSpace, NSGraphicsContext, NSWorkspace,
+    NSDeviceRGBColorSpace, NSGraphicsContext, NSModalResponse, NSModalResponseAbort,
+    NSModalResponseOK, NSOpenPanel, NSWorkspace,
 };
 use objc2_foundation::{
     NSBundle, NSDictionary, NSError, NSLocale, NSPoint, NSRect, NSSize, NSString, NSURL,
@@ -20,6 +21,8 @@ use objc2_user_notifications::{
     UNNotificationPresentationOptions, UNNotificationRequest, UNNotificationResponse,
     UNNotificationSound, UNUserNotificationCenter, UNUserNotificationCenterDelegate,
 };
+
+use super::FolderPick;
 
 #[link(name = "AppKit", kind = "framework")]
 unsafe extern "C" {
@@ -189,6 +192,68 @@ pub fn restore_windows() {
     }
 }
 
+/// A new open panel, or `None` when AppKit returns none, as it does when
+/// its open panel service fails.
+pub fn open_panel() -> Option<Retained<NSOpenPanel>> {
+    MainThreadMarker::new()?;
+    // SAFETY: `+[NSOpenPanel openPanel]` takes no arguments and runs on the
+    // main thread (checked above). It can return nil, which the generated
+    // binding declares impossible and objc2 turns into a panic; receiving
+    // an optional turns nil into `None`.
+    unsafe { msg_send![NSOpenPanel::class(), openPanel] }
+}
+
+/// Show `panel` (from [`open_panel`]) for choosing folders, with GPUI's
+/// options, and report the outcome on `done`.
+pub fn begin_folder_panel(
+    panel: Option<Retained<NSOpenPanel>>,
+    prompt: &str,
+    done: oneshot::Sender<FolderPick>,
+) {
+    let Some(panel) = panel else {
+        let _ = done.send(FolderPick::Unavailable(
+            "AppKit could not create an open panel".into(),
+        ));
+        return;
+    };
+    panel.setCanChooseDirectories(true);
+    panel.setCanChooseFiles(false);
+    panel.setAllowsMultipleSelection(true);
+    panel.setCanCreateDirectories(true);
+    panel.setResolvesAliases(false);
+    panel.setPrompt(Some(&NSString::from_str(prompt)));
+    let done = Cell::new(Some(done));
+    let handler = RcBlock::new({
+        let panel = panel.clone();
+        move |response: NSModalResponse| {
+            let Some(done) = done.take() else {
+                return;
+            };
+            let _ = done.send(panel_outcome(response, || {
+                panel
+                    .URLs()
+                    .iter()
+                    .filter(|url| url.isFileURL())
+                    .filter_map(|url| url.to_file_path())
+                    .collect()
+            }));
+        }
+    });
+    panel.beginWithCompletionHandler(&handler);
+}
+
+/// What a closed panel's response means. Apple documents `Abort` as the
+/// panel failing to display.
+fn panel_outcome(response: NSModalResponse, chosen: impl FnOnce() -> Vec<PathBuf>) -> FolderPick {
+    if response == NSModalResponseOK {
+        FolderPick::Chosen(chosen())
+    } else if response == NSModalResponseAbort {
+        FolderPick::Unavailable("the open panel failed to display".into())
+    } else {
+        FolderPick::Cancelled
+    }
+}
+
 pub fn set_badge(count: usize) {
     let Some(mtm) = MainThreadMarker::new() else {
         return;
@@ -242,4 +307,36 @@ pub fn app_icon_png(path: &str, size: isize) -> Option<Vec<u8>> {
         rep.representationUsingType_properties(NSBitmapImageFileType::PNG, &NSDictionary::new())
     }?;
     Some(data.to_vec())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn missing_open_panel_reports_unavailable() {
+        let (done, mut picked) = oneshot::channel();
+        begin_folder_panel(None, "Add repository", done);
+        assert!(matches!(
+            picked.try_recv(),
+            Ok(Some(FolderPick::Unavailable(_)))
+        ));
+    }
+
+    #[test]
+    fn panel_responses_map_to_folder_picks() {
+        let chosen = || vec![PathBuf::from("/src/a")];
+        assert_eq!(
+            panel_outcome(NSModalResponseOK, chosen),
+            FolderPick::Chosen(chosen())
+        );
+        assert_eq!(
+            panel_outcome(objc2_app_kit::NSModalResponseCancel, chosen),
+            FolderPick::Cancelled
+        );
+        assert!(matches!(
+            panel_outcome(NSModalResponseAbort, chosen),
+            FolderPick::Unavailable(_)
+        ));
+    }
 }

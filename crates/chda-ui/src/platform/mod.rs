@@ -1,10 +1,63 @@
-//! Platform-specific UI pieces: fonts, locale, alert sound, notifications and
-//! the Dock badge.
+//! Platform-specific UI pieces: fonts, locale, alert sound, notifications,
+//! the Dock badge and the folder picker.
 
 use std::path::{Path, PathBuf};
 
+use futures::FutureExt;
+use futures::channel::oneshot;
+use futures::future::LocalBoxFuture;
+
 #[cfg(target_os = "macos")]
 mod macos;
+
+/// The outcome of [`pick_folders`].
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum FolderPick {
+    Chosen(Vec<PathBuf>),
+    Cancelled,
+    /// The system could not show the picker; the detail is for logs.
+    Unavailable(String),
+}
+
+/// Ask the user for one or more folders. On macOS chda opens the panel
+/// itself, in a later foreground task as GPUI does, so AppKit never calls
+/// back while the app is borrowed. A panel the system cannot create reports
+/// `Unavailable`, where GPUI's picker would abort the process.
+pub fn pick_folders(prompt: &str, cx: &gpui::App) -> LocalBoxFuture<'static, FolderPick> {
+    #[cfg(target_os = "macos")]
+    {
+        let (done, picked) = oneshot::channel();
+        let prompt = prompt.to_owned();
+        cx.foreground_executor()
+            .spawn(async move { macos::begin_folder_panel(macos::open_panel(), &prompt, done) })
+            .detach();
+        async move { picked.await.unwrap_or(FolderPick::Cancelled) }.boxed_local()
+    }
+    #[cfg(not(target_os = "macos"))]
+    {
+        let picked = cx.prompt_for_paths(gpui::PathPromptOptions {
+            files: false,
+            directories: true,
+            multiple: true,
+            prompt: Some(prompt.to_owned().into()),
+        });
+        async move { from_path_prompt(picked.await) }.boxed_local()
+    }
+}
+
+/// GPUI's path prompt result as a [`FolderPick`]: a dropped channel counts
+/// as cancelled, an error (e.g. no file chooser portal on Linux) as
+/// unavailable.
+#[cfg_attr(target_os = "macos", allow(dead_code))]
+fn from_path_prompt<E: std::fmt::Display>(
+    result: Result<Result<Option<Vec<PathBuf>>, E>, oneshot::Canceled>,
+) -> FolderPick {
+    match result {
+        Ok(Ok(Some(paths))) => FolderPick::Chosen(paths),
+        Ok(Ok(None)) | Err(oneshot::Canceled) => FolderPick::Cancelled,
+        Ok(Err(e)) => FolderPick::Unavailable(format!("{e:#}")),
+    }
+}
 
 /// `LANG` for shells when chda's own environment has no locale at all, as
 /// for apps started from the Dock (launchd passes none). Without it shells
@@ -320,6 +373,30 @@ mod tests {
         write_font(&dir, "a.ttf", b"two").unwrap();
         assert_eq!(std::fs::read(&path).unwrap(), b"two");
         std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn path_prompt_results_map_to_folder_picks() {
+        type Answer = Result<Option<Vec<PathBuf>>, String>;
+        let picked = vec![PathBuf::from("/src/a"), PathBuf::from("/src/b")];
+        assert_eq!(
+            from_path_prompt::<String>(Ok(Ok(Some(picked.clone())))),
+            FolderPick::Chosen(picked)
+        );
+        assert_eq!(
+            from_path_prompt::<String>(Ok(Ok(None))),
+            FolderPick::Cancelled
+        );
+        assert_eq!(
+            from_path_prompt::<String>(Ok(Err("no file chooser portal".into()))),
+            FolderPick::Unavailable("no file chooser portal".into())
+        );
+        let (done, picked) = oneshot::channel::<Answer>();
+        drop(done);
+        assert_eq!(
+            from_path_prompt(futures::executor::block_on(picked)),
+            FolderPick::Cancelled
+        );
     }
 
     #[test]

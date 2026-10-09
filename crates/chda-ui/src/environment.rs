@@ -10,7 +10,9 @@ use chda_config::{ChdaConfig, Paths};
 use chda_core::ForgeClis;
 use chda_core::agents::{AgentAdapter, adapters, data_dir};
 
-use crate::platform::{self, FolderApp, NotificationTarget};
+use futures::future::LocalBoxFuture;
+
+use crate::platform::{self, FolderApp, FolderPick, NotificationTarget};
 
 /// Side effects outside the window.
 pub trait System {
@@ -32,6 +34,8 @@ pub trait System {
     fn folder_apps(&self) -> Vec<FolderApp>;
     /// Open `folder` in the app with `id` (a [`FolderApp::id`]).
     fn open_folder_in(&self, id: &str, folder: &Path) -> std::io::Result<()>;
+    /// Ask the user for folders, with `prompt` on the confirm button.
+    fn pick_folders(&self, prompt: &str, cx: &gpui::App) -> LocalBoxFuture<'static, FolderPick>;
 }
 
 /// The real OS.
@@ -76,6 +80,10 @@ impl System for NativeSystem {
 
     fn open_folder_in(&self, id: &str, folder: &Path) -> std::io::Result<()> {
         platform::open_folder_in(id, folder)
+    }
+
+    fn pick_folders(&self, prompt: &str, cx: &gpui::App) -> LocalBoxFuture<'static, FolderPick> {
+        platform::pick_folders(prompt, cx)
     }
 }
 

@@ -1,12 +1,15 @@
-//! Folders that are not git repositories.
+//! Adding folders: the folder picker, and folders that are not git
+//! repositories.
 
 use std::path::{Path, PathBuf};
 
+use chda_core::notifications::Severity;
 use gpui::TestAppContext;
 
 use super::harness::Harness;
+use crate::platform::FolderPick;
 use crate::sidebar_view::SidebarEvent;
-use crate::workspace_view::MenuAction;
+use crate::workspace_view::{AddRepo, MenuAction};
 
 fn add(h: &mut Harness, folder: &Path) {
     let folder = folder.to_path_buf();
@@ -24,6 +27,153 @@ fn is_folder(h: &Harness, path: &Path) -> bool {
 
 fn registered(h: &Harness) -> Vec<PathBuf> {
     h.read(|v, _| v.config.repos.clone())
+}
+
+fn errors(h: &Harness) -> usize {
+    h.read(|v, _| {
+        v.notifications
+            .newest()
+            .iter()
+            .filter(|e| e.severity == Severity::Error)
+            .count()
+    })
+}
+
+/// Let the next folder picker answer `pick`.
+fn script(h: &Harness, pick: FolderPick) {
+    h.system.0.borrow_mut().folder_picks.push_back(pick);
+}
+
+fn picker_prompts(h: &Harness) -> Vec<String> {
+    h.system.0.borrow().folder_prompts.clone()
+}
+
+/// Run `echo <word>` in the focused terminal and wait for its output line.
+fn echo(h: &mut Harness, word: &str) {
+    h.type_text(&format!("echo {word}"));
+    h.keys("enter");
+    let word = word.to_owned();
+    h.wait_for(&format!("{word} printed"), move |v, cx| {
+        v.focused_text(cx).lines().any(|line| line.trim() == word)
+    });
+}
+
+fn wait_idle(h: &mut Harness) {
+    h.wait_for("no update operation in flight", |v, _| {
+        !v.env.windows.borrow().update.has_operations()
+    });
+}
+
+/// #181: macOS failed to create the folder picker and chda aborted.
+#[gpui::test]
+fn add_repository_survives_an_unavailable_picker_and_retries(cx: &mut TestAppContext) {
+    let mut existing = PathBuf::new();
+    let mut h = Harness::open(cx, "picker", |home| {
+        existing = home.repo("existing");
+        std::fs::write(
+            &home.config,
+            format!("repos = [\"{}\"]\n", existing.display()),
+        )
+        .unwrap();
+    });
+    h.wait_prompt();
+    h.wait_for("the saved repository", {
+        let existing = existing.clone();
+        move |v, cx| {
+            v.sidebar
+                .read(cx)
+                .model
+                .repos
+                .iter()
+                .any(|r| r.path == existing)
+        }
+    });
+    let config = std::fs::read(&h.home.config).unwrap();
+    let tabs = h.read(|v, _| v.ws.tabs().len());
+    let errors_before = errors(&h);
+
+    // The sidebar button while a command is half typed: one error, and
+    // nothing else changes.
+    script(&h, FolderPick::Unavailable("no open panel".into()));
+    h.type_text("echo picker-");
+    h.cx.run_until_parked();
+    let add = h.cx.debug_bounds("add-repo").expect("the + repo button");
+    h.cx.simulate_click(add.center(), gpui::Modifiers::none());
+    h.cx.run_until_parked();
+    assert_eq!(picker_prompts(&h), ["Add repository"]);
+    assert_eq!(errors(&h), errors_before + 1);
+    assert_eq!(
+        h.read(|v, _| v.notifications.latest().map(str::to_owned))
+            .as_deref(),
+        Some(
+            "Couldn't open the folder picker. Try Add repository again, \
+             or drop the folder on the sidebar."
+        )
+    );
+    assert_eq!(std::fs::read(&h.home.config).unwrap(), config);
+    assert_eq!(registered(&h), std::slice::from_ref(&existing));
+    assert_eq!(h.read(|v, _| v.ws.tabs().len()), tabs);
+    wait_idle(&mut h);
+    // Typing continues in the same terminal, with the unfinished command.
+    h.type_text("survived");
+    h.keys("enter");
+    h.wait_for("the half-typed command's output", |v, cx| {
+        v.focused_text(cx)
+            .lines()
+            .any(|line| line.trim() == "picker-survived")
+    });
+
+    // cmd-shift-o, cancelled: no message.
+    script(&h, FolderPick::Cancelled);
+    h.keys("cmd-shift-o");
+    assert_eq!(picker_prompts(&h).len(), 2);
+    assert_eq!(errors(&h), errors_before + 1);
+    assert_eq!(std::fs::read(&h.home.config).unwrap(), config);
+    wait_idle(&mut h);
+    echo(&mut h, "after-cancel");
+
+    // The palette's Add repository, once the picker works again.
+    let added = h.home.repo("added");
+    script(&h, FolderPick::Chosen(vec![added.clone()]));
+    h.keys("cmd-shift-p");
+    h.type_text("Add repository");
+    h.keys("enter");
+    h.wait_for("the picked repository", {
+        let added = added.clone();
+        move |v, cx| {
+            v.sidebar
+                .read(cx)
+                .model
+                .repos
+                .iter()
+                .any(|r| r.path == added)
+        }
+    });
+    assert_eq!(registered(&h), [existing.clone(), added.clone()]);
+    echo(&mut h, "after-palette");
+
+    // The menu item's action, with several folders at once.
+    let (one, two) = (h.home.repo("one"), h.home.repo("two"));
+    script(&h, FolderPick::Chosen(vec![one.clone(), two.clone()]));
+    h.cx.dispatch_action(AddRepo);
+    h.wait_for("both picked repositories", {
+        let (one, two) = (one.clone(), two.clone());
+        move |v, cx| {
+            let model = &v.sidebar.read(cx).model;
+            [&one, &two]
+                .iter()
+                .all(|p| model.repos.iter().any(|r| &r.path == *p))
+        }
+    });
+    assert_eq!(registered(&h), [existing, added, one.clone(), two.clone()]);
+    let saved = std::fs::read_to_string(&h.home.config).unwrap();
+    assert!(
+        saved.contains(&*one.to_string_lossy()) && saved.contains(&*two.to_string_lossy()),
+        "{saved}"
+    );
+    assert_eq!(picker_prompts(&h), ["Add repository"; 4]);
+    assert_eq!(errors(&h), errors_before + 1);
+    wait_idle(&mut h);
 }
 
 #[gpui::test]

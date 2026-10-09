@@ -27,6 +27,7 @@ gpui = { workspace = true, features = ["test-support"] }
 block2.workspace = true
 objc2.workspace = true
 objc2-app-kit = { workspace = true, features = [
+    "block2",
     "NSApplication",
     "NSBitmapImageRep",
     "NSDockTile",
@@ -34,15 +35,20 @@ objc2-app-kit = { workspace = true, features = [
     "NSGraphicsContext",
     "NSImage",
     "NSImageRep",
+    "NSOpenPanel",
+    "NSPanel",
     "NSResponder",
+    "NSSavePanel",
     "NSWindow",
     "NSWorkspace",
     "objc2-core-foundation",
 ] }
 objc2-foundation = { workspace = true, features = [
+    "NSArray",
     "NSBundle",
     "NSData",
     "NSDictionary",
+    "NSEnumerator",
     "NSError",
     "NSGeometry",
     "NSLocale",

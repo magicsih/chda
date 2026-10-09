@@ -1,6 +1,7 @@
 //! Opens a window over a temporary home and waits for real shells.
 
 use std::cell::RefCell;
+use std::collections::VecDeque;
 use std::path::{Path, PathBuf};
 use std::rc::Rc;
 use std::sync::Arc;
@@ -9,10 +10,12 @@ use std::time::{Duration, Instant};
 use chda_config::{GhosttyConfig, Paths};
 use chda_core::SavedWindow;
 use chda_core::agents::{AgentAdapter, AgentId, HookEvent, HookKind, SessionId, adapters, ipc};
+use futures::FutureExt;
+use futures::future::LocalBoxFuture;
 use gpui::{App, AppContext, Entity, TestAppContext, VisualTestContext, WindowOptions};
 
 use crate::environment::{Environment, System};
-use crate::platform::{FolderApp, NotificationTarget};
+use crate::platform::{FolderApp, FolderPick, NotificationTarget};
 use crate::terminal_view::TerminalView;
 use crate::workspace_view::WorkspaceView;
 
@@ -27,6 +30,10 @@ pub struct Recorded {
     pub revealed: Vec<PathBuf>,
     /// Folders opened from the title bar, with the app's id.
     pub opened_in: Vec<(String, PathBuf)>,
+    /// What the next folder pickers answer, in order; none left: cancelled.
+    pub folder_picks: VecDeque<FolderPick>,
+    /// The prompt of each folder picker the window opened.
+    pub folder_prompts: Vec<String>,
 }
 
 #[derive(Default)]
@@ -84,6 +91,16 @@ impl System for RecordingSystem {
             .opened_in
             .push((id.into(), folder.to_path_buf()));
         Ok(())
+    }
+
+    fn pick_folders(&self, prompt: &str, _: &App) -> LocalBoxFuture<'static, FolderPick> {
+        let mut recorded = self.0.borrow_mut();
+        recorded.folder_prompts.push(prompt.into());
+        let pick = recorded
+            .folder_picks
+            .pop_front()
+            .unwrap_or(FolderPick::Cancelled);
+        futures::future::ready(pick).boxed_local()
     }
 }
 
