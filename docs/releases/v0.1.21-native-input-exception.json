@@ -1,0 +1,22 @@
+{
+  "accepted_at": "2026-10-09T11:40:10Z",
+  "accepted_interpretation": "publish-with-incomplete-native-validation",
+  "blocked_evidence_sha256": "142e1bbded3618bec5f442042d35ffb4f5eaa5cff3acea0ce1f3e8c1180b421e",
+  "config_sha256": "37919e72949e33f36b677a5d072df0b5f62e92d924f53af9e48003df32d71915",
+  "incomplete_checks": [
+    "before-build-native-e2e",
+    "before-deploy-native-e2e",
+    "gui-ipc",
+    "session-preserving-update",
+    "shell-pid-preservation",
+    "signed-launch",
+    "three-native-review-rounds"
+  ],
+  "independent_assessment_sha256": "37ab9ee4cd9363f3cbe93552fc9fdc028454410b9686807d5c48f928df00e853",
+  "owner": "magicsih",
+  "owner_instruction": "이제 좀 공개해라 좀",
+  "schema": 1,
+  "sha": "4e4116560d4e2915830bdbb447566b5d5fabad9e",
+  "tag": "v0.1.21",
+  "tree": "f198127022e0a3aabd9162da3c663998d7ce627a"
+}
