@@ -4,6 +4,24 @@ All notable changes to chda. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); entries are
 generated from conventional commit messages by release-plz.
 
+## [0.1.21](https://github.com/magicsih/chda/compare/v0.1.20...v0.1.21) - 2026-10-09
+
+### Added
+
+- *(worktrees)* prepare local files and setup before opening new worktrees ([#176](https://github.com/magicsih/chda/pull/176))
+- *(review)* keep private notes on worktree diff lines ([#175](https://github.com/magicsih/chda/pull/175))
+- *(terminal)* preview selected assistant text before sharing ([#174](https://github.com/magicsih/chda/pull/174))
+- *(agents)* show confirmed child activity under each conversation ([#172](https://github.com/magicsih/chda/pull/172))
+- *(agents)* restart the exact conversation after a managed process exits ([#171](https://github.com/magicsih/chda/pull/171))
+- *(agents)* choose and retain permissions for each conversation ([#170](https://github.com/magicsih/chda/pull/170))
+- *(notifications)* keep operational messages in a window history ([#169](https://github.com/magicsih/chda/pull/169))
+
+### Fixed
+
+- *(notifications)* render the title-bar bell with a font fallback ([#179](https://github.com/magicsih/chda/pull/179))
+- *(sidebar)* keep repository context while navigating worktrees ([#168](https://github.com/magicsih/chda/pull/168))
+- *(terminal)* open space-containing parenthesized paths ([#166](https://github.com/magicsih/chda/pull/166))
+
 ## [0.1.20](https://github.com/magicsih/chda/compare/v0.1.19...v0.1.20) - 2026-10-07
 
 ### Added
