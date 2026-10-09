@@ -77,6 +77,7 @@ Three layers, all run by `cargo test --workspace` (CI: the macOS job).
 | A quoted path with spaces is one link | `paths::quoted_path_with_spaces_is_one_link` | #34 |
 | Drop files on a pane: quoted paths pasted, even right after typing | `paths::dropped_files_paste_as_quoted_paths` | #17 |
 | Drop a folder on the sidebar: added as a repository | `paths::dropped_folder_on_the_sidebar_becomes_a_repository` | #17 |
+| Add repository when the system cannot open the folder picker: one error, unchanged typed input, config and tabs; silent cancel; retry from the shortcut, palette and menu, several folders at once | `folders::add_repository_survives_an_unavailable_picker_and_retries`, `platform::tests::path_prompt_results_map_to_folder_picks`, `platform::macos::tests::*` | #181 |
 | Palette arrow keys choose a later entry | `palette::arrow_keys_choose_a_later_entry` | |
 | Theme picker: preview, restore on escape, save on enter | `palette::theme_picker_previews_restores_and_saves` | |
 | Menu actions: Settings opens config.toml, agent items explain themselves | `menus::settings_writes_a_missing_config_file`, `menus::agent_items_explain_why_nothing_ran` | |
@@ -93,7 +94,9 @@ Three layers, all run by `cargo test --workspace` (CI: the macOS job).
 
 Not covered by scenarios: anything visual (colors, layout, rendering), since
 the test platform draws no pixels; launching real agents (a stand-in
-`claude` script takes their place); macOS notifications and the Dock themselves.
+`claude` script takes their place); macOS notifications and the Dock themselves;
+the macOS folder picker, whose success, cancellation and creation failure need
+a native check before release.
 
 ### Native notification glyph regression
 

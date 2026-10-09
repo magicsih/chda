@@ -33,9 +33,8 @@ use futures::StreamExt;
 use futures::channel::mpsc::unbounded;
 use gpui::{
     AnyElement, AnyView, App, Context, Entity, FocusHandle, Focusable, Hsla, MouseButton,
-    MouseDownEvent, MouseMoveEvent, PathPromptOptions, Pixels, Point, PromptLevel, Render,
-    StyleRefinement, Subscription, Window, actions, anchored, deferred, div, img, point,
-    prelude::*, px, relative,
+    MouseDownEvent, MouseMoveEvent, Pixels, Point, PromptLevel, Render, StyleRefinement,
+    Subscription, Window, actions, anchored, deferred, div, img, point, prelude::*, px, relative,
 };
 
 use crate::palette::{Palette, PaletteCommand, PaletteEvent, PaletteItem};
@@ -3668,22 +3667,29 @@ impl WorkspaceView {
         }
     }
 
+    /// Pick folders and add them. The update operation ends with the task,
+    /// whatever the picker answers, so a failed picker never blocks a retry.
     fn add_repo(&mut self, _: &AddRepo, window: &mut Window, cx: &mut Context<Self>) {
         let operation = self.env.windows.borrow().update.operation();
-        let rx = cx.prompt_for_paths(PathPromptOptions {
-            files: false,
-            directories: true,
-            multiple: true,
-            prompt: Some("Add repository".into()),
-        });
+        let picked = self.env.system.pick_folders("Add repository", cx);
         cx.spawn_in(window, async move |this, cx| {
             let _operation = operation;
-            let Ok(Ok(Some(paths))) = rx.await else {
-                return;
-            };
-            let _ = this.update_in(cx, |view, window, cx| {
-                for path in paths {
-                    view.register_repo(path, window, cx);
+            let pick = picked.await;
+            let _ = this.update_in(cx, |view, window, cx| match pick {
+                platform::FolderPick::Chosen(paths) => {
+                    for path in paths {
+                        view.register_repo(path, window, cx);
+                    }
+                }
+                platform::FolderPick::Cancelled => {}
+                platform::FolderPick::Unavailable(detail) => {
+                    eprintln!("chda: could not open the folder picker: {detail}");
+                    view.notify_error(
+                        "Couldn't open the folder picker. Try Add repository again, \
+                         or drop the folder on the sidebar."
+                            .into(),
+                    );
+                    cx.notify();
                 }
             });
         })
@@ -5622,7 +5628,10 @@ impl WorkspaceView {
                     self.focus_active(window, cx);
                 }
                 "sidebar" => self.toggle_sidebar(&ToggleSidebar, window, cx),
-                "add_repo" => self.add_repo(&AddRepo, window, cx),
+                "add_repo" => {
+                    self.add_repo(&AddRepo, window, cx);
+                    self.focus_active(window, cx);
+                }
                 "font_bigger" => self.increase_font_size(&IncreaseFontSize, window, cx),
                 "font_smaller" => self.decrease_font_size(&DecreaseFontSize, window, cx),
                 "font_reset" => self.reset_font_size(&ResetFontSize, window, cx),
