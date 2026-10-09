@@ -83,7 +83,7 @@ Homebrew용 `RELEASE_TOKEN`을 사용한다. 새 credential을 만들거나 교�
 
 `cases`는 승인 설계의 PATH-164, NAV-149, PR-150, TREE-151, REMOVE-152, QUOTA-153,
 CLOSE-154, NOTIFY-155, COPY-158, POLICY-159, RESTART-160, CHILD-161, REVIEW-162,
-PREP-163 전체다. `features`는 후보의 product catalog 전체 area다. 새로운 승인 조건이나
+PREP-163, PICKER-181, SESSIONS-182 전체다. `features`는 후보의 product catalog 전체 area다. 새로운 승인 조건이나
 catalog area가 생기면 증거 검증 계약도 함께 갱신한다. `signed_artifact.checks`는
 `signed-launch`, `session-preserving-update`, `gui-ipc`, `shell-pid-preservation` 전체다.
 검증기 입력을 맞추기 위한 가상 통과 JSON을 작성하지 않는다.
