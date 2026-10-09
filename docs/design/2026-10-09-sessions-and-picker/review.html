@@ -1,0 +1,382 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>chda — Sessions and picker design 1.3</title>
+<style>
+:root{color-scheme:light;--paper:#fafaf7;--ink:#1b1b22;--muted:#5b5f6b;--accent:#3b6fd8;--surface:#f4f5f8;--rule:#e1e3ea;--good:#1f7a4d;--bad:#b3261e;--sans:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;--mono:ui-monospace,SFMono-Regular,Menlo,monospace}
+*{box-sizing:border-box}
+body{margin:0;background:var(--paper);color:var(--ink);font:16px/1.6 var(--sans)}
+main{max-width:1240px;margin:auto;padding:48px 32px 64px}
+h1{font-size:42px;line-height:1.14;letter-spacing:-.04em;margin:12px 0 18px}
+h2{font-size:25px;letter-spacing:-.02em;margin:0 0 8px}
+h3{font-size:16px;margin:0 0 8px}
+p{margin:0 0 16px}
+.eyebrow{font:12px var(--mono);letter-spacing:.1em;color:var(--muted)}
+.lede{max-width:780px;font-size:19px;color:var(--muted)}
+.notice{border-left:3px solid var(--accent);padding:10px 16px;margin:24px 0;background:#eef2fb;font-size:14px}
+nav{display:flex;gap:8px 24px;flex-wrap:wrap;margin:24px 0 36px}
+a{color:var(--accent);text-underline-offset:4px}
+section{margin:56px 0}
+.sub{color:var(--muted);max-width:860px}
+figure{margin:20px 0}
+figcaption{font-size:14px;color:var(--muted);margin-top:12px}
+.tag{font:12px var(--mono);color:var(--muted)}
+.scroller{overflow-x:auto;-webkit-overflow-scrolling:touch}
+.pair{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:24px}
+.pair>figure,.quad>figure{min-width:0}
+.quad{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:18px}
+.verdict{font-size:13px;font-weight:650;margin:0 0 8px}
+.verdict.bad{color:var(--bad)}.verdict.good{color:var(--good)}
+table{border-collapse:collapse;width:100%;font-size:14px}
+th,td{border-bottom:1px solid var(--rule);padding:9px 10px;text-align:left;vertical-align:top}
+th{font-weight:650;background:var(--surface)}
+.keep{color:var(--good);font-weight:650}.move{color:var(--accent);font-weight:650}
+.checklist li{margin:6px 0}
+
+/* app mockups */
+.app{--bg:#1e1e2e;--fg:#cdd6f4;--mut:#9399b2;--line:#45475a;--acc:#89b4fa;--panel:#181825;--sel:#313e58;--hdr:#252536;--warn:#fab387;--warnbg:rgba(250,179,135,.13);--ok:#a6e3a1;--idle:#f9e2af;--gray:#7f849c;--term:#11111b;
+  background:var(--bg);color:var(--fg);font:13px/1.45 var(--sans);border:1px solid #3d3e4b;border-radius:8px;overflow:hidden;min-width:600px}
+.app.light{--bg:#eff1f5;--fg:#4c4f69;--mut:#6c6f85;--line:#ccd0da;--acc:#1e66f5;--panel:#e6e9ef;--sel:#d4ddf3;--hdr:#e1e5ee;--warn:#d4610a;--warnbg:rgba(254,100,11,.12);--ok:#2d8a2b;--idle:#b37a0c;--gray:#8c8fa1;--term:#f5f6f9;border-color:#ccd0da}
+.titlebar{height:38px;background:var(--panel);border-bottom:1px solid var(--line);display:flex;align-items:center;padding:0 12px;gap:10px}
+.traffic{display:flex;gap:6px}.traffic i{width:10px;height:10px;border-radius:50%;background:#a6adc8;display:block}
+.traffic i:first-child{background:#f38ba8}.traffic i:nth-child(2){background:#f9e2af}.traffic i:nth-child(3){background:#a6e3a1}
+.tctx{flex:1;min-width:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;color:var(--mut)}
+.bell{position:relative;padding:2px 6px}.bell b{position:absolute;right:-6px;top:-6px;background:var(--acc);color:var(--panel);font-size:10px;min-width:16px;height:16px;border-radius:8px;text-align:center;line-height:16px}
+.pick{border:1px solid var(--line);border-radius:4px;padding:2px 8px;white-space:nowrap}
+.body{display:grid;grid-template-columns:262px 1fr}
+.side{border-right:1px solid var(--line);display:flex;flex-direction:column;background:var(--bg)}
+.sh{display:flex;align-items:center;gap:6px;padding:7px 10px 5px;font-size:11px;font-weight:650;letter-spacing:.05em;color:var(--mut);text-transform:none;border-bottom:1px solid transparent}
+.sh .cnt{font-weight:500}.sh .sp{flex:1}.sh .btn{border:1px solid var(--line);border-radius:4px;padding:0 6px;font-weight:500;letter-spacing:0}
+.region{position:relative;overflow:hidden}
+.region .sb{position:absolute;right:2px;width:4px;border-radius:2px;background:var(--mut);opacity:.55}
+.row{display:flex;align-items:center;gap:7px;padding:4px 10px;white-space:nowrap}
+.row .g{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis}
+.row .s{color:var(--mut);font-size:11px}
+.row.on{background:var(--sel);box-shadow:inset 2px 0 var(--acc)}
+.row.wait{background:var(--warnbg)}
+.row.child{padding-left:30px;font-size:12px}
+.x{color:var(--mut);border:1px solid var(--line);border-radius:3px;font-size:10px;padding:0 4px}
+.i{display:inline-block;width:12px;text-align:center;font-weight:700}
+.i.work{color:var(--acc)}.i.wait{color:var(--warn)}.i.done{color:var(--ok)}.i.idle{color:var(--idle)}.i.none{color:var(--gray)}
+.divider{border-top:1px solid var(--line)}
+.repo{padding:5px 10px;font-weight:650;background:var(--hdr);display:flex;gap:6px}
+.repo.sticky{box-shadow:0 2px 4px rgba(0,0,0,.25)}
+.wt{padding:4px 10px 4px 26px;display:flex;gap:6px;white-space:nowrap}
+.wt.on{background:var(--sel);box-shadow:inset 2px 0 var(--acc)}
+.wt .g{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis}
+.pr{font-size:11px;border-radius:9px;padding:0 6px;border:1px solid}
+.pr.open{color:#3fb950;border-color:#3fb950}.pr.merged{color:#a371f7;border-color:#a371f7}
+.term{background:var(--term);font:12px/1.7 var(--mono);padding:14px 16px;color:var(--fg);position:relative}
+.term .p{color:var(--acc)}
+.tabs{display:flex;border-bottom:1px solid var(--line);font-size:12px;background:var(--bg)}
+.tabs span{padding:6px 12px;border-right:1px solid var(--line);color:var(--mut);white-space:nowrap}.tabs span.on{color:var(--fg);background:var(--hdr)}
+.status{height:28px;border-top:1px solid var(--line);display:flex;gap:16px;align-items:center;padding:0 12px;font-size:11px;color:var(--mut);background:var(--panel)}
+.pop{position:absolute;right:12px;top:8px;width:330px;max-width:calc(100% - 24px);background:var(--panel);border:1px solid var(--line);border-radius:6px;padding:10px 12px;font:12px/1.5 var(--sans);box-shadow:0 8px 24px rgba(0,0,0,.35)}
+.pop .e{border-top:1px solid var(--line);padding:8px 0}.pop .e:first-of-type{border-top:0}
+.sev{font-size:10px;font-weight:700;border-radius:3px;padding:0 5px;margin-right:6px}
+.sev.err{background:#f38ba8;color:#1e1e2e}.sev.info{background:var(--line);color:var(--fg)}
+.callout{position:absolute;background:#fff3c4;color:#3a2f00;border:1px solid #e0c64f;border-radius:4px;font:11px/1.35 var(--sans);padding:4px 7px;max-width:180px;box-shadow:0 2px 6px rgba(0,0,0,.2)}
+.arrow{color:var(--acc);font-weight:700}
+
+/* mini sidebars for the height rules */
+.mini{min-width:0;border:1px solid #3d3e4b;border-radius:6px;overflow:hidden;background:#1e1e2e;color:#cdd6f4;font:11px/1.4 var(--sans);display:flex;flex-direction:column;height:300px}
+.mini .h{padding:5px 8px;font-weight:650;color:#9399b2;display:flex;gap:4px}
+.mini .h .sp{flex:1}
+.mini .r{padding:2px 8px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.mini .zone{position:relative;overflow:hidden}
+.mini .zone.s{background:rgba(137,180,250,.08)}
+.mini .zone .sb{position:absolute;right:2px;top:4px;width:3px;border-radius:2px;background:#9399b2}
+.mini .ruler{font:10px var(--mono);color:#89b4fa;padding:2px 8px;border-top:1px dashed #89b4fa}
+
+/* flows */
+.flow{display:flex;flex-wrap:wrap;gap:10px;align-items:center;margin:12px 0}
+.step{border:1px solid var(--rule);background:#fff;border-radius:6px;padding:8px 12px;font-size:14px}
+.step.err{border-color:#e9b4af;background:#fdf1f0}
+.step.ok{border-color:#a9d8bf;background:#eff8f3}
+
+@media (max-width:480px){.quad{grid-template-columns:minmax(0,1fr)!important}}
+@media (max-width:760px){
+  main{padding:32px 16px 48px}
+  h1{font-size:32px}
+  .pair{grid-template-columns:minmax(0,1fr)}
+  .quad{grid-template-columns:repeat(2,minmax(0,1fr))}
+  th,td{padding:7px 6px;font-size:13px}
+}
+</style>
+</head>
+<body>
+<main>
+<p class="eyebrow">CHDA · DESIGN 1.3 · 2026-10-09 · 합성 시안</p>
+<h1>세션을 눌러도 사이드바는 제자리에</h1>
+<p class="lede">ACTIVE와 IDLE을 <b>Sessions</b> 하나로 합치고, 세션 목록과 프로젝트 목록을 따로 스크롤합니다. 세션을 누르면 PROJECT가 그 브랜치를 강조하지만, 움직이는 것은 PROJECT 영역뿐입니다. Add repo는 macOS가 선택 창을 만들지 못해도 앱을 멈추지 않습니다.</p>
+<div class="notice">이 페이지의 화면은 합성 데이터로 그린 <b>설계 시안</b>입니다. 실제 앱 화면이나 검수 결과가 아닙니다. 본문 정본은 <a href="design.md">design.md</a>입니다. 관련 이슈: <a href="https://github.com/magicsih/chda/issues/182">#182</a>, <a href="https://github.com/magicsih/chda/issues/181">#181</a>.</div>
+<nav>
+<a href="#jump">01 튀지 않는 세션 클릭</a>
+<a href="#heights">02 두 영역의 높이</a>
+<a href="#rules">03 무엇이 PROJECT를 움직이나</a>
+<a href="#small">04 좁은 창·light/dark</a>
+<a href="#picker">05 Add repo 실패</a>
+<a href="#config">06 설정 이전</a>
+<a href="#scope">검토 범위</a>
+</nav>
+
+<section id="jump">
+<p class="tag">#182 · SESSIONS-182</p>
+<h2>01 · 세션을 눌러도 다른 곳으로 튀지 않는다</h2>
+<p class="sub">지금은 목록 전체가 스크롤 하나를 공유합니다. 아래쪽 저장소에 있는 세션을 누르면 사이드바가 그 워크트리까지 내려가 세션 목록이 화면 밖으로 밀려납니다. 바뀐 뒤에는 두 영역이 따로 스크롤됩니다. 세션을 누르면 PROJECT는 그 브랜치를 강조하고 필요한 만큼만 움직이지만, 세션 목록은 그대로입니다.</p>
+<div class="pair">
+<figure>
+<p class="verdict bad">지금 · 클릭 → 공유 스크롤이 아래로 이동</p>
+<div class="scroller"><div class="mini" style="height:300px;min-width:240px">
+<div class="r" style="color:#9399b2">… 세션 목록이 위로 밀려남 …</div>
+<div class="h">PROJECT<span class="sp"></span>+ repo</div>
+<div class="r" style="background:#252536;font-weight:650">web</div>
+<div class="r" style="padding-left:20px">fix-login</div>
+<div class="r" style="padding-left:20px">main</div>
+<div class="r" style="background:#252536;font-weight:650">api</div>
+<div class="r" style="padding-left:20px;background:#313e58;box-shadow:inset 2px 0 #89b4fa">main ← 클릭한 세션의 워크트리</div>
+<div class="r" style="padding-left:20px">refactor-auth</div>
+<div class="r" style="color:#9399b2">PROJECT가 펼쳐지고 저장소가 열림</div>
+</div></div>
+<figcaption>세션 목록과 클릭한 행이 화면 밖으로 사라집니다(<code>focus_active → sync_sidebar_selection(true)</code>).</figcaption>
+</figure>
+<figure>
+<p class="verdict good">바뀐 뒤 · 클릭 → 세션 목록은 그대로, PROJECT 안에서만 그 브랜치로</p>
+<div class="scroller"><div class="mini" style="height:300px;min-width:240px">
+<div class="h">▾ Sessions <span style="font-weight:400">6</span><span class="sp"></span>Branch</div>
+<div class="zone s" style="height:116px">
+<div class="r"><span style="color:#89b4fa">◌</span> app / feature-a · Claude</div>
+<div class="r"><span style="color:#a6e3a1">●</span> app / feature-a · Codex · pane 2</div>
+<div class="r" style="background:rgba(250,179,135,.13)"><span style="color:#fab387">!</span> web / fix-login · Claude</div>
+<div class="r" style="background:#313e58;box-shadow:inset 2px 0 #89b4fa"><span style="color:#f9e2af">●</span> api / main · Claude ← 클릭</div>
+<div class="r" style="color:#9399b2">○ ~/notes · Terminal ✕</div>
+<span class="sb" style="height:60px"></span>
+</div>
+<div class="h">▾ PROJECT<span class="sp"></span>+ repo</div>
+<div class="zone">
+<div class="r" style="background:#252536;font-weight:650;box-shadow:0 2px 4px rgba(0,0,0,.3)">web  (고정 헤더)</div>
+<div class="r" style="padding-left:20px">main</div>
+<div class="r" style="background:#252536;font-weight:650">api</div>
+<div class="r" style="padding-left:20px;background:#313e58;box-shadow:inset 2px 0 #89b4fa">main ← 클릭한 세션의 브랜치</div>
+<span class="sb" style="top:34px;height:40px"></span>
+</div>
+</div></div>
+<figcaption>Sessions는 스크롤 위치를 유지하고 강조만 클릭한 행으로 옮깁니다. 화면 밖이던 <code>api / main</code>은 PROJECT 영역만 아래 가장자리까지 최소로 움직여 보여 줍니다(사용자 결정 2, #149 규칙).</figcaption>
+</figure>
+</div>
+
+<figure>
+<div class="scroller">
+<div class="app">
+<div class="titlebar"><div class="traffic"><i></i><i></i><i></i></div><div class="tctx">api — main · Claude</div><span class="bell">🔔<b>2</b></span><span class="pick">Open in ▾</span></div>
+<div class="body">
+<div class="side" style="height:470px">
+<div class="sh">▾ Sessions <span class="cnt">8</span><span class="sp"></span><span class="btn">Branch</span></div>
+<div class="region" style="height:184px">
+<div class="row"><span class="i work" title="Working">◌</span><span class="g">app / feature-a</span><span class="s">Claude</span></div>
+<div class="row child"><span class="i work">◌</span><span class="g">Explore · subagent</span><span class="s">Working</span></div>
+<div class="row"><span class="i done" title="Turn complete">●</span><span class="g">app / feature-a</span><span class="s">Codex · pane 2</span></div>
+<div class="row wait"><span class="i wait" title="Waiting for input">!</span><span class="g">web / fix-login</span><span class="s">Claude</span></div>
+<div class="row on"><span class="i idle" title="Idle">●</span><span class="g">api / main</span><span class="s">Claude</span><span class="x" title="Close agent pane">✕</span></div>
+<div class="row"><span class="i none" title="Git tree">⑂</span><span class="g">app · Git tree</span><span class="s">View</span></div>
+<div class="row"><span class="i none" title="Terminal">○</span><span class="g">~/notes</span><span class="s">Terminal</span><span class="x" title="Close terminal tab">✕</span></div>
+<div class="row"><span class="i none" title="Terminal">○</span><span class="g">web / main</span><span class="s">Terminal</span><span class="x">✕</span></div>
+<span class="sb" style="top:4px;height:120px"></span>
+</div>
+<div class="divider"></div>
+<div class="sh">▾ PROJECT<span class="sp"></span><span class="btn">+ repo</span></div>
+<div class="region" style="flex:1">
+<div class="repo sticky">▾ web <span style="font-weight:400;color:var(--mut)">· 4</span></div>
+<div class="wt"><span class="i wait">!</span><span class="g">fix-login</span><span class="pr open">#44</span></div>
+<div class="wt"><span class="i none">●</span><span class="g">main</span></div>
+<div class="wt"><span class="i none">●</span><span class="g">docs-refresh</span></div>
+<div class="repo">▾ api <span style="font-weight:400;color:var(--mut)">· 5</span></div>
+<div class="wt"><span class="i none">●</span><span class="g">refactor-auth</span><span class="pr merged">#39</span></div>
+<div class="wt"><span class="i none">●</span><span class="g">rate-limit</span></div>
+<div class="wt on"><span class="i idle">●</span><span class="g">main</span></div>
+<span class="sb" style="top:60px;height:70px"></span>
+</div>
+</div>
+<div style="display:flex;flex-direction:column;min-width:0">
+<div class="tabs"><span>app</span><span>web</span><span class="on">api</span><span>Git tree</span><span>notes</span></div>
+<div class="term" style="flex:1"><p><span class="p">❯</span> claude</p><p>✻ Ready for the next prompt.</p><p style="color:var(--mut)">&gt; 입력 중인 글자는 그대로 남습니다</p></div>
+<div class="status"><span>Claude 34%</span><span>Codex 12%</span></div>
+</div>
+</div>
+</div>
+</div>
+<figcaption>1440px 기준 전체 창. Sessions는 8행이라 40%에서 멈추고 자체 스크롤 막대를 보여 줍니다. 세션 <code>api / main</code>을 누른 직후라 PROJECT는 그 브랜치가 아래 가장자리에 보이도록만 움직였고, 맨 위 저장소 이름(<code>web</code>)은 고정 헤더로 남습니다. Sessions의 스크롤 위치는 바뀌지 않았습니다. 행 순서는 탭 순서이며 터미널 행이 맨 아래입니다. 상태는 아이콘·색과 tooltip 문구(Working, Waiting for input, Turn complete, Idle, Terminal…)로 함께 알립니다.</figcaption>
+</figure>
+
+<table>
+<thead><tr><th>행 종류</th><th>언제 생기나</th><th>클릭</th><th>닫기 버튼</th></tr></thead>
+<tbody>
+<tr><td>에이전트 행</td><td>에이전트가 살아 있거나 chda가 실행한 기록이 있는 pane마다 하나. split 안의 에이전트도 각각</td><td>그 pane에 포커스</td><td>대기 중일 때 그 pane 닫기</td></tr>
+<tr><td>보기 행</td><td>Git 트리, diff 리뷰처럼 터미널이 아닌 탭</td><td>그 탭으로</td><td>없음(탭 바에서 닫기)</td></tr>
+<tr><td>터미널 행</td><td>에이전트가 없는 터미널 탭. 목록 맨 아래</td><td>그 탭으로</td><td>그 탭만 닫기(#154)</td></tr>
+<tr><td>하위 에이전트 행</td><td>provider가 확인한 child(#161). 부모 에이전트 행 아래</td><td>전용 pane이 있을 때만 그 pane</td><td>없음</td></tr>
+</tbody>
+</table>
+</section>
+
+<section id="heights">
+<p class="tag">#182 · 사용자 결정 3</p>
+<h2>02 · 두 영역의 높이 — 내용만큼, 최대 40%</h2>
+<p class="sub">제목 줄 두 개는 스크롤 밖에 있어 접기와 <code>+ repo</code>가 늘 보입니다. 포인터 아래의 목록만 휠로 움직입니다.</p>
+<div class="quad">
+<figure><div class="mini">
+<div class="h">▾ Sessions 2</div>
+<div class="zone s" style="height:40px"><div class="r">◌ app / feature-a</div><div class="r">○ ~/notes ✕</div></div>
+<div class="h">▾ PROJECT<span class="sp"></span>+ repo</div>
+<div class="zone" style="flex:1"><div class="r">app</div><div class="r">  feature-a</div><div class="r">  main</div><div class="r">web</div><div class="r">  fix-login</div><span class="sb" style="height:60px"></span></div>
+</div><figcaption>세션이 적으면 내용 높이만 차지합니다.</figcaption></figure>
+<figure><div class="mini">
+<div class="h">▾ Sessions 14</div>
+<div class="zone s" style="height:104px"><div class="r">◌ app / feature-a</div><div class="r">● app / feature-a · pane 2</div><div class="r">! web / fix-login</div><div class="r">● api / main</div><div class="r">● ops / deploy</div><div class="r">◌ ml / train</div><span class="sb" style="height:40px"></span></div>
+<div class="ruler">40%</div>
+<div class="h">▾ PROJECT<span class="sp"></span>+ repo</div>
+<div class="zone" style="flex:1"><div class="r">app</div><div class="r">  feature-a</div><div class="r">  main</div><span class="sb" style="height:30px"></span></div>
+</div><figcaption>많으면 40%에서 멈추고 Sessions 안에서 스크롤합니다.</figcaption></figure>
+<figure><div class="mini">
+<div class="h">▾ Sessions 14</div>
+<div class="zone s" style="flex:1"><div class="r">◌ app / feature-a</div><div class="r">● app / feature-a · pane 2</div><div class="r">! web / fix-login</div><div class="r">● api / main</div><div class="r">● ops / deploy</div><div class="r">◌ ml / train</div><div class="r">● docs / site</div><div class="r">○ ~/notes ✕</div><span class="sb" style="height:120px"></span></div>
+<div class="h">▸ PROJECT 5<span class="sp"></span>+ repo</div>
+</div><figcaption>PROJECT를 접으면 Sessions가 남은 높이를 모두 씁니다.</figcaption></figure>
+<figure><div class="mini">
+<div class="h">▸ Sessions 14</div>
+<div class="h">▾ PROJECT<span class="sp"></span>+ repo</div>
+<div class="zone" style="flex:1"><div class="r">app</div><div class="r">  feature-a</div><div class="r">  main</div><div class="r">web</div><div class="r">  fix-login</div><div class="r">  main</div><div class="r">api</div><div class="r">  main</div><span class="sb" style="height:90px"></span></div>
+</div><figcaption>Sessions를 접으면 개수만 보이고 PROJECT가 바로 이어집니다.</figcaption></figure>
+</div>
+<p class="sub">빈 상태: 세션이 없으면 Sessions 안에 <code>No open sessions</code>, 저장소가 없으면 기존 PROJECT 안내를 보여 줍니다.</p>
+</section>
+
+<section id="rules">
+<p class="tag">#182 · #149와의 관계</p>
+<h2>03 · 무엇이 PROJECT를 움직이나</h2>
+<p class="sub">PROJECT 강조는 지금 포커스한 세션의 브랜치를 따라갑니다. 움직일 때는 #149 규칙(보이는 행은 그대로, 잘린 행만 최소 이동, 저장소 이름 고정)을 PROJECT 영역 안에서만 적용합니다. <b>Sessions는 어떤 경우에도 스스로 스크롤하지 않습니다.</b></p>
+<table>
+<thead><tr><th>동작</th><th>Sessions</th><th>PROJECT</th></tr></thead>
+<tbody>
+<tr><td>Sessions 행 클릭</td><td>강조만 이동 · <span class="keep">스크롤 그대로</span></td><td class="move">그 브랜치 강조, 잘렸을 때만 최소 이동, 접힌 저장소 펼침</td></tr>
+<tr><td>cmd-1…9 · 탭 클릭 · pane 이동 · split</td><td>강조만 이동 · <span class="keep">스크롤 그대로</span></td><td class="move">위와 같음</td></tr>
+<tr><td>cmd-shift-a · 알림 클릭 · 하위 에이전트·리뷰에서 이동 · resume/restore</td><td>강조만 이동 · <span class="keep">스크롤 그대로</span></td><td class="move">위와 같음</td></tr>
+<tr><td>워크트리 클릭 · 상태 점 · STARRED · 팔레트 Go to worktree · 생성 직후 탭</td><td>강조만 이동 · <span class="keep">스크롤 그대로</span></td><td class="move">위와 같음 + PROJECT 섹션이 접혀 있으면 펼침</td></tr>
+<tr><td>배경 출력 · 상태 변화 · refresh · 다른 창의 MCP 요청</td><td class="keep">그대로</td><td class="keep">그대로</td></tr>
+</tbody>
+</table>
+<p class="sub" style="margin-top:12px">세션 클릭·탭 전환은 PROJECT <b>섹션</b>을 접어 둔 선택은 바꾸지 않습니다. 강조만 갱신되고, 펼치면 그 브랜치가 보입니다.</p>
+</section>
+
+<section id="small">
+<p class="tag">640×600 · 18pt · light/dark</p>
+<h2>04 · 좁고 낮은 창에서도 두 영역 모두</h2>
+<p class="sub">글자를 줄이지 않고 행을 말줄임으로 자르며, 전체 이름은 tooltip으로 보여 줍니다. 낮은 창에서도 세션 약 5행과 PROJECT가 함께 보입니다.</p>
+<div class="pair">
+<figure><div class="scroller"><div class="app" style="min-width:420px;max-width:520px">
+<div class="titlebar"><div class="traffic"><i></i><i></i><i></i></div><div class="tctx">pay — refactor</div><span class="bell">🔔</span></div>
+<div class="body" style="grid-template-columns:200px 1fr">
+<div class="side" style="height:300px">
+<div class="sh">▾ Sessions <span class="cnt">9</span><span class="sp"></span><span class="btn">Alias</span></div>
+<div class="region" style="height:112px">
+<div class="row"><span class="i work">◌</span><span class="g">Login redesign</span></div>
+<div class="row wait"><span class="i wait">!</span><span class="g">Fix flaky auth test</span></div>
+<div class="row on"><span class="i done">●</span><span class="g">Payments refactor and …</span></div>
+<div class="row"><span class="i idle">●</span><span class="g">api / main</span><span class="x">✕</span></div>
+<div class="row"><span class="i none">○</span><span class="g">~/notes</span><span class="x">✕</span></div>
+<span class="sb" style="top:4px;height:50px"></span></div>
+<div class="divider"></div>
+<div class="sh">▾ PROJECT<span class="sp"></span><span class="btn">+ repo</span></div>
+<div class="region" style="flex:1"><div class="repo sticky">▾ pay</div><div class="wt"><span class="g">main</span></div><div class="wt on"><span class="g">refactor</span></div><div class="repo">▾ web</div><span class="sb" style="top:30px;height:40px"></span></div>
+</div>
+<div class="term">❯ _</div>
+</div></div></div>
+<figcaption>dark · 좁은 창. Alias 표시에서 긴 메모 제목은 말줄임됩니다.</figcaption></figure>
+<figure><div class="scroller"><div class="app light" style="min-width:420px;max-width:520px">
+<div class="titlebar"><div class="traffic"><i></i><i></i><i></i></div><div class="tctx">pay — refactor</div><span class="bell">🔔</span></div>
+<div class="body" style="grid-template-columns:200px 1fr">
+<div class="side" style="height:300px">
+<div class="sh">▾ Sessions <span class="cnt">9</span><span class="sp"></span><span class="btn">Branch</span></div>
+<div class="region" style="height:112px">
+<div class="row"><span class="i work">◌</span><span class="g">app / feature-a</span></div>
+<div class="row wait"><span class="i wait">!</span><span class="g">web / fix-login</span></div>
+<div class="row on"><span class="i done">●</span><span class="g">pay / refactor</span></div>
+<div class="row"><span class="i idle">●</span><span class="g">api / main</span><span class="x">✕</span></div>
+<div class="row"><span class="i none">○</span><span class="g">~/notes</span><span class="x">✕</span></div>
+<span class="sb" style="top:4px;height:50px"></span></div>
+<div class="divider"></div>
+<div class="sh">▾ PROJECT<span class="sp"></span><span class="btn">+ repo</span></div>
+<div class="region" style="flex:1"><div class="repo sticky">▾ pay</div><div class="wt"><span class="g">main</span></div><div class="wt on"><span class="g">refactor</span></div><div class="repo">▾ web</div><span class="sb" style="top:30px;height:40px"></span></div>
+</div>
+<div class="term">❯ _</div>
+</div></div></div>
+<figcaption>light · 같은 상태. 강조·입력 필요 배경·상태 아이콘이 두 테마에서 모두 구분됩니다.</figcaption></figure>
+</div>
+</section>
+
+<section id="picker">
+<p class="tag">#181 · PICKER-181</p>
+<h2>05 · Add repo가 실패해도 계속 쓸 수 있다</h2>
+<p class="sub">macOS가 폴더 선택 창을 만들지 못하면 앱이 멈추는 대신 알림 기록에 오류 한 건을 남깁니다. 터미널 포커스와 입력 중인 글자, 설정, 세션은 그대로이고, 바로 다시 시도할 수 있습니다.</p>
+<div class="flow">
+<span class="step">+ repo · 메뉴 · cmd-shift-o · 팔레트</span><span class="arrow">→</span>
+<span class="step">선택 창 생성 시도</span><span class="arrow">→</span>
+<span class="step ok">성공: 폴더 여러 개 선택 → 등록</span>
+<span class="step">취소: 아무 메시지 없음</span>
+<span class="step err">실패: 오류 알림 1건 · 앱 계속 실행</span><span class="arrow">→</span>
+<span class="step ok">다시 시도 또는 폴더를 사이드바에 끌어다 놓기</span>
+</div>
+<figure><div class="scroller"><div class="app" style="position:relative">
+<div class="titlebar"><div class="traffic"><i></i><i></i><i></i></div><div class="tctx">app — feature-a · Claude</div><span class="bell">🔔<b>1</b></span><span class="pick">Open in ▾</span></div>
+<div class="body">
+<div class="side" style="height:300px">
+<div class="sh">▾ Sessions <span class="cnt">3</span><span class="sp"></span><span class="btn">Branch</span></div>
+<div class="region" style="height:72px"><div class="row on"><span class="i done">●</span><span class="g">app / feature-a</span><span class="s">Claude</span></div><div class="row"><span class="i work">◌</span><span class="g">web / fix-login</span><span class="s">Codex</span></div><div class="row"><span class="i none">○</span><span class="g">~/notes</span><span class="x">✕</span></div></div>
+<div class="divider"></div>
+<div class="sh">▾ PROJECT<span class="sp"></span><span class="btn" style="outline:2px solid var(--acc)">+ repo</span></div>
+<div class="region" style="flex:1"><div class="repo">▾ app</div><div class="wt on"><span class="g">feature-a</span></div><div class="wt"><span class="g">main</span></div><div class="repo">▾ web</div><div class="wt"><span class="g">fix-login</span></div></div>
+</div>
+<div style="position:relative;display:flex;flex-direction:column;min-width:0">
+<div class="tabs"><span class="on">app</span><span>web</span><span>notes</span></div>
+<div class="term" style="flex:1"><p><span class="p">❯</span> claude</p><p style="color:var(--mut)">&gt; refactor the session list so th<span style="background:var(--fg);color:var(--bg)">_</span></p></div>
+<div class="pop">
+<div style="font-weight:650;margin-bottom:4px">Notifications</div>
+<div class="e"><span class="sev err">ERROR</span><span style="color:var(--mut)">15:58:50</span><br>Couldn't open the folder picker. Try Add repository again, or drop the folder on the sidebar.</div>
+<div class="e"><span class="sev info">INFO</span><span style="color:var(--mut)">15:41:12</span><br>web / fix-login — Codex finished a turn.</div>
+</div>
+</div>
+</div>
+</div></div>
+<figcaption>실패 직후. 앱과 세션이 그대로이고, 입력 중이던 프롬프트도 남아 있습니다. 오류는 제목 표시줄 알림(#155)에 쌓이며, 아이콘과 문구로 심각도를 알립니다.</figcaption></figure>
+<p class="sub">구현: GPUI의 <code>prompt_for_paths</code>는 분리 실행한 작업 안에서 panic하므로 Add repo는 chda가 직접 만든 선택 창을 씁니다. <code>msg_send!</code>로 NULL을 받을 수 있게 생성하고, NULL이면 <code>Unavailable</code>을 돌려줍니다. Linux와 Windows는 기존 GPUI 경로를 그대로 씁니다.</p>
+</section>
+
+<section id="config">
+<p class="tag">#182 · 사용자 결정 4</p>
+<h2>06 · 접기 설정 이전</h2>
+<table>
+<thead><tr><th>예전 <code>active-collapsed</code></th><th>예전 <code>idle-agents-collapsed</code></th><th>새 <code>sessions-collapsed</code></th></tr></thead>
+<tbody>
+<tr><td>false</td><td>false</td><td>false — 펼침</td></tr>
+<tr><td>true</td><td>false</td><td>false — 펼침</td></tr>
+<tr><td>false</td><td>true</td><td>false — 펼침</td></tr>
+<tr><td>true</td><td>true</td><td><b>true — 접힘</b></td></tr>
+</tbody>
+</table>
+<p class="sub" style="margin-top:12px">새 키가 이미 있으면 그 값을 씁니다. 불러올 때 파일을 다시 쓰지 않고, 예전 키는 다음 저장 때 사라집니다. <code>project-collapsed</code>, <code>active-label</code>과 다른 설정은 그대로입니다. v0.1.21로 되돌리면 ACTIVE·IDLE이 펼친 상태로 시작하며 잃는 데이터는 없습니다.</p>
+</section>
+
+<section id="scope">
+<h2>검토에서 고정할 범위</h2>
+<ul class="checklist">
+<li>#181: chda가 직접 만드는 폴더 선택 창, 실패 알림 문구, 재시도. Linux/Windows는 GPUI 경로 유지. 실제 실패는 실행 파일 교체로 먼저 재현하고, 안 되면 debug 빌드 전용 주입을 씁니다.</li>
+<li>#182: Sessions 한 섹션, 에이전트 pane마다 한 행, 상태 변화에도 고정된 순서, 터미널 행 맨 아래, 두 영역 독립 스크롤과 40% 상한, 스스로 움직이지 않는 Sessions, 포커스한 세션의 브랜치를 PROJECT 안에서만 강조·최소 이동, 접기 설정 이전.</li>
+<li>검수 조건 <code>PICKER-181</code>, <code>SESSIONS-182</code> 추가. <code>TREE-151</code>, <code>NAV-149</code>는 #182가 대체한 부분을 빼고 개정.</li>
+<li>v0.1.22: 원래 14개와 위 두 이슈를 실제 macOS 검수 3회, 빌드 전·공개 전 E2E, 서명된 draft 검수를 통과한 뒤 공개. #173 경고는 미해결로 표시.</li>
+</ul>
+</section>
+</main>
+</body>
+</html>
