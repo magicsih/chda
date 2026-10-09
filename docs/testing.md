@@ -95,6 +95,21 @@ Not covered by scenarios: anything visual (colors, layout, rendering), since
 the test platform draws no pixels; launching real agents (a stand-in
 `claude` script takes their place); macOS notifications and the Dock themselves.
 
+### Native notification glyph regression
+
+Use an isolated development app on macOS with its bundled fonts and private
+XDG config/data directories. Before the correction, the title-bar notification
+control rendered a boxed question mark instead of a bell, although clicking
+it opened the notification history. The icon font contains the bell but has
+no `m` glyph, so GPUI refuses it as a primary measurement font.
+
+Check the same title bar with the sidebar visible and hidden, in dark and
+light themes and at narrow widths: a recognizable bell must appear before
+the app picker, retain the unread count, open the history and return typing
+focus after Escape. Retain the original native images for the failing and
+corrected builds. The headless notification scenarios do not verify this
+glyph; the native check is required before release.
+
 The directly typed Codex scenario uses a stand-in CLI emitting the exact
 Codex 0.160.0 OSC titles, through a real zsh shell. It verifies argument
 forwarding, startup idle, consecutive turns, background work, user input,

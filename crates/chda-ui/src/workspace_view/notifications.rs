@@ -118,7 +118,11 @@ impl WorkspaceView {
             }))
             .child(
                 div()
-                    .font_family(crate::fonts::SYMBOLS_FAMILY)
+                    .font(gpui::Font {
+                        family: crate::fonts::DEFAULT_FAMILY.into(),
+                        fallbacks: Some(crate::fonts::fallbacks()),
+                        ..Default::default()
+                    })
                     .text_base()
                     .child(optical("\u{f0f3}")),
             )

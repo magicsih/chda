@@ -27,7 +27,7 @@
     {
       "area": "Notifications",
       "title": "Keep operational messages in view",
-      "summary": "Open the title-bar bell for timestamped messages, unread arrivals and exact agent-pane links. Closing the list returns typing focus without deleting history.",
+      "summary": "Open the title-bar bell icon for timestamped messages, unread arrivals and exact agent-pane links. Closing the list returns typing focus without deleting history.",
       "details": "The title-bar notification control stays immediately before the installed-app picker, even with the sidebar hidden or no available picker. Window-local history lists severity, date and UTC time, message and known directory/tab/pane context newest first. Opening reads only existing arrivals; later arrivals remain unread. Selecting an agent event goes to its exact still-open pane. Operational errors and successes no longer overwrite a single sidebar message; an ongoing branch update changes one entry. OS notifications and provider usage controls remain available. History retains at most 500 entries and reports removed older entries. Normal restart clears it; session-preserving updates retain each window's history and read state."
     },
     {
