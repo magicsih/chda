@@ -1,6 +1,6 @@
 # Codex 공유 서버 연결 — 추가 설계 1.1
 
-- 상태: 검토 대기. 구현 승인이나 실행 검증 완료가 아니다.
+- 상태: 설계 1.1 승인. [승인 기록](approval.md). 보존 조건의 실행 검증과 제품 구현은 별도다.
 - 연결: [#173](https://github.com/magicsih/chda/issues/173), [기존 릴리스 설계 1.0](../2026-10-08-macos-next-release/design.md), [시각 검토](review.html).
 - 영향: Codex launch/status adapter, zsh/bash/fish wrapper, exact resume, child activity. 다른 기능의 승인 1.0은 유지한다.
 
