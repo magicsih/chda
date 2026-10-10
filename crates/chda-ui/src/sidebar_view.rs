@@ -377,6 +377,62 @@ impl SidebarView {
             })))
             .into_any_element()
     }
+
+    /// A section header: a toggle with the chevron, `name` and `count` that
+    /// collapses or expands the section, and `button` beside it. The button
+    /// stays outside the toggle so hovering it shows only its own tooltip.
+    fn section_header(
+        &self,
+        name: &'static str,
+        collapsed: bool,
+        count: usize,
+        toggle: SidebarEvent,
+        button: impl IntoElement,
+        cx: &mut Context<Self>,
+    ) -> gpui::Div {
+        let fg = self.fg;
+        let selector = format!("{}-section-toggle", name.to_lowercase());
+        div()
+            .flex_none()
+            .flex()
+            .flex_row()
+            .text_xs()
+            .text_color(fg.opacity(0.6))
+            .hover(|s| s.bg(fg.opacity(0.08)))
+            .child(
+                div()
+                    .id(ElementId::Name(selector.clone().into()))
+                    .debug_selector(move || selector)
+                    .flex_1()
+                    .min_w_0()
+                    .flex()
+                    .flex_row()
+                    .items_center()
+                    .pl_2()
+                    .pt_2()
+                    .pb_1()
+                    .cursor_pointer()
+                    .tooltip(crate::tooltip::text(if collapsed {
+                        format!("Expand {name}")
+                    } else {
+                        format!("Collapse {name}")
+                    }))
+                    .on_click(cx.listener(move |_, _, _, cx| cx.emit(toggle.clone())))
+                    .child(div().w_3().child(if collapsed { "▸" } else { "▾" }))
+                    .child(div().flex_1().child(name))
+                    .child(div().px_1().child(count.to_string())),
+            )
+            .child(
+                div()
+                    .flex()
+                    .items_center()
+                    .pr_2()
+                    .pt_2()
+                    .pb_1()
+                    .child(button),
+            )
+    }
+
     pub fn new(fg: Hsla, bg: Hsla, agents: Vec<AgentLabel>, cx: &mut Context<Self>) -> Self {
         Self {
             model: Sidebar::new(),
@@ -1637,53 +1693,32 @@ impl Render for SidebarView {
             .enumerate()
             .map(|(i, s)| self.render_starred(i, s, cx))
             .collect();
-        let sessions_header = div()
-            .id("sessions-section-toggle")
-            .debug_selector(|| "sessions-section-toggle".into())
-            .flex_none()
-            .flex()
-            .flex_row()
-            .items_center()
-            .px_2()
-            .pt_2()
-            .pb_1()
-            .text_xs()
-            .text_color(fg.opacity(0.6))
+        let label_toggle = div()
+            .id("sessions-label-toggle")
+            .debug_selector(|| "sessions-label-toggle".into())
+            .px_1()
             .cursor_pointer()
             .hover(|s| s.bg(fg.opacity(0.08)))
-            .tooltip(crate::tooltip::text(if self.sessions_collapsed {
-                "Expand Sessions"
-            } else {
-                "Collapse Sessions"
+            .tooltip(crate::tooltip::text(
+                "Switch Sessions labels between branch aliases and branch names",
+            ))
+            .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
+            .on_click(cx.listener(|_, _, _, cx| {
+                cx.stop_propagation();
+                cx.emit(SidebarEvent::ToggleActiveLabel)
             }))
-            .on_click(cx.listener(|_, _, _, cx| cx.emit(SidebarEvent::ToggleSessions)))
-            .child(div().w_3().child(if self.sessions_collapsed {
-                "▸"
-            } else {
-                "▾"
-            }))
-            .child(div().flex_1().child("Sessions"))
-            .child(div().px_1().child(self.model.sessions.len().to_string()))
-            .child(
-                div()
-                    .id("sessions-label-toggle")
-                    .debug_selector(|| "sessions-label-toggle".into())
-                    .px_1()
-                    .cursor_pointer()
-                    .hover(|s| s.bg(fg.opacity(0.08)))
-                    .tooltip(crate::tooltip::text(
-                        "Switch Sessions labels between branch aliases and branch names",
-                    ))
-                    .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
-                    .on_click(cx.listener(|_, _, _, cx| {
-                        cx.stop_propagation();
-                        cx.emit(SidebarEvent::ToggleActiveLabel)
-                    }))
-                    .child(match self.active_label {
-                        chda_config::ActiveLabel::Alias => "Alias",
-                        chda_config::ActiveLabel::Branch => "Branch",
-                    }),
-            );
+            .child(match self.active_label {
+                chda_config::ActiveLabel::Alias => "Alias",
+                chda_config::ActiveLabel::Branch => "Branch",
+            });
+        let sessions_header = self.section_header(
+            "Sessions",
+            self.sessions_collapsed,
+            self.model.sessions.len(),
+            SidebarEvent::ToggleSessions,
+            label_toggle,
+            cx,
+        );
         // Sessions takes what it needs up to 40% of the sidebar, or the
         // room PROJECT leaves when collapsed; it scrolls on its own.
         let sessions_list = div()
@@ -1709,50 +1744,32 @@ impl Render for SidebarView {
                         .child("No open sessions"),
                 )
             });
-        let project_header = div()
-            .id("project-section-toggle")
-            .debug_selector(|| "project-section-toggle".into())
-            .flex_none()
-            .flex()
-            .items_center()
-            .mt_1()
-            .px_2()
-            .pt_2()
-            .pb_1()
-            .border_t_1()
-            .border_color(fg.opacity(0.1))
-            .text_xs()
-            .text_color(fg.opacity(0.6))
+        let add_repo = div()
+            .id("add-repo")
+            .debug_selector(|| "add-repo".into())
+            .px_1()
+            .rounded_sm()
             .cursor_pointer()
-            .hover(|s| s.bg(fg.opacity(0.08)))
-            .tooltip(crate::tooltip::text(if self.project_collapsed {
-                "Expand PROJECT"
-            } else {
-                "Collapse PROJECT"
+            .hover(|s| s.bg(fg.opacity(0.15)))
+            .tooltip(crate::tooltip::text("Add a repository (cmd-shift-o)"))
+            .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
+            .on_click(cx.listener(|_, _, _, cx| {
+                cx.stop_propagation();
+                cx.emit(SidebarEvent::AddRepo);
             }))
-            .on_click(cx.listener(|_, _, _, cx| cx.emit(SidebarEvent::ToggleProject)))
-            .child(
-                div()
-                    .w_3()
-                    .child(if self.project_collapsed { "▸" } else { "▾" }),
+            .child("+ repo");
+        let project_header = self
+            .section_header(
+                "PROJECT",
+                self.project_collapsed,
+                self.model.repos.len(),
+                SidebarEvent::ToggleProject,
+                add_repo,
+                cx,
             )
-            .child(div().flex_1().child("PROJECT"))
-            .child(div().px_1().child(self.model.repos.len().to_string()))
-            .child(
-                div()
-                    .id("add-repo")
-                    .debug_selector(|| "add-repo".into())
-                    .px_1()
-                    .rounded_sm()
-                    .cursor_pointer()
-                    .hover(|s| s.bg(fg.opacity(0.15)))
-                    .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
-                    .on_click(cx.listener(|_, _, _, cx| {
-                        cx.stop_propagation();
-                        cx.emit(SidebarEvent::AddRepo);
-                    }))
-                    .child("+ repo"),
-            );
+            .mt_1()
+            .border_t_1()
+            .border_color(fg.opacity(0.1));
         let paths: Vec<_> = self
             .model
             .repos

@@ -635,3 +635,70 @@ fn activity_ages_refresh_without_output_or_session_writes(cx: &mut TestAppContex
         "hidden sidebar is not repainted"
     );
 }
+
+/// Hover `at` and wait past the tooltip delay.
+fn hover(h: &mut Harness, at: gpui::Point<gpui::Pixels>) {
+    h.cx.simulate_mouse_move(at, None, Modifiers::none());
+    h.cx.run_until_parked();
+    h.cx.executor()
+        .advance_clock(std::time::Duration::from_millis(600));
+    h.cx.run_until_parked();
+}
+
+fn tooltip(h: &mut Harness, text: &str) -> bool {
+    h.cx.debug_bounds(Box::leak(format!("tooltip: {text}").into_boxed_str()))
+        .is_some()
+}
+
+/// The buttons in the Sessions and PROJECT headers show their own tooltips,
+/// never the section toggle's, also when the pointer arrives from the toggle
+/// with its tooltip showing.
+#[gpui::test]
+fn header_buttons_show_their_own_tooltips(cx: &mut TestAppContext) {
+    let mut h = Harness::open(cx, "header-tooltips", |home| {
+        let repo = home.repo("app");
+        std::fs::write(&home.config, format!("repos = [\"{}\"]\n", repo.display())).unwrap();
+    });
+    h.wait_prompt();
+    h.wait_for("the repository", |v, cx| {
+        v.sidebar.read(cx).model.repos.len() == 1
+    });
+    h.cx.run_until_parked();
+    for (toggle, toggle_tip, button, button_tip) in [
+        (
+            "project-section-toggle",
+            "Collapse PROJECT",
+            "add-repo",
+            "Add a repository (cmd-shift-o)",
+        ),
+        (
+            "sessions-section-toggle",
+            "Collapse Sessions",
+            "sessions-label-toggle",
+            "Switch Sessions labels between branch aliases and branch names",
+        ),
+    ] {
+        let header = h.cx.debug_bounds(toggle).expect(toggle);
+        // A point in the terminal, right of the sidebar.
+        let away = point(header.right() + px(200.0), header.bottom() + px(100.0));
+        hover(&mut h, point(header.left() + px(24.0), header.center().y));
+        assert!(tooltip(&mut h, toggle_tip), "{toggle_tip} on the toggle");
+        let at = h.cx.debug_bounds(button).expect(button).center();
+        h.cx.simulate_mouse_move(at, None, Modifiers::none());
+        h.cx.run_until_parked();
+        assert!(
+            !tooltip(&mut h, toggle_tip),
+            "{toggle_tip} stays on {button}"
+        );
+        hover(&mut h, at);
+        assert!(tooltip(&mut h, button_tip), "{button_tip} on {button}");
+        assert!(!tooltip(&mut h, toggle_tip), "{toggle_tip} on {button}");
+        // Straight onto the button from the terminal.
+        hover(&mut h, away);
+        assert!(!tooltip(&mut h, button_tip));
+        hover(&mut h, at);
+        assert!(tooltip(&mut h, button_tip), "{button_tip} on {button}");
+        assert!(!tooltip(&mut h, toggle_tip), "{toggle_tip} on {button}");
+        hover(&mut h, away);
+    }
+}

@@ -7,7 +7,9 @@ struct TextTooltip(SharedString);
 
 impl Render for TextTooltip {
     fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+        let text = self.0.clone();
         div()
+            .debug_selector(move || format!("tooltip: {text}"))
             .px_2()
             .py_1()
             .rounded_sm()
