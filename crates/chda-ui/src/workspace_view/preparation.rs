@@ -636,6 +636,8 @@ impl WorkspaceView {
         self.preparation_open = None;
         self.preparation_jobs.remove(&path);
         self.publish_preparation_guard(&path, false, cx);
+        // Opening the new worktree is PROJECT navigation by the user.
+        self.expand_project(cx);
         match agent {
             Some(agent) => self.run_agent(&path, agent, None, window, cx),
             None => self.open_tab_at(Some(path), None, window, cx),

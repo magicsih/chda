@@ -2237,7 +2237,9 @@ impl WorkspaceView {
         if !notes.is_empty() {
             self.notify(format!("Restored the last session; {}", notes.join("; ")));
         }
-        self.restore_focus(window, cx);
+        // The restored focus is revealed inside PROJECT once its worktree is
+        // listed, as for any navigation; a collapsed PROJECT stays collapsed.
+        self.focus_active(window, cx);
     }
 
     /// The command that reopens a saved agent conversation in `cwd`, or why
@@ -3231,7 +3233,7 @@ impl WorkspaceView {
 
     /// Give keyboard focus back without navigating: after closing a tab or
     /// pane, dismissing a sheet, palette or menu, a window activation or a
-    /// restore. The sidebar highlight follows; neither list scrolls.
+    /// window opening. The sidebar highlight follows; neither list scrolls.
     fn restore_focus(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         self.focus_pane_view(false, window, cx);
     }
@@ -3970,7 +3972,11 @@ impl WorkspaceView {
                     self.focus_active(window, cx);
                 }
             }
-            SidebarEvent::FocusPane(pane) => self.jump_to_pane(pane, window, cx),
+            SidebarEvent::FocusPane(pane) => {
+                if self.ws.focus_pane(pane) {
+                    self.focus_active(window, cx);
+                }
+            }
             SidebarEvent::ClosePane(pane) => {
                 self.request_close(CloseTarget::Pane(pane), window, cx)
             }

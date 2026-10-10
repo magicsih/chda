@@ -36,7 +36,8 @@ pub enum SidebarEvent {
     OpenUrl(String),
     /// A Sessions row for a tab was clicked.
     FocusTab(TabId),
-    /// A Sessions row for an agent pane was clicked.
+    /// A Sessions row for an agent pane was clicked: focus that exact pane,
+    /// leaving its terminal's scroll position alone.
     FocusPane(PaneId),
     ClosePane(PaneId),
     CloseTab(TabId),
@@ -247,7 +248,8 @@ pub struct SidebarView {
     pub(crate) sessions_scroll: gpui::ScrollHandle,
     /// PROJECT, which navigation reveals worktrees in.
     pub(crate) project_scroll: gpui::ScrollHandle,
-    /// The PROJECT row to bring into view once it is laid out.
+    /// The PROJECT row to bring into view once it is laid out; always the
+    /// highlighted one.
     reveal: Option<PathBuf>,
     /// A navigation target whose worktree is not listed yet, such as a
     /// worktree just created.
@@ -400,6 +402,12 @@ impl SidebarView {
             .and_then(|cwd| self.model.worktree_for_path(cwd))
             .map(|(r, w)| (r.path.clone(), w.path.clone()));
         self.selected = found.as_ref().map(|(_, path)| path.clone());
+        // A reveal not drawn yet (PROJECT collapsed, sidebar hidden) is for
+        // the highlight it was scheduled with; once that moves on, expanding
+        // PROJECT later must not scroll to the earlier worktree.
+        if self.reveal.is_some() && self.reveal != self.selected {
+            self.reveal = None;
+        }
         if let Some((repo, path)) = found
             && self.pending_reveal.take().is_some()
         {

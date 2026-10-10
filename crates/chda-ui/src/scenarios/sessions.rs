@@ -818,3 +818,200 @@ fn sessions_collapse_persists_and_migrates_legacy_keys(cx: &mut TestAppContext) 
     });
     assert!(bounds(&mut h, &row).is_none());
 }
+
+/// Collapse PROJECT, then let a session click schedule a reveal it cannot
+/// draw yet.
+fn reveal_while_collapsed(h: &mut Harness, worktrees: &[PathBuf]) {
+    scroll_project(h, px(0.0));
+    click(h, "project-section-toggle");
+    assert!(bounds(h, "repo-0").is_none());
+    let tab = h.read(|v, _| v.ws.tabs()[1].id);
+    click(h, &selector(SessionKey::Tab(tab)));
+    settle(h);
+    assert_eq!(selected(h).as_ref(), Some(&worktrees[WORKTREES - 1]));
+}
+
+#[gpui::test]
+fn collapsed_project_reveals_only_the_current_highlight_after_a_cd(cx: &mut TestAppContext) {
+    let mut f = open(cx, "sessions-stale-cd", 9, "");
+    let worktrees = f.worktrees.clone();
+    let h = &mut f.h;
+    reveal_while_collapsed(h, &worktrees);
+    // The highlight moves on without navigation: a cd in the focused pane.
+    let target = worktrees[0].clone();
+    h.run(&format!("cd '{}'", target.display()), "test%");
+    let expected = target.clone();
+    h.wait_for("the highlight follows the cd", move |v, cx| {
+        v.sidebar.read(cx).selected.as_ref() == Some(&expected)
+    });
+    let sessions = offsets(h).0;
+    click(h, "project-section-toggle");
+    settle(h);
+    assert_eq!(
+        project_scroll(h).offset().y,
+        px(0.0),
+        "expanding PROJECT does not scroll to the earlier session's worktree"
+    );
+    let row = bounds(h, &worktree_row(&target)).unwrap();
+    let viewport = project_scroll(h).bounds();
+    assert!(row.top() >= viewport.top() && row.bottom() <= viewport.bottom() + px(0.5));
+    assert_eq!(offsets(h).0, sessions);
+}
+
+#[gpui::test]
+fn collapsed_project_drops_a_reveal_when_focus_leaves_worktrees(cx: &mut TestAppContext) {
+    let mut f = open(cx, "sessions-stale-home", 9, "");
+    let worktrees = f.worktrees.clone();
+    let h = &mut f.h;
+    reveal_while_collapsed(h, &worktrees);
+    // A session outside every worktree: nothing is highlighted.
+    let home = h.read(|v, _| v.ws.tabs()[0].id);
+    click(h, &selector(SessionKey::Tab(home)));
+    settle(h);
+    assert_eq!(selected(h), None);
+    click(h, "project-section-toggle");
+    settle(h);
+    assert_eq!(
+        project_scroll(h).offset().y,
+        px(0.0),
+        "nothing is highlighted, so nothing is revealed"
+    );
+    // Another session click while collapsed: only its own highlight is revealed.
+    reveal_while_collapsed(h, &worktrees);
+    let other = h.read(|v, _| v.ws.tabs()[2].id);
+    click(h, &selector(SessionKey::Tab(other)));
+    settle(h);
+    let highlight = selected(h).unwrap();
+    assert_eq!(highlight, worktrees[WORKTREES - 2]);
+    click(h, "project-section-toggle");
+    settle(h);
+    let row = bounds(h, &worktree_row(&highlight)).unwrap();
+    let viewport = project_scroll(h).bounds();
+    assert!(
+        row.top() >= viewport.top() && row.bottom() <= viewport.bottom() + px(0.5),
+        "the current highlight is the one revealed"
+    );
+}
+
+#[gpui::test]
+fn session_rows_focus_their_pane_without_scrolling_its_terminal(cx: &mut TestAppContext) {
+    let mut h = Harness::open(cx, "sessions-scrollback", |_| {});
+    h.wait_prompt();
+    let (_, agent) = focused(&h);
+    h.run("seq 1000 1300", "1299");
+    h.hook(
+        Some(agent.raw()),
+        &h.home.home.clone(),
+        HookKind::PromptSubmitted,
+    );
+    h.wait_for("a working agent row", move |v, cx| {
+        v.sidebar
+            .read(cx)
+            .model
+            .sessions
+            .iter()
+            .any(|r| r.key == SessionKey::Pane(agent) && r.status == Some(AgentStatus::Working))
+    });
+    h.keys("cmd-d");
+    h.wait_prompt();
+    let terminal = h.read(|v, _| v.panes[&agent].0.clone());
+    let offset = |h: &Harness| terminal.read_with(&h.cx, |t, _| t.frame().scrollbar.offset);
+    let bottom = offset(&h);
+    // Read back through the agent's output while working in the split.
+    let (at, line) = h.read(|_, cx| {
+        let g = terminal.read(cx).geometry.unwrap();
+        (
+            point(g.origin.x + px(40.0), g.origin.y + px(40.0)),
+            g.line_height,
+        )
+    });
+    let wheel = |h: &mut Harness, dy: Pixels| {
+        h.cx.simulate_event(gpui::ScrollWheelEvent {
+            position: at,
+            delta: gpui::ScrollDelta::Pixels(point(px(0.0), dy)),
+            modifiers: Modifiers::none(),
+            touch_phase: gpui::TouchPhase::Moved,
+        });
+    };
+    wheel(&mut h, px(600.0));
+    h.wait_for("the agent's scrollback", |_, cx| {
+        terminal.read(cx).frame().scrollbar.offset < bottom
+    });
+    let reading = offset(&h);
+    click(&mut h, &selector(SessionKey::Pane(agent)));
+    assert_eq!(focused(&h).1, agent, "the row focuses its pane");
+    // One more line of history: the terminal handles commands in order, so
+    // this lands after anything the click asked for.
+    wheel(&mut h, line);
+    h.wait_for("the one-line scroll", |_, cx| {
+        terminal.read(cx).frame().scrollbar.offset != reading
+    });
+    assert_eq!(
+        offset(&h),
+        reading - 1,
+        "a Sessions click keeps the agent's scrollback where the user left it"
+    );
+}
+
+#[gpui::test]
+fn restore_reveals_the_focused_worktree_only_inside_project(cx: &mut TestAppContext) {
+    let mut f = open(cx, "sessions-restore", 9, "");
+    let worktrees = f.worktrees.clone();
+    let h = &mut f.h;
+    // The newest tab, task-15, is focused; PROJECT starts collapsed next time.
+    let target = worktrees[WORKTREES - 9].clone();
+    assert_eq!(selected(h).as_ref(), Some(&target));
+    click(h, "project-section-toggle");
+    let (mut cx2, view2) = h.reopen();
+    cx2.simulate_resize(size(px(960.0), px(360.0)));
+    view2.update(&mut cx2, |v, cx| {
+        v.sidebar
+            .update(cx, |s, _| s.model.set_sort(chda_core::SortOrder::Name))
+    });
+    wait_until(&mut cx2, &view2, "restored worktrees and focus", |v, cx| {
+        let s = v.sidebar.read(cx);
+        s.model
+            .repos
+            .first()
+            .is_some_and(|r| r.worktrees.len() == WORKTREES + 1)
+            && s.selected.is_some()
+    });
+    let settle2 = |cx2: &mut gpui::VisualTestContext| {
+        for _ in 0..3 {
+            cx2.run_until_parked();
+            cx2.update(|window, cx| window.simulate_next_frame(cx));
+        }
+        cx2.run_until_parked();
+    };
+    settle2(&mut cx2);
+    view2.read_with(&cx2, |v, cx| {
+        let s = v.sidebar.read(cx);
+        assert_eq!(
+            s.selected.as_ref(),
+            Some(&target),
+            "PROJECT highlights the restored focus"
+        );
+        assert!(v.config.project_collapsed, "restore never expands PROJECT");
+        assert_eq!(
+            s.sessions_scroll.offset().y,
+            px(0.0),
+            "restore never scrolls Sessions"
+        );
+    });
+    assert!(cx2.debug_bounds("repo-0").is_none());
+    let toggle = cx2.debug_bounds("project-section-toggle").unwrap().center();
+    cx2.simulate_click(toggle, Modifiers::none());
+    settle2(&mut cx2);
+    let row = cx2
+        .debug_bounds(Box::leak(worktree_row(&target).into_boxed_str()))
+        .unwrap();
+    let (viewport, offset) = view2.read_with(&cx2, |v, cx| {
+        let s = v.sidebar.read(cx);
+        (s.project_scroll.bounds(), s.project_scroll.offset().y)
+    });
+    assert!(
+        offset < px(0.0),
+        "the restored worktree was below PROJECT's top"
+    );
+    assert!(row.top() >= viewport.top() && row.bottom() <= viewport.bottom() + px(0.5));
+}
