@@ -136,6 +136,7 @@ impl WorkspaceView {
         let input = cx.new(|cx| {
             let mut input = TextInput::new("Review the selected text", fg, bg, cx);
             input.multiline = true;
+            input.soft_wrap = true;
             input.set_text(&preview.text, cx);
             input
         });
@@ -209,6 +210,7 @@ impl WorkspaceView {
                 .child(
                     div()
                         .id("sharing-editor")
+                        .debug_selector(|| "sharing-editor".into())
                         .max_h(px(220.0))
                         .overflow_y_scroll()
                         .min_w_0()

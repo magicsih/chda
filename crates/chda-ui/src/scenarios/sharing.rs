@@ -1,6 +1,6 @@
 //! Sharing starts with an actual VT selection and never copies another pane.
 use super::harness::Harness;
-use gpui::{ClipboardItem, Modifiers, MouseButton, TestAppContext, point};
+use gpui::{ClipboardItem, Modifiers, MouseButton, Pixels, Point, TestAppContext, point, px, size};
 
 fn selected(h: &mut Harness) {
     h.wait_prompt();
@@ -31,6 +31,12 @@ fn selected(h: &mut Harness) {
             ),
         )
     });
+    select(h, first, last);
+}
+
+/// Drag over the focused terminal's cells and open its context menu.
+fn select(h: &mut Harness, first: Point<Pixels>, last: Point<Pixels>) {
+    let term = h.focused_terminal();
     h.cx.simulate_mouse_down(first, MouseButton::Left, Modifiers::none());
     h.cx.simulate_mouse_move(last, MouseButton::Left, Modifiers::none());
     h.cx.simulate_mouse_up(last, MouseButton::Left, Modifiers::none());
@@ -104,6 +110,79 @@ fn sharing_edits_copy_plain_text_and_cancel_restores_terminal_input(cx: &mut Tes
     assert!(h.read(|v, _| v.share_sheet.is_none()));
     h.run("echo restored-sharing-focus", "restored-sharing-focus");
 }
+#[gpui::test]
+fn a_long_last_line_wraps_in_the_preview_and_copies_without_added_newlines(
+    cx: &mut TestAppContext,
+) {
+    let mut h = Harness::open(cx, "sharing-wrap", |_| {});
+    h.cx.simulate_resize(size(px(1200.0), px(800.0)));
+    h.wait_prompt();
+    let words: Vec<_> = (1..=40).map(|n| format!("word{n:02}")).collect();
+    let long = format!("Long line {}", words.join(" "));
+    h.run(
+        &format!("printf '\\033[2J\\033[HShared draft | first\\r\\nsecond line\\r\\n{long}\\r\\n'"),
+        "Shared draft",
+    );
+    let term = h.focused_terminal();
+    let prompt =
+        |f: &chda_term::Frame| (3..f.size.rows).find(|&r| f.row_text(r).starts_with("test%"));
+    h.wait_for(
+        "the draft, its soft-wrapped last line and the next prompt",
+        {
+            let term = term.clone();
+            move |_, cx| {
+                let t = term.read(cx);
+                let f = t.frame();
+                f.row_text(0).starts_with("Shared draft |") && prompt(&f).is_some()
+            }
+        },
+    );
+    let (first, last) = h.read(|_, cx| {
+        let t = term.read(cx);
+        let f = t.frame();
+        let prompt = prompt(&f).unwrap();
+        assert!(prompt > 3, "the long line also wraps in the terminal");
+        let g = t.geometry.unwrap();
+        (
+            point(
+                g.origin.x + g.cell_width * 0.5,
+                g.origin.y + g.line_height * 0.5,
+            ),
+            point(
+                g.origin.x + g.cell_width * (f32::from(f.size.cols) - 0.5),
+                g.origin.y + g.line_height * (f32::from(prompt) - 0.5),
+            ),
+        )
+    });
+    select(&mut h, first, last);
+    preview(&mut h);
+    let expected = format!("Shared draft | first\nsecond line\n{long}");
+    let input = h.read(|v, _| v.share_sheet.as_ref().unwrap().input.clone().unwrap());
+    for window in [size(px(1200.0), px(800.0)), size(px(640.0), px(600.0))] {
+        h.cx.simulate_resize(window);
+        h.cx.run_until_parked();
+        let editor = h.cx.debug_bounds("sharing-editor").unwrap();
+        let (text, painted) =
+            input.read_with(&h.cx, |i, _| (i.text().to_owned(), i.painted_text()));
+        let (start, rows) = painted.unwrap();
+        assert_eq!(text, expected, "the preview keeps the selected text");
+        assert!(
+            editor.contains(&start),
+            "{window:?}: the first character is painted at {start:?}, outside the editor {editor:?}"
+        );
+        assert!(
+            rows > expected.lines().count(),
+            "{window:?}: the long last line wraps instead of scrolling sideways ({rows} rows)"
+        );
+    }
+    h.keys("enter");
+    assert_eq!(
+        clipboard(&h).as_deref(),
+        Some(expected.as_str()),
+        "wrapping in the preview adds no newlines"
+    );
+}
+
 #[gpui::test]
 fn sharing_revalidates_menu_and_preview_conversation_before_copying(cx: &mut TestAppContext) {
     use chda_core::agents::HookKind;

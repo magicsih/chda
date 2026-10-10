@@ -49,7 +49,7 @@ Three layers, all run by `cargo test --workspace` (CI: the macOS job).
 | Live idle agents: pane focus, mixed-state splits, targeted process cleanup, exit and restored-history exclusion | `idle_agents::*`, `agents::directly_typed_codex_tracks_each_turn_and_exits` | #112 |
 | S5 Plain terminal: tabs, splits, focus | `workspace::new_tab_split_and_close` | |
 | Font size shortcuts | `workspace::font_size_shortcuts_apply_to_every_pane` | #8 |
-| Sharing selection: actual VT selection/context action, untouched clipboard until confirmation, Unicode and multiline editing, cancel/typing focus, exact conversation revalidation | `sharing::*`, `chda-agents` `sharing::tests::*`, `chda-term` selection tests | #158 |
+| Sharing selection: actual VT selection/context action, untouched clipboard until confirmation, Unicode and multiline editing, a long last line wrapping in the preview from its first character at 1200×800 and 640×600 without adding newlines to the copy, clicks on wrapped rows, cancel/typing focus, exact conversation revalidation | `sharing::*`, `text_input::tests::clicks_land_on_soft_wrapped_rows_without_changing_the_text`, `chda-agents` `sharing::tests::*`, `chda-term` selection tests | #158 |
 | Scrollback search | `search::search_finds_steps_and_closes` | #6 |
 | Cached prompt background after theme change; readable colors and opt-out | `terminal_element::tests::theme_switch_keeps_cached_prompt_background_readable`, `terminal_element::tests::contrast_adjustment_preserves_readable_colors_and_can_be_disabled` | |
 | Minimum contrast reload preserves pane and unfinished input | `config::minimum_contrast_changes_apply_without_restarting_the_pane` | |
@@ -77,7 +77,7 @@ Three layers, all run by `cargo test --workspace` (CI: the macOS job).
 | Mermaid output: cmd-click and the palette open the offline viewer | `diagrams::mermaid_output_opens_in_the_offline_viewer` | #35 |
 | Right-click a folder in `ls -la`: open a tab there, `cd` there | `paths::ls_folder_opens_a_terminal_tab_and_cds_there` | #34 |
 | Right-click `src/main.rs:12:5`: reveal in Finder, copy relative path | `paths::compiler_error_path_reveals_the_file` | #34 |
-| Space-containing parenthesized paths, Unicode and soft wraps use the same complete target for hover, cmd-click and path menus | `paths::parenthesized_space_paths_hover_open_and_reveal_across_wraps` | #164 |
+| Space-containing parenthesized paths, also after prose such as `(see …:5:2)`, Unicode and soft wraps use the same complete target and line/column for hover, cmd-click and path menus, never the prose or an existing shorter prefix | `paths::parenthesized_space_paths_hover_open_and_reveal_across_wraps`, `chda-term` `links::tests::parenthesized_*` | #164 |
 | A quoted path with spaces is one link | `paths::quoted_path_with_spaces_is_one_link` | #34 |
 | Drop files on a pane: quoted paths pasted, even right after typing | `paths::dropped_files_paste_as_quoted_paths` | #17 |
 | Drop a folder on the sidebar: added as a repository | `paths::dropped_folder_on_the_sidebar_becomes_a_repository` | #17 |

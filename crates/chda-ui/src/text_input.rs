@@ -1,12 +1,13 @@
 //! A minimal text field for sheets (branch names, paths, notes). Single
-//! line unless `multiline`, where shift-enter starts a new line.
+//! line unless `multiline`, where shift-enter starts a new line. Long lines
+//! scroll sideways unless `soft_wrap` wraps them at the field's width.
 
 use std::ops::Range;
 
 use gpui::{
-    App, Bounds, Context, EntityInputHandler, EventEmitter, FocusHandle, Focusable, Hsla,
-    KeyDownEvent, MouseButton, Pixels, Point, Render, UTF16Selection, Window, div, fill,
-    prelude::*, px,
+    App, AvailableSpace, Bounds, Context, EntityInputHandler, EventEmitter, FocusHandle, Focusable,
+    Font, Hsla, KeyDownEvent, MouseButton, Pixels, Point, Render, UTF16Selection, Window,
+    WrappedLine, div, fill, point, prelude::*, px,
 };
 
 gpui::actions!(text_input, [SelectAll]);
@@ -22,7 +23,7 @@ pub struct TextInput {
     /// Cursor as a char index.
     cursor: usize,
     anchor: usize,
-    bounds: Option<Bounds<Pixels>>,
+    painted: Option<Painted>,
     scroll_x: Pixels,
     marked: Option<Range<usize>>,
     focus_handle: FocusHandle,
@@ -31,6 +32,17 @@ pub struct TextInput {
     pub bg: Hsla,
     /// Shift-enter inserts a line break; enter still submits.
     pub multiline: bool,
+    /// Wrap long lines at the field's width instead of scrolling sideways.
+    /// Display only: the text keeps exactly its own line breaks.
+    pub soft_wrap: bool,
+}
+
+/// What the field was last painted with, so clicks land on the same glyphs.
+struct Painted {
+    bounds: Bounds<Pixels>,
+    font: Font,
+    font_size: Pixels,
+    line_height: Pixels,
 }
 
 impl EventEmitter<TextInputEvent> for TextInput {}
@@ -41,7 +53,7 @@ impl TextInput {
             text: String::new(),
             cursor: 0,
             anchor: 0,
-            bounds: None,
+            painted: None,
             scroll_x: px(0.0),
             marked: None,
             focus_handle: cx.focus_handle(),
@@ -49,6 +61,7 @@ impl TextInput {
             fg,
             bg,
             multiline: false,
+            soft_wrap: false,
         }
     }
 
@@ -63,6 +76,52 @@ impl TextInput {
         self.anchor = self.cursor;
         self.marked = None;
         cx.notify();
+    }
+
+    /// Where the first character was last painted and how many rows the
+    /// field showed, for scenarios that see no pixels.
+    #[cfg(test)]
+    pub(crate) fn painted_text(&self) -> Option<(Point<Pixels>, usize)> {
+        let p = self.painted.as_ref()?;
+        Some((
+            point(p.bounds.left() - self.scroll_x, p.bounds.top()),
+            (p.bounds.size.height / p.line_height).round() as usize,
+        ))
+    }
+
+    /// The text as the field shows it, the placeholder while empty: one
+    /// shaped entry per line, wrapped at `width` when `soft_wrap` is set.
+    fn shape(
+        &self,
+        font: &Font,
+        font_size: Pixels,
+        width: Option<Pixels>,
+        window: &Window,
+    ) -> Vec<WrappedLine> {
+        let (text, color) = if self.text.is_empty() {
+            (&self.placeholder, self.fg.opacity(0.4))
+        } else {
+            (&self.text, self.fg)
+        };
+        let run = gpui::TextRun {
+            len: text.len(),
+            font: font.clone(),
+            color,
+            background_color: None,
+            underline: None,
+            strikethrough: None,
+        };
+        window
+            .text_system()
+            .shape_text(
+                text.clone().into(),
+                font_size,
+                &[run],
+                width.filter(|_| self.soft_wrap),
+                None,
+            )
+            .map(|lines| lines.into_vec())
+            .unwrap_or_default()
     }
 
     fn byte_at(&self, chars: usize) -> usize {
@@ -148,34 +207,24 @@ impl TextInput {
         cx: &mut Context<Self>,
     ) {
         window.focus(&self.focus_handle, cx);
-        if let Some(bounds) = self.bounds {
-            let row = ((position.y - bounds.top()) / window.line_height())
-                .floor()
-                .max(0.0) as usize;
+        if let Some(p) = &self.painted
+            && !self.text.is_empty()
+        {
+            let lines = self.shape(&p.font, p.font_size, Some(p.bounds.size.width), window);
+            let x = position.x - p.bounds.left() + self.scroll_x;
+            let mut y = position.y - p.bounds.top();
             let mut start = 0;
-            for (index, line) in self.text.split('\n').enumerate() {
-                if index == row {
-                    let style = window.text_style();
-                    let run = gpui::TextRun {
-                        len: line.len(),
-                        font: style.font(),
-                        color: self.fg,
-                        background_color: None,
-                        underline: None,
-                        strikethrough: None,
-                    };
-                    let shaped = window.text_system().shape_line(
-                        line.to_owned().into(),
-                        style.font_size.to_pixels(window.rem_size()),
-                        &[run],
-                        None,
-                    );
-                    let byte =
-                        shaped.closest_index_for_x(position.x - bounds.left() + self.scroll_x);
-                    self.cursor = start + line[..byte].chars().count();
+            for line in &lines {
+                let height = line.size(p.line_height).height;
+                if y < height {
+                    let byte = line
+                        .closest_index_for_position(point(x, y), p.line_height)
+                        .unwrap_or_else(|end| end);
+                    self.cursor = self.text[..start + byte].chars().count();
                     break;
                 }
-                start += line.chars().count() + 1;
+                y -= height;
+                start += line.len() + 1;
             }
         }
         if !shift {
@@ -371,17 +420,33 @@ impl gpui::Element for Field {
         _: Option<&gpui::GlobalElementId>,
         _: Option<&gpui::InspectorElementId>,
         window: &mut Window,
-        cx: &mut App,
+        _: &mut App,
     ) -> (gpui::LayoutId, ()) {
-        let lines = {
-            let i = self.input.read(cx);
-            (i.text.lines().count().max(1) + usize::from(i.text.ends_with('\n')))
-                .max(if i.multiline { 3 } else { 1 })
-        };
+        let text_style = window.text_style();
+        let font = text_style.font();
+        let font_size = text_style.font_size.to_pixels(window.rem_size());
+        let line_height = window.line_height();
+        let input = self.input.clone();
         let mut style = gpui::Style::default();
         style.size.width = gpui::relative(1.0).into();
-        style.size.height = (window.line_height() * lines as f32).into();
-        (window.request_layout(style, [], cx), ())
+        // Wrapped rows depend on the width the layout gives the field.
+        let layout = window.request_measured_layout(style, move |known, available, window, cx| {
+            let i = input.read(cx);
+            let width = known.width.or(match available.width {
+                AvailableSpace::Definite(width) => Some(width),
+                _ => None,
+            });
+            let rows: usize = i
+                .shape(&font, font_size, width, window)
+                .iter()
+                .map(|line| line.wrap_boundaries.len() + 1)
+                .sum();
+            gpui::size(
+                known.width.unwrap_or_default(),
+                line_height * rows.max(if i.multiline { 3 } else { 1 }) as f32,
+            )
+        });
+        (layout, ())
     }
 
     fn prepaint(
@@ -411,96 +476,134 @@ impl gpui::Element for Field {
             gpui::ElementInputHandler::new(bounds, self.input.clone()),
             cx,
         );
-        self.input.update(cx, |i, _| i.bounds = Some(bounds));
-        let (text, cursor, selection, fg, placeholder) = {
+        let text_style = window.text_style();
+        let painted = Painted {
+            bounds,
+            font: text_style.font(),
+            font_size: text_style.font_size.to_pixels(window.rem_size()),
+            line_height: window.line_height(),
+        };
+        let line_height = painted.line_height;
+        let focused = self.focus.is_focused(window);
+        let (lines, text, cursor, selection, fg) = {
             let i = self.input.read(cx);
             (
+                i.shape(
+                    &painted.font,
+                    painted.font_size,
+                    Some(bounds.size.width),
+                    window,
+                ),
                 i.text.clone(),
                 i.cursor,
                 i.selection(),
                 i.fg,
-                i.placeholder.clone(),
             )
         };
-        let style = window.text_style();
-        let font_size = style.font_size.to_pixels(window.rem_size());
-        let shown = text.clone();
-        let cursor_byte = shown
-            .char_indices()
-            .nth(cursor)
-            .map(|(i, _)| i)
-            .unwrap_or(shown.len());
-        let empty = shown.is_empty();
-        let display = if empty { placeholder } else { shown };
-        let color = if empty { fg.opacity(0.4) } else { fg };
-        let font = style.font();
-        let line_height = window.line_height();
-        // Byte offset of the cursor in `display`, after any marked text.
-        let cursor_at = if empty { 0 } else { cursor_byte };
+        let empty = text.is_empty();
+        // Byte offset of the cursor in the shown text.
+        let cursor_at = if empty {
+            0
+        } else {
+            text_char_byte(&text, cursor)
+        };
         let selection_bytes =
             text_char_byte(&text, selection.start)..text_char_byte(&text, selection.end);
-        let mut start = 0;
-        let mut cursor_pos = None;
-        for (row, text) in display.split('\n').enumerate() {
-            let run = gpui::TextRun {
-                len: text.len(),
-                font: font.clone(),
-                color,
-                background_color: None,
-                underline: None,
-                strikethrough: None,
-            };
-            let line =
-                window
-                    .text_system()
-                    .shape_line(text.to_owned().into(), font_size, &[run], None);
-            let end = start + text.len();
-            if self.focus.is_focused(window) && cursor_at >= start && cursor_at <= end {
-                let caret_x = line.x_for_index(cursor_at - start);
-                self.input.update(cx, |input, _| {
-                    input.scroll_x = input
-                        .scroll_x
-                        .min(caret_x)
-                        .max(caret_x - (bounds.size.width - px(2.0)).max(px(0.0)))
-                        .max(px(0.0));
-                });
+        // Each line's top and byte offset, and the caret, before scrolling.
+        let mut placed = Vec::with_capacity(lines.len());
+        let mut caret = None;
+        let (mut top, mut start) = (px(0.0), 0);
+        for line in &lines {
+            if caret.is_none() && cursor_at <= start + line.len() {
+                caret = line
+                    .position_for_index(cursor_at - start, line_height)
+                    .map(|at| point(at.x, top + at.y));
             }
-            let scroll_x = self.input.read(cx).scroll_x;
-            let origin = gpui::point(
-                bounds.origin.x - scroll_x,
-                bounds.origin.y + line_height * row as f32,
-            );
+            placed.push((top, start));
+            top += line.size(line_height).height;
+            start += line.len() + 1;
+        }
+        let scroll_x = self.input.update(cx, |input, _| {
+            if input.soft_wrap {
+                input.scroll_x = px(0.0);
+            } else if focused && let Some(caret) = caret {
+                input.scroll_x = input
+                    .scroll_x
+                    .min(caret.x)
+                    .max(caret.x - (bounds.size.width - px(2.0)).max(px(0.0)))
+                    .max(px(0.0));
+            }
+            input.painted = Some(painted);
+            input.scroll_x
+        });
+        let origin = point(bounds.origin.x - scroll_x, bounds.origin.y);
+        for (line, (top, start)) in lines.iter().zip(placed) {
+            let line_origin = point(origin.x, origin.y + top);
             if !selection.is_empty() && !empty {
-                let from = selection_bytes.start.saturating_sub(start).min(text.len());
-                let to = selection_bytes.end.saturating_sub(start).min(text.len());
-                if from < to {
-                    window.paint_quad(fill(
-                        Bounds::new(
-                            gpui::point(origin.x + line.x_for_index(from), origin.y),
-                            gpui::size(line.x_for_index(to) - line.x_for_index(from), line_height),
-                        ),
-                        fg.opacity(0.2),
-                    ));
+                let layout = &line.unwrapped_layout;
+                for (row, range) in rows(line).into_iter().enumerate() {
+                    let from = selection_bytes
+                        .start
+                        .saturating_sub(start)
+                        .clamp(range.start, range.end);
+                    let to = selection_bytes
+                        .end
+                        .saturating_sub(start)
+                        .clamp(range.start, range.end);
+                    if from < to {
+                        let left = layout.x_for_index(range.start);
+                        window.paint_quad(fill(
+                            Bounds::new(
+                                point(
+                                    line_origin.x + layout.x_for_index(from) - left,
+                                    line_origin.y + line_height * row as f32,
+                                ),
+                                gpui::size(
+                                    layout.x_for_index(to) - layout.x_for_index(from),
+                                    line_height,
+                                ),
+                            ),
+                            fg.opacity(0.2),
+                        ));
+                    }
                 }
             }
-            let _ = line.paint(origin, line_height, gpui::TextAlign::Left, None, window, cx);
-            let end = start + text.len();
-            if cursor_pos.is_none() && cursor_at <= end {
-                let x = if empty {
-                    px(0.0)
-                } else {
-                    line.x_for_index(cursor_at - start)
-                };
-                cursor_pos = Some(gpui::point(origin.x + x, origin.y));
-            }
-            start = end + 1;
+            let _ = line.paint(
+                line_origin,
+                line_height,
+                gpui::TextAlign::Left,
+                None,
+                window,
+                cx,
+            );
         }
-        if self.focus.is_focused(window)
-            && let Some(at) = cursor_pos
-        {
-            window.paint_quad(fill(Bounds::new(at, gpui::size(px(1.5), line_height)), fg));
+        if focused && let Some(at) = caret {
+            window.paint_quad(fill(
+                Bounds::new(
+                    point(origin.x + at.x, origin.y + at.y),
+                    gpui::size(px(1.5), line_height),
+                ),
+                fg,
+            ));
         }
     }
+}
+
+/// Byte ranges of the rows a shaped line wraps into.
+fn rows(line: &WrappedLine) -> Vec<Range<usize>> {
+    let mut starts: Vec<usize> = line
+        .wrap_boundaries
+        .iter()
+        .map(|b| line.unwrapped_layout.runs[b.run_ix].glyphs[b.glyph_ix].index)
+        .collect();
+    starts.insert(0, 0);
+    let ends = starts.iter().skip(1).copied().chain([line.len()]);
+    starts
+        .iter()
+        .copied()
+        .zip(ends)
+        .map(|(a, b)| a..b)
+        .collect()
 }
 
 impl Render for TextInput {
@@ -548,6 +651,41 @@ fn text_char_byte(text: &str, index: usize) -> usize {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[gpui::test]
+    fn clicks_land_on_soft_wrapped_rows_without_changing_the_text(cx: &mut gpui::TestAppContext) {
+        let text = "alpha beta gamma delta epsilon zeta eta theta iota kappa lambda mu";
+        let (input, cx) = cx.add_window_view(|_, cx| {
+            let mut input = TextInput::new("Note", gpui::white(), gpui::black(), cx);
+            input.multiline = true;
+            input.soft_wrap = true;
+            input.set_text(text, cx);
+            input
+        });
+        cx.simulate_resize(gpui::size(px(200.0), px(400.0)));
+        cx.run_until_parked();
+        let (bounds, line_height) = input.read_with(cx, |i, _| {
+            let p = i.painted.as_ref().unwrap();
+            (p.bounds, p.line_height)
+        });
+        assert!(
+            bounds.size.height >= line_height * 3.0,
+            "the line wraps onto several rows"
+        );
+        cx.simulate_click(
+            point(bounds.left() + px(1.0), bounds.top() + line_height * 1.5),
+            gpui::Modifiers::none(),
+        );
+        input.read_with(cx, |i, _| {
+            assert_eq!(i.text(), text);
+            assert_eq!(i.scroll_x, px(0.0));
+            assert!(
+                i.cursor > 0 && text[..i.cursor].ends_with(' '),
+                "a click at the second row's start lands after the wrap, not at {}",
+                i.cursor
+            );
+        });
+    }
 
     #[gpui::test]
     fn composition_replaces_the_selected_unicode_range_and_commits_once(
