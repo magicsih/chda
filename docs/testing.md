@@ -113,6 +113,18 @@ focus after Escape. Retain the original native images for the failing and
 corrected builds. The headless notification scenarios do not verify this
 glyph; the native check is required before release.
 
+### Native folder picker check
+
+Add repository opens chda's own AppKit folder panel (#181). In an isolated
+development app, check a real multi-folder selection and a cancellation. For
+the failure path, start a debug build with `CHDA_QA_FOLDER_PICKER=unavailable`:
+Add repository must leave the window running with typed input, tabs and
+config unchanged, record one error in the notification history, and open the
+real panel again once the app runs without the variable. Release builds ignore
+the variable. Replacing the executable of a running app produced only an
+open-panel service warning on macOS 26.6.2 and still showed the panel, so it
+does not reproduce the reported failure.
+
 The directly typed Codex scenario uses a stand-in CLI emitting the exact
 Codex 0.160.0 OSC titles, through a real zsh shell. It verifies argument
 forwarding, startup idle, consecutive turns, background work, user input,
