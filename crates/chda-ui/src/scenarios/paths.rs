@@ -143,57 +143,89 @@ fn parenthesized_space_paths_hover_open_and_reveal_across_wraps(cx: &mut gpui::T
     h.wait_prompt();
     let term = h.focused_terminal();
     let cols = h.read(|_, cx| term.read(cx).frame().size.cols as usize);
+    // An existing shorter prefix of every fixture path.
     std::fs::create_dir_all(h.home.home.join("Notes")).unwrap();
-    for name in ["workflow.html", "작업 문서/설계안.md"] {
+    for (name, prose, suffix, line, column) in [
+        ("workflow.html", "", "", None, None),
+        ("작업 문서/설계안.md", "", "", None, None),
+        ("작업 문서/details.md", "see ", ":5:2", Some(5), Some(2)),
+    ] {
         let full = h
             .home
             .home
             .join(format!("Notes Folder/{}{name}", "d/".repeat(cols / 2)));
         std::fs::create_dir_all(full.parent().unwrap()).unwrap();
         std::fs::write(&full, "example").unwrap();
+        let expected = LinkOpen::Path {
+            path: full.clone(),
+            line,
+            column,
+            is_dir: false,
+        };
         h.run(
-            &format!("clear; printf '\\nPlan (%s)\\n' '{}'", full.display()),
+            &format!(
+                "clear; printf '\\nPlan ({prose}%s{suffix})\\n' '{}'",
+                full.display()
+            ),
             name,
         );
-        h.wait_for("the parenthesized output row", {
+        h.wait_for("the parenthesized output row after clearing the command", {
             let term = term.clone();
             move |_, cx| {
-                (0..term.read(cx).frame().size.rows)
-                    .any(|y| term.read(cx).frame().row_text(y).starts_with("Plan ("))
+                let frame = term.read(cx).frame();
+                let rows = || (0..frame.size.rows).map(|y| frame.row_text(y));
+                rows().any(|t| t.starts_with(&format!("Plan ({prose}")))
+                    && !rows().any(|t| t.contains("printf"))
             }
         });
-        let segments = h.read(|_, cx| {
+        let row = h.read(|_, cx| {
             let frame = term.read(cx).frame();
-            let y = (0..frame.size.rows)
+            (0..frame.size.rows)
                 .find(|y| frame.row_text(*y).starts_with("Plan ("))
-                .unwrap();
-            chda_term::links_at(&frame, 7, y)[0].cells.clone()
+                .unwrap()
         });
-        assert!(segments.len() > 1, "fixture must soft-wrap");
-        for (row, start, end) in segments {
+        let hover = |h: &mut Harness, row: u16, col: u16| {
+            let at = h.read(|_, cx| {
+                let g = term.read(cx).geometry.unwrap();
+                point(
+                    g.origin.x + g.cell_width * (f32::from(col) + 0.5),
+                    g.origin.y + g.line_height * (f32::from(row) + 0.5),
+                )
+            });
+            h.cx.simulate_mouse_move(at, None, Modifiers::command());
+            (at, h.read(|_, cx| term.read(cx).hovered_link.clone()))
+        };
+        let path_start = ("Plan (".len() + prose.len()) as u16;
+        let link = hover(&mut h, row, path_start)
+            .1
+            .expect("a link at the start of the path");
+        assert_eq!(link.open, expected);
+        assert_eq!(link.cells[0], (row, path_start, link.cells[0].2));
+        assert!(link.cells.len() > 1, "fixture must soft-wrap");
+        for col in "Plan ".len() as u16..path_start {
+            assert_eq!(
+                hover(&mut h, row, col).1,
+                None,
+                "the parenthesis and prose at {col} are not part of the link"
+            );
+        }
+        for (row, start, end) in link.cells.clone() {
             for col in [start, (start + end) / 2, end] {
-                let at = h.read(|_, cx| {
-                    let g = term.read(cx).geometry.unwrap();
-                    point(
-                        g.origin.x + g.cell_width * (f32::from(col) + 0.5),
-                        g.origin.y + g.line_height * (f32::from(row) + 0.5),
-                    )
-                });
-                h.cx.simulate_mouse_move(at, None, Modifiers::command());
-                assert_eq!(
-                    h.read(|_, cx| term.read(cx).hovered_link.as_ref().map(|l| l.open.clone())),
-                    Some(LinkOpen::Path {
-                        path: full.clone(),
-                        line: None,
-                        column: None,
-                        is_dir: false
-                    })
-                );
+                let (at, hovered) = hover(&mut h, row, col);
+                assert_eq!(hovered.as_ref(), Some(&link), "({col}, {row})");
                 h.cx.simulate_click(at, Modifiers::command());
                 h.cx.run_until_parked();
                 assert_eq!(h.system.0.borrow().opened_files.last(), Some(&full));
                 h.cx.simulate_mouse_move(at, None, Modifiers::none());
                 right_click(&mut h, at);
+                assert!(
+                    matches!(
+                        menu_item(&h, "Open"),
+                        MenuAction::OpenPath { path, line: l, column: c }
+                            if path == full && l == line && c == column
+                    ),
+                    "the menu opens the same target at ({col}, {row})"
+                );
                 choose(&mut h, "Copy absolute path");
                 assert_eq!(
                     h.read(|_, cx| cx.read_from_clipboard().and_then(|c| c.text()))
