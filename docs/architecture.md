@@ -168,12 +168,15 @@ and pane order; a status change never changes a row's key or place, and
 terminal output only updates activity times in place. Sessions takes its
 content height up to 40% of the sidebar and is scrolled only by the user.
 PROJECT takes the rest; its highlight follows the focused pane's worktree.
-User focus changes (`focus_active`) reveal that worktree inside PROJECT,
-moving only a clipped row to the nearest edge below the sticky repository
-name; restoring focus after closing or dismissing something, window
-activation, startup restore and agents' `chda mcp` requests
-(`restore_focus`) only update the highlight. Only explicit PROJECT
-navigation expands a collapsed PROJECT section. `sessions-collapsed` and
+User focus changes and the restored focus at startup (`focus_active`)
+reveal that worktree inside PROJECT, moving only a clipped row to the
+nearest edge below the sticky repository name. Restoring focus after closing
+or dismissing something, window activation and a window opening
+(`restore_focus`) only update the highlight, as do focus changes made while
+an agent's `chda mcp` request is handled (`focus_active` with
+`agent_request` set). A reveal not drawn yet is dropped once the highlight
+moves on. Only explicit PROJECT navigation expands a collapsed PROJECT
+section. `sessions-collapsed` and
 `project-collapsed` are saved in `config.toml`; a missing
 `sessions-collapsed` is derived from the earlier `active-collapsed` and
 `idle-agents-collapsed` keys without rewriting the file.

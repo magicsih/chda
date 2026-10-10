@@ -26,12 +26,17 @@ sections when its status changed.
   name and drag auto-scroll use PROJECT's handle only; nothing but the user
   scrolls Sessions.
 - PROJECT highlights the focused pane's worktree. A focus change the user
-  makes reveals it inside PROJECT with #149's minimal movement. Restoring
-  focus after closing or dismissing something, window activation, startup
-  restore and agents' `chda mcp` requests only update the highlight. Only
-  explicit PROJECT navigation expands a collapsed PROJECT section. A
+  makes, and the restored focus at startup, reveal it inside PROJECT with
+  #149's minimal movement. Restoring focus after closing or dismissing
+  something, window activation, a window opening and agents' `chda mcp`
+  requests only update the highlight. A reveal that could not be drawn
+  (PROJECT collapsed, sidebar hidden) is dropped once the highlight moves on.
+  Only explicit PROJECT navigation expands a collapsed PROJECT section. A
   notification's worktree whose pane is gone keeps the highlight until the
   focus moves.
+- A Sessions row focuses its exact pane or tab without moving the
+  terminal's scroll position; jumps to an agent that needs attention keep
+  scrolling to its last prompt.
 - `sessions-collapsed` replaces `active-collapsed` and
   `idle-agents-collapsed`. When it is missing it is true only if both earlier
   keys were true. Loading never rewrites the file; the next save drops the
