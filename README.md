@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="docs/media/hero.png" alt="chda: a title bar with an Open in VS Code button, a git worktree sidebar with notes, diff badges, merged and open-tab icons and agent status, next to an agent's Mermaid architecture diagram with its View diagram button" width="880">
+  <img src="docs/media/hero.png" alt="chda: a Sessions list with working, waiting and idle Claude Code and Codex panes and a plain terminal, PROJECT worktrees labeled by their notes with diff and pull request badges, and an agent's Mermaid architecture diagram with its View diagram button next to a Codex pane" width="880">
 </p>
 
 <h1 align="center">chda</h1>
@@ -119,6 +119,10 @@ document do not run. Mermaid blocks inside Markdown become diagrams too.
 
 <p align="center">
   <img src="docs/media/git-graph.jpg" alt="A read-only Git tree tab with commit connections, branch labels, subjects and short hashes" width="880">
+</p>
+
+<p align="center">
+  <img src="docs/media/sessions.png" alt="The Sessions list in a light theme: a working Claude Code pane, a Codex pane in the same tab, an agent waiting for input, an idle agent and a plain terminal, above PROJECT with the focused branch highlighted" width="880">
 </p>
 <!-- END GENERATED FEATURES -->
 
