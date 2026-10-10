@@ -1,7 +1,8 @@
 //! Sessions and PROJECT scroll on their own (#182). Session clicks, tab
 //! switches, status changes, output and closing never move Sessions; the
 //! focused branch is highlighted and revealed with minimal movement inside
-//! PROJECT only, without expanding a collapsed PROJECT section.
+//! PROJECT only, without expanding a collapsed PROJECT section. Reports
+//! without a pane never take over a live agent's row (#205).
 
 use super::harness::{Harness, git, wait_until};
 use crate::sidebar_view::SidebarEvent;
@@ -558,6 +559,185 @@ fn status_changes_keep_session_rows_in_place(cx: &mut TestAppContext) {
     let child = bounds(h, &format!("child-{}-child", first.raw())).expect("child row");
     let next = bounds(h, &selector(SessionKey::Pane(second))).unwrap();
     assert!(parent.bottom() <= child.top() && child.bottom() <= next.top());
+}
+
+/// The only pane of a worktree, beside terminal tabs, for an agent that
+/// reports through its pane while another agent, started outside chda,
+/// reports for the same worktree without one (#205).
+struct SharedWorktree {
+    pane: PaneId,
+    worktree: PathBuf,
+    /// The Sessions order once the pane's agent is live.
+    order: Vec<SessionKey>,
+}
+
+impl SharedWorktree {
+    /// Three terminal tabs; the last one's worktree is shared. Another tab
+    /// stays focused, so nothing counts as looked at.
+    fn open(cx: &mut TestAppContext, name: &str) -> (Fixture, Self) {
+        let mut f = open(cx, name, 3, "");
+        let worktree = f.worktrees[WORKTREES - 3].clone();
+        let h = &mut f.h;
+        let (_, pane) = focused(h);
+        let path = worktree.clone();
+        h.wait_for("the pane in its worktree", move |v, _| {
+            v.ws.pane(pane).unwrap().cwd.as_deref() == Some(path.as_path())
+        });
+        navigate(h, SidebarEvent::FocusTab(h.read(|v, _| v.ws.tabs()[0].id)));
+        settle(h);
+        let shared = Self {
+            pane,
+            worktree,
+            order: Vec::new(),
+        };
+        (f, shared)
+    }
+
+    /// Start the pane's own agent and remember where its row is.
+    fn start(&mut self, h: &mut Harness) {
+        self.own(h, HookKind::SessionStart, AgentStatus::Idle);
+        let pane = self.pane;
+        h.wait_for("a live agent row", move |v, cx| {
+            v.sidebar
+                .read(cx)
+                .model
+                .sessions
+                .iter()
+                .any(|r| r.key == SessionKey::Pane(pane) && r.live_idle())
+        });
+        settle(h);
+        self.order = keys(h);
+        assert_eq!(self.order.len(), 4, "one agent row and three terminal rows");
+        assert_eq!(self.order[0], SessionKey::Pane(pane), "agents come first");
+    }
+
+    /// An event from the pane's own agent, which names the pane.
+    fn own(&self, h: &mut Harness, kind: HookKind, status: AgentStatus) {
+        let pane = self.pane;
+        h.hook_session(Some(pane.raw()), &self.worktree, kind, "own");
+        h.wait_for("the agent's own status", move |v, _| {
+            v.ws.pane(pane)
+                .and_then(|p| p.agent.as_ref())
+                .is_some_and(|a| a.status == status)
+        });
+    }
+
+    /// An event from the other agent: it names no pane, and the worktree's
+    /// attention still follows it.
+    fn other(&self, h: &mut Harness, kind: HookKind, attention: AgentStatus) {
+        h.hook_session(None, &self.worktree, kind, "other");
+        let path = self.worktree.clone();
+        h.wait_for("the worktree's attention", move |v, cx| {
+            v.sidebar
+                .read(cx)
+                .model
+                .worktree_for_path(&path)
+                .and_then(|(_, w)| w.agents.get("claude").copied())
+                == Some(attention)
+        });
+    }
+
+    /// The pane's row keeps its key, place, life and own status.
+    fn check(&self, h: &mut Harness, status: AgentStatus, what: &str) {
+        settle(h);
+        assert_eq!(keys(h), self.order, "{what}: rows keep their key and place");
+        let pane = self.pane;
+        let row = h.read(|v, cx| {
+            v.sidebar
+                .read(cx)
+                .model
+                .sessions
+                .iter()
+                .find(|r| r.key == SessionKey::Pane(pane))
+                .cloned()
+        });
+        let row = row.unwrap_or_else(|| panic!("{what}: the agent row is listed"));
+        assert!(row.agent_live, "{what}: the agent stays live");
+        assert_eq!(
+            row.status,
+            Some(status),
+            "{what}: the pane keeps its own status"
+        );
+    }
+}
+
+#[gpui::test]
+fn reports_without_a_pane_after_the_live_agents_own_keep_its_row(cx: &mut TestAppContext) {
+    let (mut f, mut shared) = SharedWorktree::open(cx, "sessions-nopane-a");
+    let h = &mut f.h;
+    shared.start(h);
+    for (own, status, other, attention) in [
+        (
+            HookKind::PromptSubmitted,
+            AgentStatus::Working,
+            HookKind::Stopped,
+            AgentStatus::Review,
+        ),
+        (
+            HookKind::Stopped,
+            AgentStatus::Review,
+            HookKind::PromptSubmitted,
+            AgentStatus::Working,
+        ),
+        (
+            HookKind::PromptSubmitted,
+            AgentStatus::Working,
+            HookKind::SessionEnd,
+            AgentStatus::Idle,
+        ),
+    ] {
+        shared.own(h, own, status);
+        shared.check(h, status, &format!("own {own:?}"));
+        shared.other(h, other, attention);
+        shared.check(h, status, &format!("other {other:?} after own {own:?}"));
+    }
+}
+
+#[gpui::test]
+fn reports_without_a_pane_before_the_live_agents_own_keep_its_row(cx: &mut TestAppContext) {
+    let (mut f, mut shared) = SharedWorktree::open(cx, "sessions-nopane-b");
+    let h = &mut f.h;
+    // Before the pane's agent starts, a report without a pane is attention
+    // only: the pane shows it, but no agent row is listed.
+    shared.other(h, HookKind::Stopped, AgentStatus::Review);
+    settle(h);
+    let pane = shared.pane;
+    assert!(h.read(|v, _| {
+        let info = v.ws.pane(pane).unwrap();
+        !info.agent_live && info.agent.as_ref().map(|a| a.status) == Some(AgentStatus::Review)
+    }));
+    assert!(
+        !keys(h).contains(&SessionKey::Pane(pane)),
+        "a report without a pane creates no agent row"
+    );
+    shared.start(h);
+    let mut status = AgentStatus::Idle;
+    for (other, attention, own, next) in [
+        (
+            HookKind::Stopped,
+            AgentStatus::Review,
+            HookKind::WaitingInput,
+            AgentStatus::WaitingInput,
+        ),
+        (
+            HookKind::PromptSubmitted,
+            AgentStatus::Working,
+            HookKind::Stopped,
+            AgentStatus::Review,
+        ),
+        (
+            HookKind::SessionEnd,
+            AgentStatus::Idle,
+            HookKind::PromptSubmitted,
+            AgentStatus::Working,
+        ),
+    ] {
+        shared.other(h, other, attention);
+        shared.check(h, status, &format!("other {other:?} before own {own:?}"));
+        shared.own(h, own, next);
+        status = next;
+        shared.check(h, status, &format!("own {own:?}"));
+    }
 }
 
 /// A worktree row fully visible in PROJECT, below the sticky strip.

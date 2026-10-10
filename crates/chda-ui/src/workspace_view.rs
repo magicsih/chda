@@ -1340,9 +1340,11 @@ impl WorkspaceView {
                         ev.timestamp
                     },
                 );
+                // Only a pane-bound event establishes life; ending it is
+                // left to session end, the shell prompt and pane closure.
                 if let Some(info) = self.ws.pane_mut(p) {
-                    changed |= info.agent_live != ev.pane.is_some();
-                    info.agent_live = ev.pane.is_some();
+                    changed |= ev.pane.is_some() && !info.agent_live;
+                    info.agent_live |= ev.pane.is_some();
                 }
                 changed
             }
@@ -1459,7 +1461,10 @@ impl WorkspaceView {
 
     /// The pane an agent event belongs to: the one its hook named through
     /// `CHDA_PANE_ID`, else (agents started outside a chda shell) the most
-    /// recently active pane in the event's worktree.
+    /// recently active pane in the event's worktree without a live agent.
+    /// Such a report comes from another process, even with the same session
+    /// id (a resumed copy), so it never takes over a pane a runtime event
+    /// named.
     fn pane_for_event(&self, ev: &HookEvent, cx: &App) -> Option<PaneId> {
         if let Some(p) = ev.pane.and_then(|raw| self.ws.pane_by_raw(raw)) {
             return Some(p);
@@ -1476,7 +1481,7 @@ impl WorkspaceView {
             .iter()
             .flat_map(|t| t.panes())
             .filter_map(|p| Some((p, self.ws.pane(p)?)))
-            .filter(|(_, i)| i.cwd.as_ref().is_some_and(|c| c.starts_with(&root)))
+            .filter(|(_, i)| !i.agent_live && i.cwd.as_ref().is_some_and(|c| c.starts_with(&root)))
             .max_by_key(|(_, i)| i.last_activity)
             .map(|(p, _)| p)
     }
