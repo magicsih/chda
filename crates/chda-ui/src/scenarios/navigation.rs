@@ -60,7 +60,7 @@ fn worktree_navigation_reuses_recent_panes_and_tracks_exact_tabs(cx: &mut TestAp
     h.read(|v, cx| {
         let s = v.sidebar.read(cx);
         assert_eq!(s.selected.as_ref(), Some(&a));
-        assert_eq!(s.active_tab, v.ws.active_tab().map(|t| t.id));
+        assert_eq!(s.focus, v.ws.active_tab().map(|t| (t.id, t.focused_pane())));
     });
     click(&mut h, "repo-0");
     click(&mut h, "repo-1");

@@ -168,3 +168,87 @@ fn dragging_repository_headers_reorders_and_persists(cx: &mut TestAppContext) {
     });
     assert_eq!(reopened, ["c", "b", "a", "dropped"]);
 }
+
+#[gpui::test]
+fn dragging_near_project_edges_scrolls_only_project(cx: &mut TestAppContext) {
+    let mut h = Harness::open(cx, "reorder-scroll", |home| {
+        let list: Vec<String> = (0..12)
+            .map(|i| format!("\"{}\"", home.repo(&format!("repo-{i:02}")).display()))
+            .collect();
+        std::fs::write(&home.config, format!("repos = [{}]\n", list.join(", "))).unwrap();
+    });
+    h.wait_prompt();
+    h.cx.simulate_resize(gpui::size(px(960.0), px(360.0)));
+    h.wait_for("every repository", |v, cx| {
+        v.sidebar
+            .read(cx)
+            .model
+            .repos
+            .iter()
+            .all(|r| !r.worktrees.is_empty())
+    });
+    for _ in 0..8 {
+        h.keys("cmd-t");
+        h.wait_prompt();
+    }
+    h.cx.run_until_parked();
+    let handles = |h: &Harness| {
+        h.read(|v, cx| {
+            let s = v.sidebar.read(cx);
+            (s.sessions_scroll.clone(), s.project_scroll.clone())
+        })
+    };
+    let (sessions, project) = handles(&h);
+    assert!(sessions.max_offset().y > px(0.0) && project.max_offset().y > px(0.0));
+    sessions.set_offset(point(px(0.0), px(-20.0)));
+    h.view
+        .update(&mut h.cx, |v, cx| v.sidebar.update(cx, |_, cx| cx.notify()));
+    h.cx.run_until_parked();
+    let list = h.cx.debug_bounds("project-list").expect("PROJECT's list");
+    let above =
+        h.cx.debug_bounds("sessions-list")
+            .expect("Sessions' list")
+            .center();
+    let none = Modifiers::none();
+    let from = header(&mut h, 0);
+    h.cx.simulate_mouse_down(from, MouseButton::Left, none);
+    // Near PROJECT's bottom edge: PROJECT scrolls down, Sessions stays.
+    let bottom = point(from.x, list.bottom() - px(8.0));
+    for step in 0..6 {
+        h.cx.simulate_mouse_move(
+            point(bottom.x, bottom.y - px(step as f32 % 2.0)),
+            MouseButton::Left,
+            none,
+        );
+    }
+    h.cx.run_until_parked();
+    let scrolled = project.offset().y;
+    assert!(scrolled < px(0.0), "PROJECT follows the drag down");
+    assert_eq!(
+        sessions.offset().y,
+        px(-20.0),
+        "Sessions never scrolls for a drag"
+    );
+    // Above PROJECT, over Sessions: PROJECT scrolls back up, Sessions stays.
+    for step in 0..3 {
+        h.cx.simulate_mouse_move(
+            point(above.x, above.y + px(step as f32)),
+            MouseButton::Left,
+            none,
+        );
+    }
+    h.cx.run_until_parked();
+    assert!(project.offset().y > scrolled, "PROJECT follows the drag up");
+    assert_eq!(sessions.offset().y, px(-20.0));
+    // Released outside the sidebar, nothing moves.
+    let terminal = h.read(|v, cx| {
+        let pane = v.ws.focused_pane().unwrap();
+        let g = v.panes[&pane].0.read(cx).geometry.unwrap();
+        point(g.origin.x + px(200.0), g.origin.y + px(100.0))
+    });
+    h.cx.simulate_mouse_move(terminal, MouseButton::Left, none);
+    h.cx.simulate_mouse_up(terminal, MouseButton::Left, none);
+    h.cx.run_until_parked();
+    assert_eq!(names(&h)[0], "repo-00");
+    assert_eq!(sessions.offset().y, px(-20.0));
+}

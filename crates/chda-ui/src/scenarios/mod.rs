@@ -31,6 +31,7 @@ mod release;
 mod reorder;
 mod restore;
 mod search;
+mod sessions;
 mod sharing;
 mod sidebar;
 mod starred;

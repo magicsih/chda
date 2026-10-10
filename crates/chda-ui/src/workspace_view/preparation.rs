@@ -287,7 +287,7 @@ impl WorkspaceView {
             Ok(config) => {
                 self.config = config;
                 self.preparation_editor = None;
-                self.focus_active(window, cx);
+                self.restore_focus(window, cx);
             }
             Err(e) => self.preparation_editor.as_mut().unwrap().error = Some(e),
         }
@@ -340,6 +340,10 @@ impl WorkspaceView {
             .cloned()
             .unwrap_or_default();
         if plan.is_empty() && navigation.is_none_or(|n| n == self.env.windows.borrow().navigation) {
+            if open && navigation.is_some() {
+                // The new worktree's tab is PROJECT navigation by the user.
+                self.expand_project(cx);
+            }
             if open {
                 match agent {
                     Some(agent) => self.run_agent(&path, agent, None, window, cx),
@@ -573,7 +577,7 @@ impl WorkspaceView {
     pub(super) fn close_preparation(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         self.preparation_editor = None;
         self.preparation_open = None;
-        self.focus_active(window, cx);
+        self.restore_focus(window, cx);
         cx.notify();
     }
     fn cancel_preparation(&mut self, cx: &mut Context<Self>) {
@@ -632,6 +636,8 @@ impl WorkspaceView {
         self.preparation_open = None;
         self.preparation_jobs.remove(&path);
         self.publish_preparation_guard(&path, false, cx);
+        // Opening the new worktree is PROJECT navigation by the user.
+        self.expand_project(cx);
         match agent {
             Some(agent) => self.run_agent(&path, agent, None, window, cx),
             None => self.open_tab_at(Some(path), None, window, cx),
@@ -923,7 +929,7 @@ impl WorkspaceView {
                             v.preparation_jobs.remove(&path);
                             v.publish_preparation_guard(&path, false, cx);
                         }
-                        v.focus_active(window, cx);
+                        v.restore_focus(window, cx);
                         cx.notify();
                     })),
             );

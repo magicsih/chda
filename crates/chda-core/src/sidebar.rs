@@ -224,47 +224,13 @@ pub enum SortOrder {
     Name,
 }
 
-/// A tab as the sidebar's activity list shows it.
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct ActiveTab {
-    pub agent_live: bool,
-    /// A terminal tab with no live agent in any of its split panes.
-    pub plain_terminal: bool,
-    /// Actual branch name, available when the label is an alias.
-    pub branch: Option<String>,
-    pub tab: crate::TabId,
-    /// Most urgent agent status among the tab's panes.
-    pub status: AgentStatus,
-    pub title: String,
-    /// Repository name, or `None` outside any repository.
-    pub repo: Option<String>,
-    pub last_activity: u64,
-    pub previous_activity: Option<u64>,
-}
-
-/// A pane-bound live idle session, separate from historical session entries.
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct IdleAgent {
-    pub pane: crate::PaneId,
-    pub agent: String,
-    pub tab: String,
-    pub pane_index: usize,
-    /// Repository and worktree context, including directories outside repos.
-    pub location: String,
-    pub cwd: Option<PathBuf>,
-    /// Known completion timestamp; zero means the idle start is unavailable.
-    pub since: u64,
-}
-
 #[derive(Clone, Debug, Default)]
 pub struct Sidebar {
     pub repos: Vec<RepoEntry>,
     pub sort: SortOrder,
     pub visible: bool,
-    /// Open tabs in workspace order.
-    pub active_tabs: Vec<ActiveTab>,
-    /// Live idle panes in workspace tab/pane order.
-    pub idle_agents: Vec<IdleAgent>,
+    /// The Sessions list: agent panes and other tabs, see [`crate::session_rows`].
+    pub sessions: Vec<crate::SessionRow>,
     /// The STARRED list, as saved in the config.
     pub starred: Vec<chda_config::StarredBranch>,
 }

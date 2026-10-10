@@ -114,6 +114,8 @@ class EvidenceTests(unittest.TestCase):
     def test_every_new_case_and_existing_feature_and_private_field_rejected(self):
         for mutate in (
             lambda d: d['run']['cases'].remove('PREP-163'),
+            lambda d: d['run']['cases'].remove('PICKER-181'),
+            lambda d: d['rounds'][1]['cases'].remove('SESSIONS-182'),
             lambda d: d['rounds'][2]['features'].remove('Terminal'),
             lambda d: d['run'].update(prompt='private prompt'),
             lambda d: d['run']['environment'].update(path='/Users/private'),

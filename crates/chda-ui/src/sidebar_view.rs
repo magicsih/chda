@@ -5,12 +5,13 @@ use std::path::PathBuf;
 use crate::status_icon::status_icon;
 
 use chda_core::{
-    AgentStatus, CheckState, DiffSummary, GitBadges, PrInfo, PrState, RepoEntry, SessionEntry,
-    Sidebar, WorktreeEntry, activity_age, relative_age,
+    AgentStatus, CheckState, DiffSummary, GitBadges, PaneId, PrInfo, PrState, RepoEntry,
+    SessionEntry, SessionKey, SessionKind, SessionRow, Sidebar, TabId, WorktreeEntry, activity_age,
+    relative_age,
 };
 use gpui::{
     AnyElement, App, ClickEvent, Context, ElementId, EventEmitter, FocusHandle, Focusable, Hsla,
-    MouseButton, MouseDownEvent, Pixels, Point, Render, Window, div, prelude::*,
+    MouseButton, MouseDownEvent, Pixels, Point, Render, Window, div, prelude::*, relative,
 };
 
 /// What the user asked for in the sidebar.
@@ -33,15 +34,17 @@ pub enum SidebarEvent {
     AddRepos(Vec<PathBuf>),
     /// Open a URL (a pull request badge was clicked).
     OpenUrl(String),
-    /// Focus an open tab from the activity list.
-    FocusTab(chda_core::TabId),
-    FocusPane(chda_core::PaneId),
-    ClosePane(chda_core::PaneId),
-    CloseTab(chda_core::TabId),
+    /// A Sessions row for a tab was clicked.
+    FocusTab(TabId),
+    /// A Sessions row for an agent pane was clicked: focus that exact pane,
+    /// leaving its terminal's scroll position alone.
+    FocusPane(PaneId),
+    ClosePane(PaneId),
+    CloseTab(TabId),
     ChildDetails(chda_core::agents::ChildActivity),
+    /// Switch Sessions labels between branch aliases and branch names.
     ToggleActiveLabel,
-    ToggleActive,
-    ToggleIdleAgents,
+    ToggleSessions,
     ToggleProject,
     /// The status dot of a worktree was clicked: go to its agent's pane.
     JumpToAgent(PathBuf),
@@ -96,7 +99,7 @@ impl Render for RepoDragPreview {
     }
 }
 
-/// Distance from the list's top or bottom edge that scrolls while dragging.
+/// Distance from PROJECT's top or bottom edge that scrolls while dragging.
 const DRAG_SCROLL_EDGE: f32 = 32.0;
 const REPO_CONTEXT_HEIGHT: f32 = 32.0;
 
@@ -120,14 +123,15 @@ pub struct AgentLabel {
     pub color: Hsla,
 }
 
+/// Provider-confirmed children of one parent agent, shown under the
+/// parent's Sessions row (its pane's row, else its tab's first row).
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) struct ChildGroup {
-    pub pane: chda_core::PaneId,
-    pub tab: chda_core::TabId,
+    pub pane: PaneId,
+    pub tab: TabId,
     pub agent: String,
     pub session: String,
     pub label: String,
-    pub idle: bool,
     pub children: Vec<chda_core::agents::ChildActivity>,
 }
 
@@ -215,13 +219,15 @@ fn busy_tooltip(busy: &str) -> String {
     format!("{first}{} this worktree\u{2026}", chars.as_str())
 }
 
+/// The active tab and its focused pane, if it has panes.
+pub(crate) type Focus = (TabId, Option<PaneId>);
+
 pub struct SidebarView {
     pub model: Sidebar,
     pub(crate) child_groups: Vec<ChildGroup>,
     pub(crate) child_collapsed: std::collections::HashSet<(String, String)>,
     pub active_label: chda_config::ActiveLabel,
-    pub(crate) active_collapsed: bool,
-    pub(crate) idle_agents_collapsed: bool,
+    pub(crate) sessions_collapsed: bool,
     pub(crate) project_collapsed: bool,
     sticky_repo: Option<PathBuf>,
     /// The first session index has finished.
@@ -231,14 +237,28 @@ pub struct SidebarView {
     /// Sessions cmd-clicked to resume together, in click order.
     pub picked: Vec<SessionPick>,
     expanded: Vec<PathBuf>,
-    /// Highlighted worktree (e.g. after a notification for a closed pane).
+    /// Highlighted PROJECT worktree: the focused pane's, or a notification's
+    /// whose pane is gone.
     pub(crate) selected: Option<PathBuf>,
-    pub(crate) active_tab: Option<chda_core::TabId>,
+    /// The active tab and its focused pane; Sessions highlights their row.
+    pub(crate) focus: Option<Focus>,
     /// Frame of the "working" spinner, advanced by the workspace.
     pub(crate) spin: u32,
-    pub(crate) scroll: gpui::ScrollHandle,
+    /// Sessions scrolls only when the user scrolls it.
+    pub(crate) sessions_scroll: gpui::ScrollHandle,
+    /// PROJECT, which navigation reveals worktrees in.
+    pub(crate) project_scroll: gpui::ScrollHandle,
+    /// The PROJECT row to bring into view once it is laid out; always the
+    /// highlighted one.
     reveal: Option<PathBuf>,
-    pending_navigation: bool,
+    /// A navigation target whose worktree is not listed yet, such as a
+    /// worktree just created.
+    pending_reveal: Option<PathBuf>,
+    /// The focused pane's directory at the last sync.
+    focus_cwd: Option<PathBuf>,
+    /// The focus when a notification's worktree took the highlight; it keeps
+    /// it until the focus moves.
+    held: Option<(Option<Focus>, Option<PathBuf>)>,
     focus_handle: FocusHandle,
     fg: Hsla,
     bg: Hsla,
@@ -318,8 +338,7 @@ impl SidebarView {
             child_groups: Vec::new(),
             child_collapsed: Default::default(),
             active_label: Default::default(),
-            active_collapsed: false,
-            idle_agents_collapsed: false,
+            sessions_collapsed: false,
             project_collapsed: false,
             sticky_repo: None,
             sessions_loaded: false,
@@ -327,11 +346,14 @@ impl SidebarView {
             picked: Vec::new(),
             expanded: Vec::new(),
             selected: None,
-            active_tab: None,
+            focus: None,
             spin: 0,
-            scroll: gpui::ScrollHandle::new(),
+            sessions_scroll: gpui::ScrollHandle::new(),
+            project_scroll: gpui::ScrollHandle::new(),
             reveal: None,
-            pending_navigation: false,
+            pending_reveal: None,
+            focus_cwd: None,
+            held: None,
             focus_handle: cx.focus_handle(),
             fg,
             bg,
@@ -339,36 +361,68 @@ impl SidebarView {
         }
     }
 
-    /// Navigation reveals its target once; background refreshes only update identity.
+    /// Highlight a worktree and reveal it in PROJECT, e.g. for a
+    /// notification whose pane is gone.
     pub fn select(&mut self, worktree: &std::path::Path, cx: &mut Context<Self>) {
-        self.select_context(self.active_tab, Some(worktree), true, cx);
+        let held = (self.focus, self.focus_cwd.clone());
+        self.select_context(self.focus, Some(worktree), true, cx);
+        self.focus_cwd = held.1.clone();
+        self.held = Some(held);
     }
 
+    /// Follow the focus: Sessions highlights the focused row and PROJECT the
+    /// worktree containing `cwd`. Only `navigation` (a focus change the user
+    /// made) reveals that worktree, inside PROJECT; Sessions never scrolls.
     pub(crate) fn select_context(
         &mut self,
-        tab: Option<chda_core::TabId>,
+        focus: Option<Focus>,
         cwd: Option<&std::path::Path>,
         navigation: bool,
         cx: &mut Context<Self>,
     ) {
+        let held = !navigation
+            && self
+                .held
+                .as_ref()
+                .is_some_and(|(f, c)| *f == focus && c.as_deref() == cwd);
+        self.focus = focus;
+        self.focus_cwd = cwd.map(std::path::Path::to_path_buf);
+        if held {
+            cx.notify();
+            return;
+        }
+        self.held = None;
+        if navigation {
+            self.pending_reveal = cwd.map(std::path::Path::to_path_buf);
+        } else if self.pending_reveal.as_deref() != cwd {
+            // The focus moved on before the target was listed.
+            self.pending_reveal = None;
+        }
         let found = cwd
             .and_then(|cwd| self.model.worktree_for_path(cwd))
             .map(|(r, w)| (r.path.clone(), w.path.clone()));
-        self.active_tab = tab;
-        if navigation {
-            self.pending_navigation = true;
-        }
         self.selected = found.as_ref().map(|(_, path)| path.clone());
+        // A reveal not drawn yet (PROJECT collapsed, sidebar hidden) is for
+        // the highlight it was scheduled with; once that moves on, expanding
+        // PROJECT later must not scroll to the earlier worktree.
+        if self.reveal.is_some() && self.reveal != self.selected {
+            self.reveal = None;
+        }
         if let Some((repo, path)) = found
-            && self.pending_navigation
+            && self.pending_reveal.take().is_some()
         {
             if let Some(r) = self.model.repo_mut(&repo) {
                 r.collapsed = false;
             }
             self.reveal = Some(path);
-            self.pending_navigation = false;
         }
         cx.notify();
+    }
+
+    /// The Sessions row holding the focus.
+    pub(crate) fn focused_session(&self) -> Option<SessionKey> {
+        let (tab, pane) = self.focus?;
+        chda_core::focused_session(&self.model.sessions, tab, pane)
     }
 
     /// New colors after a config reload.
@@ -378,23 +432,28 @@ impl SidebarView {
         cx.notify();
     }
 
-    /// Scroll the list when a dragged repository header nears its top or
+    /// Scroll PROJECT when a dragged repository header nears its top or
     /// bottom edge, so a target outside the visible part can be reached.
+    /// Sessions never scrolls for a drag.
     fn scroll_while_dragging(&mut self, e: &gpui::DragMoveEvent<RepoDrag>, cx: &mut Context<Self>) {
-        let y = e.event.position.y;
+        let position = e.event.position;
+        if position.x < e.bounds.left() || position.x > e.bounds.right() {
+            return;
+        }
         let edge = gpui::px(DRAG_SCROLL_EDGE);
-        let step = if y < e.bounds.top() + edge {
+        let step = if position.y < e.bounds.top() + edge {
             gpui::px(12.0)
-        } else if y > e.bounds.bottom() - edge {
+        } else if position.y > e.bounds.bottom() - edge {
             gpui::px(-12.0)
         } else {
             return;
         };
-        let mut offset = self.scroll.offset();
-        let max = self.scroll.max_offset().y;
+        let scroll = &self.project_scroll;
+        let mut offset = scroll.offset();
+        let max = scroll.max_offset().y;
         offset.y = (offset.y + step).clamp(-max, gpui::px(0.0));
-        if offset != self.scroll.offset() {
-            self.scroll.set_offset(offset);
+        if offset != scroll.offset() {
+            scroll.set_offset(offset);
             cx.notify();
         }
     }
@@ -545,11 +604,13 @@ impl SidebarView {
     /// runs there, `Idle` (yellow) for a live idle agent.
     fn status_dot(&self, wt: &WorktreeEntry) -> (Option<AgentStatus>, String) {
         let status = wt.status();
-        let live_idle = self.model.idle_agents.iter().any(|i| {
-            i.cwd
-                .as_ref()
-                .and_then(|cwd| self.model.worktree_for_path(cwd))
-                .is_some_and(|(_, w)| w.path == wt.path)
+        let live_idle = self.model.sessions.iter().any(|row| {
+            row.live_idle()
+                && row
+                    .cwd
+                    .as_ref()
+                    .and_then(|cwd| self.model.worktree_for_path(cwd))
+                    .is_some_and(|(_, w)| w.path == wt.path)
         });
         match status {
             AgentStatus::Idle if live_idle => (
@@ -952,7 +1013,7 @@ impl SidebarView {
             });
         let reveal = self.reveal.as_ref() == Some(&wt.path);
         let row = if reveal {
-            let scroll = self.scroll.clone();
+            let scroll = self.project_scroll.clone();
             let path = wt.path.clone();
             let this = cx.entity().downgrade();
             div()
@@ -1285,6 +1346,197 @@ impl Focusable for SidebarView {
     }
 }
 
+/// The id part shared by a Sessions row's element ids and debug selectors.
+fn session_id(key: SessionKey) -> String {
+    match key {
+        SessionKey::Pane(pane) => format!("pane-{}", pane.raw()),
+        SessionKey::Tab(tab) => format!("tab-{tab:?}"),
+    }
+}
+
+impl SidebarView {
+    /// One Sessions row: status icon, label, what it is, activity age and,
+    /// for terminals and idle agents, a close button. Child agents follow it.
+    fn render_session_row(
+        &self,
+        row: &SessionRow,
+        focused: bool,
+        children: Vec<&ChildGroup>,
+        now: u64,
+        cx: &mut Context<Self>,
+    ) -> AnyElement {
+        let fg = self.fg;
+        let key = row.key;
+        let id = session_id(key);
+        let agent_name = row.agent.as_ref().map(|agent| {
+            self.agents
+                .iter()
+                .find(|a| a.id == *agent)
+                .map_or_else(|| agent.clone(), |a| a.name.clone())
+        });
+        let kind = match (row.kind, &agent_name) {
+            (SessionKind::Agent, Some(name)) if row.shares_tab => {
+                format!("{name} \u{b7} pane {}", row.pane_index)
+            }
+            (SessionKind::Agent, Some(name)) => name.clone(),
+            (SessionKind::Agent, None) => "Agent".into(),
+            (SessionKind::Terminal, _) => "Terminal".into(),
+            (SessionKind::View(_), _) => "View".into(),
+        };
+        // Branch names read with their repository; an alias stands alone.
+        let label = match (&row.repo, &row.branch) {
+            (Some(repo), Some(branch)) if row.title == *branch => format!("{repo} / {branch}"),
+            _ => row.title.clone(),
+        };
+        let place = match (row.kind, &agent_name) {
+            (SessionKind::Agent, Some(name)) => {
+                format!(
+                    "{name} \u{b7} {} \u{b7} pane {}",
+                    row.tab_title, row.pane_index
+                )
+            }
+            _ => row.tab_title.clone(),
+        };
+        let tooltip = format!(
+            "{label}\n{}\n{place}\n{}",
+            row.location(),
+            row.status_label()
+        );
+        let idle_for = (row.live_idle() && row.since > 0).then(|| activity_age(now, row.since));
+        let close = match row.kind {
+            SessionKind::Terminal => Some((
+                format!("session-close-tab-{:?}", row.tab),
+                "Close terminal tab",
+                SidebarEvent::CloseTab(row.tab),
+            )),
+            SessionKind::Agent if row.live_idle() => match key {
+                SessionKey::Pane(pane) => Some((
+                    format!("session-close-pane-{}", pane.raw()),
+                    "Close agent pane",
+                    SidebarEvent::ClosePane(pane),
+                )),
+                SessionKey::Tab(_) => None,
+            },
+            _ => None,
+        };
+        let click = match key {
+            SessionKey::Pane(pane) => SidebarEvent::FocusPane(pane),
+            SessionKey::Tab(tab) => SidebarEvent::FocusTab(tab),
+        };
+        let line = div()
+            .id(ElementId::Name(format!("session:{id}").into()))
+            .debug_selector({
+                let id = id.clone();
+                move || format!("session-{id}")
+            })
+            .when(row.status == Some(AgentStatus::WaitingInput), |d| {
+                d.bg(waiting_tint())
+            })
+            .when(focused, |d| d.bg(fg.opacity(0.14)))
+            .flex()
+            .flex_row()
+            .items_center()
+            .gap_1()
+            .px_2()
+            .py_0p5()
+            .cursor_pointer()
+            .hover(|s| s.bg(fg.opacity(0.08)))
+            .tooltip(crate::tooltip::text(tooltip))
+            .on_click(cx.listener(move |_, _, _, cx| cx.emit(click.clone())))
+            .child(
+                div()
+                    .id(ElementId::Name(format!("session-status:{id}").into()))
+                    .debug_selector({
+                        let id = id.clone();
+                        move || format!("session-status-{id}")
+                    })
+                    .flex_shrink_0()
+                    .tooltip(crate::tooltip::text(row.status_label()))
+                    .child(status_icon(row.status, self.spin)),
+            )
+            // The label keeps a readable width; what the row is gives way first.
+            .child(
+                div()
+                    .debug_selector({
+                        let id = id.clone();
+                        move || format!("session-label-{id}")
+                    })
+                    .flex_1()
+                    .min_w(gpui::px(48.0))
+                    .overflow_hidden()
+                    .whitespace_nowrap()
+                    .text_ellipsis()
+                    .child(label),
+            )
+            .child(
+                div()
+                    .text_xs()
+                    .flex_shrink_1()
+                    .min_w_0()
+                    .max_w(gpui::px(96.0))
+                    .overflow_hidden()
+                    .whitespace_nowrap()
+                    .text_ellipsis()
+                    .text_color(fg.opacity(0.5))
+                    .child(kind),
+            )
+            .child(
+                div()
+                    .id(ElementId::Name(format!("activity-age:{id}").into()))
+                    .w(gpui::px(34.0))
+                    .flex_shrink_0()
+                    .text_right()
+                    .text_xs()
+                    .text_color(fg.opacity(0.5))
+                    .tooltip(crate::tooltip::text({
+                        let mut text = match row.previous_activity {
+                            Some(at) => format!(
+                                "Last output: {} ago\nPrevious work before restart: {} ago",
+                                activity_age(now, row.last_activity),
+                                activity_age(now, at)
+                            ),
+                            None => "Time since the last terminal output or screen update".into(),
+                        };
+                        if let Some(age) = &idle_for {
+                            text.push_str(&format!("\nReady for another task for {age}"));
+                        }
+                        text
+                    }))
+                    .child(activity_age(now, row.last_activity)),
+            )
+            .when_some(close, |d, (selector, tip, event)| {
+                d.child(
+                    div()
+                        .id(ElementId::Name(selector.clone().into()))
+                        .debug_selector(move || selector.clone())
+                        .flex_shrink_0()
+                        .px_1()
+                        .rounded_sm()
+                        .text_color(fg.opacity(0.7))
+                        .hover(|s| s.bg(fg.opacity(0.15)))
+                        .tooltip(crate::tooltip::text(tip))
+                        .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
+                        .on_click(cx.listener(move |_, _, _, cx| {
+                            cx.stop_propagation();
+                            cx.emit(event.clone());
+                        }))
+                        .child("\u{00d7}"),
+                )
+            });
+        div()
+            .flex()
+            .flex_col()
+            .min_w_0()
+            .child(line)
+            .children(
+                children
+                    .into_iter()
+                    .map(|g| self.render_children(g, now, cx)),
+            )
+            .into_any_element()
+    }
+}
+
 impl Render for SidebarView {
     fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let fg = self.fg;
@@ -1300,109 +1552,39 @@ impl Render for SidebarView {
             .duration_since(std::time::UNIX_EPOCH)
             .unwrap_or_default()
             .as_millis() as u64;
-        let active: Vec<AnyElement> = self
-            .model
-            .active_tabs
+        let focused = self.focused_session();
+        // A child group sits under its parent pane's row, else under the
+        // first row of the parent's tab.
+        let parents: Vec<(SessionKey, &ChildGroup)> = self
+            .child_groups
             .iter()
-            .filter(|t| !t.plain_terminal)
-            .chain(self.model.active_tabs.iter().filter(|t| t.plain_terminal))
-            .map(|t| {
-                let id = t.tab;
-                let row = div()
-                    .id(ElementId::Name(format!("active:{:?}", t.tab).into()))
-                    .debug_selector(move || format!("active-{id:?}"))
-                    .when(t.status == AgentStatus::WaitingInput, |d| {
-                        d.bg(waiting_tint())
-                    })
-                    .when(self.active_tab == Some(id), |d| d.bg(fg.opacity(0.14)))
-                    .flex()
-                    .flex_row()
-                    .items_center()
-                    .gap_1()
-                    .px_2()
-                    .py_0p5()
-                    .cursor_pointer()
-                    .hover(|s| s.bg(fg.opacity(0.08)))
-                    .on_click(cx.listener(move |_, _, _, cx| cx.emit(SidebarEvent::FocusTab(id))))
-                    .when_some(t.branch.clone(), |d, branch| {
-                        d.tooltip(crate::tooltip::text(branch))
-                    })
-                    .child(status_icon(
-                        (t.status != AgentStatus::Idle || t.agent_live).then_some(t.status),
-                        self.spin,
-                    ))
-                    .child(
-                        div()
-                            .flex_1()
-                            .min_w_0()
-                            .overflow_hidden()
-                            .whitespace_nowrap()
-                            .text_ellipsis()
-                            .child(t.title.clone()),
-                    )
-                    .child(
-                        div()
-                            .text_xs()
-                            .flex_shrink_0()
-                            .max_w(gpui::px(70.0))
-                            .overflow_hidden()
-                            .whitespace_nowrap()
-                            .text_ellipsis()
-                            .text_color(fg.opacity(0.5))
-                            .child(t.repo.clone().unwrap_or_else(|| "\u{2014}".into())),
-                    )
-                    .child(
-                        div()
-                            .id(ElementId::Name(format!("activity-age:{:?}", t.tab).into()))
-                            .w(gpui::px(38.0))
-                            .flex_shrink_0()
-                            .text_right()
-                            .text_xs()
-                            .text_color(fg.opacity(0.5))
-                            .tooltip(crate::tooltip::text(match t.previous_activity {
-                                Some(at) => format!(
-                                    "Last output: {} ago\nPrevious work before restart: {} ago",
-                                    activity_age(now, t.last_activity),
-                                    activity_age(now, at)
-                                ),
-                                None => {
-                                    "Time since the last terminal output or screen update".into()
-                                }
-                            }))
-                            .child(activity_age(now, t.last_activity)),
-                    )
-                    .when(t.plain_terminal, |d| {
-                        d.child(
-                            div()
-                                .id(ElementId::Name(format!("active-close-{id:?}").into()))
-                                .debug_selector(move || format!("active-close-{id:?}"))
-                                .flex_shrink_0()
-                                .px_1()
-                                .text_color(fg.opacity(0.7))
-                                .tooltip(crate::tooltip::text("Close terminal tab"))
-                                .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
-                                .on_click(cx.listener(move |_, _, _, cx| {
-                                    cx.stop_propagation();
-                                    cx.emit(SidebarEvent::CloseTab(id));
-                                }))
-                                .child("\u{00d7}"),
-                        )
-                    })
-                    .into_any_element();
-                div()
-                    .flex()
-                    .flex_col()
-                    .min_w_0()
-                    .child(row)
-                    .children(
-                        self.child_groups
-                            .iter()
-                            .filter(|g| g.tab == id && !g.idle)
-                            .map(|g| self.render_children(g, now, cx)),
-                    )
-                    .into_any_element()
+            .filter_map(|g| {
+                let rows = &self.model.sessions;
+                let own = SessionKey::Pane(g.pane);
+                let key = if rows.iter().any(|r| r.key == own) {
+                    Some(own)
+                } else {
+                    rows.iter().find(|r| r.tab == g.tab).map(|r| r.key)
+                };
+                key.map(|key| (key, g))
             })
             .collect();
+        let sessions: Vec<AnyElement> = if self.sessions_collapsed {
+            Vec::new()
+        } else {
+            self.model
+                .sessions
+                .iter()
+                .map(|row| {
+                    let children = parents
+                        .iter()
+                        .filter(|(key, _)| *key == row.key)
+                        .map(|(_, g)| *g)
+                        .collect();
+                    self.render_session_row(row, focused == Some(row.key), children, now, cx)
+                })
+                .collect()
+        };
         let starred: Vec<AnyElement> = self
             .model
             .starred
@@ -1410,168 +1592,90 @@ impl Render for SidebarView {
             .enumerate()
             .map(|(i, s)| self.render_starred(i, s, cx))
             .collect();
-        let idle: Vec<AnyElement> = self
-            .model
-            .idle_agents
-            .iter()
-            .map(|entry| {
-                let pane = entry.pane;
-                let name = self
-                    .agents
-                    .iter()
-                    .find(|a| a.id == entry.agent)
-                    .map(|a| a.name.clone())
-                    .unwrap_or_else(|| entry.agent.clone());
-                let context = format!("{} · pane {}", entry.tab, entry.pane_index);
-                let tooltip = format!(
-                    "{}\n{}\n{}",
-                    name,
-                    context,
-                    entry
-                        .cwd
-                        .as_ref()
-                        .map(|p| p.to_string_lossy().into_owned())
-                        .unwrap_or_else(|| entry.location.clone())
-                );
-                div()
-                    .id(ElementId::Name(format!("idle:{}", pane.raw()).into()))
-                    .debug_selector(move || format!("idle-{}", pane.raw()))
-                    .flex()
-                    .flex_col()
-                    .w_full()
-                    .min_w_0()
-                    .px_2()
-                    .py_1()
-                    .cursor_pointer()
-                    .hover(|s| s.bg(fg.opacity(0.08)))
-                    .tooltip(crate::tooltip::text(tooltip))
-                    .on_click(
-                        cx.listener(move |_, _, _, cx| cx.emit(SidebarEvent::FocusPane(pane))),
-                    )
-                    .child(
-                        div()
-                            .flex()
-                            .w_full()
-                            .min_w_0()
-                            .items_center()
-                            .gap_1()
-                            .child(
-                                div()
-                                    .id(ElementId::Name(format!("idle-name:{}", pane.raw()).into()))
-                                    .debug_selector(move || format!("idle-name-{}", pane.raw()))
-                                    .flex_1()
-                                    .min_w_0()
-                                    .flex()
-                                    .items_center()
-                                    .gap_1()
-                                    .child(
-                                        div()
-                                            .debug_selector(move || {
-                                                format!("idle-dot-{}", pane.raw())
-                                            })
-                                            .flex_shrink_0()
-                                            .child(status_icon(Some(AgentStatus::Idle), 0)),
-                                    )
-                                    .child(
-                                        div()
-                                            .debug_selector(move || {
-                                                format!("idle-label-{}", pane.raw())
-                                            })
-                                            .min_w_0()
-                                            .overflow_hidden()
-                                            .whitespace_nowrap()
-                                            .text_ellipsis()
-                                            .child(name),
-                                    ),
-                            )
-                            .child(
-                                div()
-                                    .id(ElementId::Name(format!("idle-age:{}", pane.raw()).into()))
-                                    .flex_shrink_0()
-                                    .text_xs()
-                                    .text_color(fg.opacity(0.6))
-                                    .tooltip(crate::tooltip::text(if entry.since == 0 {
-                                        "Idle start time is unavailable"
-                                    } else {
-                                        "Time since this session became ready for another task"
-                                    }))
-                                    .child(if entry.since == 0 {
-                                        "—".into()
-                                    } else {
-                                        format!("{} idle", activity_age(now, entry.since))
-                                    }),
-                            )
-                            .child(
-                                div()
-                                    .id(ElementId::Name(
-                                        format!("idle-close:{}", pane.raw()).into(),
-                                    ))
-                                    .debug_selector(move || format!("idle-close-{}", pane.raw()))
-                                    .px_1()
-                                    .rounded_sm()
-                                    .hover(|s| s.bg(fg.opacity(0.15)))
-                                    .tooltip(crate::tooltip::text("Close this pane"))
-                                    .on_mouse_down(MouseButton::Left, |_, _, cx| {
-                                        cx.stop_propagation()
-                                    })
-                                    .on_click(cx.listener(move |_, _, _, cx| {
-                                        cx.stop_propagation();
-                                        cx.emit(SidebarEvent::ClosePane(pane));
-                                    }))
-                                    .child("×"),
-                            ),
-                    )
-                    .child(
-                        div()
-                            .w_full()
-                            .min_w_0()
-                            .text_xs()
-                            .text_color(fg.opacity(0.7))
-                            .overflow_hidden()
-                            .whitespace_nowrap()
-                            .text_ellipsis()
-                            .child(entry.location.clone()),
-                    )
-                    .child(
-                        div()
-                            .w_full()
-                            .min_w_0()
-                            .text_xs()
-                            .text_color(fg.opacity(0.5))
-                            .flex()
-                            .gap_1()
-                            .child(
-                                div()
-                                    .flex_1()
-                                    .min_w_0()
-                                    .overflow_hidden()
-                                    .whitespace_nowrap()
-                                    .text_ellipsis()
-                                    .child(entry.tab.clone()),
-                            )
-                            .child(
-                                div()
-                                    .flex_shrink_0()
-                                    .child(format!("pane {}", entry.pane_index)),
-                            ),
-                    )
-                    .children(
-                        self.child_groups
-                            .iter()
-                            .filter(|g| g.pane == pane && g.idle)
-                            .map(|g| self.render_children(g, now, cx)),
-                    )
-                    .into_any_element()
-            })
-            .collect();
-        let project_header = div()
-            .id("project-section-toggle")
-            .debug_selector(|| "project-section-toggle".into())
+        let sessions_header = div()
+            .id("sessions-section-toggle")
+            .debug_selector(|| "sessions-section-toggle".into())
+            .flex_none()
             .flex()
+            .flex_row()
             .items_center()
             .px_2()
             .pt_2()
             .pb_1()
+            .text_xs()
+            .text_color(fg.opacity(0.6))
+            .cursor_pointer()
+            .hover(|s| s.bg(fg.opacity(0.08)))
+            .tooltip(crate::tooltip::text(if self.sessions_collapsed {
+                "Expand Sessions"
+            } else {
+                "Collapse Sessions"
+            }))
+            .on_click(cx.listener(|_, _, _, cx| cx.emit(SidebarEvent::ToggleSessions)))
+            .child(div().w_3().child(if self.sessions_collapsed {
+                "▸"
+            } else {
+                "▾"
+            }))
+            .child(div().flex_1().child("Sessions"))
+            .child(div().px_1().child(self.model.sessions.len().to_string()))
+            .child(
+                div()
+                    .id("sessions-label-toggle")
+                    .debug_selector(|| "sessions-label-toggle".into())
+                    .px_1()
+                    .cursor_pointer()
+                    .hover(|s| s.bg(fg.opacity(0.08)))
+                    .tooltip(crate::tooltip::text(
+                        "Switch Sessions labels between branch aliases and branch names",
+                    ))
+                    .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
+                    .on_click(cx.listener(|_, _, _, cx| {
+                        cx.stop_propagation();
+                        cx.emit(SidebarEvent::ToggleActiveLabel)
+                    }))
+                    .child(match self.active_label {
+                        chda_config::ActiveLabel::Alias => "Alias",
+                        chda_config::ActiveLabel::Branch => "Branch",
+                    }),
+            );
+        // Sessions takes what it needs up to 40% of the sidebar, or the
+        // room PROJECT leaves when collapsed; it scrolls on its own.
+        let sessions_list = div()
+            .id("sessions-list")
+            .debug_selector(|| "sessions-list".into())
+            .flex()
+            .flex_col()
+            .min_h_0()
+            .when(self.project_collapsed, |d| d.flex_shrink_1())
+            .when(!self.project_collapsed, |d| {
+                d.flex_none().max_h(relative(0.4))
+            })
+            .overflow_y_scroll()
+            .track_scroll(&self.sessions_scroll)
+            .children(sessions)
+            .when(self.model.sessions.is_empty(), |d| {
+                d.child(
+                    div()
+                        .px_2()
+                        .py_1()
+                        .text_xs()
+                        .text_color(fg.opacity(0.5))
+                        .child("No open sessions"),
+                )
+            });
+        let project_header = div()
+            .id("project-section-toggle")
+            .debug_selector(|| "project-section-toggle".into())
+            .flex_none()
+            .flex()
+            .items_center()
+            .mt_1()
+            .px_2()
+            .pt_2()
+            .pb_1()
+            .border_t_1()
+            .border_color(fg.opacity(0.1))
             .text_xs()
             .text_color(fg.opacity(0.6))
             .cursor_pointer()
@@ -1610,7 +1714,7 @@ impl Render for SidebarView {
             .iter()
             .map(|r| (r.path.clone(), r.collapsed))
             .collect();
-        let scroll = self.scroll.clone();
+        let scroll = self.project_scroll.clone();
         let current = self.sticky_repo.clone();
         let this = cx.entity().downgrade();
         let repo_groups = div()
@@ -1723,139 +1827,75 @@ impl Render for SidebarView {
                         .child("3. Right-click the worktree to open a terminal or run Claude Code / Codex."),
                 )
             });
-        let list = div()
-            .id("sidebar")
+        // PROJECT's own viewport: navigation reveals, drag auto-scroll and
+        // the sticky repository name all work inside it.
+        let sticky = self
+            .sticky_repo
+            .as_ref()
+            .and_then(|path| self.model.repos.iter().find(|r| &r.path == path));
+        let project_region = div()
+            .relative()
+            .flex_1()
+            .min_h_0()
             .flex()
             .flex_col()
+            .child(
+                div()
+                    .id("project-list")
+                    .debug_selector(|| "project-list".into())
+                    .flex_1()
+                    .min_h_0()
+                    .overflow_y_scroll()
+                    .track_scroll(&self.project_scroll)
+                    .on_drag_move(
+                        cx.listener(|this, e: &gpui::DragMoveEvent<RepoDrag>, _, cx| {
+                            this.scroll_while_dragging(e, cx)
+                        }),
+                    )
+                    .child(project),
+            )
+            .when_some(sticky, |d, repo| {
+                d.child(
+                    div()
+                        .id("sticky-repo-context")
+                        .debug_selector(|| "sticky-repo-context".into())
+                        .absolute()
+                        .top_0()
+                        .left_0()
+                        .w_full()
+                        .h(gpui::px(REPO_CONTEXT_HEIGHT))
+                        .flex()
+                        .items_center()
+                        .px_3()
+                        .bg(self.bg)
+                        .border_b_1()
+                        .border_color(fg.opacity(0.15))
+                        .text_sm()
+                        .font_weight(gpui::FontWeight::BOLD)
+                        .overflow_hidden()
+                        .whitespace_nowrap()
+                        .text_ellipsis()
+                        .tooltip(crate::tooltip::text(
+                            repo.path.to_string_lossy().into_owned(),
+                        ))
+                        .child(repo.name.clone()),
+                )
+            });
+        div()
+            .id("sidebar")
+            .debug_selector(|| "sidebar".into())
+            .relative()
             .size_full()
+            .flex()
+            .flex_col()
             .bg(self.bg)
             .text_color(fg)
             .text_sm()
-            .overflow_y_scroll()
-            .track_scroll(&self.scroll)
-            .on_drag_move(
-                cx.listener(|this, e: &gpui::DragMoveEvent<RepoDrag>, _, cx| {
-                    this.scroll_while_dragging(e, cx)
-                }),
-            )
-            .child(
-                div()
-                    .id("active-section-toggle")
-                    .debug_selector(|| "active-section-toggle".into())
-                    .flex()
-                    .flex_row()
-                    .items_center()
-                    .px_2()
-                    .pt_2()
-                    .pb_1()
-                    .text_xs()
-                    .text_color(fg.opacity(0.6))
-                    .cursor_pointer()
-                    .hover(|s| s.bg(fg.opacity(0.08)))
-                    .tooltip(crate::tooltip::text(if self.active_collapsed {
-                        "Expand ACTIVE"
-                    } else {
-                        "Collapse ACTIVE"
-                    }))
-                    .on_click(cx.listener(|_, _, _, cx| cx.emit(SidebarEvent::ToggleActive)))
-                    .child(
-                        div()
-                            .w_3()
-                            .child(if self.active_collapsed { "▸" } else { "▾" }),
-                    )
-                    .child(div().flex_1().child("ACTIVE"))
-                    .child(div().px_1().child(active.len().to_string()))
-                    .child(
-                        div()
-                            .id("active-label-toggle")
-                            .debug_selector(|| "active-label-toggle".into())
-                            .px_1()
-                            .cursor_pointer()
-                            .hover(|s| s.bg(fg.opacity(0.08)))
-                            .tooltip(crate::tooltip::text(
-                                "Switch ACTIVE labels between branch aliases and branch names",
-                            ))
-                            .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
-                            .on_click(cx.listener(|_, _, _, cx| {
-                                cx.stop_propagation();
-                                cx.emit(SidebarEvent::ToggleActiveLabel)
-                            }))
-                            .child(match self.active_label {
-                                chda_config::ActiveLabel::Alias => "Alias",
-                                chda_config::ActiveLabel::Branch => "Branch",
-                            }),
-                    ),
-            )
-            .when(!self.active_collapsed, |d| d.children(active))
-            .child(div().h(gpui::px(6.0)))
-            .child(
-                div()
-                    .id("idle-section-toggle")
-                    .debug_selector(|| "idle-section-toggle".into())
-                    .flex()
-                    .items_center()
-                    .px_2()
-                    .pt_2()
-                    .pb_1()
-                    .text_xs()
-                    .cursor_pointer()
-                    .hover(|s| s.bg(fg.opacity(0.08)))
-                    .text_color(fg.opacity(0.6))
-                    .tooltip(crate::tooltip::text(if self.idle_agents_collapsed {
-                        "Expand IDLE"
-                    } else {
-                        "Collapse IDLE"
-                    }))
-                    .on_click(cx.listener(|_, _, _, cx| cx.emit(SidebarEvent::ToggleIdleAgents)))
-                    .child(div().w_3().child(if self.idle_agents_collapsed {
-                        "▸"
-                    } else {
-                        "▾"
-                    }))
-                    .child(div().flex_1().child("IDLE"))
-                    .child(div().px_1().child(idle.len().to_string())),
-            )
-            .when(!self.idle_agents_collapsed, |d| d.children(idle))
-            .child(project_header)
-            .when(!self.project_collapsed, |d| d.child(project));
-        div()
-            .relative()
-            .size_full()
             .on_drag_move(cx.listener(|this, e, _, cx| this.dragged.track(e, cx)))
-            .child(list)
-            .when(!self.project_collapsed, |d| {
-                let repo = self
-                    .sticky_repo
-                    .as_ref()
-                    .and_then(|path| self.model.repos.iter().find(|r| &r.path == path));
-                d.when_some(repo, |d, repo| {
-                    d.child(
-                        div()
-                            .id("sticky-repo-context")
-                            .debug_selector(|| "sticky-repo-context".into())
-                            .absolute()
-                            .top_0()
-                            .left_0()
-                            .w_full()
-                            .h(gpui::px(REPO_CONTEXT_HEIGHT))
-                            .flex()
-                            .items_center()
-                            .px_3()
-                            .bg(self.bg)
-                            .border_b_1()
-                            .border_color(fg.opacity(0.15))
-                            .text_sm()
-                            .font_weight(gpui::FontWeight::BOLD)
-                            .overflow_hidden()
-                            .whitespace_nowrap()
-                            .text_ellipsis()
-                            .tooltip(crate::tooltip::text(
-                                repo.path.to_string_lossy().into_owned(),
-                            ))
-                            .child(repo.name.clone()),
-                    )
-                })
-            })
+            .child(sessions_header)
+            .when(!self.sessions_collapsed, |d| d.child(sessions_list))
+            .child(project_header)
+            .when(!self.project_collapsed, |d| d.child(project_region))
             .child(crate::external_drop::catcher(
                 cx.entity(),
                 |v: &mut Self| &mut v.dragged,

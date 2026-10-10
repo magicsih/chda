@@ -21,7 +21,7 @@ import xml.etree.ElementTree as ET
 REPO = 'magicsih/chda'
 CASES = frozenset(('PATH-164 NAV-149 PR-150 TREE-151 REMOVE-152 QUOTA-153 '
                    'CLOSE-154 NOTIFY-155 COPY-158 POLICY-159 RESTART-160 '
-                   'CHILD-161 REVIEW-162 PREP-163').split())
+                   'CHILD-161 REVIEW-162 PREP-163 PICKER-181 SESSIONS-182').split())
 FEATURES = frozenset(('Terminal', 'Tabs and splits', 'App updates', 'Title bar',
                       'Notifications', 'Sidebar', 'Worktrees', 'Git history',
                       'Diff review', 'Agents', 'Status bar', 'Palette', 'Config'))

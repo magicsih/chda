@@ -72,6 +72,7 @@ fn imported_setup_does_not_execute_or_open_a_tab_without_confirmation(cx: &mut T
         repo = home.repo("app");
         let mut config = chda_config::ChdaConfig::default();
         config.repos.push(repo.clone());
+        config.project_collapsed = true;
         config.repo_preparation.insert(
             repo.clone(),
             chda_config::PreparationPlan {
@@ -113,9 +114,14 @@ fn imported_setup_does_not_execute_or_open_a_tab_without_confirmation(cx: &mut T
         1,
         "background success leaves focus and tabs alone"
     );
+    assert!(h.read(|v, _| v.config.project_collapsed));
     click(&mut h, "preparation-open");
     h.wait_prompt();
     assert_eq!(h.read(|v, _| v.ws.tabs().len()), 2);
+    // Opening the new worktree is PROJECT navigation: PROJECT shows it.
+    assert!(!h.read(|v, _| v.config.project_collapsed));
+    h.cx.run_until_parked();
+    assert!(h.cx.debug_bounds("repo-0").is_some());
 }
 
 #[gpui::test]

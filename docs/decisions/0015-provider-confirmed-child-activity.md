@@ -10,7 +10,7 @@ Codex 0.161's `app-server proxy` forwards raw bytes to the existing interactive 
 
 The bounded helper has one deadline covering handshake and requests, limits frames/messages and total bytes, suppresses stderr and provider error bodies, and always terminates/reaps its own proxy process group. The existing daemon remains owned by the CLI. This helper participates in update quiescence.
 
-Each window projects child groups beneath the owning ACTIVE or IDLE parent, in stable arrival order. Disclosure changes do not reorder tabs or repositories. A row may focus a dedicated pane only when exactly one live provider/session match is registered across windows. Otherwise a read-only detail view preserves the current conversation and restores focus when dismissed. Waiting transitions add one notification; duplicate state reports do not duplicate it.
+Each window projects child groups beneath the owning parent's Sessions row ([0019](0019-unified-sessions.md); formerly its ACTIVE or IDLE row), in stable arrival order. Disclosure changes do not reorder tabs or repositories. A row may focus a dedicated pane only when exactly one live provider/session match is registered across windows. Otherwise a read-only detail view preserves the current conversation and restores focus when dismissed. Waiting transitions add one notification; duplicate state reports do not duplicate it.
 
 Child reports and per-window disclosure states belong to live handoff and are absent from cold session saves. A cold restart cannot infer a live child from transcript recency. The existing prepared/commit PTY contract remains unchanged.
 

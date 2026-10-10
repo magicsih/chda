@@ -21,7 +21,7 @@ pub enum TabTitle {
     Path,
 }
 
-/// Labels used by the ACTIVE sidebar list, independent of tab titles.
+/// Labels used by the sidebar's Sessions list, independent of tab titles.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "kebab-case")]
 pub enum ActiveLabel {
@@ -108,10 +108,8 @@ pub struct ChdaConfig {
     pub default_action: DefaultAction,
     pub tab_title: TabTitle,
     pub active_label: ActiveLabel,
-    /// Hide ACTIVE rows while keeping the header and count visible.
-    pub active_collapsed: bool,
-    /// Hide live idle rows while keeping the header and count visible.
-    pub idle_agents_collapsed: bool,
+    /// Hide Sessions rows while keeping the header and count visible.
+    pub sessions_collapsed: bool,
     /// Hide registered folders and starred branches beneath PROJECT.
     pub project_collapsed: bool,
     /// Agents offered in the sidebar and the palette, by id (`claude`,
@@ -156,8 +154,7 @@ impl Default for ChdaConfig {
             default_action: DefaultAction::Terminal,
             tab_title: TabTitle::Branch,
             active_label: ActiveLabel::Alias,
-            active_collapsed: false,
-            idle_agents_collapsed: false,
+            sessions_collapsed: false,
             project_collapsed: false,
             agents: vec!["claude".into(), "codex".into()],
             sidebar_width: 280,
@@ -175,6 +172,17 @@ impl Default for ChdaConfig {
             starred: Vec::new(),
         }
     }
+}
+
+/// Section keys from before ACTIVE and IDLE became one Sessions list. Read
+/// only to carry the choice over; the next save writes `sessions-collapsed`
+/// alone.
+#[derive(Default, Deserialize)]
+#[serde(default, rename_all = "kebab-case")]
+struct LegacySections {
+    sessions_collapsed: Option<bool>,
+    active_collapsed: bool,
+    idle_agents_collapsed: bool,
 }
 
 /// Explicit commands in order and regular gitignored files relative to the primary checkout.
@@ -202,12 +210,20 @@ impl ChdaConfig {
     /// Load from `path`; a missing file yields the defaults, a broken one an error.
     pub fn load(path: &Path) -> io::Result<Self> {
         match fs::read_to_string(path) {
-            Ok(text) => {
-                toml::from_str(&text).map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e))
-            }
+            Ok(text) => Self::parse(&text),
             Err(e) if e.kind() == io::ErrorKind::NotFound => Ok(Self::default()),
             Err(e) => Err(e),
         }
+    }
+
+    fn parse(text: &str) -> io::Result<Self> {
+        let invalid = |e| io::Error::new(io::ErrorKind::InvalidData, e);
+        let mut config: Self = toml::from_str(text).map_err(invalid)?;
+        let legacy: LegacySections = toml::from_str(text).map_err(invalid)?;
+        if legacy.sessions_collapsed.is_none() {
+            config.sessions_collapsed = legacy.active_collapsed && legacy.idle_agents_collapsed;
+        }
+        Ok(config)
     }
 
     pub fn save(&self, path: &Path) -> io::Result<()> {
@@ -297,8 +313,7 @@ mod tests {
         c.repos.push("/src/app".into());
         c.default_action = DefaultAction::Claude;
         c.active_label = ActiveLabel::Branch;
-        c.active_collapsed = true;
-        c.idle_agents_collapsed = true;
+        c.sessions_collapsed = true;
         c.project_collapsed = true;
         c.repo_preparation.insert(
             "/src/app".into(),
@@ -310,6 +325,7 @@ mod tests {
         c.save(&path).unwrap();
         let text = fs::read_to_string(&path).unwrap();
         assert!(text.contains("default-action = \"claude\""), "{text}");
+        assert!(text.contains("sessions-collapsed = true"), "{text}");
         assert_eq!(ChdaConfig::load(&path).unwrap(), c);
         assert_eq!(
             c.worktree_path(Path::new("/src/app"), "feat/x"),
@@ -323,8 +339,7 @@ mod tests {
         let c = ChdaConfig::load(&path).unwrap();
         assert_eq!(c.sidebar_width, 320);
         assert_eq!(c.active_label, ActiveLabel::Alias);
-        assert!(!c.active_collapsed);
-        assert!(!c.idle_agents_collapsed);
+        assert!(!c.sessions_collapsed);
         assert!(!c.project_collapsed);
         assert_eq!(
             c.repo_hosts.get(Path::new("/src/app")).map(String::as_str),
@@ -404,6 +419,42 @@ mod tests {
         c.save(&path).unwrap();
         assert_eq!(ChdaConfig::load(&path).unwrap(), c);
         fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn legacy_session_collapse_keys_migrate() {
+        let parse = |text: &str| ChdaConfig::parse(text).unwrap().sessions_collapsed;
+        assert!(parse(
+            "active-collapsed = true\nidle-agents-collapsed = true\n"
+        ));
+        for one in [
+            "active-collapsed = true\n",
+            "idle-agents-collapsed = true\n",
+            "active-collapsed = true\nidle-agents-collapsed = false\n",
+            "",
+        ] {
+            assert!(!parse(one), "{one:?}");
+        }
+        // The new key wins over the legacy ones either way.
+        assert!(!parse(
+            "sessions-collapsed = false\nactive-collapsed = true\nidle-agents-collapsed = true\n"
+        ));
+        assert!(parse(
+            "sessions-collapsed = true\nactive-collapsed = false\n"
+        ));
+        // Saving writes only the new key, so the legacy ones disappear.
+        let mut c = ChdaConfig::parse(
+            "active-collapsed = true\nidle-agents-collapsed = true\nproject-collapsed = true\n",
+        )
+        .unwrap();
+        assert!(c.sessions_collapsed && c.project_collapsed);
+        let text = toml::to_string_pretty(&c).unwrap();
+        assert!(text.contains("sessions-collapsed = true"), "{text}");
+        assert!(!text.contains("active-collapsed") && !text.contains("idle-agents"));
+        c.sessions_collapsed = false;
+        let text = toml::to_string_pretty(&c).unwrap();
+        assert!(!ChdaConfig::parse(&text).unwrap().sessions_collapsed);
+        assert!(ChdaConfig::parse("active-collapsed = 3\n").is_err());
     }
 
     #[test]

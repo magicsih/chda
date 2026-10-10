@@ -102,7 +102,7 @@ fn starred_branches_navigate_unstar_in_one_click_and_persist(cx: &mut TestAppCon
             (a.clone(), "feat/x".to_owned()),
         ]
     );
-    // STARRED shows without any ACTIVE entry for b or the feature worktree.
+    // STARRED shows without any Sessions row for b or the feature worktree.
     let tabs = h.read(|v, _| v.ws.tabs().len());
 
     // Clicking a label navigates with the usual worktree navigation.

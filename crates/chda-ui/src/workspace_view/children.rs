@@ -27,19 +27,12 @@ impl WorkspaceView {
                 if children.is_empty() {
                     continue;
                 }
-                let idle = self.ws.pane(pane).is_some_and(|p| {
-                    p.agent_live
-                        && p.agent
-                            .as_ref()
-                            .is_some_and(|a| a.status == AgentStatus::Idle)
-                });
                 groups.push(crate::sidebar_view::ChildGroup {
                     pane,
                     tab: tab.id,
                     agent,
                     session,
                     label: self.ws.tab_title(tab),
-                    idle,
                     children,
                 });
             }

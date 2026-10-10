@@ -26,8 +26,8 @@ mod review;
 mod sharing;
 mod upgrade;
 use chda_core::{
-    ActiveTab, AgentEvent, AgentSessionRef, AgentStatus, Axis, Direction, FileWatcher, IdleAgent,
-    Listing, Node, PaneId, RepoWatcher, SavedBounds, SavedWindow, TabId, TitleMode, Workspace,
+    AgentEvent, AgentSessionRef, AgentStatus, Axis, Direction, FileWatcher, Listing, Node, PaneId,
+    RepoWatcher, SavedBounds, SavedWindow, TabId, TitleMode, Workspace,
 };
 use futures::StreamExt;
 use futures::channel::mpsc::unbounded;
@@ -349,6 +349,9 @@ pub struct WorkspaceView {
     window_title: String,
     /// A session save for new terminal activity is scheduled.
     activity_save_pending: bool,
+    /// An agent's `chda mcp` request is being handled: the focus changes it
+    /// makes are not the user's navigation and reveal nothing.
+    agent_request: bool,
     /// Where the Ghostty config lives, and the files the last load read.
     ghostty_paths: Paths,
     ghostty_sources: Vec<PathBuf>,
@@ -516,6 +519,7 @@ impl WorkspaceView {
             notification_focus: None,
             window_title: String::new(),
             activity_save_pending: false,
+            agent_request: false,
             ghostty_paths: env.ghostty.clone(),
             ghostty_sources: ghostty.sources,
             config_watcher: None,
@@ -562,7 +566,7 @@ impl WorkspaceView {
         this.start_notification_clicks(window, cx);
         cx.observe_window_activation(window, |this, window, cx| {
             if window.is_window_active() {
-                this.focus_active(window, cx);
+                this.restore_focus(window, cx);
             }
         })
         .detach();
@@ -1019,7 +1023,11 @@ impl WorkspaceView {
             }
             Incoming::Event(ev) => self.apply_hook_event(ev, window, cx),
             Incoming::Request(request, reply) => {
-                let _ = reply.send(self.handle_request(request, window, cx));
+                // An agent's request is not the user's navigation.
+                self.agent_request = true;
+                let result = self.handle_request(request, window, cx);
+                self.agent_request = false;
+                let _ = reply.send(result);
             }
         }
     }
@@ -1587,6 +1595,7 @@ impl WorkspaceView {
     /// The sidebar's status dot for a worktree: jump to the pane that needs
     /// attention there, else any of its panes, else open one.
     fn jump_to_worktree_agent(&mut self, path: &Path, window: &mut Window, cx: &mut Context<Self>) {
+        self.expand_project(cx);
         let panes: Vec<PaneId> = self
             .sidebar
             .read(cx)
@@ -1646,6 +1655,7 @@ impl WorkspaceView {
                 if !self.sidebar_visible {
                     self.toggle_sidebar(&ToggleSidebar, window, cx);
                 }
+                self.expand_project(cx);
                 self.sidebar
                     .update(cx, |s, cx| s.select(&target.worktree, cx));
             }
@@ -1793,7 +1803,7 @@ impl WorkspaceView {
                         }
                         if view.sidebar_visible {
                             view.sidebar.update(cx, |s, cx| {
-                                if !s.model.active_tabs.is_empty() {
+                                if !s.model.sessions.is_empty() {
                                     cx.notify();
                                 }
                             });
@@ -2227,6 +2237,8 @@ impl WorkspaceView {
         if !notes.is_empty() {
             self.notify(format!("Restored the last session; {}", notes.join("; ")));
         }
+        // The restored focus is revealed inside PROJECT once its worktree is
+        // listed, as for any navigation; a collapsed PROJECT stays collapsed.
         self.focus_active(window, cx);
     }
 
@@ -2377,118 +2389,16 @@ impl WorkspaceView {
         if let Some(active) = self.ws.active_tab() {
             self.tab_group = self.ws.tab_repo(active);
         }
-        let active_tabs: Vec<ActiveTab> = {
-            let model = &self.sidebar.read(cx).model;
-            self.ws
-                .tabs_with_activity()
-                .into_iter()
-                .map(|(tab, title, repo, last_activity)| {
-                    let tab_ref = self.ws.tabs().iter().find(|t| t.id == tab);
-                    let pane = tab_ref
-                        .and_then(|t| t.focused_pane())
-                        .and_then(|p| self.ws.pane(p));
-                    let branch = pane.and_then(|p| p.branch.clone());
-                    let alias = pane
-                        .and_then(|p| p.cwd.as_ref())
-                        .and_then(|cwd| model.worktree_for_path(cwd))
-                        .and_then(|(_, wt)| wt.note_title());
-                    let title = match self.config.active_label {
-                        chda_config::ActiveLabel::Alias => alias
-                            .map(str::to_owned)
-                            .or_else(|| branch.clone())
-                            .unwrap_or(title),
-                        chda_config::ActiveLabel::Branch => branch.clone().unwrap_or(title),
-                    };
-                    ActiveTab {
-                        plain_terminal: tab_ref.is_some_and(|t| {
-                            t.terminal().is_some()
-                                && t.panes().iter().all(|p| {
-                                    self.ws
-                                        .pane(*p)
-                                        .is_none_or(|i| !i.agent_live && i.agent_launch.is_none())
-                                })
-                        }),
-                        agent_live: tab_ref.is_some_and(|t| {
-                            t.panes()
-                                .iter()
-                                .any(|p| self.ws.pane(*p).is_some_and(|i| i.agent_live))
-                        }),
-                        branch,
-                        status: tab_ref
-                            .and_then(|t| self.ws.tab_agent(t))
-                            .map(|a| a.status)
-                            .unwrap_or_default(),
-                        tab,
-                        title,
-                        repo: repo.and_then(|r| {
-                            model
-                                .repos
-                                .iter()
-                                .find(|e| e.path == r)
-                                .map(|e| e.name.clone())
-                        }),
-                        previous_activity: tab_ref.and_then(|t| {
-                            t.panes()
-                                .iter()
-                                .filter_map(|p| self.ws.pane(*p)?.previous_activity)
-                                .max()
-                        }),
-                        last_activity,
-                    }
-                })
-                .collect()
-        };
-        let idle_agents = self
-            .ws
-            .tabs()
-            .iter()
-            .flat_map(|tab| {
-                tab.panes()
-                    .into_iter()
-                    .enumerate()
-                    .filter_map(|(index, pane)| {
-                        let info = self.ws.pane(pane)?;
-                        let agent = info.agent.as_ref()?;
-                        if !info.agent_live || agent.status != AgentStatus::Idle {
-                            return None;
-                        }
-                        let context = info
-                            .cwd
-                            .as_ref()
-                            .and_then(|cwd| self.sidebar.read(cx).model.worktree_for_path(cwd));
-                        let location = context
-                            .map(|(repo, wt)| {
-                                format!(
-                                    "{} / {}",
-                                    repo.name,
-                                    wt.branch.as_deref().unwrap_or("detached HEAD")
-                                )
-                            })
-                            .unwrap_or_else(|| {
-                                info.cwd
-                                    .as_ref()
-                                    .map(|p| p.to_string_lossy().into_owned())
-                                    .unwrap_or_else(|| "Directory unavailable".into())
-                            });
-                        Some(IdleAgent {
-                            pane,
-                            agent: agent.agent.clone(),
-                            tab: self.ws.tab_title(tab),
-                            pane_index: index + 1,
-                            location,
-                            cwd: info.cwd.clone(),
-                            since: agent.since,
-                        })
-                    })
-            })
-            .collect();
+        let sessions = chda_core::session_rows(
+            &self.ws,
+            &self.sidebar.read(cx).model,
+            self.config.active_label,
+        );
         self.sidebar.update(cx, |s, cx| {
             s.model.set_panes(&panes);
-            s.model.active_tabs = active_tabs;
-            s.model.idle_agents = idle_agents;
+            s.model.sessions = sessions;
             s.active_label = self.config.active_label;
-            s.active_collapsed = self.config.active_collapsed;
-            s.idle_agents_collapsed = self.config.idle_agents_collapsed;
+            s.sessions_collapsed = self.config.sessions_collapsed;
             s.project_collapsed = self.config.project_collapsed;
             cx.notify();
         });
@@ -2711,7 +2621,7 @@ impl WorkspaceView {
                     window.remove_window();
                     return;
                 }
-                self.focus_active(window, cx);
+                self.restore_focus(window, cx);
                 self.sync_panes(cx);
             }
             TerminalEvent::Title(title) => {
@@ -2820,15 +2730,12 @@ impl WorkspaceView {
                 if let Some(info) = self.ws.pane_mut(pane) {
                     info.last_activity = *at;
                 }
-                // Only ACTIVE's ages show this, and their once-a-second timer
-                // redraws the sidebar; output alone redraws nothing else.
-                let activity = self.ws.tabs_with_activity();
+                // Only Sessions' ages show this, and their once-a-second
+                // timer redraws the sidebar; output alone redraws nothing,
+                // and never adds, removes or moves a row.
+                let ws = &self.ws;
                 self.sidebar.update(cx, |s, _| {
-                    for tab in &mut s.model.active_tabs {
-                        if let Some((.., at)) = activity.iter().find(|(id, ..)| *id == tab.tab) {
-                            tab.last_activity = *at;
-                        }
-                    }
+                    chda_core::update_session_activity(&mut s.model.sessions, ws);
                 });
                 // The next launch shows this as the previous working time.
                 // Output saves at most once per delay, off the hot path;
@@ -3286,28 +3193,52 @@ impl WorkspaceView {
         }
     }
 
+    /// Point the sidebar at the focus: Sessions highlights its row and
+    /// PROJECT its worktree. `navigation` (the user moved the focus) also
+    /// reveals that worktree inside PROJECT; nothing ever scrolls Sessions,
+    /// and a collapsed PROJECT section stays collapsed.
     fn sync_sidebar_selection(&mut self, navigation: bool, cx: &mut Context<Self>) {
-        let tab = self.ws.active_tab().map(|t| t.id);
+        let focus = self.ws.active_tab().map(|t| (t.id, t.focused_pane()));
         let cwd = self
             .focused_cwd()
             .or_else(|| self.ws.active_tab()?.directory().map(Path::to_path_buf));
-        if navigation
-            && self.config.project_collapsed
-            && cwd
-                .as_ref()
-                .is_some_and(|cwd| self.sidebar.read(cx).model.worktree_for_path(cwd).is_some())
-        {
-            self.config.project_collapsed = false;
-            self.save_config();
-            self.sidebar.update(cx, |s, _| s.project_collapsed = false);
-        }
         self.sidebar.update(cx, |s, cx| {
-            s.select_context(tab, cwd.as_deref(), navigation, cx)
+            s.select_context(focus, cwd.as_deref(), navigation, cx)
         });
     }
 
-    /// Give keyboard focus to the workspace's focused pane.
+    /// Explicit PROJECT navigation (a worktree, its status dot, STARRED, Go to
+    /// worktree, a new worktree's tab, a notification without its pane) shows
+    /// a collapsed PROJECT section again. Session clicks and tab switches never do.
+    fn expand_project(&mut self, cx: &mut Context<Self>) {
+        if self.agent_request || !self.config.project_collapsed {
+            return;
+        }
+        self.config.project_collapsed = false;
+        self.save_config();
+        self.sidebar.update(cx, |s, cx| {
+            s.project_collapsed = false;
+            cx.notify();
+        });
+    }
+
+    /// Give keyboard focus to the focused pane after the user moved the
+    /// focus: a Sessions click, tab or pane switch, split, jump or new tab.
+    /// PROJECT reveals the focused worktree. Focus changes an agent asks for
+    /// through `chda mcp` reveal nothing.
     fn focus_active(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let navigation = !self.agent_request;
+        self.focus_pane_view(navigation, window, cx);
+    }
+
+    /// Give keyboard focus back without navigating: after closing a tab or
+    /// pane, dismissing a sheet, palette or menu, a window activation or a
+    /// window opening. The sidebar highlight follows; neither list scrolls.
+    fn restore_focus(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        self.focus_pane_view(false, window, cx);
+    }
+
+    fn focus_pane_view(&mut self, navigation: bool, window: &mut Window, cx: &mut Context<Self>) {
         if self
             .confirm
             .as_ref()
@@ -3337,10 +3268,10 @@ impl WorkspaceView {
         if !self.env.windows.borrow().update.adopting {
             self.reviewed_focused(cx);
         }
-        // ACTIVE labels depend on split focus, even when no agent status or
+        // Session labels depend on split focus, even when no agent status or
         // terminal output changed. Keep each row in sync with its click target.
         self.sync_panes(cx);
-        self.sync_sidebar_selection(true, cx);
+        self.sync_sidebar_selection(navigation, cx);
         self.sync_title(window, cx);
         cx.notify();
     }
@@ -3361,8 +3292,9 @@ impl WorkspaceView {
         }
     }
 
+    /// Focus the window's pane when it opens; not a navigation.
     pub fn focus(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        self.focus_active(window, cx);
+        self.restore_focus(window, cx);
     }
 
     fn refocus_terminal(&self, window: &mut Window, cx: &mut App) {
@@ -3444,7 +3376,7 @@ impl WorkspaceView {
             || self.note_sheet.take().is_some()
             || self.context_menu.take().is_some()
         {
-            self.focus_active(window, cx);
+            self.restore_focus(window, cx);
             return;
         }
         let target = if let Some(pane) = self.ws.focused_pane() {
@@ -3556,7 +3488,7 @@ impl WorkspaceView {
             window.remove_window();
             return;
         }
-        self.focus_active(window, cx);
+        self.restore_focus(window, cx);
         self.sync_attention(cx);
     }
 
@@ -3573,7 +3505,7 @@ impl WorkspaceView {
         } else {
             self.ws.activate_tab_id(focus.tab);
         }
-        self.focus_active(window, cx);
+        self.restore_focus(window, cx);
     }
 
     fn cancel_confirm(&mut self, window: &mut Window, cx: &mut Context<Self>) {
@@ -3584,7 +3516,7 @@ impl WorkspaceView {
         {
             self.restore_close_focus(focus, window, cx);
         } else {
-            self.focus_active(window, cx);
+            self.restore_focus(window, cx);
         }
         cx.notify();
     }
@@ -3601,7 +3533,7 @@ impl WorkspaceView {
         if self.ws.is_empty() {
             self.open_tab_at(None, None, window, cx);
         } else {
-            self.focus_active(window, cx);
+            self.restore_focus(window, cx);
         }
         self.sync_panes(cx);
     }
@@ -3628,7 +3560,7 @@ impl WorkspaceView {
         if self.sidebar_visible {
             self.refresh_all(cx);
         }
-        self.focus_active(window, cx);
+        self.restore_focus(window, cx);
     }
 
     /// The sidebar's width in this window.
@@ -4023,13 +3955,8 @@ impl WorkspaceView {
                 self.save_config();
                 self.sync_panes(cx);
             }
-            SidebarEvent::ToggleActive => {
-                self.config.active_collapsed = !self.config.active_collapsed;
-                self.save_config();
-                self.sync_panes(cx);
-            }
-            SidebarEvent::ToggleIdleAgents => {
-                self.config.idle_agents_collapsed = !self.config.idle_agents_collapsed;
+            SidebarEvent::ToggleSessions => {
+                self.config.sessions_collapsed = !self.config.sessions_collapsed;
                 self.save_config();
                 self.sync_panes(cx);
             }
@@ -4045,7 +3972,11 @@ impl WorkspaceView {
                     self.focus_active(window, cx);
                 }
             }
-            SidebarEvent::FocusPane(pane) => self.jump_to_pane(pane, window, cx),
+            SidebarEvent::FocusPane(pane) => {
+                if self.ws.focus_pane(pane) {
+                    self.focus_active(window, cx);
+                }
+            }
             SidebarEvent::ClosePane(pane) => {
                 self.request_close(CloseTarget::Pane(pane), window, cx)
             }
@@ -4096,6 +4027,7 @@ impl WorkspaceView {
             cx.notify();
             return;
         }
+        self.expand_project(cx);
         let wanted = self
             .sidebar
             .read(cx)
@@ -4149,6 +4081,7 @@ impl WorkspaceView {
                                 return false;
                             }
                             other_window.activate_window();
+                            view.expand_project(cx);
                             view.focus_active(other_window, cx);
                             true
                         })
@@ -5060,7 +4993,7 @@ impl WorkspaceView {
                     return;
                 }
                 this.sheet = None;
-                this.focus_active(window, cx);
+                this.restore_focus(window, cx);
             }
         };
         let subs = [
@@ -5137,7 +5070,7 @@ impl WorkspaceView {
             TextInputEvent::Submit(text) => this.save_note(text.clone(), window, cx),
             TextInputEvent::Cancel => {
                 this.note_sheet = None;
-                this.focus_active(window, cx);
+                this.restore_focus(window, cx);
             }
         });
         let handle = input.read(cx).focus_handle(cx);
@@ -5162,7 +5095,7 @@ impl WorkspaceView {
                 self.note_sheet = None;
                 self.show_note(&repo, &branch, &text, cx);
                 self.refresh_repo(repo, cx);
-                self.focus_active(window, cx);
+                self.restore_focus(window, cx);
             }
             Err(e) => sheet.error = Some(e.to_string()),
         }
@@ -5308,7 +5241,7 @@ impl WorkspaceView {
             }
             let _ = input;
             this.renaming = None;
-            this.focus_active(window, cx);
+            this.restore_focus(window, cx);
         });
         let handle = input.read(cx).focus_handle(cx);
         window.focus(&handle, cx);
@@ -5439,7 +5372,7 @@ impl WorkspaceView {
     fn toggle_palette(&mut self, _: &TogglePalette, window: &mut Window, cx: &mut Context<Self>) {
         if self.palette.take().is_some() {
             self.restore_theme(cx);
-            self.focus_active(window, cx);
+            self.restore_focus(window, cx);
             return;
         }
         let items = self.palette_items(cx);
@@ -5590,7 +5523,7 @@ impl WorkspaceView {
                 PaletteEvent::Dismissed => {
                     this.palette = None;
                     this.restore_theme(cx);
-                    this.focus_active(window, cx);
+                    this.restore_focus(window, cx);
                 }
             }
             cx.notify();
@@ -5621,16 +5554,16 @@ impl WorkspaceView {
                 "split_down" => self.split(Axis::Vertical, window, cx),
                 "zoom" => {
                     self.ws.toggle_zoom();
-                    self.focus_active(window, cx);
+                    self.restore_focus(window, cx);
                 }
                 "equalize" => {
                     self.ws.equalize();
-                    self.focus_active(window, cx);
+                    self.restore_focus(window, cx);
                 }
                 "sidebar" => self.toggle_sidebar(&ToggleSidebar, window, cx),
                 "add_repo" => {
                     self.add_repo(&AddRepo, window, cx);
-                    self.focus_active(window, cx);
+                    self.restore_focus(window, cx);
                 }
                 "font_bigger" => self.increase_font_size(&IncreaseFontSize, window, cx),
                 "font_smaller" => self.decrease_font_size(&DecreaseFontSize, window, cx),
@@ -5670,18 +5603,18 @@ impl WorkspaceView {
             PaletteCommand::NewWorktree(repo) => self.open_sheet(repo, window, cx),
             PaletteCommand::OpenFolderIn(id) => {
                 self.open_folder_in(&id, cx);
-                self.focus_active(window, cx);
+                self.restore_focus(window, cx);
             }
             PaletteCommand::PreviewMarkdown(file) => {
                 self.preview_markdown(&file, cx);
-                self.focus_active(window, cx);
+                self.restore_focus(window, cx);
             }
             PaletteCommand::SetTheme(theme) => {
                 self.previewing_theme = false;
                 self.show_theme(theme.as_deref(), cx);
                 self.config.theme = theme;
                 self.save_config();
-                self.focus_active(window, cx);
+                self.restore_focus(window, cx);
             }
             PaletteCommand::CheckoutBranch(repo, branch) => {
                 let path = self.config.worktree_path(&repo, &branch);
@@ -5765,7 +5698,7 @@ impl WorkspaceView {
             || self.context_menu.take().is_some()
         {
             self.restore_theme(cx);
-            self.focus_active(window, cx);
+            self.restore_focus(window, cx);
             cx.notify();
         } else {
             // No overlay handled Esc: let the focused terminal encode and
@@ -6255,7 +6188,7 @@ impl WorkspaceView {
                             } else {
                                 this.sheet = None;
                             }
-                            this.focus_active(window, cx);
+                            this.restore_focus(window, cx);
                         }
                     }))
                     .child("Cancel"),
@@ -6599,7 +6532,7 @@ impl Render for WorkspaceView {
             }))
             .on_action(cx.listener(|this, _: &ToggleZoom, w, cx| {
                 this.ws.toggle_zoom();
-                this.focus_active(w, cx);
+                this.restore_focus(w, cx);
             }))
             .child(title_bar)
             .when(window.viewport_size().width < px(700.0), |d| {
