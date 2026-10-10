@@ -2,7 +2,8 @@
 //! (optionally with `:line[:column]`) in the visible rows. Soft-wrapped rows
 //! are joined, so a long URL that wraps is found as a whole.
 //!
-//! Paths may contain spaces when parenthesized, quoted (`"My Notes/todo.md"`) or escaped
+//! Paths may contain spaces when parenthesized, also after prose
+//! (`(see /tmp/My Notes/todo.md)`), quoted (`"My Notes/todo.md"`) or escaped
 //! with a backslash (`My\ Notes/todo.md`); `file://` URLs are paths too.
 //! Any word can name a file (`ls` prints bare names), so paths are only
 //! candidates: the caller keeps the first that exists.
@@ -108,7 +109,9 @@ pub fn links_at(frame: &Frame, x: u16, y: u16) -> Vec<Link> {
         });
     }
     // Balanced outer bounds retain parentheses in filenames. Prefer the
-    // complete bounded candidate over a shorter token that also exists.
+    // complete bounded candidate over a shorter token that also exists;
+    // after leading prose (`(see /tmp/a b.md)`), the path runs from its
+    // start to the closing parenthesis.
     let mut stack = Vec::new();
     let mut bounded = Vec::new();
     for (offset, ch) in line.text.char_indices() {
@@ -127,14 +130,18 @@ pub fn links_at(frame: &Frame, x: u16, y: u16) -> Vec<Link> {
     bounded.sort_by_key(|range| std::cmp::Reverse(range.len()));
     for range in bounded {
         let inner = &line.text[range.clone()];
-        if inner.trim() == inner
-            && !inner.contains(['"', '\''])
-            && let Some(target) = path_target(&inner.replace("\\ ", " "))
-        {
-            out.push(Link {
-                cells: line.cells(range.start, range.end),
-                target,
-            });
+        let starts = path_starts(inner).filter(|&s| range.start + s <= byte);
+        for start in std::iter::once(0).chain(starts) {
+            let candidate = &inner[start..];
+            if candidate.trim() == candidate
+                && !candidate.contains(['"', '\''])
+                && let Some(target) = path_target(&candidate.replace("\\ ", " "))
+            {
+                out.push(Link {
+                    cells: line.cells(range.start + start, range.end),
+                    target,
+                });
+            }
         }
     }
     if let Some(m) = TOKEN
@@ -152,6 +159,27 @@ pub fn links_at(frame: &Frame, x: u16, y: u16) -> Vec<Link> {
         }
     }
     out
+}
+
+/// Where a path starts after prose inside parentheses: `/`, `~/`, `./` or
+/// `../` after a blank, outside nested parentheses, left to right.
+fn path_starts(inner: &str) -> impl Iterator<Item = usize> + '_ {
+    let mut depth = 0usize;
+    let mut after_blank = false;
+    inner.char_indices().filter_map(move |(i, ch)| {
+        let start = depth == 0
+            && after_blank
+            && ["/", "~/", "./", "../"]
+                .iter()
+                .any(|p| inner[i..].starts_with(p));
+        match ch {
+            '(' => depth += 1,
+            ')' => depth = depth.saturating_sub(1),
+            _ => {}
+        }
+        after_blank = ch.is_whitespace();
+        start.then_some(i)
+    })
 }
 
 /// A path with an optional `:line[:column]` suffix.
@@ -495,6 +523,158 @@ mod tests {
             links_at(&f, 25, 0)[0].target,
             LinkTarget::Url("https://example.com/x".into())
         );
+    }
+
+    /// The candidate the caller opens: a URL, or the first path in `existing`.
+    fn opened(frame: &Frame, x: u16, y: u16, existing: &[&str]) -> Option<Link> {
+        links_at(frame, x, y).into_iter().find(|l| match &l.target {
+            LinkTarget::Url(_) => true,
+            LinkTarget::Path { path, .. } => existing.contains(&path.as_str()),
+        })
+    }
+
+    fn paths_at(frame: &Frame, x: u16, y: u16) -> Vec<String> {
+        links_at(frame, x, y)
+            .into_iter()
+            .filter_map(|l| match l.target {
+                LinkTarget::Path { path, .. } => Some(path),
+                LinkTarget::Url(_) => None,
+            })
+            .collect()
+    }
+
+    #[test]
+    fn parenthesized_paths_after_prose_exclude_the_prose() {
+        for (text, path, line, column, prefix) in [
+            (
+                "Notes (see /tmp/x/Notes Folder/workflow.html:5) next",
+                "/tmp/x/Notes Folder/workflow.html",
+                Some(5),
+                None,
+                "/tmp/x/Notes",
+            ),
+            (
+                "Plan (details in ~/work/작업 문서/설계안.md)",
+                "~/work/작업 문서/설계안.md",
+                None,
+                None,
+                "~/work/작업",
+            ),
+            (
+                "Done (wrote ./out dir/report.md:3:2)",
+                "./out dir/report.md",
+                Some(3),
+                Some(2),
+                "./out",
+            ),
+            (
+                "Moved (now in ../shared notes/a.md)",
+                "../shared notes/a.md",
+                None,
+                None,
+                "../shared",
+            ),
+            (
+                "Saved (see /tmp/My Notes/file (draft).md:7)",
+                "/tmp/My Notes/file (draft).md",
+                Some(7),
+                None,
+                "/tmp/My",
+            ),
+        ] {
+            let f = frame(100, &[text], &[]);
+            let col = |byte: usize| text[..byte].chars().count() as u16;
+            let open = col(text.find('(').unwrap());
+            let start = col(text.find(path).unwrap());
+            let end = col(text.rfind(')').unwrap()) - 1;
+            let expected = LinkTarget::Path {
+                path: path.into(),
+                line,
+                column,
+            };
+            for x in start..=end {
+                let link = opened(&f, x, 0, &[path, prefix]);
+                assert_eq!(
+                    link.as_ref().map(|l| &l.target),
+                    Some(&expected),
+                    "{text} at {x}"
+                );
+                assert_eq!(link.unwrap().cells, vec![(0, start, end)], "{text} at {x}");
+            }
+            for x in open..start {
+                assert_eq!(
+                    opened(&f, x, 0, &[path, prefix]),
+                    None,
+                    "the prose and the parenthesis are not links: {text} at {x}"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn parenthesized_paths_after_prose_cross_only_soft_wraps_and_stay_apart() {
+        let path = "/tmp/Notes Folder/a.md";
+        let existing = [path, "/tmp/Notes"];
+        let f = frame(
+            16,
+            &["Plan (see /tmp/N", "otes Folder/a.md", ":5:2) done"],
+            &[0, 1],
+        );
+        for (x, y) in [(10, 0), (15, 0), (0, 1), (8, 1), (15, 1), (0, 2), (3, 2)] {
+            let link = opened(&f, x, y, &existing).unwrap();
+            assert_eq!(
+                link.target,
+                LinkTarget::Path {
+                    path: path.into(),
+                    line: Some(5),
+                    column: Some(2)
+                },
+                "({x}, {y})"
+            );
+            assert_eq!(link.cells, vec![(0, 10, 15), (1, 0, 15), (2, 0, 3)]);
+        }
+
+        let f = frame(
+            40,
+            &[
+                "(see /tmp/a b.md) (see /tmp/c d.md)",
+                "Broken (see /tmp/A",
+                "B/file.md)",
+            ],
+            &[],
+        );
+        let existing = ["/tmp/a b.md", "/tmp/c d.md", "/tmp/a", "/tmp/c"];
+        let first = opened(&f, 12, 0, &existing).unwrap();
+        assert_eq!(first.target, path_target("/tmp/a b.md").unwrap());
+        assert_eq!(first.cells, vec![(0, 5, 15)]);
+        let second = opened(&f, 30, 0, &existing).unwrap();
+        assert_eq!(second.target, path_target("/tmp/c d.md").unwrap());
+        assert_eq!(second.cells, vec![(0, 23, 33)]);
+        assert!(
+            paths_at(&f, 14, 1)
+                .iter()
+                .chain(&paths_at(&f, 3, 2))
+                .all(|p| !p.contains("/tmp/A B")),
+            "hard newlines are not joined"
+        );
+    }
+
+    #[test]
+    fn parenthesized_prose_without_a_path_start_adds_no_candidates() {
+        let f = frame(
+            80,
+            &["(see my notes/todo.md) (see the docs) (see https://example.com/x)"],
+            &[],
+        );
+        assert_eq!(
+            paths_at(&f, 16, 0),
+            ["see my notes/todo.md", "notes/todo.md"],
+            "words are not path starts"
+        );
+        assert_eq!(paths_at(&f, 32, 0), ["see the docs", "docs"]);
+        let url = link_at(&f, 50, 0).unwrap();
+        assert_eq!(url.target, LinkTarget::Url("https://example.com/x".into()));
+        assert_eq!(url.cells, vec![(0, 43, 63)]);
     }
 
     #[test]
