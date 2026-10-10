@@ -84,6 +84,11 @@
       "file": "git-graph.jpg",
       "alt": "A read-only Git tree tab with commit connections, branch labels, subjects and short hashes",
       "label": "View full-size Git tree screenshot"
+    },
+    {
+      "file": "sessions.png",
+      "alt": "The Sessions list in a light theme: a working Claude Code pane, a Codex pane in the same tab, an agent waiting for input, an idle agent and a plain terminal, above PROJECT with the focused branch highlighted",
+      "label": "View full-size Sessions screenshot"
     }
   ]
 }
