@@ -3,6 +3,7 @@
 use std::path::PathBuf;
 
 use crate::status_icon::status_icon;
+use crate::workspace_view::blend;
 
 use chda_core::{
     AgentStatus, CheckState, DiffSummary, GitBadges, PaneId, PrInfo, PrState, RepoEntry,
@@ -268,22 +269,66 @@ pub struct SidebarView {
 
 impl EventEmitter<SidebarEvent> for SidebarView {}
 
-pub(crate) fn no_agent_color() -> Hsla {
-    gpui::rgb(0x6c7086).into()
-}
+/// Highlight of a selected row: the foreground at this opacity.
+const SELECTED_ROW: f32 = 0.14;
 
 /// Background of a row whose agent waits for input.
-fn waiting_tint() -> Hsla {
-    status_color(AgentStatus::WaitingInput).opacity(0.16)
+fn waiting_tint(fg: Hsla, bg: Hsla) -> Hsla {
+    status_color(Some(AgentStatus::WaitingInput), fg, bg).opacity(0.16)
 }
 
-pub fn status_color(status: AgentStatus) -> Hsla {
-    match status {
-        AgentStatus::Idle => gpui::rgb(0xf9e2af).into(),
-        AgentStatus::Working => gpui::rgb(0x89b4fa).into(),
-        AgentStatus::WaitingInput => gpui::rgb(0xfab387).into(),
-        AgentStatus::Review => gpui::rgb(0xa6e3a1).into(),
+/// The hue of `status`, or gray without a live agent, before it is fitted
+/// to a theme.
+fn status_base(status: Option<AgentStatus>) -> Hsla {
+    gpui::rgb(match status {
+        None => 0x6c7086,
+        Some(AgentStatus::Idle) => 0xf9e2af,
+        Some(AgentStatus::Working) => 0x89b4fa,
+        Some(AgentStatus::WaitingInput) => 0xfab387,
+        Some(AgentStatus::Review) => 0xa6e3a1,
+    })
+    .into()
+}
+
+/// The icon color of `status`, or gray without a live agent, on `bg` in a
+/// theme whose text is `fg`. A hue that stands out less than 3:1 from `bg`
+/// or from a row selected on it (WCAG 2.2 SC 1.4.11 for state graphics)
+/// darkens on a light background and lightens on a dark one until it does.
+pub fn status_color(status: Option<AgentStatus>, fg: Hsla, bg: Hsla) -> Hsla {
+    let mut color = status_base(status);
+    let row = luminance(bg);
+    let selected = luminance(blend(bg, fg, SELECTED_ROW));
+    let step = if ratio(row, 0.0) >= ratio(row, 1.0) {
+        -0.01
+    } else {
+        0.01
+    };
+    while (0.0..=1.0).contains(&(color.l + step)) {
+        let l = luminance(color);
+        if ratio(l, row).min(ratio(l, selected)) >= 3.0 {
+            break;
+        }
+        color.l += step;
     }
+    color
+}
+
+/// WCAG 2.2 relative luminance of an opaque color.
+fn luminance(color: Hsla) -> f32 {
+    let color = color.to_rgb();
+    let linear = |v: f32| {
+        if v <= 0.04045 {
+            v / 12.92
+        } else {
+            ((v + 0.055) / 1.055).powf(2.4)
+        }
+    };
+    0.2126 * linear(color.r) + 0.7152 * linear(color.g) + 0.0722 * linear(color.b)
+}
+
+/// WCAG 2.2 contrast ratio of two relative luminances, from 1 to 21.
+fn ratio(a: f32, b: f32) -> f32 {
+    (a.max(b) + 0.05) / (a.min(b) + 0.05)
 }
 
 fn pr_badge(pr: &PrInfo, bg: Hsla) -> (&'static str, Hsla) {
@@ -488,7 +533,7 @@ impl SidebarView {
                     cx.new(|_| RepoDragPreview {
                         name: name.clone(),
                         fg,
-                        bg: crate::workspace_view::blend(bg, fg, 0.12),
+                        bg: blend(bg, fg, 0.12),
                     })
                 }
             })
@@ -553,7 +598,7 @@ impl SidebarView {
             });
         // Dropping a header on this group moves that repository here; the
         // line shows which side it lands on.
-        let marker = status_color(AgentStatus::Working);
+        let marker = status_color(Some(AgentStatus::Working), self.fg, self.bg);
         let mut col = div()
             .flex()
             .flex_col()
@@ -666,11 +711,11 @@ impl SidebarView {
             .cursor_pointer()
             .when(worktree.is_none(), |d| d.opacity(0.55))
             .when(dot == Some(AgentStatus::WaitingInput), |d| {
-                d.bg(waiting_tint())
+                d.bg(waiting_tint(self.fg, self.bg))
             })
             .when(
                 worktree.is_some_and(|w| self.selected.as_ref() == Some(&w.path)),
-                |d| d.bg(fg.opacity(0.14)),
+                |d| d.bg(fg.opacity(SELECTED_ROW)),
             )
             .hover(|s| s.bg(fg.opacity(0.08)))
             .tooltip(crate::tooltip::text(tip))
@@ -703,7 +748,7 @@ impl SidebarView {
                     }))
                     .child("\u{2605}"),
             )
-            .child(status_icon(dot, self.spin))
+            .child(status_icon(dot, self.spin, self.fg, self.bg))
             .child(
                 div()
                     .flex_1()
@@ -918,10 +963,10 @@ impl SidebarView {
             .cursor_pointer()
             .when(wt.missing || wt.busy.is_some(), |d| d.opacity(0.55))
             .when(dot == Some(AgentStatus::WaitingInput), |d| {
-                d.bg(waiting_tint())
+                d.bg(waiting_tint(self.fg, self.bg))
             })
             .when(self.selected.as_ref() == Some(&wt.path), |d| {
-                d.bg(fg.opacity(0.14))
+                d.bg(fg.opacity(SELECTED_ROW))
             })
             .hover(|s| s.bg(fg.opacity(0.08)))
             .on_click({
@@ -973,7 +1018,7 @@ impl SidebarView {
                             cx.emit(SidebarEvent::JumpToAgent(path.clone()));
                         })
                     })
-                    .child(status_icon(dot, self.spin)),
+                    .child(status_icon(dot, self.spin, self.fg, self.bg)),
             )
             .child(match wt.note_title() {
                 // With a note, the task is the label and the branch sits
@@ -1247,7 +1292,7 @@ impl SidebarView {
             .text_xs()
             .text_color(fg.opacity(0.75))
             .cursor_pointer()
-            .when(picked, |d| d.bg(fg.opacity(0.14)))
+            .when(picked, |d| d.bg(fg.opacity(SELECTED_ROW)))
             .hover(|s| s.bg(fg.opacity(0.08)))
             .tooltip(crate::tooltip::text(format!(
                 "{name}, {messages}.{}\nClick to resume in a new tab; \
@@ -1312,7 +1357,7 @@ impl SidebarView {
                             .text_color(fg)
                             // The hovered row's color, so a short age does
                             // not let the prompt show through.
-                            .bg(crate::workspace_view::blend(self.bg, fg, 0.08))
+                            .bg(blend(self.bg, fg, 0.08))
                             .group_hover(group, |s| s.visible())
                             .child("Resume"),
                     ),
@@ -1430,9 +1475,9 @@ impl SidebarView {
                 move || format!("session-{id}")
             })
             .when(row.status == Some(AgentStatus::WaitingInput), |d| {
-                d.bg(waiting_tint())
+                d.bg(waiting_tint(self.fg, self.bg))
             })
-            .when(focused, |d| d.bg(fg.opacity(0.14)))
+            .when(focused, |d| d.bg(fg.opacity(SELECTED_ROW)))
             .flex()
             .flex_row()
             .items_center()
@@ -1452,7 +1497,7 @@ impl SidebarView {
                     })
                     .flex_shrink_0()
                     .tooltip(crate::tooltip::text(row.status_label()))
-                    .child(status_icon(row.status, self.spin)),
+                    .child(status_icon(row.status, self.spin, self.fg, self.bg)),
             )
             // The label keeps a readable width; what the row is gives way first.
             .child(
@@ -1761,6 +1806,7 @@ impl Render for SidebarView {
             })
             .when(!self.picked.is_empty(), |d| {
                 let count = self.picked.len();
+                let accent = status_color(Some(AgentStatus::Working), fg, self.bg);
                 d.child(
                     div()
                         .flex()
@@ -1779,7 +1825,7 @@ impl Render for SidebarView {
                                 .id("resume-picked")
                                 .flex_1()
                                 .cursor_pointer()
-                                .hover(|s| s.text_color(status_color(AgentStatus::Working)))
+                                .hover(move |s| s.text_color(accent))
                                 .on_click(cx.listener(|this, _, _, cx| this.resume_picked(cx)))
                                 .child(match count {
                                     1 => "Resume 1 session".to_owned(),
@@ -1975,6 +2021,81 @@ mod tests {
                 }
             }
         }
+    }
+
+    #[test]
+    fn status_icons_stand_out_three_to_one_in_light_and_dark_themes() {
+        let contrast = |a: Hsla, b: Hsla| ratio(luminance(a), luminance(b));
+        // Terminal background and text of each theme.
+        let themes = [
+            ("GitHub Light Default", 0xffffff, 0x1f2328),
+            ("Catppuccin Latte", 0xeff1f5, 0x4c4f69),
+            ("GitHub Dark Default", 0x0d1117, 0xe6edf3),
+            ("Catppuccin Mocha", 0x1e1e2e, 0xcdd6f4),
+        ];
+        let statuses = [
+            None,
+            Some(AgentStatus::Working),
+            Some(AgentStatus::WaitingInput),
+            Some(AgentStatus::Review),
+            Some(AgentStatus::Idle),
+        ];
+        let hex = |c: Hsla| {
+            let c = c.to_rgb();
+            let byte = |v: f32| (v * 255.0).round() as u8;
+            format!("#{:02x}{:02x}{:02x}", byte(c.r), byte(c.g), byte(c.b))
+        };
+        let mut low = Vec::new();
+        for (theme, bg, fg) in themes {
+            let (bg, fg): (Hsla, Hsla) = (gpui::rgb(bg).into(), gpui::rgb(fg).into());
+            // The sidebar is the background blended 4% toward the text; the
+            // tab bar 6%, with the active tab on the background itself.
+            let sidebar = blend(bg, fg, 0.04);
+            let bar = blend(bg, fg, 0.06);
+            for status in statuses {
+                let base = status_base(status);
+                for (icon, color) in [
+                    ("sidebar", status_color(status, fg, sidebar)),
+                    ("tab", status_color(status, fg, bar)),
+                ] {
+                    assert!(
+                        (color.h - base.h).abs() < 1e-3 && (color.s - base.s).abs() < 1e-3,
+                        "{theme} {icon} {status:?} left its hue"
+                    );
+                }
+                let color = status_color(status, fg, sidebar);
+                let selected = blend(sidebar, fg, SELECTED_ROW);
+                if contrast(base, sidebar).min(contrast(base, selected)) >= 3.0 {
+                    assert_eq!(color, base, "{theme} {status:?} changed while legible");
+                }
+                let mut under = vec![
+                    ("sidebar", color, sidebar),
+                    ("selected row", color, selected),
+                    ("tab bar", status_color(status, fg, bar), bar),
+                    ("active tab", status_color(status, fg, bar), bg),
+                ];
+                if status == Some(AgentStatus::WaitingInput) {
+                    let tint = waiting_tint(fg, sidebar);
+                    let tinted = blend(sidebar, tint.opacity(1.0), tint.a);
+                    under.push(("tinted row", color, tinted));
+                }
+                for (surface, color, under) in under {
+                    let ratio = contrast(color, under);
+                    if ratio < 3.0 {
+                        low.push(format!(
+                            "{theme}, {surface} {}: {status:?} {} {ratio:.2}:1",
+                            hex(under),
+                            hex(color)
+                        ));
+                    }
+                }
+            }
+        }
+        assert!(
+            low.is_empty(),
+            "below 3:1 (WCAG 2.2 SC 1.4.11):\n{}",
+            low.join("\n")
+        );
     }
 
     fn pr(state: PrState, checks: CheckState, url: &str) -> PrInfo {

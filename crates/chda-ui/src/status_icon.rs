@@ -2,11 +2,11 @@
 //! ring while an agent works, an "!" badge while it waits for input, and a
 //! small dot otherwise.
 
-use crate::sidebar_view::{no_agent_color, status_color};
+use crate::sidebar_view::status_color;
 use chda_core::AgentStatus;
 use gpui::{
-    AnyElement, FontWeight, IntoElement, ParentElement, PathBuilder, Pixels, Point, Styled, canvas,
-    div, point, px,
+    AnyElement, FontWeight, Hsla, IntoElement, ParentElement, PathBuilder, Pixels, Point, Styled,
+    canvas, div, point, px,
 };
 use std::f32::consts::PI;
 use std::time::Duration;
@@ -22,9 +22,11 @@ const DOT: f32 = 6.0;
 const RING: f32 = 10.0;
 const STROKE: f32 = 2.0;
 
-/// The icon for `status`, or the gray dot of a row with no live agent.
-/// `frame` turns the spinner of a working agent.
-pub fn status_icon(status: Option<AgentStatus>, frame: u32) -> AnyElement {
+/// The icon for `status`, or the gray dot of a row with no live agent, on
+/// `bg` in a theme whose text is `fg`. `frame` turns the spinner of a working
+/// agent.
+pub fn status_icon(status: Option<AgentStatus>, frame: u32, fg: Hsla, bg: Hsla) -> AnyElement {
+    let color = status_color(status, fg, bg);
     let icon = match status {
         Some(AgentStatus::Working) => canvas(
             |_, _, _| {},
@@ -33,7 +35,7 @@ pub fn status_icon(status: Option<AgentStatus>, frame: u32) -> AnyElement {
                 let start = 2.0 * PI * turn - PI / 2.0;
                 let r = (RING - STROKE) / 2.0;
                 if let Some(path) = arc(bounds.center(), r, start, start + 1.5 * PI) {
-                    window.paint_path(path, status_color(AgentStatus::Working));
+                    window.paint_path(path, color);
                 }
             },
         )
@@ -42,20 +44,21 @@ pub fn status_icon(status: Option<AgentStatus>, frame: u32) -> AnyElement {
         Some(AgentStatus::WaitingInput) => div()
             .size(px(BOX))
             .rounded_full()
-            .bg(status_color(AgentStatus::WaitingInput))
+            .bg(color)
             .flex()
             .items_center()
             .justify_center()
             .text_size(px(9.0))
             .line_height(px(BOX))
             .font_weight(FontWeight::BOLD)
-            .text_color(gpui::rgb(0x1e1e2e))
+            // Cut out in the background color, which the badge stands out from.
+            .text_color(bg)
             .child("!")
             .into_any_element(),
-        other => div()
+        _ => div()
             .size(px(DOT))
             .rounded_full()
-            .bg(other.map_or_else(no_agent_color, status_color))
+            .bg(color)
             .into_any_element(),
     };
     div()
