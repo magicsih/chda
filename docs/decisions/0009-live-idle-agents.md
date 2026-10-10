@@ -15,8 +15,11 @@ ID and terminal-output age establish neither process life nor idle duration.
 - Keep `PaneAgent` after review, with `Idle` status and the original completion
   timestamp. Track whether a runtime signal explicitly named the pane in
   `PaneInfo::agent_live`. Worktree-only fallback reports continue to drive
-  attention but cannot create live idle rows. Restored conversation metadata
-  does not restore runtime status.
+  attention but cannot create live idle rows. They fall back only to a pane
+  without a live agent, so they neither end a live agent nor replace its
+  status, even with the same session id
+  ([#205](https://github.com/magicsih/chda/issues/205)). Restored
+  conversation metadata does not restore runtime status.
 - Codex's existing requested OSC Ready title establishes an idle live pane at
   startup. Claude and other hook adapters establish life with pane-bound
   lifecycle events. Session start shows idle with unknown duration; completion
