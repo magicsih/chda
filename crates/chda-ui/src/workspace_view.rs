@@ -5719,6 +5719,7 @@ impl WorkspaceView {
         }
         let bg = hsla(self.settings.colors.background.unwrap_or_default());
         let fg = hsla(self.settings.colors.foreground.unwrap_or_default());
+        let bar_bg = blend(bg, fg, 0.06);
         let active = self.ws.active_index_in(self.tab_group.as_deref());
         let bar = div()
             .flex()
@@ -5727,7 +5728,7 @@ impl WorkspaceView {
             .id("tab-bar")
             .overflow_x_scroll()
             .flex_shrink_0()
-            .bg(blend(bg, fg, 0.06))
+            .bg(bar_bg)
             .text_sm()
             .text_color(fg)
             .children(tabs.into_iter().enumerate().map(|(i, tab)| {
@@ -5781,7 +5782,11 @@ impl WorkspaceView {
                         AgentStatus::Idle => format!("{name} is idle; ready for another task"),
                     }
                 });
-                let dot = agent.map(|a| crate::status_icon::status_icon(Some(a.status), self.spin));
+                // Tab icons are measured against the bar; the active tab's
+                // own background lies further from the text color.
+                let dot = agent.map(|a| {
+                    crate::status_icon::status_icon(Some(a.status), self.spin, fg, bar_bg)
+                });
                 div()
                     .id(("tab", i))
                     .debug_selector(move || format!("tab-{i}"))
