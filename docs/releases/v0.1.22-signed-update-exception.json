@@ -1,0 +1,21 @@
+{
+  "accepted_at": "2026-10-11T11:18:23Z",
+  "accepted_interpretation": "publish-with-failed-isolated-update",
+  "artifact_sha256": "2b6ada55875c3c47b09e1ee38ef1f154f39e8e5340abeec7a21624a36a6d8436",
+  "config_sha256": "229c2bb2a8b029506dd969cc9ebfbfae35ad1b81b4d3a70afba89c89269cd938",
+  "failed_evidence_sha256": "2f05344a3caf8b4bc7d3f2a3590d2e8e5a7f7f2083783465a32e07b8b3d91284",
+  "independent_assessment_sha256": "95699dbd43f9838706f53e8178aa39b49bba53c1f45fc3c0481dd4bfb3bd979a",
+  "original_exception_sha256": "3012c430d097f0329b3443bd76ec86dd1216fe0bbc973b125755cbe65b007599",
+  "owner": "magicsih",
+  "owner_instruction": "공개해",
+  "schema": 1,
+  "sha": "80a0576246ecc25b91d4889e015c07e4ffc30bca",
+  "signed_artifact_checks": {
+    "gui-ipc": "passed",
+    "session-preserving-update": "failed",
+    "shell-pid-preservation": "unknown",
+    "signed-launch": "passed"
+  },
+  "tag": "v0.1.22",
+  "tree": "b53b60e283cca361e0898fcb5f2ba35fad93c602"
+}

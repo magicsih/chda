@@ -34,6 +34,11 @@ EXCEPTION_PATHS = {
     'v0.1.21': EXCEPTION_PATH,
     'v0.1.22': 'docs/releases/v0.1.22-native-validation-exception.json',
 }
+POSTBUILD_EXCEPTION_PATH = 'docs/releases/v0.1.22-signed-update-exception.json'
+POSTBUILD_CHECKS = {
+    'signed-launch': 'passed', 'gui-ipc': 'passed',
+    'session-preserving-update': 'failed', 'shell-pid-preservation': 'unknown',
+}
 SPARKLE = 'http://www.andymatuschak.org/xml-namespaces/sparkle'
 
 
@@ -142,7 +147,7 @@ def validate_run(run, implementer, now, is_round=False):
 
 
 def validate_exception(data, record_text, tag, sha, tree, config, stage, now,
-                       built_at, artifact_sha256, fresh):
+                       built_at, artifact_sha256, fresh, postbuild_record_text=None):
     require(tag in EXCEPTION_PATHS and record_text is not None,
             'This release has no recorded owner exception')
     reduced = tag == 'v0.1.22'
@@ -168,6 +173,9 @@ def validate_exception(data, record_text, tag, sha, tree, config, stage, now,
     unique_items(record['incomplete_checks'], incomplete)
     if reduced:
         unique_items(record['observed_failures'], ('CHILD-161',))
+    supplemental = 'postbuild_exception_sha256' in data
+    require(not supplemental or (reduced and stage == 'before-deploy'),
+            'Postbuild approval is limited to v0.1.22 deploy evidence')
     names = ('schema', 'platform', 'stage', 'candidate', 'native_result',
              'incomplete_checks', 'exception_sha256', 'checked_at')
     if stage == 'before-deploy':
@@ -176,6 +184,8 @@ def validate_exception(data, record_text, tag, sha, tree, config, stage, now,
             names += ('signed_artifact',)
     if reduced:
         names += ('observed_failures',)
+    if supplemental:
+        names += ('postbuild_exception_sha256',)
     fields(data, names)
     require(type(data['schema']) is int and data['schema'] == 2
             and data['platform'] == 'macos' and data['stage'] == stage
@@ -208,20 +218,59 @@ def validate_exception(data, record_text, tag, sha, tree, config, stage, now,
             fields(artifact, ('sha256', 'evidence_sha256', 'checks', 'result'))
             digest(artifact['sha256'])
             digest(artifact['evidence_sha256'])
-            require(artifact['result'] == 'passed', 'Signed artifact verification did not pass')
-            unique_items(artifact['checks'], ARTIFACT_CHECKS)
             require(artifact['sha256'] == artifact_sha256,
                     'Native artifact checks must cover the exact draft archive')
+            if supplemental:
+                validate_postbuild_exception(data, postbuild_record_text, tag, sha, tree,
+                                             config, checked, built_at, artifact_sha256)
+            else:
+                require(artifact['result'] == 'passed', 'Signed artifact verification did not pass')
+                unique_items(artifact['checks'], ARTIFACT_CHECKS)
     return data
 
 
+def validate_postbuild_exception(data, record_text, tag, sha, tree, config,
+                                checked, built_at, artifact_sha256):
+    require(record_text is not None, 'Missing postbuild owner approval')
+    record = read_json_text(record_text)
+    fields(record, ('schema', 'tag', 'sha', 'tree', 'config_sha256', 'artifact_sha256',
+                    'original_exception_sha256', 'owner', 'owner_instruction',
+                    'accepted_interpretation', 'accepted_at', 'failed_evidence_sha256',
+                    'independent_assessment_sha256', 'signed_artifact_checks'))
+    require(type(record['schema']) is int and record['schema'] == 1
+            and record['owner'] == 'magicsih' and record['owner_instruction'] == '공개해'
+            and record['accepted_interpretation'] == 'publish-with-failed-isolated-update',
+            'Unsupported postbuild owner approval')
+    require((record['tag'], record['sha'], record['tree'], record['config_sha256'])
+            == (tag, sha, tree, config), 'Postbuild approval identifies another candidate')
+    for name in ('artifact_sha256', 'original_exception_sha256',
+                 'failed_evidence_sha256', 'independent_assessment_sha256'):
+        digest(record[name])
+    require(record['artifact_sha256'] == artifact_sha256
+            and record['original_exception_sha256'] == data['exception_sha256'],
+            'Postbuild approval must retain the original approval and exact draft archive')
+    digest(data['postbuild_exception_sha256'])
+    require(data['postbuild_exception_sha256'] == hashlib.sha256(record_text.encode('utf-8')).hexdigest(),
+            'Postbuild evidence differs from the main approval record')
+    require(instant(built_at) <= instant(record['accepted_at']) <= checked,
+            'Postbuild approval must follow the signed build and precede deploy readback')
+    artifact = data['signed_artifact']
+    fields(record['signed_artifact_checks'], ARTIFACT_CHECKS)
+    fields(artifact['checks'], ARTIFACT_CHECKS)
+    require(record['signed_artifact_checks'] == POSTBUILD_CHECKS
+            and artifact['checks'] == POSTBUILD_CHECKS and artifact['result'] == 'failed'
+            and artifact['evidence_sha256'] == record['independent_assessment_sha256'],
+            'Postbuild approval must retain the observed failed and unknown checks')
+
+
 def validate_evidence(data, tag, sha, tree, config, stage, now=None,
-                      built_at=None, artifact_sha256=None, fresh=True, exception_record=None):
+                      built_at=None, artifact_sha256=None, fresh=True, exception_record=None,
+                      postbuild_exception_record=None):
     now = now or datetime.now(timezone.utc)
     require(stage in ('before-build', 'before-deploy'), 'Unsupported native gate')
     if isinstance(data, dict) and data.get('schema') == 2:
         return validate_exception(data, exception_record, tag, sha, tree, config, stage,
-                                  now, built_at, artifact_sha256, fresh)
+                                  now, built_at, artifact_sha256, fresh, postbuild_exception_record)
     names = ('schema', 'platform', 'stage', 'candidate', 'implementer_sha256', 'rounds', 'run')
     if stage == 'before-deploy':
         names += ('signed_artifact',)
@@ -385,6 +434,17 @@ def freeze_exception(tag):
     if tag not in EXCEPTION_PATHS:
         return
     record_path = EXCEPTION_PATHS[tag]
+    freeze_committed_record(path, record_path)
+
+
+def freeze_postbuild_exception(tag):
+    if tag == 'v0.1.22':
+        freeze_committed_record(Path(__file__).with_suffix('.postbuild-exception.json'),
+                                POSTBUILD_EXCEPTION_PATH)
+
+
+def freeze_committed_record(path, record_path):
+    require(not path.exists(), 'A frozen exception record already exists')
     found = subprocess.run(['git', 'cat-file', '-e', 'HEAD:' + record_path],
                            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
     if found.returncode:
@@ -407,7 +467,14 @@ def freeze_exception(tag):
 
 
 def frozen_exception():
-    path = Path(__file__).with_suffix('.exception.json')
+    return read_frozen_record(Path(__file__).with_suffix('.exception.json'))
+
+
+def frozen_postbuild_exception():
+    return read_frozen_record(Path(__file__).with_suffix('.postbuild-exception.json'))
+
+
+def read_frozen_record(path):
     if not path.exists():
         return None
     require(path.is_file() and not path.is_symlink(), 'Invalid frozen exception file')
@@ -495,11 +562,13 @@ def main():
         require(command('git', 'rev-parse', 'HEAD') == command('git', 'rev-parse', 'origin/main'),
                 'The verifier and exception record must start at the checked-out main')
         freeze_exception(tag)
+        freeze_postbuild_exception(tag)
         command('git', 'switch', '--detach', sha)
         print('Selected exact main candidate ' + tag)
         return
     require(command('git', 'rev-parse', 'HEAD') == sha, 'The checkout must be the exact candidate')
     approval = frozen_exception()
+    postbuild_approval = frozen_postbuild_exception()
     existing = gh_release(tag)
     if args.action in ('check-build', 'draft'):
         require(existing is None, 'A release already exists: verify/publish the same draft; do not rebuild')
@@ -566,7 +635,8 @@ def main():
         archive_sha = manifest['assets'][archive_name(tag)]['sha256']
         validate_evidence(after, tag, sha, tree, config, 'before-deploy',
                           artifact_sha256=archive_sha, built_at=manifest['built_at'],
-                          fresh=bool(existing['draft']), exception_record=approval)
+                          fresh=bool(existing['draft']), exception_record=approval,
+                          postbuild_exception_record=postbuild_approval)
         require(after['schema'] == before['schema'], 'Build and deploy evidence formats differ')
         if before['schema'] == 2:
             require(after['exception_sha256'] == before['exception_sha256']
@@ -590,7 +660,8 @@ def main():
             # before making the already built draft public.
             prevent_downgrade(tag)
             validate_evidence(after, tag, sha, tree, config, 'before-deploy',
-                              artifact_sha256=archive_sha, built_at=manifest['built_at'], exception_record=approval)
+                              artifact_sha256=archive_sha, built_at=manifest['built_at'],
+                              exception_record=approval, postbuild_exception_record=postbuild_approval)
             command('gh', 'release', 'edit', tag, '--repo', REPO, '--draft=false', '--latest')
         latest(tag)
         update_cask(root, tag)

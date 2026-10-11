@@ -17,7 +17,12 @@ v0.1.22는 사용자가 장시간 검수를 줄이도록 요청한 뒤, 반복 �
 생략을 선택했다. [한정 예외 기록](releases/v0.1.22-native-validation-exception.md)은
 부분 검수와 CHILD-161 완료 후 Unknown 관찰을 보존한다. schema 2의
 `native_result: blocked`를 유지하고 실제 signed ZIP의 4개 검사는 여전히
-공개 필수 조건이다. 다른 후보나 미래 버전에 적용하는 skip 옵션은 없다.
+공개 필수 조건이었다. 실제 격리 업데이트의 installer 실패와 업데이트 후 보존
+미확인을 전달받은 뒤 사용자가 “공개해”를 재지시한
+[추가 예외](releases/v0.1.22-signed-update-exception.md)는 기존 승인과 서명 ZIP을
+그대로 유지하고, 공개 증거에 `failed`·`unknown`을 남긴다. 추가 승인은 v0.1.22
+공개 직전에만 적용하며 서명·공증·파일 검사는 유지한다. 다른 후보나 미래 버전에
+적용하는 skip 옵션은 없다.
 
 ## 후보와 실제 검수
 
