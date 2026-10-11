@@ -268,6 +268,9 @@ fn codex_poll_failure_keeps_child_states(cx: &mut TestAppContext) {
         std::fs::set_permissions(&codex, std::fs::Permissions::from_mode(0o755)).unwrap();
     });
     h.wait_prompt();
+    // A foreground command stands in for the CLI, so a late shell prompt
+    // cannot end the parent before the poll.
+    h.run("printf 'fore%s\\n' ground; cat", "foreground");
     let pane = h.read(|v, _| v.ws.focused_pane().unwrap());
     h.hook_from(
         "codex",
