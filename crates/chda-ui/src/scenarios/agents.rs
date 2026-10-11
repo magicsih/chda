@@ -438,7 +438,10 @@ done
     };
     let step = |h: &mut Harness, step: &str, title: &'static str| {
         let control = h.home.home.join(format!("codex-step-{}", pane.raw()));
-        std::fs::write(&control, step).unwrap();
+        // Renamed into place, so the stand-in never reads a half-written step.
+        let partial = control.with_extension("partial");
+        std::fs::write(&partial, step).unwrap();
+        std::fs::rename(&partial, &control).unwrap();
         h.wait_for(step, move |v, _| {
             !control.exists() && v.ws.pane(pane).is_some_and(|p| p.title == title)
         });
