@@ -30,6 +30,10 @@ ARTIFACT_CHECKS = frozenset(('signed-launch', 'session-preserving-update',
 EXCEPTION_CHECKS = ARTIFACT_CHECKS | frozenset((
     'three-native-review-rounds', 'before-build-native-e2e', 'before-deploy-native-e2e'))
 EXCEPTION_PATH = 'docs/releases/v0.1.21-native-input-exception.json'
+EXCEPTION_PATHS = {
+    'v0.1.21': EXCEPTION_PATH,
+    'v0.1.22': 'docs/releases/v0.1.22-native-validation-exception.json',
+}
 SPARKLE = 'http://www.andymatuschak.org/xml-namespaces/sparkle'
 
 
@@ -139,36 +143,52 @@ def validate_run(run, implementer, now, is_round=False):
 
 def validate_exception(data, record_text, tag, sha, tree, config, stage, now,
                        built_at, artifact_sha256, fresh):
-    require(tag == 'v0.1.21' and record_text is not None,
+    require(tag in EXCEPTION_PATHS and record_text is not None,
             'This release has no recorded owner exception')
+    reduced = tag == 'v0.1.22'
     record = read_json_text(record_text)
-    fields(record, ('schema', 'tag', 'sha', 'tree', 'config_sha256', 'owner',
+    record_names = ('schema', 'tag', 'sha', 'tree', 'config_sha256', 'owner',
                     'owner_instruction', 'accepted_interpretation', 'accepted_at',
                     'blocked_evidence_sha256', 'independent_assessment_sha256',
-                    'incomplete_checks'))
+                    'incomplete_checks')
+    if reduced:
+        record_names += ('observed_failures',)
+    fields(record, record_names)
+    instruction = ('예외 출시: 반복 검수 생략 (권장)' if reduced else '이제 좀 공개해라 좀')
     require(type(record['schema']) is int and record['schema'] == 1
             and record['owner'] == 'magicsih'
-            and record['owner_instruction'] == '이제 좀 공개해라 좀'
+            and record['owner_instruction'] == instruction
             and record['accepted_interpretation'] == 'publish-with-incomplete-native-validation',
             'Unsupported owner exception record')
     require((record['tag'], record['sha'], record['tree'], record['config_sha256'])
             == (tag, sha, tree, config), 'The owner exception identifies another candidate')
     for name in ('blocked_evidence_sha256', 'independent_assessment_sha256'):
         digest(record[name])
-    unique_items(record['incomplete_checks'], EXCEPTION_CHECKS)
+    incomplete = EXCEPTION_CHECKS - ARTIFACT_CHECKS if reduced else EXCEPTION_CHECKS
+    unique_items(record['incomplete_checks'], incomplete)
+    if reduced:
+        unique_items(record['observed_failures'], ('CHILD-161',))
     names = ('schema', 'platform', 'stage', 'candidate', 'native_result',
              'incomplete_checks', 'exception_sha256', 'checked_at')
     if stage == 'before-deploy':
         names += ('artifact_sha256',)
+        if reduced:
+            names += ('signed_artifact',)
+    if reduced:
+        names += ('observed_failures',)
     fields(data, names)
     require(type(data['schema']) is int and data['schema'] == 2
             and data['platform'] == 'macos' and data['stage'] == stage
             and data['native_result'] == 'blocked',
             'An exception must retain the incomplete native validation result')
     candidate(data['candidate'], tag, sha, tree, config)
-    unique_items(data['incomplete_checks'], EXCEPTION_CHECKS)
+    unique_items(data['incomplete_checks'], incomplete)
     require(data['incomplete_checks'] == record['incomplete_checks'],
             'The exception cannot omit or change incomplete checks')
+    if reduced:
+        unique_items(data['observed_failures'], ('CHILD-161',))
+        require(data['observed_failures'] == record['observed_failures'],
+                'The exception cannot hide the observed native failure')
     digest(data['exception_sha256'])
     require(data['exception_sha256'] == hashlib.sha256(record_text.encode('utf-8')).hexdigest(),
             'Exception evidence differs from the main approval record')
@@ -183,6 +203,15 @@ def validate_exception(data, record_text, tag, sha, tree, config, stage, now,
                 'Exception readback must identify the exact immutable draft archive')
         require(built_at is not None and checked >= instant(built_at),
                 'Deploy readback must occur after the signed draft build')
+        if reduced:
+            artifact = data['signed_artifact']
+            fields(artifact, ('sha256', 'evidence_sha256', 'checks', 'result'))
+            digest(artifact['sha256'])
+            digest(artifact['evidence_sha256'])
+            require(artifact['result'] == 'passed', 'Signed artifact verification did not pass')
+            unique_items(artifact['checks'], ARTIFACT_CHECKS)
+            require(artifact['sha256'] == artifact_sha256,
+                    'Native artifact checks must cover the exact draft archive')
     return data
 
 
@@ -331,7 +360,7 @@ def check_source(tag, sha, config):
 
 def check_round_commits(data):
     if data['schema'] == 2:
-        return  # The validated owner exception records zero qualified native reviews.
+        return  # The owner exception does not claim three qualified native reviews.
     for review in data['rounds']:
         digest(review['sha'], 40)
         found = subprocess.run(['git', 'cat-file', '-e', review['sha'] + '^{commit}'],
@@ -353,15 +382,16 @@ def freeze_exception(tag):
     """Copy only the authoritative main record before candidate checkout."""
     path = Path(__file__).with_suffix('.exception.json')
     require(not path.exists(), 'A frozen exception record already exists')
-    if tag != 'v0.1.21':
+    if tag not in EXCEPTION_PATHS:
         return
-    found = subprocess.run(['git', 'cat-file', '-e', 'HEAD:' + EXCEPTION_PATH],
+    record_path = EXCEPTION_PATHS[tag]
+    found = subprocess.run(['git', 'cat-file', '-e', 'HEAD:' + record_path],
                            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
     if found.returncode:
         return
-    require(int(command('git', 'cat-file', '-s', 'HEAD:' + EXCEPTION_PATH)) <= 65536,
+    require(int(command('git', 'cat-file', '-s', 'HEAD:' + record_path)) <= 65536,
             'Exception record exceeds the metadata limit')
-    body = subprocess.run(['git', 'show', 'HEAD:' + EXCEPTION_PATH], check=True,
+    body = subprocess.run(['git', 'show', 'HEAD:' + record_path], check=True,
                           stdout=subprocess.PIPE, stderr=subprocess.PIPE).stdout
     require(len(body) <= 65536, 'Exception record exceeds the metadata limit')
     text = body.decode('utf-8')
@@ -489,12 +519,22 @@ def main():
         notes = command('bash', 'scripts/release-notes.sh', tag)
         require(bool(notes), 'The release-plz changelog section is empty')
         if before['schema'] == 2:
-            notes = ('Native UI validation is incomplete in this release. The owner requested publication '
-                     'after the input-tool blocker was reported. CI, Developer ID signing, notarization '
-                     'and update-signature verification remain required. '
-                     '[Recorded exception](https://github.com/%s/blob/main/%s).\n\n'
-                     'The Codex shared-server warning remains unresolved '
-                     '([#173](https://github.com/%s/issues/173)).\n\n' % (REPO, EXCEPTION_PATH, REPO)) + notes
+            if tag == 'v0.1.22':
+                notes = ('Native UI validation is incomplete in this release. The owner approved omitting '
+                         'repeated native review rounds and the two full native E2E runs. '
+                         'A completed Codex child can remain Unknown (CHILD-161); this observed failure '
+                         'is retained, not marked passed. CI, Developer ID signing, notarization, '
+                         'update signatures and actual signed-archive launch, session-preserving update, '
+                         'GUI IPC and shell PID checks remain required. '
+                         '[Recorded exception](https://github.com/%s/blob/main/%s).\n\n'
+                         % (REPO, EXCEPTION_PATHS[tag])) + notes
+            else:
+                notes = ('Native UI validation is incomplete in this release. The owner requested publication '
+                         'after the input-tool blocker was reported. CI, Developer ID signing, notarization '
+                         'and update-signature verification remain required. '
+                         '[Recorded exception](https://github.com/%s/blob/main/%s).\n\n'
+                         'The Codex shared-server warning remains unresolved '
+                         '([#173](https://github.com/%s/issues/173)).\n\n' % (REPO, EXCEPTION_PATH, REPO)) + notes
         with tempfile.TemporaryDirectory() as folder:
             notes_path = Path(folder) / 'notes.md'
             notes_path.write_text(notes + '\n', encoding='utf-8')

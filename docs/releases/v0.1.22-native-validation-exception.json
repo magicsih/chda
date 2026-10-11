@@ -1,0 +1,21 @@
+{
+  "accepted_at": "2026-10-11T08:54:32Z",
+  "accepted_interpretation": "publish-with-incomplete-native-validation",
+  "blocked_evidence_sha256": "d226488088062e7ef524ec23c9208301a867ec2725fca8a41a69da184b632fbf",
+  "config_sha256": "229c2bb2a8b029506dd969cc9ebfbfae35ad1b81b4d3a70afba89c89269cd938",
+  "incomplete_checks": [
+    "before-build-native-e2e",
+    "before-deploy-native-e2e",
+    "three-native-review-rounds"
+  ],
+  "independent_assessment_sha256": "de9904af4c0eac175a6e923a3379b04c0695849757b37a7d2acbd8f972f8da34",
+  "observed_failures": [
+    "CHILD-161"
+  ],
+  "owner": "magicsih",
+  "owner_instruction": "예외 출시: 반복 검수 생략 (권장)",
+  "schema": 1,
+  "sha": "80a0576246ecc25b91d4889e015c07e4ffc30bca",
+  "tag": "v0.1.22",
+  "tree": "b53b60e283cca361e0898fcb5f2ba35fad93c602"
+}
