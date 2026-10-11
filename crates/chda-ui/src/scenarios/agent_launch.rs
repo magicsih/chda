@@ -153,3 +153,52 @@ fn conflicting_preset_keeps_the_sheet_and_does_not_start(cx: &mut TestAppContext
     h.keys("escape");
     h.run("echo cancelled-choice", "cancelled-choice");
 }
+
+/// A stand-in `claude` that records every byte its terminal sends, raw.
+fn recording_claude(home: &super::harness::Home) {
+    use std::os::unix::fs::PermissionsExt;
+    std::fs::create_dir_all(home.claude_bin.parent().unwrap()).unwrap();
+    std::fs::write(
+        &home.claude_bin,
+        "#!/bin/sh\nstty raw -echo\nprintf 'recording-claude ready\\r\\n'\nexec cat > \"$HOME/claude-input-$CHDA_PANE_ID\"\n",
+    )
+    .unwrap();
+    std::fs::set_permissions(&home.claude_bin, std::fs::Permissions::from_mode(0o755)).unwrap();
+}
+
+/// Everything the launched CLI read before the first character typed into it.
+fn input_before_typing(h: &mut Harness) -> String {
+    h.wait_for("the launched CLI to read its terminal", |v, cx| {
+        v.focused_text(cx).contains("recording-claude ready")
+    });
+    let pane = h.read(|v, _| v.ws.focused_pane().unwrap());
+    h.type_text("x");
+    let input = h.home.home.join(format!("claude-input-{}", pane.raw()));
+    h.wait_for("the typed character to reach the CLI", |_, _| {
+        std::fs::read(&input).is_ok_and(|bytes| bytes.contains(&b'x'))
+    });
+    let bytes = std::fs::read(&input).unwrap();
+    String::from_utf8_lossy(&bytes[..bytes.len() - 1]).into_owned()
+}
+
+/// The Return that confirms the launch belongs to the sheet: neither its
+/// press nor its release reaches the new terminal, as with a click on Start.
+#[gpui::test]
+fn confirming_a_launch_sends_nothing_to_the_new_terminal(cx: &mut TestAppContext) {
+    let mut h = Harness::open(cx, "launch-return", recording_claude);
+    h.wait_prompt();
+    h.cx.dispatch_action(crate::workspace_view::RunClaude);
+    h.cx.run_until_parked();
+    h.keys("enter");
+    // On macOS the release arrives after focus moved to the new terminal.
+    h.cx.simulate_event(gpui::KeyUpEvent {
+        keystroke: gpui::Keystroke::parse("enter").unwrap(),
+    });
+    assert_eq!(input_before_typing(&mut h), "");
+
+    h.keys("cmd-t");
+    h.wait_prompt();
+    h.cx.dispatch_action(crate::workspace_view::RunClaude);
+    h.confirm_agent_launch();
+    assert_eq!(input_before_typing(&mut h), "");
+}
