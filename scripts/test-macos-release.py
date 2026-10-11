@@ -311,6 +311,88 @@ class ReducedExceptionTests(unittest.TestCase):
                                       'before-build', now=NOW, exception_record=record)
 
 
+def postbuild_exception_record(original):
+    return json.dumps({
+        'schema': 1, 'tag': 'v0.1.22', 'sha': SHA, 'tree': TREE,
+        'config_sha256': CONFIG, 'artifact_sha256': 'a' * 64,
+        'original_exception_sha256': hashlib.sha256(original.encode()).hexdigest(),
+        'owner': 'magicsih', 'owner_instruction': '공개해',
+        'accepted_interpretation': 'publish-with-failed-isolated-update',
+        'accepted_at': timestamp(2), 'failed_evidence_sha256': 'f' * 64,
+        'independent_assessment_sha256': 'b' * 64,
+        'signed_artifact_checks': {
+            'signed-launch': 'passed', 'gui-ipc': 'passed',
+            'session-preserving-update': 'failed', 'shell-pid-preservation': 'unknown'},
+    }, sort_keys=True, ensure_ascii=False) + '\n'
+
+
+class PostbuildExceptionTests(unittest.TestCase):
+    def setUp(self):
+        self.original = reduced_exception_record()
+        self.postbuild = postbuild_exception_record(self.original)
+        self.data = reduced_exception_evidence(self.original, 'before-deploy')
+        self.data['postbuild_exception_sha256'] = hashlib.sha256(self.postbuild.encode()).hexdigest()
+        self.data['signed_artifact'].update(
+            result='failed', checks=json.loads(self.postbuild)['signed_artifact_checks'])
+
+    def verify(self, **kwargs):
+        return release.validate_evidence(
+            self.data, 'v0.1.22', SHA, TREE, CONFIG, 'before-deploy', now=NOW,
+            built_at=timestamp(3), artifact_sha256='a' * 64,
+            exception_record=self.original, postbuild_exception_record=self.postbuild,
+            **kwargs)
+
+    def test_exact_postbuild_approval_preserves_original_approval_and_failed_unknown(self):
+        original_digest = self.data['exception_sha256']
+        self.assertEqual(self.verify(), self.data)
+        self.assertEqual(self.data['exception_sha256'], original_digest)
+        self.assertEqual(self.data['native_result'], 'blocked')
+        self.assertEqual(self.data['signed_artifact']['checks']['session-preserving-update'], 'failed')
+        self.assertEqual(self.data['signed_artifact']['checks']['shell-pid-preservation'], 'unknown')
+
+    def test_missing_modified_or_wrong_candidate_postbuild_approval_is_rejected(self):
+        original = self.postbuild
+        for replacement in (None, original + '\n'):
+            self.postbuild = replacement
+            with self.subTest(replacement=replacement), self.assertRaises(ValueError):
+                self.verify()
+        for name, value in (
+            ('sha', '9' * 40), ('tree', '9' * 40), ('config_sha256', '9' * 64),
+            ('artifact_sha256', '9' * 64), ('original_exception_sha256', '9' * 64),
+            ('owner_instruction', 'skip tests'), ('independent_assessment_sha256', '9' * 64),
+            ('accepted_at', timestamp(-1)), ('accepted_at', timestamp(6))):
+            altered = json.loads(original)
+            altered[name] = value
+            self.postbuild = json.dumps(altered, sort_keys=True, ensure_ascii=False) + '\n'
+            self.data['postbuild_exception_sha256'] = hashlib.sha256(self.postbuild.encode()).hexdigest()
+            with self.subTest(name=name, value=value), self.assertRaises(ValueError):
+                self.verify()
+
+    def test_observed_failed_unknown_cannot_be_masked_as_passed(self):
+        for name in ('session-preserving-update', 'shell-pid-preservation'):
+            original = copy.deepcopy(self.data)
+            self.data['signed_artifact']['checks'][name] = 'passed'
+            with self.subTest(name=name), self.assertRaises(ValueError):
+                self.verify()
+            self.data = original
+        self.data['signed_artifact']['result'] = 'passed'
+        with self.assertRaises(ValueError):
+            self.verify()
+
+    def test_postbuild_approval_cannot_waive_build_gate_or_other_tags(self):
+        before = reduced_exception_evidence(self.original)
+        before['postbuild_exception_sha256'] = self.data['postbuild_exception_sha256']
+        with self.assertRaises(ValueError):
+            release.validate_evidence(
+                before, 'v0.1.22', SHA, TREE, CONFIG, 'before-build', now=NOW,
+                exception_record=self.original, postbuild_exception_record=self.postbuild)
+        with self.assertRaises(ValueError):
+            release.validate_evidence(
+                self.data, 'v0.1.23', SHA, TREE, CONFIG, 'before-deploy', now=NOW,
+                built_at=timestamp(3), artifact_sha256='a' * 64,
+                exception_record=self.original, postbuild_exception_record=self.postbuild)
+
+
 class ArtifactTests(unittest.TestCase):
     def test_manifest_binds_archive_appcast_source_and_evidence(self):
         with tempfile.TemporaryDirectory() as folder:
@@ -354,6 +436,7 @@ class PromotionTests(unittest.TestCase):
         os.chdir(self.repo)
         self.addCleanup(os.chdir, self.old_cwd)
         self.original_command = release.command
+        self.tag = 'v0.1.21'
         self.git('init', '-b', 'main')
         self.git('config', 'user.name', 'Fixture')
         self.git('config', 'user.email', 'fixture@example.invalid')
@@ -398,7 +481,7 @@ class PromotionTests(unittest.TestCase):
         if args[0] == 'git':
             return self.original_command(*args)
         if args[:3] == ('gh', 'api', 'repos/magicsih/chda/releases/latest'):
-            return json.dumps({'tag_name': self.previous_tag if self.state['draft'] else 'v0.1.21',
+            return json.dumps({'tag_name': self.previous_tag if self.state['draft'] else self.tag,
                                'draft': False, 'prerelease': False})
         if args[:3] == ('gh', 'release', 'upload'):
             self.mutations.append('upload')
@@ -410,9 +493,9 @@ class PromotionTests(unittest.TestCase):
             return ''
         self.fail('Unexpected command in synthetic promotion test')
 
-    def run_stage(self, stage, data=None, now=NOW, exception=None):
+    def run_stage(self, stage, data=None, now=NOW, exception=None, postbuild_exception=None):
         env = {'GITHUB_REPOSITORY': release.REPO, 'GITHUB_EVENT_NAME': 'workflow_dispatch',
-               'GITHUB_REF': 'refs/heads/main', 'RELEASE_TAG': 'v0.1.21',
+               'GITHUB_REF': 'refs/heads/main', 'RELEASE_TAG': self.tag,
                'RELEASE_SHA': self.sha, 'RELEASE_CONFIG_SHA256': CONFIG,
                'RELEASE_TOKEN': 'synthetic-test-only',
                'NATIVE_EVIDENCE': json.dumps(data if data is not None else self.after)}
@@ -432,11 +515,87 @@ class PromotionTests(unittest.TestCase):
                 patch.object(release, 'gh_release', lambda _tag: self.state), \
                 patch.object(release, 'download', download), \
                 patch.object(release, 'frozen_exception', lambda: exception), \
+                patch.object(release, 'frozen_postbuild_exception', lambda: postbuild_exception), \
                 patch.object(release, 'native_archive', signed_archive), \
                 patch.object(release, 'update_cask', lambda *_: self.mutations.append('cask')), \
                 patch.object(release, 'datetime', wraps=datetime) as clock:
             clock.now.return_value = now
             release.main()
+
+    def prepare_postbuild_exception(self):
+        self.tag = 'v0.1.22'
+        (self.repo / 'Cargo.toml').write_text('[workspace.package]\nversion = "0.1.22"\n')
+        self.git('add', '.')
+        self.git('commit', '-m', 'chore(release): synthetic candidate')
+        self.sha = self.git('rev-parse', 'HEAD')
+        self.tree = self.git('rev-parse', 'HEAD^{tree}')
+        self.git('tag', self.tag)
+        self.git('update-ref', 'refs/remotes/origin/main', self.sha)
+        self.state['tag_name'] = self.tag
+        self.previous_tag = 'v0.1.21'
+        archive = self.assets / release.archive_name(self.tag)
+        (self.assets / release.archive_name('v0.1.21')).rename(archive)
+        feed = self.assets / 'appcast.xml'
+        feed.write_text(feed.read_text().replace('0.1.21', '0.1.22'))
+        record = json.loads(reduced_exception_record())
+        record.update(sha=self.sha, tree=self.tree)
+        original = json.dumps(record, sort_keys=True, indent=2, ensure_ascii=False) + '\n'
+        self.before = reduced_exception_evidence(original)
+        self.before['candidate'].update(sha=self.sha, tree=self.tree)
+        self.manifest = release.make_manifest(self.assets, self.before, now=NOW - timedelta(minutes=2))
+        self.after = reduced_exception_evidence(original, 'before-deploy')
+        self.after['candidate'].update(sha=self.sha, tree=self.tree)
+        supplemental = json.loads(postbuild_exception_record(original))
+        supplemental.update(sha=self.sha, tree=self.tree, artifact_sha256=release.hash_file(archive),
+                            accepted_at=timestamp(1))
+        postbuild = json.dumps(supplemental, sort_keys=True, indent=2, ensure_ascii=False) + '\n'
+        self.after['postbuild_exception_sha256'] = hashlib.sha256(postbuild.encode()).hexdigest()
+        self.after['artifact_sha256'] = release.hash_file(archive)
+        self.after['signed_artifact'].update(sha256=release.hash_file(archive), result='failed',
+                                            checks=copy.deepcopy(release.POSTBUILD_CHECKS))
+        return original, postbuild
+
+    def test_postbuild_promotion_retains_all_draft_bytes_and_truthful_failed_unknown(self):
+        original, postbuild = self.prepare_postbuild_exception()
+        hashes = {p.name: release.hash_file(p) for p in self.assets.iterdir()}
+        self.run_stage('publish', exception=original, postbuild_exception=postbuild)
+        self.assertEqual(self.mutations, ['upload', 'publish', 'cask'])
+        self.assertEqual(self.signed_archive_checks, ['v0.1.22'])
+        self.assertEqual({name: release.hash_file(self.assets / name) for name in hashes}, hashes)
+        after = release.read_json(self.assets / 'before-deploy.json')
+        self.assertEqual(after['exception_sha256'], self.before['exception_sha256'])
+        self.assertEqual(after['signed_artifact']['result'], 'failed')
+        self.assertEqual(after['signed_artifact']['checks'], release.POSTBUILD_CHECKS)
+        self.run_stage('cask', exception=original, postbuild_exception=postbuild)
+        self.assertEqual(self.mutations, ['upload', 'publish', 'cask', 'cask'])
+
+    def test_postbuild_approval_never_bypasses_signed_archive_failure(self):
+        original, postbuild = self.prepare_postbuild_exception()
+        self.signed_archive_failure = True
+        with self.assertRaisesRegex(ValueError, 'signed archive verification failed'):
+            self.run_stage('publish', exception=original, postbuild_exception=postbuild)
+        self.assertEqual(self.mutations, [])
+        self.assertTrue(self.state['draft'])
+
+    def test_postbuild_freeze_preserves_both_committed_approval_bytes(self):
+        original, postbuild = self.prepare_postbuild_exception()
+        first = self.repo / release.EXCEPTION_PATHS[self.tag]
+        second = self.repo / release.POSTBUILD_EXCEPTION_PATH
+        first.parent.mkdir(parents=True, exist_ok=True)
+        first.write_text(original, encoding='utf-8')
+        second.write_text(postbuild, encoding='utf-8')
+        self.git('add', '.')
+        self.git('commit', '-m', 'docs(release): synthetic approvals')
+        gate = self.root / 'frozen-gate.py'
+        with patch.object(release, '__file__', str(gate)):
+            release.freeze_exception(self.tag)
+            release.freeze_postbuild_exception(self.tag)
+            second.write_text(postbuild + '\n', encoding='utf-8')
+            self.assertEqual(release.frozen_exception(), original)
+            self.assertEqual(release.frozen_postbuild_exception(), postbuild)
+            self.assertEqual(gate.with_suffix('.postbuild-exception.json').stat().st_mode & 0o777, 0o600)
+            with self.assertRaises(ValueError):
+                release.freeze_postbuild_exception(self.tag)
 
     def test_fresh_build_check_and_queue_expiration_create_no_release(self):
         self.state = None
