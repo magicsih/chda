@@ -4,6 +4,23 @@ All notable changes to chda. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); entries are
 generated from conventional commit messages by release-plz.
 
+## [0.1.22](https://github.com/magicsih/chda/compare/v0.1.21...v0.1.22) - 2026-10-11
+
+### Added
+
+- *(sidebar)* combine agents and terminals into one Sessions list with independent scrolling ([#203](https://github.com/magicsih/chda/pull/203))
+
+### Fixed
+
+- *(agents)* keep a new Codex conversation working through its title helper ([#223](https://github.com/magicsih/chda/pull/223))
+- *(agents)* keep a finished child's state when later polls know less ([#221](https://github.com/magicsih/chda/pull/221))
+- *(sidebar)* make the sticky repository header act on its repository and clear closed agents' working status ([#222](https://github.com/magicsih/chda/pull/222))
+- *(sidebar)* keep status icons visible in light themes and give + repo its own tooltip ([#215](https://github.com/magicsih/chda/pull/215))
+- *(terminal)* wrap long lines in the Copy for sharing preview ([#214](https://github.com/magicsih/chda/pull/214))
+- *(terminal)* open paths that follow prose inside parentheses ([#213](https://github.com/magicsih/chda/pull/213))
+- *(agents)* keep a live agent's Sessions row when another process reports for its worktree ([#206](https://github.com/magicsih/chda/pull/206))
+- *(sidebar)* keep chda running when macOS cannot open the folder picker ([#201](https://github.com/magicsih/chda/pull/201))
+
 ## [0.1.21](https://github.com/magicsih/chda/compare/v0.1.20...v0.1.21) - 2026-10-09
 
 ### Added
