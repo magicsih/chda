@@ -29,6 +29,28 @@ configuration would affect sessions outside chda.
 - Clear activity on a shell prompt, title clear or pane exit. This introduces
   no polling of transcripts, process scanning or new dependency.
 
+## Amendment (2026-10-11): first-turn helper notify
+
+Codex 0.162 generates a new conversation's title through an ephemeral thread
+([`tui/src/app/thread_title.rs`](https://github.com/openai/codex/blob/rust-v0.162.0/codex-rs/tui/src/app/thread_title.rs)
+starts it with `ephemeral: true` in
+[`tui/src/temporary_structured_request.rs`](https://github.com/openai/codex/blob/rust-v0.162.0/codex-rs/tui/src/temporary_structured_request.rs))
+that still runs the legacy `notify` mid-turn. Treated as the
+conversation's completion, it showed a working pane as idle with a close button
+that skipped the confirmation, announced an unfinished turn and recorded an
+unresumable conversation ID.
+
+- `chda hook codex` reports a notify only for a thread with a saved transcript
+  under `$CODEX_HOME/sessions`: a provider-confirmed child under its parent,
+  otherwise the conversation itself. Codex saves a conversation before its
+  first turn completes, so a thread without a transcript is an ephemeral
+  helper and reports nothing. Neither does a sender whose transcripts cannot
+  be searched to the end.
+- While a pane's title reports Codex's run state, turns come from the title
+  alone; a notify only names the conversation, whichever path arrives first.
+- A repeated title state restores the pane's status when it fell behind, and
+  closing a pane asks while its Codex title reports work or a wait for input.
+
 ## Evidence and boundaries
 
 The public [configuration reference](https://developers.openai.com/codex/config-reference/)

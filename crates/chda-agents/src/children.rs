@@ -219,66 +219,113 @@ fn codex_thread(thread: &serde_json::Value, parent: &str, at: u64) -> Option<Chi
     })
 }
 
-/// Identify a notify sender only from its exact rollout metadata. Bounded
-/// directory traversal does not follow symlinks or read conversation bodies.
-pub(crate) fn codex_notify_child(root: &std::path::Path, id: &str) -> Option<(String, ChildEvent)> {
+/// What Codex's saved transcripts say about the thread that sent a `notify`.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) enum CodexNotifySender {
+    /// A provider-confirmed child, reported under its exact parent.
+    Child { parent: String, child: ChildEvent },
+    /// A conversation of its own, saved under `sessions`.
+    TopLevel,
+    /// No transcript exists for the thread: Codex saves every conversation
+    /// before its first turn completes, so this is an ephemeral helper, such
+    /// as the title request on a new conversation's first turn.
+    NotSaved,
+    /// The transcripts could not be searched to the end or read.
+    Incomplete,
+}
+
+/// Classify a notify sender only from its exact rollout metadata. Newest
+/// dated directories are searched first; bounded traversal does not follow
+/// symlinks or read conversation bodies. Compressed (cold) transcripts are not
+/// read: a thread that reports a turn has a plain one.
+pub(crate) fn codex_notify_sender(root: &std::path::Path, id: &str) -> CodexNotifySender {
     use std::io::{BufRead, Read};
     if id.is_empty() || id.len() > 256 || id.contains(['/', '\\']) {
-        return None;
+        return CodexNotifySender::Incomplete;
     }
     let deadline = std::time::Instant::now() + std::time::Duration::from_millis(200);
     let mut stack = vec![(root.join("sessions"), 0)];
     let mut visited = 0;
+    let mut unreadable = false;
     while let Some((dir, depth)) = stack.pop() {
-        for entry in std::fs::read_dir(dir).ok().into_iter().flatten().flatten() {
+        let entries = match std::fs::read_dir(&dir) {
+            Ok(entries) => entries,
+            Err(e) if depth == 0 && e.kind() == std::io::ErrorKind::NotFound => {
+                return CodexNotifySender::NotSaved;
+            }
+            Err(_) => return CodexNotifySender::Incomplete,
+        };
+        let Ok(mut entries) = entries.collect::<Result<Vec<_>, _>>() else {
+            return CodexNotifySender::Incomplete;
+        };
+        // Ascending here, so the newest (largest) name is popped first.
+        entries.sort_by_key(std::fs::DirEntry::file_name);
+        for entry in entries {
             visited += 1;
             if visited > 20_000 || std::time::Instant::now() >= deadline {
-                return None;
+                return CodexNotifySender::Incomplete;
             }
-            let kind = entry.file_type().ok()?;
+            let Ok(kind) = entry.file_type() else {
+                return CodexNotifySender::Incomplete;
+            };
             if kind.is_dir() && depth < 6 {
                 stack.push((entry.path(), depth + 1));
                 continue;
             }
-            if !kind.is_file() {
+            let name = entry.file_name();
+            let Some(stem) = name.to_str().and_then(|n| n.strip_suffix(".jsonl")) else {
                 continue;
-            }
-            let path = entry.path();
-            if path.extension().is_none_or(|e| e != "jsonl")
-                || path
-                    .file_stem()
-                    .is_none_or(|s| !s.to_string_lossy().ends_with(id))
+            };
+            // `rollout-<time>-<thread>.jsonl`, or `-<thread>_<rollout>` after a revert.
+            if !kind.is_file()
+                || !(stem.ends_with(&format!("-{id}")) || stem.contains(&format!("-{id}_")))
             {
                 continue;
             }
-            let reader = std::io::BufReader::new(std::fs::File::open(&path).ok()?.take(524_288));
-            for line in reader.lines().take(50).filter_map(Result::ok) {
-                let Ok(value) = serde_json::from_str::<serde_json::Value>(&line) else {
-                    continue;
-                };
-                if value["type"] != "session_meta" || value["payload"]["id"].as_str() != Some(id) {
-                    continue;
-                }
-                let source = value.pointer("/payload/source/subagent/thread_spawn")?;
-                return Some((
-                    source.get("parent_thread_id")?.as_str()?.into(),
-                    ChildEvent {
-                        id: id.into(),
-                        label: source
-                            .get("agent_nickname")
-                            .and_then(serde_json::Value::as_str)
-                            .or_else(|| {
-                                source.get("agent_role").and_then(serde_json::Value::as_str)
-                            })
-                            .map(str::to_owned),
-                        state: ChildState::TurnComplete,
-                        started: false,
-                    },
-                ));
+            let Ok(file) = std::fs::File::open(entry.path()) else {
+                unreadable = true;
+                continue;
+            };
+            let reader = std::io::BufReader::new(file.take(524_288));
+            let meta = reader
+                .lines()
+                .take(50)
+                .map_while(Result::ok)
+                .filter_map(|line| serde_json::from_str::<serde_json::Value>(&line).ok())
+                .find(|value| value["type"] == "session_meta");
+            let Some(meta) = meta else {
+                unreadable = true;
+                continue;
+            };
+            if meta["payload"]["id"].as_str() != Some(id) {
+                continue;
             }
+            let Some(source) = meta.pointer("/payload/source/subagent/thread_spawn") else {
+                return CodexNotifySender::TopLevel;
+            };
+            let Some(parent) = source.get("parent_thread_id").and_then(|p| p.as_str()) else {
+                return CodexNotifySender::Incomplete;
+            };
+            return CodexNotifySender::Child {
+                parent: parent.into(),
+                child: ChildEvent {
+                    id: id.into(),
+                    label: source
+                        .get("agent_nickname")
+                        .and_then(serde_json::Value::as_str)
+                        .or_else(|| source.get("agent_role").and_then(serde_json::Value::as_str))
+                        .map(str::to_owned),
+                    state: ChildState::TurnComplete,
+                    started: false,
+                },
+            };
         }
     }
-    None
+    if unreadable {
+        CodexNotifySender::Incomplete
+    } else {
+        CodexNotifySender::NotSaved
+    }
 }
 
 #[cfg(test)]
@@ -404,20 +451,86 @@ mod tests {
     #[test]
     fn codex_notify_uses_full_identity_and_provider_parent_metadata() {
         let root = std::env::temp_dir().join(format!("chda-child-metadata-{}", std::process::id()));
-        let dir = root.join("sessions/fixture");
+        let dir = root.join("sessions/2026/10/11");
         std::fs::create_dir_all(&dir).unwrap();
-        let file = dir.join("rollout-fixture-full-child-id.jsonl");
+        let file = dir.join("rollout-2026-10-11T09-00-00-full-child-id.jsonl");
         std::fs::write(file,concat!(r#"{"type":"session_meta","payload":{"id":"full-child-id","source":{"subagent":{"thread_spawn":{"parent_thread_id":"exact-parent","agent_nickname":null,"agent_role":"reviewer"}}}}}"#, "\n", r#"{"type":"response_item","payload":{"content":"private answer"}}"#)).unwrap();
-        let (parent, child) = codex_notify_child(&root, "full-child-id").unwrap();
+        let CodexNotifySender::Child { parent, child } =
+            codex_notify_sender(&root, "full-child-id")
+        else {
+            panic!("a child rollout identifies its parent");
+        };
         assert_eq!(parent, "exact-parent");
         assert_eq!(child.id, "full-child-id");
         assert_eq!(child.label.as_deref(), Some("reviewer"));
         assert_eq!(child.state, ChildState::TurnComplete);
-        assert!(codex_notify_child(&root, "child-id").is_none());
         assert!(
             !serde_json::to_string(&child)
                 .unwrap()
                 .contains("private answer")
+        );
+        // A suffix of another thread's identity is not that thread.
+        assert_eq!(
+            codex_notify_sender(&root, "child-id"),
+            CodexNotifySender::NotSaved
+        );
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn codex_notify_senders_without_a_saved_transcript_are_told_apart() {
+        let root = std::env::temp_dir().join(format!("chda-notify-sender-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        // Before Codex saved anything, no thread has a transcript.
+        assert_eq!(
+            codex_notify_sender(&root, "title-helper"),
+            CodexNotifySender::NotSaved
+        );
+        let day = root.join("sessions/2026/10/11");
+        std::fs::create_dir_all(&day).unwrap();
+        let meta = |id: &str| {
+            format!(
+                "{{\"type\":\"session_meta\",\"payload\":{{\"id\":\"{id}\",\"source\":\"cli\"}}}}\n"
+            )
+        };
+        std::fs::write(
+            day.join("rollout-2026-10-11T09-00-00-conversation.jsonl"),
+            meta("conversation"),
+        )
+        .unwrap();
+        // A reverted conversation continues in a rollout named after both ids.
+        std::fs::write(
+            day.join("rollout-2026-10-11T10-00-00-reverted_new-rollout.jsonl"),
+            meta("reverted"),
+        )
+        .unwrap();
+        assert_eq!(
+            codex_notify_sender(&root, "conversation"),
+            CodexNotifySender::TopLevel
+        );
+        assert_eq!(
+            codex_notify_sender(&root, "reverted"),
+            CodexNotifySender::TopLevel
+        );
+        // Codex's title request on a new conversation's first turn is
+        // ephemeral: it notifies, but nothing is saved for it.
+        assert_eq!(
+            codex_notify_sender(&root, "title-helper"),
+            CodexNotifySender::NotSaved
+        );
+        // A matching file whose metadata cannot be read proves nothing.
+        std::fs::write(
+            day.join("rollout-2026-10-11T11-00-00-partial.jsonl"),
+            "{\"type\":\"response_item\"",
+        )
+        .unwrap();
+        assert_eq!(
+            codex_notify_sender(&root, "partial"),
+            CodexNotifySender::Incomplete
+        );
+        assert_eq!(
+            codex_notify_sender(&root, "../conversation"),
+            CodexNotifySender::Incomplete
         );
         std::fs::remove_dir_all(root).unwrap();
     }

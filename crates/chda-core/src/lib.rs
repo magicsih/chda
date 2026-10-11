@@ -37,7 +37,7 @@ pub use restore::*;
 
 /// Agent integration surface the UI needs (ADR: the UI talks to core only).
 pub mod agents {
-    pub use chda_agents::hook::data_dir;
+    pub use chda_agents::hook::{codex_notify_event, data_dir};
     pub use chda_agents::{
         AgentAdapter, AgentId, AgentLaunchContext, AgentSession, CODEX_TITLE_CONFIG,
         CODEX_TITLE_ENV, ChildActivity, ChildBoard, ChildEvent, ChildState, CodexRunState,

@@ -198,8 +198,33 @@ pub fn opencode_event(payload: &Value) -> Option<HookEvent> {
     })
 }
 
-/// Map a Codex `notify` payload (last argv item, JSON) to an event.
-pub fn codex_event(payload: &Value, cwd: &Path) -> Option<HookEvent> {
+/// Map a Codex `notify` payload (last argv item, JSON) to an event, resolving
+/// its sender against the transcripts saved under `codex_home`. A
+/// provider-confirmed child reports under its exact parent. A thread without a
+/// saved transcript reports nothing: Codex's ephemeral helpers, such as the
+/// title request on a new conversation's first turn, notify like the
+/// conversation itself and would end its turn early and replace its identity.
+/// Neither does a sender whose transcripts could not be checked.
+pub fn codex_notify_event(
+    payload: &Value,
+    cwd: &Path,
+    codex_home: Option<&Path>,
+) -> Option<HookEvent> {
+    use crate::children::CodexNotifySender;
+    let mut event = codex_event(payload, cwd)?;
+    match crate::children::codex_notify_sender(codex_home?, &event.session_id) {
+        CodexNotifySender::Child { parent, child } => {
+            event.session_id = parent;
+            event.child = Some(child);
+        }
+        CodexNotifySender::TopLevel => {}
+        CodexNotifySender::NotSaved | CodexNotifySender::Incomplete => return None,
+    }
+    Some(event)
+}
+
+/// The event a Codex `notify` payload names, before its sender is resolved.
+fn codex_event(payload: &Value, cwd: &Path) -> Option<HookEvent> {
     let kind = match payload.get("type")?.as_str()? {
         "agent-turn-complete" => HookKind::Stopped,
         _ => return None,
@@ -248,26 +273,18 @@ pub fn hook_main(args: &[String]) -> i32 {
         "codex" => {
             let json = args.last().filter(|a| a.starts_with('{'));
             let cwd = std::env::current_dir().unwrap_or_default();
+            let codex_home = std::env::var_os("CODEX_HOME")
+                .map(PathBuf::from)
+                .or_else(|| std::env::var_os("HOME").map(|h| PathBuf::from(h).join(".codex")));
             let event = json
                 .and_then(|j| serde_json::from_str::<Value>(j).ok())
-                .and_then(|v| codex_event(&v, &cwd));
+                .and_then(|v| codex_notify_event(&v, &cwd, codex_home.as_deref()));
             run_chained_notify(args);
             event
         }
         _ => None,
     };
     if let Some(mut event) = event {
-        if event.agent == "codex" {
-            let root = std::env::var_os("CODEX_HOME")
-                .map(PathBuf::from)
-                .or_else(|| std::env::var_os("HOME").map(|h| PathBuf::from(h).join(".codex")));
-            if let Some((parent, child)) =
-                root.and_then(|r| crate::children::codex_notify_child(&r, &event.session_id))
-            {
-                event.session_id = parent;
-                event.child = Some(child);
-            }
-        }
         event.pane = std::env::var(PANE_ENV).ok().and_then(|v| v.parse().ok());
         deliver(&event);
     }
@@ -413,5 +430,53 @@ mod tests {
         })
         .unwrap();
         assert!(line.contains(r#""pane":7"#), "{line}");
+    }
+
+    #[test]
+    fn codex_notify_reports_only_saved_threads() {
+        let home = std::env::temp_dir().join(format!("chda-notify-hook-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&home);
+        let day = home.join("sessions/2026/10/11");
+        std::fs::create_dir_all(&day).unwrap();
+        std::fs::write(
+            day.join("rollout-2026-10-11T09-00-00-conversation.jsonl"),
+            r#"{"type":"session_meta","payload":{"id":"conversation","source":"cli"}}"#,
+        )
+        .unwrap();
+        std::fs::write(
+            day.join("rollout-2026-10-11T09-01-00-worker.jsonl"),
+            r#"{"type":"session_meta","payload":{"id":"worker","source":{"subagent":{"thread_spawn":{"parent_thread_id":"conversation","agent_nickname":"Halley"}}}}}"#,
+        )
+        .unwrap();
+        // The payload Codex 0.162's legacy notify appends to argv.
+        let notify = |thread: &str| {
+            json!({
+                "type": "agent-turn-complete", "thread-id": thread, "turn-id": "1",
+                "cwd": "/work", "client": "codex-tui", "input-messages": ["private prompt"],
+                "last-assistant-message": "private answer",
+            })
+        };
+        let cwd = Path::new("/elsewhere");
+        let top = codex_notify_event(&notify("conversation"), cwd, Some(&home)).unwrap();
+        assert_eq!(
+            (
+                top.kind,
+                top.session_id.as_str(),
+                top.cwd.as_path(),
+                &top.child
+            ),
+            (HookKind::Stopped, "conversation", Path::new("/work"), &None)
+        );
+        let child = codex_notify_event(&notify("worker"), cwd, Some(&home)).unwrap();
+        assert_eq!(child.session_id, "conversation");
+        assert_eq!(child.child.as_ref().unwrap().id, "worker");
+        assert!(!serde_json::to_string(&child).unwrap().contains("private"));
+        // The title request on a new conversation's first turn is ephemeral.
+        assert_eq!(
+            codex_notify_event(&notify("title-helper"), cwd, Some(&home)),
+            None
+        );
+        assert_eq!(codex_notify_event(&notify("conversation"), cwd, None), None);
+        std::fs::remove_dir_all(home).unwrap();
     }
 }

@@ -1252,6 +1252,9 @@ impl WorkspaceView {
         {
             self.ws.end_agent(pane);
         }
+        // A pane whose title reports Codex's run state takes turns from the
+        // title alone: a completion notify only names the conversation, so it
+        // can neither end a turn the title still reports nor announce it twice.
         if ev.agent == "codex"
             && ev.kind == HookKind::Stopped
             && !ev.session_id.is_empty()
@@ -1259,7 +1262,7 @@ impl WorkspaceView {
             && self
                 .ws
                 .pane(p)
-                .is_some_and(|i| parse_codex_title(&i.title) == Some(CodexRunState::Ready))
+                .is_some_and(|i| parse_codex_title(&i.title).is_some())
         {
             if self.ws.set_agent_session(
                 p,
@@ -2573,7 +2576,20 @@ impl WorkspaceView {
             let Some(state) = parse_codex_title(title) else {
                 return;
             };
-            if previous == Some(state) {
+            // Spinner frames and blinking repeat a state. They change nothing
+            // unless the pane's status no longer shows what the title reports.
+            let shown = info
+                .agent
+                .as_ref()
+                .filter(|a| a.agent == "codex")
+                .map(|a| a.status);
+            if previous == Some(state)
+                && match state {
+                    CodexRunState::Working => shown == Some(AgentStatus::Working),
+                    CodexRunState::WaitingInput => shown == Some(AgentStatus::WaitingInput),
+                    CodexRunState::Ready => true,
+                }
+            {
                 return;
             }
             match state {
@@ -3443,10 +3459,17 @@ impl WorkspaceView {
             .filter_map(|pane| {
                 let info = self.ws.pane(*pane)?;
                 let agent = info.agent.as_ref()?;
-                let status = match agent.status {
-                    AgentStatus::Working => "working",
-                    AgentStatus::WaitingInput => "waiting for input",
-                    AgentStatus::Review | AgentStatus::Idle => return None,
+                // Codex's own title still reports a turn the stored status
+                // may not show yet.
+                let titled = (agent.agent == "codex")
+                    .then(|| parse_codex_title(&info.title))
+                    .flatten();
+                let status = match (agent.status, titled) {
+                    (AgentStatus::Working, _) | (_, Some(CodexRunState::Working)) => "working",
+                    (AgentStatus::WaitingInput, _) | (_, Some(CodexRunState::WaitingInput)) => {
+                        "waiting for input"
+                    }
+                    (AgentStatus::Review | AgentStatus::Idle, _) => return None,
                 };
                 let session = info
                     .agent_session

@@ -552,6 +552,25 @@ impl Harness {
         };
         ipc::send(&ipc::socket_path(&self.home.data), &event).unwrap();
     }
+
+    /// Report a Codex turn completion as `chda hook codex` does for Codex's
+    /// `notify`: the payload Codex 0.162 sends, resolved against the
+    /// transcripts saved under the home's `.codex`, and sent for `pane` only
+    /// when it names a saved conversation or a child of one.
+    pub fn codex_notify(&self, pane: chda_core::PaneId, cwd: &Path, thread: &str) {
+        let payload = serde_json::json!({
+            "type": "agent-turn-complete", "thread-id": thread, "turn-id": "turn",
+            "cwd": cwd, "client": "codex-tui", "input-messages": [],
+            "last-assistant-message": null,
+        });
+        let codex_home = self.home.home.join(".codex");
+        if let Some(mut event) =
+            chda_core::agents::codex_notify_event(&payload, cwd, Some(&codex_home))
+        {
+            event.pane = Some(pane.raw());
+            ipc::send(&ipc::socket_path(&self.home.data), &event).unwrap();
+        }
+    }
 }
 
 /// Run a window until `done` holds, letting shells and watchers work.
