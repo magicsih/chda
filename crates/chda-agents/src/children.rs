@@ -84,10 +84,17 @@ impl ChildBoard {
                     ChildState::Ended => 4,
                 }
             }
+            // Unknown carries no evidence: it may clear a live state, never
+            // a confirmed turn completion or end.
             if event.observed_at < old.observed_at
                 || (event.observed_at == old.observed_at
                     && rank(event.child.state) <= rank(old.child.state))
                 || (old.child.state == ChildState::Ended && !event.child.started)
+                || (event.child.state == ChildState::Unknown
+                    && matches!(
+                        old.child.state,
+                        ChildState::TurnComplete | ChildState::Ended
+                    ))
             {
                 return false;
             }
@@ -361,6 +368,34 @@ mod tests {
         assert!(board.apply(resumed));
         assert_eq!(board.children("claude", "p1").len(), 1);
         assert!(ChildBoard::default().children("claude", "p1").is_empty());
+    }
+    #[test]
+    fn unknown_observation_keeps_turn_completion() {
+        let mut board = ChildBoard::default();
+        assert!(board.apply(event("p1", "c1", ChildState::Working, 10)));
+        // Missing evidence for a live child stays unknown.
+        assert!(board.apply(event("p1", "c1", ChildState::Unknown, 11)));
+        assert!(board.apply(event("p1", "c1", ChildState::TurnComplete, 12)));
+        // A later poll that only sees NotLoaded knows less than the report.
+        assert!(!board.apply(event("p1", "c1", ChildState::Unknown, 13)));
+        let kept = &board.children("claude", "p1")[0];
+        assert_eq!(kept.child.state, ChildState::TurnComplete);
+        assert_eq!(kept.observed_at, 12);
+        assert!(board.apply(event("p1", "c1", ChildState::Working, 14)));
+    }
+    #[test]
+    fn unknown_observation_keeps_ended() {
+        let mut board = ChildBoard::default();
+        assert!(board.apply(event("p1", "c1", ChildState::Ended, 10)));
+        for started in [false, true] {
+            let mut unknown = event("p1", "c1", ChildState::Unknown, 11);
+            unknown.child.started = started;
+            assert!(!board.apply(unknown));
+        }
+        assert_eq!(
+            board.children("claude", "p1")[0].child.state,
+            ChildState::Ended
+        );
     }
     #[test]
     fn codex_metadata_confirms_the_parent_and_only_current_runtime_status() {

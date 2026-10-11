@@ -1462,6 +1462,26 @@ impl WorkspaceView {
         });
     }
 
+    /// The agents running in `panes`, with their directories, taken before
+    /// the panes close. A closed pane sends no further hook or title, not
+    /// even a session end, so `resync_closed_agents` re-derives the status
+    /// they gave their worktrees from the panes that remain.
+    fn pane_agents(&self, panes: &[PaneId]) -> Vec<(String, PathBuf)> {
+        panes
+            .iter()
+            .filter_map(|pane| {
+                let info = self.ws.pane(*pane)?;
+                Some((info.agent.as_ref()?.agent.clone(), info.cwd.clone()?))
+            })
+            .collect()
+    }
+
+    fn resync_closed_agents(&mut self, agents: Vec<(String, PathBuf)>, cx: &mut Context<Self>) {
+        for (agent, cwd) in agents {
+            self.sync_worktree_agent_status(&agent, &cwd, cx);
+        }
+    }
+
     /// The pane an agent event belongs to: the one its hook named through
     /// `CHDA_PANE_ID`, else (agents started outside a chda shell) the most
     /// recently active pane in the event's worktree without a live agent.
@@ -1833,7 +1853,9 @@ impl WorkspaceView {
                 cx.background_executor().timer(STATUS_REFRESH).await;
                 ticks += 1;
                 let alive = this.update(cx, |view, cx| {
-                    view.poll_children(cx);
+                    if view.env.collect_telemetry {
+                        view.poll_children(cx);
+                    }
                     if view.sidebar_visible {
                         view.refresh_all(cx);
                         if ticks
@@ -2634,8 +2656,10 @@ impl WorkspaceView {
                     self.managed_exit(pane, status.as_ref(), output.as_ref(), window, cx);
                     return;
                 }
+                let agents = self.pane_agents(&[pane]);
                 self.ws.close_pane(pane);
                 self.panes.remove(&pane);
+                self.resync_closed_agents(agents, cx);
                 if self.ws.is_empty() {
                     // Nothing left to restore: this removes the saved session.
                     self.save_session();
@@ -3483,27 +3507,32 @@ impl WorkspaceView {
     }
 
     fn finish_close(&mut self, target: CloseTarget, window: &mut Window, cx: &mut Context<Self>) {
-        match target {
+        let agents = match target {
             CloseTarget::Tab(id) => {
                 let Some(tab) = self.ws.tabs().iter().find(|tab| tab.id == id) else {
                     return;
                 };
                 let panes = tab.panes();
+                let agents = self.pane_agents(&panes);
                 self.ws.close_tab(id);
                 self.graphs.remove(&id);
                 self.reviews.remove(&id);
                 for pane in panes {
                     self.panes.remove(&pane);
                 }
+                agents
             }
             CloseTarget::Pane(pane) => {
                 if self.ws.pane(pane).is_none() {
                     return;
                 }
+                let agents = self.pane_agents(&[pane]);
                 self.ws.close_pane(pane);
                 self.panes.remove(&pane);
+                agents
             }
-        }
+        };
+        self.resync_closed_agents(agents, cx);
         if self
             .renaming
             .as_ref()
@@ -3554,10 +3583,12 @@ impl WorkspaceView {
         if panes.is_empty() {
             return;
         }
+        let agents = self.pane_agents(panes);
         for pane in panes {
             self.ws.close_pane(*pane);
             self.panes.remove(pane);
         }
+        self.resync_closed_agents(agents, cx);
         if self.ws.is_empty() {
             self.open_tab_at(None, None, window, cx);
         } else {

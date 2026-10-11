@@ -256,6 +256,194 @@ fn navigation_reveals_only_clipped_rows_and_keeps_repository_context(cx: &mut Te
     }
 }
 
+/// The repository name pinned at PROJECT's top acts on its repository like
+/// the header it stands in for, never on the worktree row scrolled under it,
+/// and the wheel still scrolls PROJECT over it (#149).
+#[gpui::test]
+fn sticky_repository_header_acts_on_its_repository(cx: &mut TestAppContext) {
+    use super::harness::git;
+
+    let mut repo = std::path::PathBuf::new();
+    let mut paths = Vec::new();
+    let mut h = Harness::open(cx, "sticky-header", |home| {
+        repo = home.repo("app");
+        let other = home.repo("other-app");
+        for (owner, prefix) in [(&repo, "task"), (&other, "other")] {
+            for index in 0..16 {
+                let branch = format!("{prefix}-{index:02}");
+                let path = home.home.join(&branch);
+                git(
+                    owner,
+                    &[
+                        "worktree",
+                        "add",
+                        "-q",
+                        "-b",
+                        &branch,
+                        path.to_str().unwrap(),
+                    ],
+                );
+                // A branch note gives the whole worktree row a tooltip.
+                git(
+                    owner,
+                    &[
+                        "config",
+                        &format!("branch.{branch}.description"),
+                        &format!("Note {branch}"),
+                    ],
+                );
+                if owner == &repo {
+                    paths.push(path);
+                }
+            }
+        }
+        std::fs::write(
+            &home.config,
+            format!(
+                "repos = [\"{}\", \"{}\"]\n",
+                repo.display(),
+                other.display()
+            ),
+        )
+        .unwrap();
+    });
+    h.wait_prompt();
+    h.cx.simulate_resize(gpui::size(px(960.0), px(480.0)));
+    h.wait_for("all worktrees and notes", |v, cx| {
+        let repos = &v.sidebar.read(cx).model.repos;
+        repos.len() == 2
+            && repos
+                .iter()
+                .all(|r| r.worktrees.len() == 17 && r.worktrees.iter().any(|w| w.note.is_some()))
+    });
+    h.view.update(&mut h.cx, |v, cx| {
+        v.sidebar.update(cx, |s, cx| {
+            s.model.set_sort(chda_core::SortOrder::Name);
+            cx.notify();
+        })
+    });
+    click_row(&mut h, "sessions-section-toggle");
+    let settle = |h: &mut Harness| {
+        for _ in 0..3 {
+            h.cx.run_until_parked();
+            h.cx.update(|window, cx| window.simulate_next_frame(cx));
+        }
+        h.cx.run_until_parked();
+    };
+    let scroll = h.read(|v, cx| v.sidebar.read(cx).project_scroll.clone());
+    let covered = paths[6].clone();
+    let selector: &'static str = Box::leak(format!("wt:{}", covered.display()).into_boxed_str());
+    // Scroll PROJECT so the sticky name covers the middle of `covered`.
+    let scroll_under_sticky = |h: &mut Harness| {
+        settle(h);
+        let row = h.cx.debug_bounds(selector).unwrap();
+        let target = scroll.bounds().top() + px(16.0) - row.size.height / 2.0;
+        scroll.set_offset(point(
+            px(0.0),
+            (scroll.offset().y + target - row.top()).clamp(-scroll.max_offset().y, px(0.0)),
+        ));
+        h.view
+            .update(&mut h.cx, |v, cx| v.sidebar.update(cx, |_, cx| cx.notify()));
+        settle(h);
+        let sticky =
+            h.cx.debug_bounds("sticky-repo-context")
+                .expect("the repository name is pinned over its rows");
+        let row = h.cx.debug_bounds(selector).unwrap();
+        assert!(
+            row.top() < sticky.center().y && row.bottom() > sticky.center().y,
+            "{row:?} lies under {sticky:?}"
+        );
+        sticky.center()
+    };
+    let at = scroll_under_sticky(&mut h);
+    let tabs = h.read(|v, _| v.ws.tabs().len());
+    let selected = h.read(|v, cx| v.sidebar.read(cx).selected.clone());
+
+    // Hover shows the repository, not the covered worktree's note.
+    let (repo_tip, note_tip) = h.read(|v, cx| {
+        let model = &v.sidebar.read(cx).model;
+        let (repo, worktree) = model.worktree_for_path(&covered).unwrap();
+        (
+            repo.path.to_string_lossy().into_owned(),
+            format!(
+                "{}\n\n{}",
+                worktree.note.as_deref().unwrap(),
+                worktree.branch.as_deref().unwrap()
+            ),
+        )
+    });
+    hover(&mut h, at);
+    assert!(tooltip(&mut h, &repo_tip), "{repo_tip}");
+    assert!(!tooltip(&mut h, &note_tip), "{note_tip}");
+
+    // The wheel over the name scrolls PROJECT.
+    let before = scroll.offset().y;
+    h.cx.simulate_event(gpui::ScrollWheelEvent {
+        position: at,
+        delta: gpui::ScrollDelta::Pixels(point(px(0.0), px(-40.0))),
+        modifiers: Modifiers::none(),
+        touch_phase: gpui::TouchPhase::Moved,
+    });
+    settle(&mut h);
+    assert!(
+        scroll.offset().y < before,
+        "the wheel over the sticky name scrolls PROJECT"
+    );
+    let at = scroll_under_sticky(&mut h);
+
+    // Right-click: the repository's menu, not the covered worktree's.
+    h.cx.simulate_mouse_down(at, MouseButton::Right, Modifiers::none());
+    h.cx.simulate_mouse_up(at, MouseButton::Right, Modifiers::none());
+    h.cx.run_until_parked();
+    let items: Vec<String> = h.read(|v, _| {
+        v.context_menu
+            .as_ref()
+            .expect("a menu opens")
+            .items
+            .iter()
+            .map(|(label, _)| label.clone())
+            .collect()
+    });
+    assert!(
+        items.iter().any(|l| l == "New worktree...")
+            && items.iter().any(|l| l == "Remove from sidebar"),
+        "{items:?}"
+    );
+    assert!(
+        !items
+            .iter()
+            .any(|l| l.starts_with("Delete worktree") || l == "Open terminal"),
+        "{items:?}"
+    );
+    h.keys("escape");
+    assert!(h.read(|v, _| v.context_menu.is_none()));
+
+    // Left-click collapses the repository and leaves its header in view;
+    // the covered worktree does not open.
+    h.cx.simulate_click(at, Modifiers::none());
+    settle(&mut h);
+    h.read(|v, cx| {
+        let sidebar = v.sidebar.read(cx);
+        assert!(sidebar.model.repos[0].collapsed, "the repository collapses");
+        assert!(!sidebar.model.repos[1].collapsed);
+        assert_eq!(v.ws.tabs().len(), tabs, "no terminal opens");
+        assert_eq!(sidebar.selected, selected, "the highlight stays");
+        assert!(sidebar.project_scroll.max_offset().y > px(0.0));
+    });
+    assert!(h.cx.debug_bounds(selector).is_none());
+    assert!(h.cx.debug_bounds("sticky-repo-context").is_none());
+    let header = h.cx.debug_bounds("repo-0").unwrap();
+    let viewport = scroll.bounds();
+    assert!(
+        (header.top() - viewport.top()).abs() < px(1.0),
+        "the collapsed header {header:?} sits at PROJECT's top {viewport:?}"
+    );
+    // The real header expands it again.
+    click_row(&mut h, "repo-0");
+    assert!(h.read(|v, cx| !v.sidebar.read(cx).model.repos[0].collapsed));
+    assert_eq!(h.read(|v, _| v.ws.tabs().len()), tabs);
+}
+
 #[gpui::test]
 fn project_is_a_peer_section_and_collapses_without_hiding_sessions(cx: &mut TestAppContext) {
     use super::harness::wait_until;
