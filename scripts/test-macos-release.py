@@ -225,6 +225,92 @@ class ExceptionEvidenceTests(unittest.TestCase):
             self.verify(data, record, built_at=timestamp(-1), artifact_sha256='a' * 64)
 
 
+def reduced_exception_record():
+    record = json.loads(exception_record())
+    record.update(tag='v0.1.22', owner_instruction='예외 출시: 반복 검수 생략 (권장)',
+                  incomplete_checks=sorted(release.EXCEPTION_CHECKS - release.ARTIFACT_CHECKS),
+                  observed_failures=['CHILD-161'])
+    return json.dumps(record, sort_keys=True, ensure_ascii=False) + '\n'
+
+
+def reduced_exception_evidence(record, stage='before-build'):
+    data = exception_evidence(record, stage)
+    data['candidate']['tag'] = 'v0.1.22'
+    data.update(observed_failures=['CHILD-161'])
+    if stage == 'before-deploy':
+        data['signed_artifact'] = {
+            'sha256': 'a' * 64, 'evidence_sha256': 'b' * 64,
+            'checks': sorted(release.ARTIFACT_CHECKS), 'result': 'passed'}
+    return data
+
+
+class ReducedExceptionTests(unittest.TestCase):
+    def verify(self, data, record, **kwargs):
+        return release.validate_evidence(
+            data, 'v0.1.22', SHA, TREE, CONFIG, data['stage'], now=NOW,
+            exception_record=record, **kwargs)
+
+    def test_reduced_exception_preserves_failure_and_requires_signed_smoke(self):
+        record = reduced_exception_record()
+        before = reduced_exception_evidence(record)
+        self.assertEqual(self.verify(before, record), before)
+        after = reduced_exception_evidence(record, 'before-deploy')
+        self.assertEqual(self.verify(after, record, built_at=timestamp(1),
+                                     artifact_sha256='a' * 64), after)
+
+    def test_observed_failure_cannot_be_hidden_or_relabelled_as_passed(self):
+        record = reduced_exception_record()
+        for mutate in (
+            lambda d: d.pop('observed_failures'),
+            lambda d: d.update(observed_failures=[]),
+            lambda d: d.update(native_result='passed'),
+        ):
+            data = reduced_exception_evidence(record)
+            mutate(data)
+            with self.subTest(mutate=mutate), self.assertRaises(ValueError):
+                self.verify(data, record)
+        altered = json.loads(record)
+        altered['observed_failures'] = []
+        other = json.dumps(altered, sort_keys=True)
+        with self.assertRaises(ValueError):
+            self.verify(reduced_exception_evidence(other), other)
+
+    def test_owner_did_not_waive_actual_signed_artifact_checks(self):
+        altered = json.loads(reduced_exception_record())
+        altered['incomplete_checks'].append('session-preserving-update')
+        record = json.dumps(altered, sort_keys=True)
+        with self.assertRaises(ValueError):
+            self.verify(reduced_exception_evidence(record), record)
+
+    def test_deploy_refuses_missing_failed_or_wrong_archive_signed_smoke(self):
+        record = reduced_exception_record()
+        for mutate in (
+            lambda d: d.pop('signed_artifact'),
+            lambda d: d['signed_artifact'].update(result='failed'),
+            lambda d: d['signed_artifact'].update(sha256='d' * 64),
+            lambda d: d['signed_artifact']['checks'].remove('shell-pid-preservation'),
+        ):
+            data = reduced_exception_evidence(record, 'before-deploy')
+            mutate(data)
+            with self.subTest(mutate=mutate), self.assertRaises(ValueError):
+                self.verify(data, record, built_at=timestamp(1), artifact_sha256='a' * 64)
+
+    def test_approval_remains_candidate_bound_and_is_not_a_general_skip_option(self):
+        record = reduced_exception_record()
+        for key, value in (('sha', '9' * 40), ('tree', '9' * 40),
+                           ('config_sha256', '9' * 64),
+                           ('owner_instruction', 'skip tests')):
+            altered = json.loads(record)
+            altered[key] = value
+            other = json.dumps(altered, sort_keys=True)
+            with self.subTest(key=key), self.assertRaises(ValueError):
+                self.verify(reduced_exception_evidence(other), other)
+        data = reduced_exception_evidence(record)
+        with self.assertRaises(ValueError):
+            release.validate_evidence(data, 'v0.1.23', SHA, TREE, CONFIG,
+                                      'before-build', now=NOW, exception_record=record)
+
+
 class ArtifactTests(unittest.TestCase):
     def test_manifest_binds_archive_appcast_source_and_evidence(self):
         with tempfile.TemporaryDirectory() as folder:
@@ -490,6 +576,24 @@ class PromotionTests(unittest.TestCase):
                 with self.assertRaises(ValueError):
                     release.freeze_exception('v0.1.21')
                 self.assertFalse(gate.with_suffix('.exception.json').exists())
+
+    def test_reduced_approval_is_frozen_from_main_before_candidate_checkout(self):
+        value = json.loads(reduced_exception_record())
+        value.update(sha=self.sha, tree=self.tree)
+        record = json.dumps(value, sort_keys=True, indent=2, ensure_ascii=False) + '\n'
+        doc = self.repo / release.EXCEPTION_PATHS['v0.1.22']
+        doc.parent.mkdir(parents=True)
+        doc.write_text(record)
+        gate = self.root / 'reduced-gate.py'
+        with patch.object(release, '__file__', str(gate)):
+            release.freeze_exception('v0.1.22')
+            self.assertIsNone(release.frozen_exception())
+            self.git('add', str(doc.relative_to(self.repo)))
+            self.git('commit', '-m', 'chore: synthetic reduced approval')
+            release.freeze_exception('v0.1.22')
+            self.git('switch', '--detach', self.sha)
+            self.assertFalse(doc.exists())
+            self.assertEqual(release.frozen_exception(), record)
 
 
 class CaskTests(unittest.TestCase):

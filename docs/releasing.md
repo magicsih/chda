@@ -13,6 +13,12 @@ v0.1.21에 한해 차단 상태를 전달받은 뒤 사용자가 공개를 재�
 `blocked`로 유지한다. 기존 서명·공증·ZIP·동일 draft 공개 검사는 유지한다.
 아래의 정상 schema 1 조건을 통과했다는 뜻이 아니다.
 
+v0.1.22는 사용자가 장시간 검수를 줄이도록 요청한 뒤, 반복 검수와 두 전체 E2E
+생략을 선택했다. [한정 예외 기록](releases/v0.1.22-native-validation-exception.md)은
+부분 검수와 CHILD-161 완료 후 Unknown 관찰을 보존한다. schema 2의
+`native_result: blocked`를 유지하고 실제 signed ZIP의 4개 검사는 여전히
+공개 필수 조건이다. 다른 후보나 미래 버전에 적용하는 skip 옵션은 없다.
+
 ## 후보와 실제 검수
 
 기능 구현과 CI가 통과한 후보를 실제 macOS 개발 실행 환경에서 세 번 검수한다.
