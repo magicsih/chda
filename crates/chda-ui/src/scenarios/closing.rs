@@ -1,5 +1,6 @@
 //! Tab-wide shutdown, pane shortcuts and cancellable agent protection (#108).
-use super::harness::Harness;
+use super::harness::{Harness, git};
+use crate::workspace_view::MenuAction;
 use chda_core::agents::HookKind;
 use chda_core::{AgentStatus, PaneId, SavedWindow};
 use gpui::{Modifiers, MouseButton, MouseDownEvent, MouseUpEvent, TestAppContext};
@@ -304,4 +305,181 @@ fn last_graph_shortcut_removes_restore_data(cx: &mut TestAppContext) {
         h.read(|view, _| view.ws.is_empty() && view.graphs.is_empty() && view.confirm.is_none())
     );
     assert!(!SavedWindow::path(&h.home.data).exists());
+}
+
+/// The worktree's agent status as PROJECT and Update branch see it.
+fn worktree_status(h: &mut Harness, repo: &std::path::Path) -> (AgentStatus, String) {
+    let event =
+        crate::sidebar_view::SidebarEvent::WorktreeMenu(repo.to_path_buf(), gpui::Point::default());
+    let status = h.read(|view, cx| {
+        view.sidebar
+            .read(cx)
+            .model
+            .worktree_for_path(repo)
+            .unwrap()
+            .1
+            .status()
+    });
+    h.cx.update(|window, cx| {
+        h.view
+            .update(cx, |view, cx| view.on_sidebar_event(event, window, cx))
+    });
+    let update = h.read(|view, _| {
+        let menu = view.context_menu.as_ref().unwrap();
+        let (_, action) = menu
+            .items
+            .iter()
+            .find(|(label, _)| label.starts_with("Update branch"))
+            .unwrap();
+        match action {
+            MenuAction::Unavailable(reason) => reason.clone(),
+            MenuAction::UpdateBranch { .. } => "enabled".into(),
+            other => format!("{other:?}"),
+        }
+    });
+    h.view.update(&mut h.cx, |view, cx| {
+        view.context_menu = None;
+        cx.notify();
+    });
+    (status, update)
+}
+
+/// Stop and close, from the pane shortcut or a tab's close button, ends the
+/// working status its Claude Code or Codex agent gave the worktree in PROJECT
+/// and Update branch, as does a pane whose process ends under a working
+/// agent; another agent pane in the branch keeps it working (#154).
+#[gpui::test]
+fn stop_and_close_clears_the_worktree_working_status(cx: &mut TestAppContext) {
+    let mut repo = std::path::PathBuf::new();
+    let mut h = Harness::open(cx, "close-status", |home| {
+        repo = home.repo("app");
+        let src = repo.parent().unwrap();
+        git(src, &["clone", "-q", "--bare", "app", "origin.git"]);
+        git(&repo, &["remote", "add", "origin", "../origin.git"]);
+        git(&repo, &["fetch", "-q", "origin"]);
+        git(&repo, &["branch", "-q", "-u", "origin/main", "main"]);
+        std::fs::write(&home.config, format!("repos = [\"{}\"]\n", repo.display())).unwrap();
+    });
+    h.wait_prompt();
+    h.wait_for("an updatable main worktree", {
+        let repo = repo.clone();
+        move |view, cx| {
+            view.sidebar
+                .read(cx)
+                .model
+                .worktree_for_path(&repo)
+                .is_some_and(|(_, w)| chda_core::update_blocker(w).is_none())
+        }
+    });
+    let cd = |h: &mut Harness, repo: &std::path::Path| {
+        h.wait_prompt();
+        h.run(
+            &format!("cd {}", chda_term::shell_quote(&repo.to_string_lossy())),
+            "test%",
+        );
+        let pane = focused(h);
+        let repo = repo.to_path_buf();
+        h.wait_for("the pane in the branch", move |view, _| {
+            view.ws.pane(pane).and_then(|p| p.cwd.as_ref()) == Some(&repo)
+        });
+        pane
+    };
+    // Like an agent CLI, a foreground command holds the pane, so the shell
+    // draws no prompt while hooks or titles report the turn.
+    let run_agent = |h: &mut Harness, name: &str, command: &str| {
+        let started = h.home.home.join(format!("{name}.started"));
+        h.type_text(&format!("touch '{}'; {command}", started.display()));
+        h.keys("enter");
+        h.wait_for("the stand-in agent", move |_, _| started.exists());
+    };
+    let working = |h: &mut Harness, pane: PaneId, agent: &'static str| {
+        h.wait_for("a working agent", move |view, _| {
+            view.ws
+                .pane(pane)
+                .and_then(|p| p.agent.as_ref())
+                .is_some_and(|a| a.agent == agent && a.status == AgentStatus::Working)
+        });
+    };
+    let focus = |h: &mut Harness, pane: PaneId| {
+        let row = format!("session-pane-{}", pane.raw());
+        click(h, Box::leak(row.into_boxed_str()), 1);
+        assert_eq!(focused(h), pane);
+    };
+    // The first tab stays outside the branch, so the window survives.
+    h.keys("cmd-t");
+    let claude = cd(&mut h, &repo);
+    run_agent(&mut h, "claude", "sleep 600");
+    h.keys("cmd-d");
+    let second = cd(&mut h, &repo);
+    run_agent(&mut h, "second", "sleep 600");
+    for (pane, session) in [(claude, "first-session"), (second, "second-session")] {
+        h.hook_session(Some(pane.raw()), &repo, HookKind::PromptSubmitted, session);
+        working(&mut h, pane, "claude");
+    }
+    h.keys("cmd-t");
+    let codex = cd(&mut h, &repo);
+    // Codex reports its turn only in its title.
+    run_agent(
+        &mut h,
+        "codex",
+        r"printf '\033]0;codex | Working\007'; sleep 600",
+    );
+    working(&mut h, codex, "codex");
+    assert_eq!(
+        worktree_status(&mut h, &repo),
+        (AgentStatus::Working, "Claude Code is working here".into())
+    );
+
+    // Stop and close one Claude Code pane: the other keeps the branch working.
+    focus(&mut h, second);
+    h.keys("cmd-w");
+    assert!(h.read(|view, _| view.confirm.is_some()));
+    click(&mut h, "confirm-ok", 1);
+    assert!(h.read(|view, _| view.ws.pane(second).is_none()));
+    assert_eq!(
+        worktree_status(&mut h, &repo),
+        (AgentStatus::Working, "Claude Code is working here".into())
+    );
+    // Closing the last one ends Claude Code's status; Codex still works.
+    focus(&mut h, claude);
+    h.keys("cmd-w");
+    assert!(h.read(|view, _| view.confirm.is_some()));
+    click(&mut h, "confirm-ok", 1);
+    assert!(h.read(|view, _| view.ws.pane(claude).is_none()));
+    assert_eq!(
+        worktree_status(&mut h, &repo),
+        (AgentStatus::Working, "Codex is working here".into())
+    );
+
+    // Stop and close the Codex tab from its close button.
+    focus(&mut h, codex);
+    click(&mut h, "tab-close-0", 1);
+    assert!(h.read(|view, _| view.confirm.is_some()));
+    click(&mut h, "confirm-ok", 1);
+    assert!(h.read(|view, _| view.ws.pane(codex).is_none()));
+    let (status, update) = worktree_status(&mut h, &repo);
+    assert_ne!(status, AgentStatus::Working);
+    assert_eq!(update, "enabled");
+
+    // An agent pane whose process ends without a session end.
+    h.keys("cmd-t");
+    let ending = cd(&mut h, &repo);
+    let pid = shell_pid(&mut h, "ending");
+    run_agent(&mut h, "ending", "exec sleep 600");
+    h.hook_session(
+        Some(ending.raw()),
+        &repo,
+        HookKind::PromptSubmitted,
+        "ending-session",
+    );
+    working(&mut h, ending, "claude");
+    assert_eq!(worktree_status(&mut h, &repo).0, AgentStatus::Working);
+    Command::new("kill").arg(pid.to_string()).status().unwrap();
+    h.wait_for("the ended pane closed", move |view, _| {
+        view.ws.pane(ending).is_none()
+    });
+    let (status, update) = worktree_status(&mut h, &repo);
+    assert_ne!(status, AgentStatus::Working);
+    assert_eq!(update, "enabled");
+    assert_eq!(h.read(|view, _| view.ws.tabs().len()), 1);
 }
