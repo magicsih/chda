@@ -1,6 +1,8 @@
 //! The repository / worktree / session tree with git and agent badges.
 
-use std::path::PathBuf;
+use std::cell::Cell;
+use std::path::{Path, PathBuf};
+use std::rc::Rc;
 
 use crate::status_icon::status_icon;
 use crate::workspace_view::blend;
@@ -231,6 +233,10 @@ pub struct SidebarView {
     pub(crate) sessions_collapsed: bool,
     pub(crate) project_collapsed: bool,
     sticky_repo: Option<PathBuf>,
+    /// How far the sticky repository's group starts above PROJECT's top, as
+    /// of the last layout; collapsing it from the sticky name scrolls back
+    /// by this much.
+    sticky_overhang: Rc<Cell<Pixels>>,
     /// The first session index has finished.
     pub sessions_loaded: bool,
     /// Labels and names of the agents chda knows.
@@ -442,6 +448,7 @@ impl SidebarView {
             sessions_collapsed: false,
             project_collapsed: false,
             sticky_repo: None,
+            sticky_overhang: Rc::default(),
             sessions_loaded: false,
             agents,
             picked: Vec::new(),
@@ -559,6 +566,16 @@ impl SidebarView {
         }
     }
 
+    /// Collapse or expand a repository's worktrees, from its header or the
+    /// sticky name standing in for it.
+    fn toggle_repo(&mut self, path: &Path, cx: &mut Context<Self>) {
+        if let Some(r) = self.model.repo_mut(path) {
+            r.collapsed = !r.collapsed;
+        }
+        cx.emit(SidebarEvent::RefocusTerminal);
+        cx.notify();
+    }
+
     /// Show or hide a worktree's past sessions.
     pub(crate) fn toggle_expanded(&mut self, path: &PathBuf, cx: &mut Context<Self>) {
         if let Some(i) = self.expanded.iter().position(|p| p == path) {
@@ -603,20 +620,9 @@ impl SidebarView {
             .hover(|s| s.bg(fg.opacity(0.08)))
             .on_click({
                 let path = path.clone();
-                cx.listener(move |this, _, _, cx| {
-                    if let Some(r) = this.model.repo_mut(&path) {
-                        r.collapsed = !r.collapsed;
-                    }
-                    cx.emit(SidebarEvent::RefocusTerminal);
-                    cx.notify();
-                })
+                cx.listener(move |this, _, _, cx| this.toggle_repo(&path, cx))
             })
-            .on_mouse_down(MouseButton::Right, {
-                let path = path.clone();
-                cx.listener(move |_, e: &MouseDownEvent, _, cx| {
-                    cx.emit(SidebarEvent::RepoMenu(path.clone(), e.position));
-                })
-            })
+            .on_mouse_down(MouseButton::Right, repo_menu(path.clone(), cx))
             .child(div().w_3().text_color(fg.opacity(0.6)).child(if collapsed {
                 "\u{25b8}"
             } else {
@@ -1192,6 +1198,17 @@ impl SidebarView {
         }
         col.into_any_element()
     }
+}
+
+/// A right-click on a repository's header, or on the sticky name standing in
+/// for it, opens that repository's menu.
+fn repo_menu(
+    path: PathBuf,
+    cx: &mut Context<SidebarView>,
+) -> impl Fn(&MouseDownEvent, &mut Window, &mut App) + 'static {
+    cx.listener(move |_, e: &MouseDownEvent, _, cx| {
+        cx.emit(SidebarEvent::RepoMenu(path.clone(), e.position));
+    })
 }
 
 /// "1 commit" / "3 commits".
@@ -1778,6 +1795,7 @@ impl Render for SidebarView {
             .collect();
         let scroll = self.project_scroll.clone();
         let current = self.sticky_repo.clone();
+        let overhang = self.sticky_overhang.clone();
         let this = cx.entity().downgrade();
         let repo_groups = div()
             .flex()
@@ -1792,7 +1810,10 @@ impl Render for SidebarView {
                         (!collapsed
                             && bounds.top() < viewport.top()
                             && bounds.bottom() > viewport.top() + gpui::px(REPO_CONTEXT_HEIGHT))
-                        .then(|| path.clone())
+                        .then(|| {
+                            overhang.set(viewport.top() - bounds.top());
+                            path.clone()
+                        })
                     });
                 if next == current {
                     return;
@@ -1918,6 +1939,8 @@ impl Render for SidebarView {
                     .child(project),
             )
             .when_some(sticky, |d, repo| {
+                let hovered = blend(self.bg, fg, 0.08);
+                let path = repo.path.clone();
                 d.child(
                     div()
                         .id("sticky-repo-context")
@@ -1938,9 +1961,30 @@ impl Render for SidebarView {
                         .overflow_hidden()
                         .whitespace_nowrap()
                         .text_ellipsis()
+                        // It stands in for the repository's header: the rows
+                        // scrolled underneath get no clicks or hover, and the
+                        // wheel still scrolls PROJECT.
+                        .block_mouse_except_scroll()
+                        .cursor_pointer()
+                        .hover(move |s| s.bg(hovered))
                         .tooltip(crate::tooltip::text(
                             repo.path.to_string_lossy().into_owned(),
                         ))
+                        .on_click({
+                            let path = path.clone();
+                            cx.listener(move |this, _, _, cx| {
+                                // Collapsed, the repository is just its header,
+                                // which starts above PROJECT's top: scroll it
+                                // back into view where the sticky name was.
+                                let scroll = &this.project_scroll;
+                                let mut offset = scroll.offset();
+                                offset.y =
+                                    (offset.y + this.sticky_overhang.get()).min(gpui::px(0.0));
+                                scroll.set_offset(offset);
+                                this.toggle_repo(&path, cx);
+                            })
+                        })
+                        .on_mouse_down(MouseButton::Right, repo_menu(path, cx))
                         .child(repo.name.clone()),
                 )
             });
