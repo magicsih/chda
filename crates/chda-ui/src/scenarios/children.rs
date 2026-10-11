@@ -4,10 +4,22 @@ use chda_core::agents::{ChildEvent, ChildState, HookEvent, HookKind, ipc};
 use gpui::{TestAppContext, VisualContext};
 
 fn send(h: &Harness, pane: u64, parent: &str, id: &str, state: ChildState, at: u64) {
+    send_from(h, "claude", pane, parent, id, state, at);
+}
+
+fn send_from(
+    h: &Harness,
+    agent: &str,
+    pane: u64,
+    parent: &str,
+    id: &str,
+    state: ChildState,
+    at: u64,
+) {
     ipc::send(
         &ipc::socket_path(&h.home.data),
         &HookEvent {
-            agent: "claude".into(),
+            agent: agent.into(),
             session_id: parent.into(),
             cwd: h.home.home.clone(),
             kind: HookKind::Stopped,
@@ -239,4 +251,73 @@ fn children_route_to_exact_parents_across_windows_and_focus_only_a_known_child_p
         second.read_with(&second_cx, |v, _| v.ws.focused_pane()),
         Some(parent)
     );
+}
+
+#[gpui::test]
+fn codex_poll_failure_keeps_child_states(cx: &mut TestAppContext) {
+    use std::os::unix::fs::PermissionsExt;
+    let mut h = Harness::open(cx, "child-poll-failure", |home| {
+        // The CLI is installed, but its local metadata query fails.
+        std::fs::create_dir_all(&home.bin).unwrap();
+        let codex = home.bin.join("codex");
+        std::fs::write(
+            &codex,
+            "#!/bin/sh\necho poll >> \"$(dirname \"$0\")/polls\"\nexit 1\n",
+        )
+        .unwrap();
+        std::fs::set_permissions(&codex, std::fs::Permissions::from_mode(0o755)).unwrap();
+    });
+    h.wait_prompt();
+    let pane = h.read(|v, _| v.ws.focused_pane().unwrap());
+    h.hook_from(
+        "codex",
+        Some(pane.raw()),
+        &h.home.home,
+        HookKind::SessionStart,
+        "p1",
+    );
+    h.wait_for("live Codex parent", |v, _| {
+        v.env
+            .windows
+            .borrow()
+            .entries
+            .iter()
+            .flat_map(|e| e.sessions.values())
+            .any(|(agent, session, live)| agent == "codex" && session == "p1" && *live)
+    });
+    // Earlier than the poll, so only the failure handling can keep them.
+    let at = crate::terminal_view::now_ms() - 10;
+    for (id, state) in [
+        ("running", ChildState::Working),
+        ("finished", ChildState::TurnComplete),
+    ] {
+        send_from(&h, "codex", pane.raw(), "p1", id, state, at);
+    }
+    let states = |v: &crate::workspace_view::WorkspaceView, cx: &gpui::App| {
+        v.sidebar
+            .read(cx)
+            .child_groups
+            .iter()
+            .flat_map(|g| g.children.iter())
+            .map(|c| (c.child.id.clone(), c.child.state))
+            .collect::<Vec<_>>()
+    };
+    let expected = vec![
+        ("running".to_owned(), ChildState::Working),
+        ("finished".to_owned(), ChildState::TurnComplete),
+    ];
+    h.wait_for("both children reported", |v, cx| states(v, cx) == expected);
+    h.cx.update(|_, cx| h.view.update(cx, |v, cx| v.poll_children(cx)));
+    assert!(h.read(|v, _| v.env.windows.borrow().child_polling));
+    h.wait_for("failed poll settled", |v, _| {
+        !v.env.windows.borrow().child_polling
+    });
+    assert_eq!(
+        std::fs::read_to_string(h.home.bin.join("polls"))
+            .unwrap()
+            .lines()
+            .count(),
+        1
+    );
+    assert_eq!(h.read(states), expected);
 }
