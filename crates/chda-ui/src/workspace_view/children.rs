@@ -88,10 +88,7 @@ impl WorkspaceView {
             cx.notify();
         }
     }
-    pub(super) fn poll_children(&mut self, cx: &mut Context<Self>) {
-        if !self.env.collect_telemetry {
-            return;
-        }
+    pub(crate) fn poll_children(&mut self, cx: &mut Context<Self>) {
         let registry = self.env.windows.clone();
         let mut state = registry.borrow_mut();
         if state.child_polling || state.update.frozen || state.update.preparing || state.quitting {
@@ -129,6 +126,8 @@ impl WorkspaceView {
         cx.spawn(async move |this, cx| {
             let result = task.await;
             registry.borrow_mut().child_polling = false;
+            // A failed query says nothing about any child.
+            let Ok(events) = result else { return };
             // Query completion never navigates or focuses a terminal.
             let entries = registry.borrow().entries.clone();
             let still_live: HashSet<_> = entries
@@ -137,15 +136,15 @@ impl WorkspaceView {
                 .filter(|(a, _, live)| a == "codex" && *live)
                 .map(|(_, s, _)| s.clone())
                 .collect();
-            let events = result.unwrap_or_default();
             {
                 let mut registry = registry.borrow_mut();
                 for parent in &parents {
                     if !still_live.contains(parent) {
                         continue;
                     }
+                    // Absence only removes evidence for a live state.
                     for mut old in registry.children.children("codex", parent) {
-                        if old.child.state != ChildState::Ended
+                        if old.child.state.active()
                             && !events
                                 .iter()
                                 .any(|e| e.parent == *parent && e.child.id == old.child.id)
@@ -239,6 +238,7 @@ impl WorkspaceView {
                 .child(format!("{} · last report {} ago", child.child.state.label(), chda_core::activity_age(now_ms(), child.observed_at)))
                 .child(format!("Child: {}", child.child.id))
                 .child(format!("Parent: {}", child.parent))
+                .when(child.child.state == ChildState::Unknown, |d| d.child("This provider does not report live child status. Unknown means no current report, not that the child stopped."))
                 .child("No unique dedicated pane is known. This view does not navigate to another conversation.")
                 .child(div().id("close-child-details").cursor_pointer().p_2().child("Close").on_click(cx.listener(|v, _, window, cx| v.close_child_details(window, cx))))
         ).into_any_element())

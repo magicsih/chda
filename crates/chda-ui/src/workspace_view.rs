@@ -1850,7 +1850,9 @@ impl WorkspaceView {
                 cx.background_executor().timer(STATUS_REFRESH).await;
                 ticks += 1;
                 let alive = this.update(cx, |view, cx| {
-                    view.poll_children(cx);
+                    if view.env.collect_telemetry {
+                        view.poll_children(cx);
+                    }
                     if view.sidebar_visible {
                         view.refresh_all(cx);
                         if ticks

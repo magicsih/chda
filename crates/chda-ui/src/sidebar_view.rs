@@ -348,15 +348,30 @@ fn pr_badge(pr: &PrInfo, bg: Hsla) -> (&'static str, Hsla) {
     (icon, gpui::rgb(color).into())
 }
 
+/// A child group's counts. Unknown children are counted on their own, so
+/// the group never claims that nothing runs when the provider cannot tell.
+fn child_counts(children: &[chda_core::agents::ChildActivity]) -> String {
+    use chda_core::agents::ChildState;
+    let active = children.iter().filter(|e| e.child.state.active()).count();
+    let unknown = children
+        .iter()
+        .filter(|e| e.child.state == ChildState::Unknown)
+        .count();
+    let mut counts = Vec::new();
+    if active > 0 || unknown == 0 {
+        counts.push(format!("{active} active"));
+    }
+    if unknown > 0 {
+        counts.push(format!("{unknown} unknown"));
+    }
+    counts.push(format!("{} children", children.len()));
+    counts.join(" · ")
+}
+
 impl SidebarView {
     fn render_children(&self, group: &ChildGroup, now: u64, cx: &mut Context<Self>) -> AnyElement {
         let key = (group.agent.clone(), group.session.clone());
         let collapsed = self.child_collapsed.contains(&key);
-        let active = group
-            .children
-            .iter()
-            .filter(|e| e.child.state.active())
-            .count();
         let fg = self.fg;
         let pane = group.pane.raw();
         div().flex().flex_col().min_w_0()
@@ -365,7 +380,7 @@ impl SidebarView {
                 .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
                 .on_click(cx.listener(move |s, _, _, cx| { cx.stop_propagation(); if !s.child_collapsed.remove(&key) { s.child_collapsed.insert(key.clone()); } cx.emit(SidebarEvent::RefocusTerminal); cx.notify(); }))
                 .child(if collapsed { "▸" } else { "▾" })
-                .child(format!("{} · {active} active · {} children", group.agent, group.children.len()))
+                .child(format!("{} · {}", group.agent, child_counts(&group.children)))
                 .tooltip(crate::tooltip::text(format!("{}\nExact parent: {}\nCounts reflect provider reports; usage is already included in the existing session total.", group.label, group.session))))
             .when(!collapsed, |d| d.children(group.children.iter().map(|entry| {
                 let child = entry.clone();
@@ -2045,6 +2060,38 @@ mod tests {
             usage_lines(&u)
                 .ends_with("Plan limit: 34% of the weekly window used at the last turn.")
         );
+    }
+
+    #[test]
+    fn child_counts_never_claim_zero_active_for_unknown_children() {
+        use chda_core::agents::{ChildActivity, ChildEvent, ChildState};
+        let group = |states: &[ChildState]| {
+            let children: Vec<_> = states
+                .iter()
+                .enumerate()
+                .map(|(i, &state)| ChildActivity {
+                    agent: "codex".into(),
+                    parent: "parent".into(),
+                    child: ChildEvent {
+                        id: format!("child-{i}"),
+                        label: None,
+                        state,
+                        started: false,
+                    },
+                    observed_at: 1,
+                })
+                .collect();
+            child_counts(&children)
+        };
+        use ChildState::*;
+        assert_eq!(group(&[TurnComplete]), "0 active · 1 children");
+        assert_eq!(group(&[Working, Ended]), "1 active · 2 children");
+        assert_eq!(group(&[Unknown, Unknown]), "2 unknown · 2 children");
+        assert_eq!(
+            group(&[Working, Unknown, TurnComplete]),
+            "1 active · 1 unknown · 3 children"
+        );
+        assert_eq!(group(&[Unknown, TurnComplete]), "1 unknown · 2 children");
     }
 
     #[test]
