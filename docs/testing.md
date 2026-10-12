@@ -225,3 +225,23 @@ updater-enabled release. See [decision 0011](decisions/0011-session-preserving-u
 ## Private Diff review
 
 `scenarios::diff_review` uses isolated repositories, real shells and native GPUI entities. It covers discovery beside the existing pager; old/new range entry; refresh preserving a draft; stale edits retaining their original anchor; restored virtual tabs without additional PTYs; failed saves and draft copying; fresh batch previews; changed diff and exact conversation rejection; manual clipboard handoff preserving unfinished terminal input. `chda-core::review::tests` and `chda-git::review_diff::tests` cover exact context attachment, private storage, optimistic window conflicts, path and hunk parsing, external-helper exclusion and handoff serialization. These tests do not count as pixel or actual macOS review rounds.
+
+## Terminal engine integrity (#224)
+
+Run `python3 scripts/test-prepare-ghostty.py` for synthetic preparation guards
+and `python3 scripts/prepare-ghostty.py --check` for the real prepared source.
+The `vt::tests::scrolled_resize_keeps_debug_integrity` subprocess regression
+covers row growth, preserved cursors and reflow without losing the test suite
+to Zig's abort. `growing_rows_preserves_a_viewport_still_in_history` checks the
+history anchor. The checked patch also carries direct PageList regressions. The source check
+runs these alongside the upstream recycled-row, trimmed-row and viewport-pin
+regressions; it keeps Debug integrity enabled throughout:
+
+```sh
+python3 scripts/prepare-ghostty.py --test
+```
+
+Keep Debug integrity enabled. Before the patch, the newly active viewport
+cases abort with `ViewportPinInsufficientRows` during `grow()`. Native font and
+window resizing, copied hard line breaks and Kitty temporary-file images still
+require the final macOS candidate check.

@@ -37,7 +37,7 @@ gpui = { git = "https://github.com/zed-industries/zed.git", rev = "f8c2cc8440575
 gpui_platform = { git = "https://github.com/zed-industries/zed.git", rev = "f8c2cc844057540ca1eac7de4f19f50d7597dead", features = ["font-kit", "wayland", "x11"] }
 
 # Terminal core (ADR-0001). Only chda-term may depend on it.
-libghostty-vt = "0.2.2"
+libghostty-vt = { git = "https://github.com/Uzaaft/libghostty-rs", rev = "d2036baeb605d31d09a9e2ba6d0c923e04c34d54" }
 
 # git reads (ADR-0003). Only chda-git may depend on it.
 # Kitty graphics PNG payloads; the version GPUI's `image` crate already uses.

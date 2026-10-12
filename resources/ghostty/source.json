@@ -1,0 +1,12 @@
+{
+  "libghostty_rs_commit": "d2036baeb605d31d09a9e2ba6d0c923e04c34d54",
+  "ghostty_commit": "3425025e585a3403340d4dc6d65132f42e05e605",
+  "zig_version": "0.16.0",
+  "archive_url": "https://codeload.github.com/ghostty-org/ghostty/tar.gz/3425025e585a3403340d4dc6d65132f42e05e605",
+  "archive_sha256": "268760f13121b4f4cd33456e1b216415a8c0c5a8c62ff2b87a14ee4f74bd7590",
+  "patch": "resize-viewport.patch",
+  "patch_sha256": "356b5ca8ade80db494d4709a46f9d442913c75061b93661f1493ac4f7eabce3e",
+  "upstream_file_sha256": "439b43614559499f790db3e80bad41f9d8e3bb9f98d286468eaf17aeea5205cd",
+  "patched_file_sha256": "33b5e2b2ff323c1ba119e2301ab87f8703ea7b6251ee0441e3f9b1164d5918c9",
+  "source_sha256": "856371ee49075c0809ba47a36e968c375be14867f445a7b4ffd20a51b0f473a6"
+}
