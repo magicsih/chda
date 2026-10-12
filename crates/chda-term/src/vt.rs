@@ -113,6 +113,14 @@ pub struct Terminal {
 impl Terminal {
     /// Create a terminal with the given size and scrollback limit in bytes.
     pub fn new(size: Size, max_scrollback: usize) -> Result<Self> {
+        Self::with_temp_directory(size, max_scrollback, &std::env::temp_dir())
+    }
+
+    fn with_temp_directory(
+        size: Size,
+        max_scrollback: usize,
+        process_temp: &std::path::Path,
+    ) -> Result<Self> {
         let mut vt = VtTerminal::new(size.cols, size.rows)?;
         vt.set_scrollback_max_bytes(Some(max_scrollback))?;
         let hooks = Rc::new(Hooks::default());
@@ -148,12 +156,13 @@ impl Terminal {
         // libghostty asks the embedder to decode PNG payloads, on the
         // thread that owns the terminal.
         kitty::set_png_decoder(Some(Box::new(graphics::PngDecoder)))?;
-        let temp_dir = std::env::temp_dir()
+        let temp_dir = process_temp
             .canonicalize()
-            .map_err(|_| Error(libghostty_vt::Error::InvalidValue))?;
+            .ok()
+            .filter(|path| path.is_dir());
         vt.set_kitty_image_storage_limit(graphics::STORAGE_LIMIT)?
-            .set_kitty_image_from_file_allowed(true)?
-            .set_kitty_image_temp_file_dir(Some(&temp_dir))?
+            .set_kitty_image_from_file_allowed(temp_dir.is_some())?
+            .set_kitty_image_temp_file_dir(temp_dir.as_deref())?
             .set_kitty_image_from_shared_mem_allowed(true)?;
 
         Ok(Self {
@@ -1558,6 +1567,24 @@ mod tests {
                 end: 6,
                 uri: "https://example.com/x".into()
             }]
+        );
+    }
+
+    #[test]
+    fn unavailable_process_temp_directory_keeps_terminal_usable() {
+        let missing =
+            std::env::temp_dir().join(format!("chda-missing-temp-{}", std::process::id()));
+        assert!(!missing.exists());
+        let mut terminal =
+            Terminal::with_temp_directory(Size { cols: 40, rows: 4 }, 4096, &missing).unwrap();
+        assert!(!terminal.vt.is_kitty_image_from_file_allowed().unwrap());
+        terminal.feed(b"usable terminal");
+        assert!(
+            terminal
+                .frame()
+                .unwrap()
+                .row_text(0)
+                .contains("usable terminal")
         );
     }
 

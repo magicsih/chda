@@ -42,7 +42,7 @@ def verify_source(manifest, source):
     if source.is_symlink() or not source.is_dir():
         raise ValueError("Ghostty source is not prepared; run python3 scripts/prepare-ghostty.py")
     if source_digest(source) != manifest["source_sha256"]:
-        raise ValueError("Ghostty source integrity mismatch; existing source was preserved")
+        raise ValueError(f"Ghostty source integrity mismatch; existing source was preserved. Move {source} aside, then rerun preparation")
 
 
 def prepare(manifest, patches, source, archive=None, *, check=False):
@@ -51,6 +51,14 @@ def prepare(manifest, patches, source, archive=None, *, check=False):
         raise ValueError("Ghostty patch integrity mismatch")
     if source.exists() or source.is_symlink():
         verify_source(manifest, source)
+        marker = source.with_suffix(".unverified")
+        if marker.exists():
+            if check:
+                raise ValueError("Ghostty native cache is unverified; run python3 scripts/prepare-ghostty.py before Cargo")
+            # A failed Cargo guard can race the dependency's native build.
+            # Exact source restoration alone must not make that artifact fresh.
+            subprocess.run(["cargo", "clean", "-p", "libghostty-vt-sys"], cwd=ROOT, check=True)
+            marker.unlink()
         return
     if check:
         raise ValueError("Ghostty source is not prepared; run python3 scripts/prepare-ghostty.py")
@@ -91,6 +99,20 @@ def prepare(manifest, patches, source, archive=None, *, check=False):
         if source.exists() or source.is_symlink():
             raise ValueError("Ghostty source appeared during preparation; existing source was preserved")
         staging.rename(source)
+    prepare(manifest, patches, source, check=False)
+
+
+def prepare_dependency(metadata, resources, source, *, check=False):
+    archive = resources / metadata['archive']
+    if hashlib.sha256(archive.read_bytes()).hexdigest() != metadata['archive_sha256']:
+        raise ValueError('Pinned translate-c archive integrity mismatch')
+    # Keep the upstream .zon URL/hash and source digest unchanged. Zig checks
+    # the package's canonical content hash before populating its own cache.
+    if not check:
+        result = subprocess.run(['zig', 'fetch', str(archive.resolve())], cwd=source,
+                                check=True, capture_output=True, text=True)
+        if result.stdout.strip() != metadata['zig_hash']:
+            raise ValueError('Pinned translate-c Zig package hash mismatch')
 
 
 def main():
@@ -103,6 +125,8 @@ def main():
     try:
         source = ROOT / ".ghostty-source" / manifest["source_sha256"][:16]
         prepare(manifest, RESOURCES, source, args.archive, check=args.check)
+        dependency = json.loads((RESOURCES / 'translate-c.json').read_text())
+        prepare_dependency(dependency, RESOURCES, source, check=args.check)
         if args.test:
             subprocess.run(["zig", "build", "test-lib-vt", "-Demit-lib-vt=true", "-Doptimize=Debug", "-Dtest-filter=PageList chda", "-Dtest-filter=chda temporary image", "-Dtest-filter=PageList eraseRow recycled", "-Dtest-filter=PageList eraseRowBounded recycled", "-Dtest-filter=PageList resize trimmed rows", "-Dtest-filter=PageList resize grow cols with unwrap fixes viewport pin", "--summary", "failures"], cwd=source, check=True)
     except (ValueError, OSError, subprocess.CalledProcessError) as error:
