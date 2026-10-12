@@ -213,9 +213,22 @@ pub fn links_at(frame: &Frame, x: u16, y: u16) -> Vec<Link> {
             });
         }
     }
-    // Avoid repeating a metadata lookup for the same legacy token.
-    out.dedup();
-    out
+    // All path candidates share one lookup budget, including the prior
+    // quoted/parenthesized forms and a distinct legacy token. Keep the
+    // earliest (highest-priority) cells for repeated targets.
+    let mut unique = Vec::new();
+    for link in out {
+        if !unique
+            .iter()
+            .any(|known: &Link| known.target == link.target)
+        {
+            unique.push(link);
+            if unique.len() == MAX_BARE_PATH_CHECKS {
+                break;
+            }
+        }
+    }
+    unique
 }
 
 fn explicit_starts(text: &str) -> impl Iterator<Item = usize> + '_ {
@@ -564,6 +577,33 @@ mod tests {
         });
         assert!(found.is_none());
         assert_eq!(checks, 16);
+    }
+
+    #[test]
+    fn exact_limit_includes_legacy_and_parenthesized_candidates() {
+        let words = (0..16)
+            .map(|n| format!("part{n}"))
+            .collect::<Vec<_>>()
+            .join(" ");
+        for text in [
+            format!("/tmp/Notes {words}"),
+            format!("(see /tmp/Notes {words})"),
+        ] {
+            let f = frame(400, &[&text], &[]);
+            let x = text.find("part0").unwrap() as u16 + 2;
+            let candidates = links_at(&f, x, 0);
+            assert!(
+                candidates.len() <= MAX_BARE_PATH_CHECKS,
+                "{} candidates: {candidates:?}",
+                candidates.len()
+            );
+            assert!(
+                candidates
+                    .iter()
+                    .all(|link| link.target != path_target("part0").unwrap()),
+                "exhausted lookup must not open a cut token"
+            );
+        }
     }
 
     #[test]
