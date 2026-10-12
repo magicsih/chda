@@ -80,3 +80,14 @@ retaining genuine history anchors and Debug integrity assertions. Kitty temporar
 images are restricted to the process directory after validating the opened file
 handle. Remove each corresponding patch when a pinned upstream revision includes the equivalent behavior and passes the
 same regressions; do not change optimize mode to avoid a failure.
+
+## Terminal path lookup
+
+OSC 8, URLs and quoted/prose-parenthesized paths retain precedence. Explicit
+unquoted paths (`/`, `~/`, `./`, `../`) then use the longest existing candidate
+across spaces and filename parentheses on the same logical line. Soft wraps join;
+hard newlines, quotes, tabs, `<`, `>` and `|`, and adjacent explicit path starts
+separate candidates. New bare-path lookup performs at most 16 filesystem checks.
+After exhausting that bound it does not fall back to a cut legacy prefix. Results
+are shared for the frame, working directory and segment. Activating a displayed
+path checks the same target still exists rather than replacing it.

@@ -1,5 +1,6 @@
 //! A view that owns one terminal session and forwards input to it.
 
+use std::cell::RefCell;
 use std::ops::Range;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -187,8 +188,22 @@ pub struct TerminalView {
     hover_cell: Option<(u16, u16)>,
     cmd_held: bool,
     pub hovered_link: Option<HoveredLink>,
+    link_cache: RefCell<Option<LinkCache>>,
     /// Files dragged over the window from another app.
     dragged: crate::external_drop::Dragged,
+}
+
+struct LinkCache {
+    generation: u64,
+    cwd: Option<PathBuf>,
+    segment: Vec<(u16, u16, u16)>,
+    link: Option<HoveredLink>,
+}
+
+fn covers(cells: &[(u16, u16, u16)], x: u16, y: u16) -> bool {
+    cells
+        .iter()
+        .any(|&(row, start, end)| row == y && (start..=end).contains(&x))
 }
 
 impl EventEmitter<TerminalEvent> for TerminalView {}
@@ -364,6 +379,7 @@ impl TerminalView {
             hover_cell: None,
             cmd_held: false,
             hovered_link: None,
+            link_cache: RefCell::new(None),
             dragged: Default::default(),
         }
     }
@@ -1035,14 +1051,44 @@ impl TerminalView {
 
     /// The first link candidate at cell `(x, y)` that resolves.
     fn link_at(&self, x: u16, y: u16) -> Option<HoveredLink> {
-        chda_term::links_at(&self.frame, x, y)
-            .into_iter()
-            .find_map(|l| {
-                Some(HoveredLink {
-                    open: self.resolve_link(l.target)?,
-                    cells: l.cells,
-                })
+        if let Some(cache) = self.link_cache.borrow().as_ref()
+            && cache.generation == self.frame.generation
+            && cache.cwd == self.cwd
+            && (covers(&cache.segment, x, y)
+                || cache
+                    .link
+                    .as_ref()
+                    .is_some_and(|link| covers(&link.cells, x, y)))
+        {
+            return cache.link.clone().filter(|link| covers(&link.cells, x, y));
+        }
+        let candidates = chda_term::link_candidates_at(&self.frame, x, y);
+        let link = candidates.links.into_iter().find_map(|link| {
+            Some(HoveredLink {
+                open: self.resolve_link(link.target)?,
+                cells: link.cells,
             })
+        });
+        *self.link_cache.borrow_mut() = Some(LinkCache {
+            generation: self.frame.generation,
+            cwd: self.cwd.clone(),
+            segment: candidates.segment,
+            link: link.clone(),
+        });
+        link.filter(|link| covers(&link.cells, x, y))
+    }
+
+    fn action_link_at(&self, x: u16, y: u16) -> Option<HoveredLink> {
+        let link = self.link_at(x, y)?;
+        if let LinkOpen::Path { path, is_dir, .. } = &link.open
+            && !std::fs::metadata(path).is_ok_and(|meta| meta.is_dir() == *is_dir)
+        {
+            if let Some(cache) = self.link_cache.borrow_mut().as_mut() {
+                cache.link = None;
+            }
+            return None;
+        }
+        Some(link)
     }
 
     /// URLs open as they are; paths must exist, relative to the shell's
@@ -1117,7 +1163,7 @@ impl TerminalView {
                 position: event.position,
                 link: self
                     .hover_cell
-                    .and_then(|(x, y)| self.link_at(x, y))
+                    .and_then(|(x, y)| self.action_link_at(x, y))
                     .map(|l| l.open),
                 at_prompt: self.frame.at_prompt(),
             });
@@ -1125,7 +1171,7 @@ impl TerminalView {
         }
         if wants_menu
             && let Some((x, y)) = self.hover_cell
-            && let Some(link) = self.link_at(x, y)
+            && let Some(link) = self.action_link_at(x, y)
         {
             cx.emit(TerminalEvent::LinkMenu {
                 link: link.open,
@@ -1136,7 +1182,8 @@ impl TerminalView {
         }
         if event.button == MouseButton::Left
             && event.modifiers.platform
-            && let Some(link) = self.hovered_link.clone()
+            && let Some((x, y)) = self.hover_cell
+            && let Some(link) = self.action_link_at(x, y)
         {
             match link.open {
                 LinkOpen::Url(url) => cx.open_url(&url),

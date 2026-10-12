@@ -58,11 +58,19 @@ fn menu_item(h: &Harness, label: &str) -> MenuAction {
 }
 
 fn choose(h: &mut Harness, label: &str) {
-    let action = menu_item(h, label);
-    h.cx.update(|window, cx| {
-        h.view
-            .update(cx, |v, cx| v.run_menu_action(action, window, cx))
+    let index = h.read(|v, _| {
+        v.context_menu
+            .as_ref()
+            .unwrap()
+            .items
+            .iter()
+            .position(|(text, _)| text == label)
+            .unwrap()
     });
+    h.cx.run_until_parked();
+    let selector = Box::leak(format!("menu-item-{index}").into_boxed_str());
+    let bounds = h.cx.debug_bounds(selector).expect("menu item bounds");
+    h.cx.simulate_click(bounds.center(), Modifiers::none());
     h.cx.run_until_parked();
 }
 
@@ -420,5 +428,134 @@ fn wrapped_path_actions_use_the_full_target_instead_of_an_existing_prefix(
         right_click(&mut h, at);
         choose(&mut h, "Reveal in Finder");
         assert_eq!(h.system.0.borrow().revealed.last(), Some(&full));
+    }
+}
+
+#[gpui::test]
+fn bare_paths_share_complete_hover_click_and_menu_targets_across_soft_wraps(
+    cx: &mut gpui::TestAppContext,
+) {
+    let mut h = Harness::open(cx, "bare-paths", |_| {});
+    h.wait_prompt();
+    let term = h.focused_terminal();
+    let cols = h.read(|_, cx| term.read(cx).frame().size.cols as usize);
+    std::fs::write(h.home.home.join("Notes"), "short prefix").unwrap();
+    for (directory, name, escaped, line, column) in [
+        ("Notes Folder", "file.txt", false, Some(3), Some(2)),
+        ("./Notes Folder", "relative.txt", false, Some(2), Some(5)),
+        ("(draft dir)", "f.txt", false, Some(3), None),
+        ("Notes (draft)", "file.txt", true, None, None),
+        ("작업 문서", "설계 (초안).md", false, Some(2), Some(5)),
+    ] {
+        let full = h
+            .home
+            .home
+            .join(directory)
+            .join("d/".repeat(cols / 2))
+            .join(name);
+        std::fs::create_dir_all(full.parent().unwrap()).unwrap();
+        std::fs::write(&full, "fixture").unwrap();
+        let printed_path = if directory.starts_with("./") {
+            format!("./{}", full.strip_prefix(&h.home.home).unwrap().display())
+        } else {
+            full.to_string_lossy().into_owned()
+        };
+        let printed = if escaped {
+            printed_path.replace(' ', "\\ ")
+        } else {
+            printed_path
+        };
+        let suffix = line
+            .map(|line| {
+                column.map_or_else(|| format!(":{line}"), |column| format!(":{line}:{column}"))
+            })
+            .unwrap_or_default();
+        h.run(
+            &format!(
+                "clear; printf '\\nBare %s{suffix}\\n' {}",
+                chda_term::shell_quote(&printed)
+            ),
+            name,
+        );
+        h.wait_for("bare path output without echoed command", {
+            let term = term.clone();
+            move |_, cx| {
+                let frame = term.read(cx).frame();
+                (0..frame.size.rows).any(|row| frame.row_text(row).starts_with("Bare "))
+                    && !(0..frame.size.rows).any(|row| frame.row_text(row).contains("printf"))
+            }
+        });
+        let row = h.read(|_, cx| {
+            let frame = term.read(cx).frame();
+            (0..frame.size.rows)
+                .find(|row| frame.row_text(*row).starts_with("Bare "))
+                .unwrap()
+        });
+        let position = |h: &Harness, row: u16, col: u16| {
+            h.read(|_, cx| {
+                let g = term.read(cx).geometry.unwrap();
+                point(
+                    g.origin.x + g.cell_width * (f32::from(col) + 0.5),
+                    g.origin.y + g.line_height * (f32::from(row) + 0.5),
+                )
+            })
+        };
+        let at = position(&h, row, 5);
+        h.cx.simulate_mouse_move(at, None, Modifiers::command());
+        let link = h
+            .read(|_, cx| term.read(cx).hovered_link.clone())
+            .expect("full bare path");
+        assert_eq!(
+            link.open,
+            LinkOpen::Path {
+                path: full.clone(),
+                line,
+                column,
+                is_dir: false
+            }
+        );
+        assert!(link.cells.len() > 1, "fixture must wrap");
+        for (row, start, end) in link.cells.clone() {
+            for col in [start, (start + end) / 2, end] {
+                let at = position(&h, row, col);
+                h.cx.simulate_mouse_move(at, None, Modifiers::command());
+                assert_eq!(
+                    h.read(|_, cx| term.read(cx).hovered_link.clone()),
+                    Some(link.clone())
+                );
+                h.cx.simulate_click(at, Modifiers::command());
+                h.cx.run_until_parked();
+                assert_eq!(h.system.0.borrow().opened_files.last(), Some(&full));
+                right_click(&mut h, at);
+                assert!(
+                    matches!(menu_item(&h,"Open"),MenuAction::OpenPath{path,line:l,column:c} if path==full && l==line && c==column)
+                );
+                choose(&mut h, "Copy absolute path");
+                assert_eq!(
+                    h.read(|_, cx| cx.read_from_clipboard().and_then(|item| item.text()))
+                        .as_deref(),
+                    Some(&*full.to_string_lossy())
+                );
+            }
+        }
+        let (row, start, _) = link.cells[0];
+        let at = position(&h, row, start);
+        h.cx.run_until_parked();
+        h.cx.simulate_mouse_move(at, None, Modifiers::command());
+        h.cx.run_until_parked();
+        assert_eq!(
+            h.read(|_, cx| term.read(cx).hovered_link.clone())
+                .map(|link| link.open),
+            Some(link.open.clone())
+        );
+        std::fs::remove_file(&full).unwrap();
+        let count = h.system.0.borrow().opened_files.len();
+        h.cx.simulate_click(at, Modifiers::command());
+        h.cx.run_until_parked();
+        assert_eq!(
+            h.system.0.borrow().opened_files.len(),
+            count,
+            "deleted path changed to a prefix or was opened"
+        );
     }
 }

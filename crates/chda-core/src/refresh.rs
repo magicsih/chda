@@ -131,6 +131,8 @@ pub fn diff_command(merge_base: &str) -> Vec<String> {
         "git",
         "-c",
         "core.pager=less -+F -R",
+        "-c",
+        "core.quotePath=false",
         "diff",
         "--stat",
         "--patch",
@@ -289,4 +291,75 @@ pub fn index_sessions(
             )
         })
         .collect()
+}
+
+#[cfg(test)]
+mod diff_tests {
+    use super::*;
+    use std::process::Command;
+
+    #[test]
+    fn diff_pager_prints_utf8_names_in_stat_and_patch_without_changing_config() {
+        let repo = std::env::temp_dir().join(format!("chda-diff-utf8-{}", std::process::id()));
+        assert!(!repo.exists());
+        std::fs::create_dir(&repo).unwrap();
+        struct Cleanup(PathBuf);
+        impl Drop for Cleanup {
+            fn drop(&mut self) {
+                let _ = std::fs::remove_dir_all(&self.0);
+            }
+        }
+        let _cleanup = Cleanup(repo.clone());
+        let git = |args: &[&str]| {
+            let output = Command::new("git")
+                .args(args)
+                .current_dir(&repo)
+                .output()
+                .unwrap();
+            assert!(
+                output.status.success(),
+                "{}",
+                String::from_utf8_lossy(&output.stderr)
+            );
+            String::from_utf8(output.stdout).unwrap()
+        };
+        git(&["init", "-q", "-b", "main"]);
+        git(&["config", "user.name", "Test"]);
+        git(&["config", "user.email", "test@example.invalid"]);
+        git(&["config", "core.quotePath", "true"]);
+        git(&["commit", "-q", "--allow-empty", "-m", "base"]);
+        let name = "日本語 문서.txt";
+        std::fs::write(repo.join(name), "hi\n").unwrap();
+        git(&["add", "."]);
+        git(&["commit", "-q", "-m", "add"]);
+        let argv = diff_command("HEAD~1");
+        let output = Command::new(&argv[0])
+            .args(&argv[1..])
+            .env("GIT_PAGER", "cat")
+            .current_dir(&repo)
+            .output()
+            .unwrap();
+        assert!(output.status.success());
+        let output = String::from_utf8(output.stdout).unwrap();
+        assert!(
+            output
+                .lines()
+                .any(|line| line.contains(name) && line.contains("| 1 +")),
+            "{output}"
+        );
+        assert!(
+            output
+                .lines()
+                .any(|line| line.starts_with("diff --git ") && line.contains(name)),
+            "{output}"
+        );
+        assert!(
+            output
+                .lines()
+                .any(|line| line.starts_with("+++ ") && line.contains(name))
+        );
+        assert!(argv.contains(&"core.pager=less -+F -R".into()));
+        assert_eq!(argv.last().unwrap(), "HEAD~1");
+        assert_eq!(git(&["config", "core.quotePath"]).trim(), "true");
+    }
 }

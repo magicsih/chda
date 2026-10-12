@@ -140,3 +140,12 @@
 - 메뉴 최종 로컬 전체 UI 실행은 193/195 통과, 가짜 forge 테스트 2개 실패였다. 처음 로컬 URL rewrite는 forge 식별도 바꾸어 부적합하므로 제거했다. 원래 URL을 유지하고 검수 저장소의 HTTP proxy만 loopback의 닫힌 포트로 격리한 뒤 두 테스트가 모두 통과했다. 앞선 네트워크 대기 실행은 중단했으며 통과로 계산하지 않는다.
 - 기존 sidebar reveal 시나리오의 display-frame 대기를 명시하고 Sessions 실제 접힘을 확인했다. 전체 실행에서 reveal 시나리오가 통과했으며 제품의 reveal 로직은 변경하지 않았다.
 - 최종 메뉴 변경의 workspace clippy, fmt, 제품 문서 테스트 6개, 생성 문서 일치 검사가 통과했다. 정확한 PR HEAD의 전체 workspace/세 OS CI 및 최종 native 검수는 별도 확인한다.
+
+## 영역 5 · 경로와 diff
+
+- 승인 설계 1.0 및 #210/#212에 맞춰 기존 OSC 8/URL/인용/외부 괄호 우선순위를 유지했다. 파일명 안의 괄호는 외부 prose 경계로 해석하지 않고 명시적 시작점의 가장 긴 existing path부터 확인한다. soft wrap만 연결하고 hard newline·인접 explicit path·hard delimiter는 분리한다.
+- 실제 수정 전 bare-path logic 2개는 기존 짧은 prefix를 선택하거나 soft wrap의 전체 경로를 찾지 못해 실패했다. 실제 Git 저장소 diff는 UTF-8 파일명을 octal escape로 표시해 실패했다. compile 오류를 RED로 계산하지 않았다.
+- 수정 뒤 links 전체 16개, real Git diff 1개, path UI 시나리오 9개 통과. 기존 경로 8개와 새 절대/상대·Unicode·escaped-space·괄호·wrapped 경로의 start/middle/end hover, click, 실제 menu-item 마우스 선택을 검증했다. 표시한 대상을 삭제한 뒤 클릭해 다른 prefix를 열지 않음을 확인했다.
+- 새 후보는 최대 16개/확인으로 제한하고 한도 초과 시 legacy cut-prefix fallback을 제외했다. frame generation·cwd·구간 cache를 hover/click/menu에서 재사용하고 action은 같은 대상의 metadata만 재확인한다. 누락된 대상은 해당 cache 결과를 비운다.
+- 최초 path UI 실행 8/9는 메뉴 종료 후 새 hover 없이 삭제한 fixture 상태에서 실패했다. 표시된 target을 다시 hover하고 이벤트를 안정화한 실제 삭제-클릭 순서로 보완했으며 해당 실행을 통과로 계산하지 않았다.
+- workspace clippy 통과. native #212 검수와 최종 HEAD 전체 CI/Pages 검수는 아직 수행하지 않았다.
