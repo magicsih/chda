@@ -162,3 +162,47 @@
 +    try testing.expectEqual(before, s.viewport_pin.*);
 +    try s.verifyIntegrity();
 +}
+--- a/src/terminal/kitty/graphics_image.zig
++++ b/src/terminal/kitty/graphics_image.zig
+@@ -492,16 +492,13 @@
+         return path;
+     }
+
+-    /// Returns true if path appears to be in a temporary directory.
+-    /// Copies logic from Kitty.
++    /// Restrict temporary images to the embedder's process directory.
+     fn isPathInTempDir(
+         io: std.Io,
+         alloc: Allocator,
+         dir: []const u8,
+         path: []const u8,
+     ) Allocator.Error!bool {
+-        if (isPathInDir("/tmp", path)) return true;
+-        if (isPathInDir("/dev/shm", path)) return true;
+         if (isPathInDir(dir, path)) return true;
+
+         // The temporary dir is sometimes a symlink. On macOS for
+@@ -2203,3 +2200,23 @@
+     );
+     defer loading.deinit(alloc);
+ }
++
++test "chda temporary image uses only the provided process directory" {
++    const testing = std.testing;
++    const alloc = testing.allocator;
++    const io = testing.io;
++    const dir = "/chda-private-process-temp";
++    for ([_][]const u8{
++        "/tmp/tty-graphics-protocol-image.data",
++        "/dev/shm/tty-graphics-protocol-image.data",
++        "/chda-private-process-temp-extra/tty-graphics-protocol-image.data",
++    }) |path| {
++        try testing.expect(!try LoadingImage.isPathInTempDir(io, alloc, dir, path));
++    }
++    try testing.expect(try LoadingImage.isPathInTempDir(
++        io,
++        alloc,
++        dir,
++        "/chda-private-process-temp/tty-graphics-protocol-image.data",
++    ));
++}

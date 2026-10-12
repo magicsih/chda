@@ -4,9 +4,17 @@
   "zig_version": "0.16.0",
   "archive_url": "https://codeload.github.com/ghostty-org/ghostty/tar.gz/3425025e585a3403340d4dc6d65132f42e05e605",
   "archive_sha256": "268760f13121b4f4cd33456e1b216415a8c0c5a8c62ff2b87a14ee4f74bd7590",
-  "patch": "resize-viewport.patch",
-  "patch_sha256": "594a387a186e1775bbbba4571d645762717ed1c2ec9739d66e6af8150132931f",
-  "upstream_file_sha256": "439b43614559499f790db3e80bad41f9d8e3bb9f98d286468eaf17aeea5205cd",
-  "patched_file_sha256": "33b5e2b2ff323c1ba119e2301ab87f8703ea7b6251ee0441e3f9b1164d5918c9",
-  "source_sha256": "856371ee49075c0809ba47a36e968c375be14867f445a7b4ffd20a51b0f473a6"
+  "patch": "terminal-integrity.patch",
+  "patch_sha256": "bba82fa40b47203bfdf6af2fc9ba548a23da3372e9dd73e8b11ae329bc6430e9",
+  "source_sha256": "9d05e6c187faa7d2f2c19dd4ea34c1583c670bdf16a7dab21fac32e47ecf8cea",
+  "files": {
+    "src/terminal/PageList.zig": {
+      "upstream_sha256": "439b43614559499f790db3e80bad41f9d8e3bb9f98d286468eaf17aeea5205cd",
+      "patched_sha256": "33b5e2b2ff323c1ba119e2301ab87f8703ea7b6251ee0441e3f9b1164d5918c9"
+    },
+    "src/terminal/kitty/graphics_image.zig": {
+      "upstream_sha256": "3f7c1aeb6ead17488e9ce5ec1fde6a5c6c75d8bebeef13ddddcff66a18acd63c",
+      "patched_sha256": "d744edf27def64072b125f9cd36a504f272708af842daa1d9d45f95fc2e0bfc4"
+    }
+  }
 }

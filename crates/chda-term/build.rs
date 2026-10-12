@@ -52,7 +52,7 @@ fn main() {
     );
     println!("cargo:rerun-if-env-changed=GHOSTTY_SOURCE_DIR");
     let source = root
-        .join("target/ghostty-source")
+        .join(".ghostty-source")
         .join(&manifest["source_sha256"].as_str().unwrap()[..16]);
     assert!(
         source.is_dir() && !source.is_symlink(),

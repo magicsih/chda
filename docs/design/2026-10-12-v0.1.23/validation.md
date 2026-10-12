@@ -65,3 +65,13 @@
 - 이 실행 역시 전체 통과로 기록하지 않는다. 새 최종 HEAD의 CI와 단독·관련 시나리오 결과를 확인한다.
 
 - 수정 후 로컬 준비 9 tests·실제 Cargo guard 2 tests·관련 sidebar 마우스/스크롤 시나리오 10 tests 통과. 명시적 width·offset·bounds 검사는 유지했다. 전체 최종 CI 결과는 별도로 확인한다.
+
+### source cache 분리와 Kitty 경계 완성
+
+- 세 번째 CI: Windows의 source 준비는 통과했지만 Zig 의존성 다운로드가 HTTP 504로 실패했다. Linux는 Rust cache가 복원한 불완전한 source를 무결성 검사에서 거부했다. 이 결과를 빌드 통과로 세지 않는다.
+- 준비 소스를 Cargo target 밖의 `.ghostty-source/<source hash>`로 분리한다. 소스 변조 거부와 기존 source 보존 규칙은 유지하며, cache 안의 파일을 지워 문제를 숨기지 않는다.
+- upstream은 명시적 임시 디렉터리 외에도 `/tmp`·`/dev/shm`를 허용한다. 제공된 process dir만 허용해야 하는 직접 Debug 회귀가 수정 전 실패했고, 두 fallback을 제거한 최소 패치 뒤 통과했다. 열린 file handle의 실제 경로 검증·경계·Windows canonical 경로 처리는 유지한다.
+- 새 `terminal-integrity.patch`에는 PageList와 이 Kitty 경계 수정만 포함한다. 고정 archive를 깨끗하게 추출해 전체 source hash와 파일별 audit hash를 다시 계산했다. 새 source/hash의 최종 검사를 수행한다.
+
+- 세 번째 HEAD `364afb7`의 macOS CI는 workspace 전체 검사·clippy·Debug 회귀·Cargo guard·updater 컴파일·release build까지 통과했다. Linux/Windows 실패가 있어 PR 전체 통과는 아니다.
+- 새 source `9d05e6c187faa7d2`에서 명시적 Debug 회귀·Rust terminal 64 passed/2 ignored·실제 Cargo guard 2 tests·준비 9 tests·제품 문서 6 tests·fmt·생성 문서 일치를 다시 확인했다. 최종 CI 및 교차 코드 리뷰를 확인한 뒤 통합한다.

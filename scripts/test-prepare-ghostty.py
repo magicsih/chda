@@ -69,7 +69,8 @@ class PreparationTests(unittest.TestCase):
         repository.mkdir()
         subprocess.run(["git", "init", "-q", str(repository)], check=True)
         subprocess.run(["git", "config", "core.autocrlf", "true"], cwd=repository, check=True)
-        relative = Path("resources/ghostty/resize-viewport.patch")
+        manifest = json.loads((prepare.RESOURCES / "source.json").read_text())
+        relative = Path("resources/ghostty") / manifest["patch"]
         patch = repository / relative
         patch.parent.mkdir(parents=True)
         original = (prepare.ROOT / relative).read_bytes()

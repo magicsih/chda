@@ -22,7 +22,7 @@ class BuildGuardTests(unittest.TestCase):
     def setUpClass(cls):
         subprocess.run([sys.executable, str(ROOT / "scripts/prepare-ghostty.py"), "--check"], check=True)
         manifest = json.loads((ROOT / "resources/ghostty/source.json").read_text())
-        cls.source = ROOT / "target/ghostty-source" / manifest["source_sha256"][:16]
+        cls.source = ROOT / ".ghostty-source" / manifest["source_sha256"][:16]
 
     def setUp(self):
         result = check()

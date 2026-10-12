@@ -96,15 +96,15 @@ def prepare(manifest, patches, source, archive=None, *, check=False):
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--check", action="store_true", help="Verify prepared source without downloading or changing it")
-    parser.add_argument("--test", action="store_true", help="Run the pinned Debug resize and row-metadata regressions after verification")
+    parser.add_argument("--test", action="store_true", help="Run the pinned Debug terminal integrity regressions after verification")
     parser.add_argument("--archive", type=Path, help="Use an already downloaded pinned source archive")
     args = parser.parse_args()
     manifest = json.loads((RESOURCES / "source.json").read_text())
     try:
-        source = ROOT / "target/ghostty-source" / manifest["source_sha256"][:16]
+        source = ROOT / ".ghostty-source" / manifest["source_sha256"][:16]
         prepare(manifest, RESOURCES, source, args.archive, check=args.check)
         if args.test:
-            subprocess.run(["zig", "build", "test-lib-vt", "-Demit-lib-vt=true", "-Doptimize=Debug", "-Dtest-filter=PageList chda", "-Dtest-filter=PageList eraseRow recycled", "-Dtest-filter=PageList eraseRowBounded recycled", "-Dtest-filter=PageList resize trimmed rows", "-Dtest-filter=PageList resize grow cols with unwrap fixes viewport pin", "--summary", "failures"], cwd=source, check=True)
+            subprocess.run(["zig", "build", "test-lib-vt", "-Demit-lib-vt=true", "-Doptimize=Debug", "-Dtest-filter=PageList chda", "-Dtest-filter=chda temporary image", "-Dtest-filter=PageList eraseRow recycled", "-Dtest-filter=PageList eraseRowBounded recycled", "-Dtest-filter=PageList resize trimmed rows", "-Dtest-filter=PageList resize grow cols with unwrap fixes viewport pin", "--summary", "failures"], cwd=source, check=True)
     except (ValueError, OSError, subprocess.CalledProcessError) as error:
         parser.exit(1, f"Ghostty preparation failed: {error}\n")
     print("Pinned Ghostty source and patch verified")

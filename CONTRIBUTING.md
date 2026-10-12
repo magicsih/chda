@@ -65,16 +65,18 @@ Run `python3 scripts/prepare-ghostty.py` before Cargo. It verifies the archive,
 patch and entire source tree, stages preparation atomically, and preserves an
 existing source on a mismatch. `--check` verifies without downloading. For an
 offline source preparation, pass `--archive` with the same pinned archive.
-`.cargo/config.toml` forces `GHOSTTY_SOURCE_DIR` to `target/ghostty-source/<source hash>`;
+`.cargo/config.toml` forces `GHOSTTY_SOURCE_DIR` to `.ghostty-source/<source hash>`;
 unprepared or changed source fails the build rather than using another engine.
 The hash changes with the patch, so Cargo rebuilds the native library instead
-of reusing a previous engine. `--test` runs the pinned Debug resize and row-metadata regressions.
-CI prepares this source after restoring the Rust cache, which can clean
-non-Cargo files under `target`. Git attributes preserve patch LF bytes on Windows.
+of reusing a previous engine. `--test` runs the pinned Debug resize, row-metadata and Kitty boundary regressions.
+The source stays outside Cargo's target cache, which may prune non-Cargo
+files or restore a partially pruned tree. Git attributes and the apply command
+preserve LF bytes even when Git enables Windows autocrlf.
 Only Zig's `.zig-cache`, `zig-out` and `zig-pkg` generated directories are excluded
 from the source digest. Package dependencies stay pinned by `build.zig.zon`.
 
-The PageList patch normalizes a newly active viewport before growth while
-retaining genuine history anchors and Debug integrity assertions. Remove it
-when a pinned upstream revision includes the equivalent fix and passes the
+The engine patch normalizes a newly active viewport before growth while
+retaining genuine history anchors and Debug integrity assertions. Kitty temporary
+images are restricted to the process directory after validating the opened file
+handle. Remove each corresponding patch when a pinned upstream revision includes the equivalent behavior and passes the
 same regressions; do not change optimize mode to avoid a failure.

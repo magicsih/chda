@@ -238,7 +238,8 @@ covers row growth, preserved cursors and reflow without losing the test suite
 to Zig's abort. `growing_rows_preserves_a_viewport_still_in_history` checks the
 history anchor. The checked patch also carries direct PageList regressions. The source check
 runs these alongside the upstream recycled-row, trimmed-row and viewport-pin
-regressions; it keeps Debug integrity enabled throughout:
+regressions and process-directory Kitty restrictions; it keeps Debug integrity
+enabled throughout:
 
 ```sh
 python3 scripts/prepare-ghostty.py --test
