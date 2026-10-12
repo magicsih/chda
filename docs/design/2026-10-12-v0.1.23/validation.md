@@ -99,4 +99,18 @@
 
 - Copilot은 `<id>/events.jsonl`, Gemini는 `.json`/`.jsonl` 안의 전체 `sessionId`로 대화를 식별한다. 공통 filename 조회는 transcript가 있어도 cwd를 찾지 못했다. 실제 저장 형식을 격리한 두 child-process 회귀가 수정 전 모두 실패했다.
 - `session_file_for_id`를 어댑터별로 제공하고 재개 가능 여부와 cwd 조회가 같은 exact 파일을 사용하도록 했다. 기존 Copilot path traversal 거부와 Gemini 전체 ID 비교를 유지한다. 사용자 환경 변수를 변경하지 않고 테스트 프로세스에만 fixture 환경을 전달한다.
-- 수정 후 agents 61 passed/기존 측정 2 ignored, doc tests 통과. 새 exact cwd 두 회귀 및 잘못된/부분 ID 거부를 포함한다. 원격 CI와 최종 교차 리뷰는 새 HEAD에서 확인한다.
+- 수정 후 agents 61 passed/기존 수동 검사 2 ignored, doc tests 통과. 새 exact cwd 두 회귀 및 잘못된/부분 ID 거부를 포함한다. 원격 CI와 최종 교차 리뷰는 새 HEAD에서 확인한다.
+
+
+## 영역 3 · 사이드바 (#209, #216, #228, #230)
+
+- RED: 기존 정렬에서 background hook이 `/a` 위로 `/z`를 이동시키는 core 검사, 실제 마우스의 PROJECT/STARRED 단일 클릭 실행·agent launch sheet·포인터 아래 행 이동·독립 분할 번호 부재 다섯 시나리오와 밝은 테마의 기존 star 대비 실패를 확인했다.
+- main worktree 우선, branch 이름순, 동일 이름 path순, branch 없는 항목은 path순으로 뒤에 둔다. 사용되지 않는 활동 정렬 선택을 제거하며 transcript 목록의 최근 활동 정렬과 기존 repository 순서는 유지한다.
+- PROJECT/STARRED는 한 번 클릭해 선택만 하고 두 번째 클릭에서 기존 open을 한 번 실행한다. 우클릭은 캡처한 path의 기존 메뉴만 연다. 누락 STARRED의 선택도 표시하며 생성하지 않는다. Sessions는 단일 클릭 탐색을 유지한다.
+- 단일 선택 뒤 실제 typing focus를 잃어 `cd`가 전달되지 않는 추가 RED를 확인해 비이동 클릭 뒤 원래 pane의 입력 focus를 돌려준다. 같은 pane의 cwd 보고가 바뀌어도 다른 session focus 전까지 선택을 유지한다.
+- 분할 번호는 별도의 nonshrinking #1/#2로 표시한다. 단일 agent 행은 번호를 추가하지 않고 기존 label minimum을 유지한다. mark 색은 기존 status 색 계산을 공유해 hue를 유지하며 normal/selected/waiting/hover surface에서 3:1, diff text는 4.5:1을 요구한다. PR badge palette는 바꾸지 않았다.
+- 단계별 GREEN: 새 실제 마우스 시나리오 5개, sidebar 관련 29개(기존 PR palette·status 대비 포함)가 통과했다. 18pt terminal font·640×600·280/180px sidebar의 실제 PTY 기반 bounds 검사에서 분할 번호를 확인했다. synthetic agent가 shell prompt redraw로 종료되는 fixture를 실행 중 process로 맞췄으며 native 검수로 세지 않는다.
+- 마지막 source의 전체 workspace·clippy·fmt·문서 검사를 수행한다. 최종 native 화면·변경된 Sessions screenshot·Pages 배치·교차 리뷰와 공개 인수조건은 아직 미실행이다.
+
+- 최종 전체 workspace 실행: core 71, agents 61/수동 검사 2 ignored, terminal 65/기존 성능 측정 2 ignored 및 다른 crate 검사 통과. UI 187/188 통과, shared-row label이 180px에서 0px로 축소되는 기존 readability assertion 실패를 확인했다. 모든 행에 기존 48px label minimum을 유지한 최소 수정 뒤 해당 idle 검사 1개와 새 sidebar 시나리오 5개(번호와 닫기 bounds 포함)가 통과했다. 실패한 전체 실행을 통과로 세지 않으며 최종 HEAD CI에서 전체를 확인한다.
+- workspace clippy·fmt·제품 문서 6 tests·생성 문서 일치·diff 형식 통과. CI와 코드 리뷰, native 세 회차는 별도 확인한다.

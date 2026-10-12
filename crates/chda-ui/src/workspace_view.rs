@@ -6033,7 +6033,11 @@ impl WorkspaceView {
             .shadow_md()
             .occlude()
             .children(items.into_iter().enumerate().map(|(i, (label, action))| {
-                let item = div().id(("menu", i)).px_3().py_1();
+                let item = div()
+                    .id(("menu", i))
+                    .debug_selector(move || format!("menu-item-{i}"))
+                    .px_3()
+                    .py_1();
                 match action {
                     MenuAction::Unavailable(reason) => item
                         .text_color(fg.opacity(0.45))

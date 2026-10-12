@@ -35,6 +35,7 @@ mod search;
 mod sessions;
 mod sharing;
 mod sidebar;
+mod sidebar_interactions;
 mod starred;
 mod workspace;
 mod worktrees;

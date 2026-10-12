@@ -163,8 +163,7 @@ fn navigation_reveals_only_clipped_rows_and_keeps_repository_context(cx: &mut Te
         v.sidebar.read(cx).model.repos[0].worktrees.len() == 25
     });
     h.view.update(&mut h.cx, |v, cx| {
-        v.sidebar.update(cx, |s, cx| {
-            s.model.set_sort(chda_core::SortOrder::Name);
+        v.sidebar.update(cx, |_, cx| {
             cx.notify();
         })
     });
@@ -321,8 +320,7 @@ fn sticky_repository_header_acts_on_its_repository(cx: &mut TestAppContext) {
                 .all(|r| r.worktrees.len() == 17 && r.worktrees.iter().any(|w| w.note.is_some()))
     });
     h.view.update(&mut h.cx, |v, cx| {
-        v.sidebar.update(cx, |s, cx| {
-            s.model.set_sort(chda_core::SortOrder::Name);
+        v.sidebar.update(cx, |_, cx| {
             cx.notify();
         })
     });

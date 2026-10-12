@@ -59,8 +59,7 @@ fn open(cx: &mut TestAppContext, name: &str, tabs: usize, extra: &str) -> Fixtur
         v.sidebar.read(cx).model.repos[0].worktrees.len() == WORKTREES + 1
     });
     h.view.update(&mut h.cx, |v, cx| {
-        v.sidebar.update(cx, |s, cx| {
-            s.model.set_sort(chda_core::SortOrder::Name);
+        v.sidebar.update(cx, |_, cx| {
             cx.notify();
         })
     });
@@ -150,6 +149,25 @@ fn click(h: &mut Harness, selector: &str) {
         .center();
     h.cx.simulate_click(at, Modifiers::none());
     h.cx.run_until_parked();
+}
+
+fn open_branch(h: &mut Harness, selector: &str) {
+    click(h, selector);
+    let at = bounds(h, selector).unwrap().center();
+    h.cx.simulate_event(gpui::MouseDownEvent {
+        position: at,
+        button: gpui::MouseButton::Left,
+        modifiers: Modifiers::none(),
+        click_count: 2,
+        first_mouse: false,
+    });
+    h.cx.simulate_event(gpui::MouseUpEvent {
+        position: at,
+        button: gpui::MouseButton::Left,
+        modifiers: Modifiers::none(),
+        click_count: 2,
+    });
+    settle(h);
 }
 
 fn wheel(h: &mut Harness, selector: &str, dy: f32) {
@@ -779,12 +797,12 @@ fn project_navigation_does_not_scroll_sessions(cx: &mut TestAppContext) {
         assert_revealed(h, path, expected);
     };
 
-    // A visible worktree row: its click opens a tab and moves nothing.
+    // A visible worktree row: its double click opens a tab and moves nothing.
     scroll_project(h, px(-40.0));
     settle(h);
     let target = visible_worktree(h, &worktrees[..10]);
     let expected = project_scroll(h).offset().y;
-    click(h, &worktree_row(&target));
+    open_branch(h, &worktree_row(&target));
     h.wait_prompt();
     check(h, &target, expected, "a worktree click");
 
@@ -805,7 +823,7 @@ fn project_navigation_does_not_scroll_sessions(cx: &mut TestAppContext) {
     settle(h);
     let target = worktrees[12].clone();
     let expected = minimal_offset(h, &target);
-    click(h, "starred-0");
+    open_branch(h, "starred-0");
     h.wait_prompt();
     check(h, &target, expected, "STARRED");
 
@@ -1144,10 +1162,6 @@ fn restore_reveals_the_focused_worktree_only_inside_project(cx: &mut TestAppCont
     click(h, "project-section-toggle");
     let (mut cx2, view2) = h.reopen();
     cx2.simulate_resize(size(px(960.0), px(360.0)));
-    view2.update(&mut cx2, |v, cx| {
-        v.sidebar
-            .update(cx, |s, _| s.model.set_sort(chda_core::SortOrder::Name))
-    });
     wait_until(&mut cx2, &view2, "restored worktrees and focus", |v, cx| {
         let s = v.sidebar.read(cx);
         s.model

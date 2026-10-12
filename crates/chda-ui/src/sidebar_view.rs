@@ -247,6 +247,9 @@ pub struct SidebarView {
     /// Highlighted PROJECT worktree: the focused pane's, or a notification's
     /// whose pane is gone.
     pub(crate) selected: Option<PathBuf>,
+    /// Explicit STARRED selection, including branches without a worktree.
+    selected_starred: Option<(PathBuf, String)>,
+    selection_from_row: bool,
     /// The active tab and its focused pane; Sessions highlights their row.
     pub(crate) focus: Option<Focus>,
     /// Frame of the "working" spinner, advanced by the workspace.
@@ -301,22 +304,45 @@ fn status_base(status: Option<AgentStatus>) -> Hsla {
 /// or from a row selected on it (WCAG 2.2 SC 1.4.11 for state graphics)
 /// darkens on a light background and lightens on a dark one until it does.
 pub fn status_color(status: Option<AgentStatus>, fg: Hsla, bg: Hsla) -> Hsla {
-    let mut color = status_base(status);
-    let row = luminance(bg);
-    let selected = luminance(blend(bg, fg, SELECTED_ROW));
+    fit_color(status_base(status), &[bg, blend(bg, fg, SELECTED_ROW)], 3.0)
+}
+
+/// Fit a sidebar mark to normal, selected and waiting rows.
+fn sidebar_mark_color(base: Hsla, fg: Hsla, bg: Hsla, minimum: f32) -> Hsla {
+    let waiting = waiting_tint(fg, bg);
+    fit_color(
+        base,
+        &[
+            bg,
+            blend(bg, fg, SELECTED_ROW),
+            blend(bg, waiting.opacity(1.0), waiting.a),
+            blend(bg, fg, 0.08),
+        ],
+        minimum,
+    )
+}
+
+fn fit_color(mut color: Hsla, surfaces: &[Hsla], minimum: f32) -> Hsla {
+    let row = luminance(surfaces[0]);
     let step = if ratio(row, 0.0) >= ratio(row, 1.0) {
         -0.01
     } else {
         0.01
     };
-    while (0.0..=1.0).contains(&(color.l + step)) {
-        let l = luminance(color);
-        if ratio(l, row).min(ratio(l, selected)) >= 3.0 {
-            break;
+    loop {
+        let light = luminance(color);
+        if surfaces
+            .iter()
+            .all(|s| ratio(light, luminance(*s)) >= minimum)
+        {
+            return color;
         }
-        color.l += step;
+        let next = (color.l + step).clamp(0.0, 1.0);
+        if next == color.l {
+            return color;
+        }
+        color.l = next;
     }
-    color
 }
 
 /// WCAG 2.2 relative luminance of an opaque color.
@@ -469,6 +495,8 @@ impl SidebarView {
             picked: Vec::new(),
             expanded: Vec::new(),
             selected: None,
+            selected_starred: None,
+            selection_from_row: false,
             focus: None,
             spin: 0,
             sessions_scroll: gpui::ScrollHandle::new(),
@@ -504,10 +532,9 @@ impl SidebarView {
         cx: &mut Context<Self>,
     ) {
         let held = !navigation
-            && self
-                .held
-                .as_ref()
-                .is_some_and(|(f, c)| *f == focus && c.as_deref() == cwd);
+            && self.held.as_ref().is_some_and(|(f, c)| {
+                *f == focus && (self.selection_from_row || c.as_deref() == cwd)
+            });
         self.focus = focus;
         self.focus_cwd = cwd.map(std::path::Path::to_path_buf);
         if held {
@@ -515,6 +542,8 @@ impl SidebarView {
             return;
         }
         self.held = None;
+        self.selected_starred = None;
+        self.selection_from_row = false;
         if navigation {
             self.pending_reveal = cwd.map(std::path::Path::to_path_buf);
         } else if self.pending_reveal.as_deref() != cwd {
@@ -539,6 +568,22 @@ impl SidebarView {
             }
             self.reveal = Some(path);
         }
+        cx.notify();
+    }
+
+    /// Select a branch row without navigating or changing terminal focus.
+    fn select_row(
+        &mut self,
+        path: Option<PathBuf>,
+        starred: Option<(PathBuf, String)>,
+        cx: &mut Context<Self>,
+    ) {
+        self.selected = path;
+        self.selected_starred = starred;
+        self.selection_from_row = true;
+        self.held = Some((self.focus, self.focus_cwd.clone()));
+        self.pending_reveal = None;
+        self.reveal = None;
         cx.notify();
     }
 
@@ -776,6 +821,7 @@ impl SidebarView {
         };
         tip = format!("{}\n{repo_name} \u{2022} {}\n{tip}", label, starred.branch);
         let (repo, branch) = (starred.repo.clone(), starred.branch.clone());
+        let target = worktree.map(|w| w.path.clone());
         div()
             .id(ElementId::Name(format!("starred:{index}").into()))
             .debug_selector(move || format!("starred-{index}"))
@@ -786,25 +832,43 @@ impl SidebarView {
             .px_2()
             .py_0p5()
             .cursor_pointer()
-            .when(worktree.is_none(), |d| d.opacity(0.55))
             .when(dot == Some(AgentStatus::WaitingInput), |d| {
                 d.bg(waiting_tint(self.fg, self.bg))
             })
             .when(
-                worktree.is_some_and(|w| self.selected.as_ref() == Some(&w.path)),
+                self.selected_starred.as_ref() == Some(&(repo.clone(), branch.clone()))
+                    || worktree.is_some_and(|w| self.selected.as_ref() == Some(&w.path)),
                 |d| d.bg(fg.opacity(SELECTED_ROW)),
             )
             .hover(|s| s.bg(fg.opacity(0.08)))
             .tooltip(crate::tooltip::text(tip))
             .on_click({
                 let (repo, branch) = (repo.clone(), branch.clone());
-                cx.listener(move |_, _, _, cx| {
-                    cx.emit(SidebarEvent::OpenStarred {
-                        repo: repo.clone(),
-                        branch: branch.clone(),
-                    })
+                let target = target.clone();
+                cx.listener(move |this, event: &ClickEvent, _, cx| {
+                    if matches!(event, ClickEvent::Mouse(e) if e.up.button != MouseButton::Left) {
+                        return;
+                    }
+                    this.select_row(target.clone(), Some((repo.clone(), branch.clone())), cx);
+                    if event.click_count() == 2 {
+                        cx.emit(SidebarEvent::OpenStarred {
+                            repo: repo.clone(),
+                            branch: branch.clone(),
+                        });
+                    } else {
+                        cx.emit(SidebarEvent::RefocusTerminal);
+                    }
                 })
             })
+            .on_mouse_down(
+                MouseButton::Right,
+                cx.listener(move |_, e: &MouseDownEvent, _, cx| {
+                    cx.stop_propagation();
+                    if let Some(path) = &target {
+                        cx.emit(SidebarEvent::WorktreeMenu(path.clone(), e.position));
+                    }
+                }),
+            )
             .child(
                 div()
                     .id(ElementId::Name(format!("unstar:{index}").into()))
@@ -812,7 +876,12 @@ impl SidebarView {
                     .flex_shrink_0()
                     .px_0p5()
                     .rounded_sm()
-                    .text_color(gpui::rgb(0xf9e2af))
+                    .text_color(sidebar_mark_color(
+                        gpui::rgb(0xf9e2af).into(),
+                        fg,
+                        self.bg,
+                        3.0,
+                    ))
                     .hover(|s| s.bg(fg.opacity(0.15)))
                     .tooltip(crate::tooltip::text("Unstar branch"))
                     .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
@@ -833,6 +902,7 @@ impl SidebarView {
                     .overflow_hidden()
                     .whitespace_nowrap()
                     .text_ellipsis()
+                    .when(worktree.is_none(), |d| d.opacity(0.55))
                     .child(label),
             )
             .child(
@@ -872,7 +942,12 @@ impl SidebarView {
             badges.push(
                 div()
                     .id(badge_id("conflicts"))
-                    .text_color(gpui::rgb(0xf38ba8))
+                    .text_color(sidebar_mark_color(
+                        gpui::rgb(0xf38ba8).into(),
+                        fg,
+                        self.bg,
+                        3.0,
+                    ))
                     .tooltip(crate::tooltip::text(conflicts_tooltip(b.conflicted)))
                     .child(format!("!{}", b.conflicted))
                     .into_any_element(),
@@ -882,7 +957,12 @@ impl SidebarView {
             badges.push(
                 div()
                     .id(badge_id("dirty"))
-                    .text_color(gpui::rgb(0xf9e2af))
+                    .text_color(sidebar_mark_color(
+                        gpui::rgb(0xf9e2af).into(),
+                        fg,
+                        self.bg,
+                        3.0,
+                    ))
                     .tooltip(crate::tooltip::text(dirty_tooltip(&b)))
                     .child(format!("\u{25cf}{}", b.dirty_count() - b.conflicted))
                     .into_any_element(),
@@ -930,12 +1010,22 @@ impl SidebarView {
                     }))
                     .child(
                         div()
-                            .text_color(gpui::rgb(0xa6e3a1))
+                            .text_color(sidebar_mark_color(
+                                gpui::rgb(0xa6e3a1).into(),
+                                fg,
+                                self.bg,
+                                4.5,
+                            ))
                             .child(format!("+{}", diff.added)),
                     )
                     .child(
                         div()
-                            .text_color(gpui::rgb(0xf38ba8))
+                            .text_color(sidebar_mark_color(
+                                gpui::rgb(0xf38ba8).into(),
+                                fg,
+                                self.bg,
+                                4.5,
+                            ))
                             .child(format!("\u{2212}{}", diff.removed)),
                     )
                     .into_any_element(),
@@ -985,7 +1075,7 @@ impl SidebarView {
             badges.push(
                 div()
                     .id(badge_id("missing"))
-                    .text_color(gpui::rgb(0xf38ba8))
+                    .text_color(sidebar_mark_color(gpui::rgb(0xf38ba8).into(), fg, self.bg, 3.0))
                     .tooltip(crate::tooltip::text(
                         "Folder missing: the worktree's folder was deleted outside git. Right-click to prune it.",
                     ))
@@ -997,7 +1087,12 @@ impl SidebarView {
             badges.push(
                 div()
                     .id(badge_id("merged"))
-                    .text_color(gpui::rgb(0xa6e3a1))
+                    .text_color(sidebar_mark_color(
+                        gpui::rgb(0xa6e3a1).into(),
+                        fg,
+                        self.bg,
+                        3.0,
+                    ))
                     .tooltip(crate::tooltip::text(
                         "Merged: the branch's commits are in the default branch.",
                     ))
@@ -1038,7 +1133,6 @@ impl SidebarView {
             .pr_2()
             .py_0p5()
             .cursor_pointer()
-            .when(wt.missing || wt.busy.is_some(), |d| d.opacity(0.55))
             .when(dot == Some(AgentStatus::WaitingInput), |d| {
                 d.bg(waiting_tint(self.fg, self.bg))
             })
@@ -1048,14 +1142,22 @@ impl SidebarView {
             .hover(|s| s.bg(fg.opacity(0.08)))
             .on_click({
                 let path = path.clone();
-                cx.listener(move |this, _, _, cx| {
-                    this.selected = Some(path.clone());
-                    cx.emit(SidebarEvent::OpenWorktree(path.clone()))
+                cx.listener(move |this, event: &ClickEvent, _, cx| {
+                    if matches!(event, ClickEvent::Mouse(e) if e.up.button != MouseButton::Left) {
+                        return;
+                    }
+                    this.select_row(Some(path.clone()), None, cx);
+                    if event.click_count() == 2 {
+                        cx.emit(SidebarEvent::OpenWorktree(path.clone()));
+                    } else {
+                        cx.emit(SidebarEvent::RefocusTerminal);
+                    }
                 })
             })
             .on_mouse_down(MouseButton::Right, {
                 let path = path.clone();
                 cx.listener(move |_, e: &MouseDownEvent, _, cx| {
+                    cx.stop_propagation();
                     cx.emit(SidebarEvent::WorktreeMenu(path.clone(), e.position));
                 })
             })
@@ -1097,37 +1199,40 @@ impl SidebarView {
                     })
                     .child(status_icon(dot, self.spin, self.fg, self.bg)),
             )
-            .child(match wt.note_title() {
-                // With a note, the task is the label and the branch sits
-                // small underneath.
-                Some(title) => div()
-                    .flex_1()
-                    .min_w_0()
-                    .flex()
-                    .flex_col()
-                    .child(
-                        div()
-                            .overflow_hidden()
-                            .whitespace_nowrap()
-                            .text_ellipsis()
-                            .child(title.to_owned()),
-                    )
-                    .child(
-                        div()
-                            .overflow_hidden()
-                            .whitespace_nowrap()
-                            .text_ellipsis()
-                            .text_xs()
-                            .text_color(fg.opacity(0.5))
-                            .child(name.clone()),
-                    ),
-                None => div()
-                    .flex_1()
-                    .min_w_0()
-                    .overflow_hidden()
-                    .whitespace_nowrap()
-                    .text_ellipsis()
-                    .child(name.clone()),
+            .child({
+                let label = match wt.note_title() {
+                    // With a note, the task is the label and the branch sits
+                    // small underneath.
+                    Some(title) => div()
+                        .flex_1()
+                        .min_w_0()
+                        .flex()
+                        .flex_col()
+                        .child(
+                            div()
+                                .overflow_hidden()
+                                .whitespace_nowrap()
+                                .text_ellipsis()
+                                .child(title.to_owned()),
+                        )
+                        .child(
+                            div()
+                                .overflow_hidden()
+                                .whitespace_nowrap()
+                                .text_ellipsis()
+                                .text_xs()
+                                .text_color(fg.opacity(0.5))
+                                .child(name.clone()),
+                        ),
+                    None => div()
+                        .flex_1()
+                        .min_w_0()
+                        .overflow_hidden()
+                        .whitespace_nowrap()
+                        .text_ellipsis()
+                        .child(name.clone()),
+                };
+                label.when(wt.missing || wt.busy.is_some(), |d| d.opacity(0.55))
             })
             .children(badges.into_iter().map(|b| div().text_xs().child(b)))
             .when_some(wt.note.clone(), |d, note| {
@@ -1188,7 +1293,12 @@ impl SidebarView {
                     .pl_8()
                     .pr_2()
                     .text_xs()
-                    .text_color(gpui::rgb(0xf38ba8))
+                    .text_color(sidebar_mark_color(
+                        gpui::rgb(0xf38ba8).into(),
+                        fg,
+                        self.bg,
+                        3.0,
+                    ))
                     .cursor_pointer()
                     .on_click({
                         let path = path.clone();
@@ -1489,7 +1599,7 @@ fn session_id(key: SessionKey) -> String {
 
 impl SidebarView {
     /// One Sessions row: status icon, label, what it is, activity age and,
-    /// for terminals and idle agents, a close button. Child agents follow it.
+    /// for terminals and agents, a close button. Child agents follow it.
     fn render_session_row(
         &self,
         row: &SessionRow,
@@ -1508,9 +1618,6 @@ impl SidebarView {
                 .map_or_else(|| agent.clone(), |a| a.name.clone())
         });
         let kind = match (row.kind, &agent_name) {
-            (SessionKind::Agent, Some(name)) if row.shares_tab => {
-                format!("{name} \u{b7} pane {}", row.pane_index)
-            }
             (SessionKind::Agent, Some(name)) => name.clone(),
             (SessionKind::Agent, None) => "Agent".into(),
             (SessionKind::Terminal, _) => "Terminal".into(),
@@ -1613,6 +1720,21 @@ impl SidebarView {
                     .text_color(fg.opacity(0.5))
                     .child(kind),
             )
+            .when(row.kind == SessionKind::Agent && row.shares_tab, |d| {
+                d.child(
+                    div()
+                        .id(ElementId::Name(format!("session-number:{id}").into()))
+                        .debug_selector({
+                            let id = id.clone();
+                            move || format!("session-number-{id}")
+                        })
+                        .flex_shrink_0()
+                        .whitespace_nowrap()
+                        .text_xs()
+                        .text_color(fg.opacity(0.7))
+                        .child(format!("#{}", row.pane_index)),
+                )
+            })
             .child(
                 div()
                     .id(ElementId::Name(format!("activity-age:{id}").into()))
@@ -2126,6 +2248,43 @@ mod tests {
                         PrState::Merged => "merged",
                         PrState::Closed => "closed",
                     }));
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn sidebar_marks_keep_their_hue_and_contrast_on_every_row_surface() {
+        for (background, foreground) in [
+            (0xffffff, 0x1f2328),
+            (0xeff1f5, 0x4c4f69),
+            (0x0d1117, 0xe6edf3),
+            (0x1e1e2e, 0xcdd6f4),
+        ] {
+            let fg: Hsla = gpui::rgb(foreground).into();
+            let bg = blend(gpui::rgb(background).into(), fg, 0.04);
+            let waiting = waiting_tint(fg, bg);
+            let surfaces = [
+                bg,
+                blend(bg, fg, SELECTED_ROW),
+                blend(bg, waiting.opacity(1.0), waiting.a),
+                blend(bg, fg, 0.08),
+            ];
+            for base in [
+                gpui::rgb(0xf9e2af).into(),
+                gpui::rgb(0xf38ba8).into(),
+                gpui::rgb(0xa6e3a1).into(),
+                fg,
+            ] {
+                for minimum in [3.0, 4.5] {
+                    let color = sidebar_mark_color(base, fg, bg, minimum);
+                    assert!((color.h - base.h).abs() < 1e-3 && (color.s - base.s).abs() < 1e-3);
+                    for surface in surfaces {
+                        assert!(
+                            ratio(luminance(color), luminance(surface)) >= minimum,
+                            "{background:x}: {base:?} below {minimum}:1"
+                        );
+                    }
                 }
             }
         }
