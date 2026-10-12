@@ -127,8 +127,13 @@ impl AgentAdapter for GeminiAdapter {
         gemini_dir().map(|d| d.join("tmp")).into_iter().collect()
     }
 
-    fn has_session(&self, id: &SessionId) -> bool {
-        !id.0.is_empty() && self.session_roots().iter().any(|root| has_chat(root, id))
+    fn session_file_for_id(&self, id: &SessionId) -> Option<PathBuf> {
+        if id.0.is_empty() {
+            return None;
+        }
+        self.session_roots()
+            .iter()
+            .find_map(|root| find_chat(root, id))
     }
 
     /// Gemini CLI keeps one folder per project directory and records that
@@ -176,22 +181,22 @@ fn project_root(project_dir: &Path) -> Option<PathBuf> {
     (!root.is_empty()).then(|| PathBuf::from(root))
 }
 
-fn has_chat(root: &Path, id: &SessionId) -> bool {
+fn find_chat(root: &Path, id: &SessionId) -> Option<PathBuf> {
     fs::read_dir(root)
         .into_iter()
         .flatten()
         .flatten()
-        .any(|project| {
+        .find_map(|project| {
             fs::read_dir(project.path().join("chats"))
                 .into_iter()
                 .flatten()
                 .flatten()
-                .any(|entry| {
-                    let path = entry.path();
+                .map(|entry| entry.path())
+                .find(|path| {
                     matches!(
                         path.extension().and_then(|s| s.to_str()),
                         Some("json" | "jsonl")
-                    ) && crate::session::head_metadata_field(&path, "sessionId").as_deref()
+                    ) && crate::session::head_metadata_field(path, "sessionId").as_deref()
                         == Some(id.0.as_str())
                 })
         })
@@ -280,6 +285,53 @@ pub fn parse_chat(file: &Path, cwd: &Path) -> Option<AgentSession> {
 mod tests {
     use super::*;
     #[test]
+    fn exact_transcript_directory_uses_the_adapter_storage_layout() {
+        const CHILD: &str = "CHDA_GeminiAdapter_CWD_TEST_CHILD";
+        if std::env::var_os(CHILD).is_some() {
+            let adapter = GeminiAdapter;
+            assert!(adapter.has_session(&SessionId("full-identity".into())));
+            assert_eq!(
+                adapter.session_cwd_for_id(&SessionId("full-identity".into())),
+                Some(PathBuf::from("/exact/gemini"))
+            );
+            for id in ["identity", "short", "", "../full-identity"] {
+                assert!(adapter.session_cwd_for_id(&SessionId(id.into())).is_none());
+            }
+            return;
+        }
+        let root =
+            std::env::temp_dir().join(format!("chda-gemini-exact-cwd-{}", std::process::id()));
+        let folder = root.join(".gemini/tmp/project/chats");
+        std::fs::create_dir_all(&folder).unwrap();
+        std::fs::write(
+            folder.join("session-time-short.json"),
+            r#"{"sessionId":"full-identity","messages":[]}"#,
+        )
+        .unwrap();
+        std::fs::write(
+            folder.parent().unwrap().join(".project_root"),
+            "/exact/gemini\n",
+        )
+        .unwrap();
+        let output = std::process::Command::new(std::env::current_exe().unwrap())
+            .args([
+                "--exact",
+                "gemini::tests::exact_transcript_directory_uses_the_adapter_storage_layout",
+            ])
+            .env(CHILD, "1")
+            .env("GEMINI_CLI_HOME", &root)
+            .output()
+            .unwrap();
+        std::fs::remove_dir_all(root).unwrap();
+        assert!(
+            output.status.success(),
+            "{}\n{}",
+            String::from_utf8_lossy(&output.stdout),
+            String::from_utf8_lossy(&output.stderr)
+        );
+    }
+
+    #[test]
     fn resume_confirms_full_metadata_id_for_legacy_json_and_jsonl() {
         let dir = std::env::temp_dir().join(format!("chda-gemini-resume-{}", std::process::id()));
         let chats = dir.join("project/chats");
@@ -291,9 +343,9 @@ mod tests {
                 r#"{"sessionId":"full-identity","messages":[{"content":"not retained"}]}"#,
             )
             .unwrap();
-            assert!(has_chat(&dir, &SessionId("full-identity".into())));
-            assert!(!has_chat(&dir, &SessionId("identity".into())));
-            assert!(!has_chat(&dir, &SessionId("short".into())));
+            assert!(find_chat(&dir, &SessionId("full-identity".into())).is_some());
+            assert!(find_chat(&dir, &SessionId("identity".into())).is_none());
+            assert!(find_chat(&dir, &SessionId("short".into())).is_none());
             fs::remove_file(file).unwrap();
         }
         fs::remove_dir_all(dir).unwrap();

@@ -94,3 +94,9 @@
 - managed cwd 우선순위 변경 후 기존 missing-folder fixture가 낮은 우선순위의 launch cwd만 변경해 기대 오류가 발생하지 않았다. 실제 authoritative report cwd를 사라진 디렉터리로 설정하도록 fixture를 맞췄고 원래 오류·복원 assertion은 유지했다.
 - 생성 Pages를 Chromium의 desktop 1280px와 좁은 390px에서 렌더해 직접 확인했다. 13개 feature card, 이미지 로딩·가로 overflow·page error 검사가 통과했다. 이는 Pages의 실행 근거이며 chda native UI 검수 회차에 포함하지 않는다.
 - 최종 원격 CI·교차 코드 리뷰·macOS native 검수·GUI update handoff·공개는 아직 통과 근거가 없다. native 검수는 승인된 최종 후보의 3회 계획으로 진행한다.
+
+### 리뷰 수용 · 어댑터별 정확한 transcript 경로
+
+- Copilot은 `<id>/events.jsonl`, Gemini는 `.json`/`.jsonl` 안의 전체 `sessionId`로 대화를 식별한다. 공통 filename 조회는 transcript가 있어도 cwd를 찾지 못했다. 실제 저장 형식을 격리한 두 child-process 회귀가 수정 전 모두 실패했다.
+- `session_file_for_id`를 어댑터별로 제공하고 재개 가능 여부와 cwd 조회가 같은 exact 파일을 사용하도록 했다. 기존 Copilot path traversal 거부와 Gemini 전체 ID 비교를 유지한다. 사용자 환경 변수를 변경하지 않고 테스트 프로세스에만 fixture 환경을 전달한다.
+- 수정 후 agents 61 passed/기존 측정 2 ignored, doc tests 통과. 새 exact cwd 두 회귀 및 잘못된/부분 ID 거부를 포함한다. 원격 CI와 최종 교차 리뷰는 새 HEAD에서 확인한다.
