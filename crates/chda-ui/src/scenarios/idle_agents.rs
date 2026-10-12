@@ -354,6 +354,7 @@ fn saved_conversations_output_age_and_shell_prompts_do_not_create_live_idle(
             Some(AgentSessionRef {
                 agent: "claude".into(),
                 session: "historical".into(),
+                cwd: None,
             }),
         );
         let terminal = v.panes[&target].0.clone();

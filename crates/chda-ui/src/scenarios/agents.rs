@@ -208,6 +208,7 @@ done
     }));
     h.keys("cmd-t");
     h.wait_prompt();
+    let notify_created_before_title = crate::terminal_view::now_ms();
     for (step, status) in [
         ("work", AgentStatus::Working),
         ("spin", AgentStatus::Working),
@@ -243,13 +244,19 @@ done
     // A menu-launch completion notify can arrive after the title. Keep its
     // real session ID for restore without announcing the turn twice.
     let notifications = h.system.0.borrow().notifications.len();
-    h.hook_from(
-        "codex",
-        Some(pane.raw()),
-        &repo,
-        HookKind::Stopped,
-        "real-session",
-    );
+    chda_core::agents::ipc::send(
+        &chda_core::agents::ipc::socket_path(&h.home.data),
+        &chda_core::agents::HookEvent {
+            agent: "codex".into(),
+            session_id: "real-session".into(),
+            cwd: repo.clone(),
+            kind: HookKind::Stopped,
+            timestamp: notify_created_before_title,
+            pane: Some(pane.raw()),
+            child: None,
+        },
+    )
+    .unwrap();
     h.wait_for("notify records the conversation", move |v, _| {
         v.ws.pane(pane)
             .and_then(|p| p.agent_session.as_ref())
@@ -277,6 +284,7 @@ done
             .and_then(|p| p.agent.as_ref())
             .is_some_and(|a| a.status == AgentStatus::Working)
     });
+    let notify_before_exit = crate::terminal_view::now_ms();
     std::fs::write(
         h.home.home.join(format!("codex-step-{}", pane.raw())),
         "clear",
@@ -287,6 +295,44 @@ done
             .is_some_and(|p| p.title.is_empty() && p.agent.is_none() && p.agent_session.is_none())
             && v.sidebar.read(cx).model.repos[0].worktrees[0].status() == AgentStatus::Working
     });
+    chda_core::agents::ipc::send(
+        &chda_core::agents::ipc::socket_path(&h.home.data),
+        &chda_core::agents::HookEvent {
+            agent: "codex".into(),
+            session_id: "real-session".into(),
+            cwd: repo.clone(),
+            kind: HookKind::Stopped,
+            timestamp: notify_before_exit,
+            pane: Some(pane.raw()),
+            child: None,
+        },
+    )
+    .unwrap();
+    // The following message acknowledges that the earlier IPC reply was drained.
+    h.hook_from(
+        "codex",
+        Some(second.raw()),
+        &repo,
+        HookKind::Stopped,
+        "second-real-session",
+    );
+    h.wait_for(
+        "second conversation after the late ended notify",
+        move |v, _| {
+            v.ws.pane(second)
+                .unwrap()
+                .agent_session
+                .as_ref()
+                .is_some_and(|s| s.session == "second-real-session")
+        },
+    );
+    assert!(
+        h.read(|v, _| v
+            .ws
+            .pane(pane)
+            .is_some_and(|p| p.agent.is_none() && p.agent_session.is_none())),
+        "late notify revived an ended Codex conversation"
+    );
     std::fs::write(
         h.home.home.join(format!("codex-step-{}", pane.raw())),
         "exit",
@@ -487,8 +533,8 @@ done
         h.cx.debug_bounds(Box::leak(
             format!("session-close-pane-{}", pane.raw()).into_boxed_str()
         ))
-        .is_none(),
-        "a working agent's row offers no close button"
+        .is_some(),
+        "a working agent keeps its close button and checks state on click"
     );
     h.keys("cmd-w");
     assert!(

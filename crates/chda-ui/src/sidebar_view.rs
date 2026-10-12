@@ -1542,7 +1542,7 @@ impl SidebarView {
                 "Close terminal tab",
                 SidebarEvent::CloseTab(row.tab),
             )),
-            SessionKind::Agent if row.live_idle() => match key {
+            SessionKind::Agent => match key {
                 SessionKey::Pane(pane) => Some((
                     format!("session-close-pane-{}", pane.raw()),
                     "Close agent pane",
@@ -1624,11 +1624,11 @@ impl SidebarView {
                     .tooltip(crate::tooltip::text({
                         let mut text = match row.previous_activity {
                             Some(at) => format!(
-                                "Last output: {} ago\nPrevious work before restart: {} ago",
+                                "Last input/output: {} ago\nPrevious work before restart: {} ago",
                                 activity_age(now, row.last_activity),
                                 activity_age(now, at)
                             ),
-                            None => "Time since the last terminal output or screen update".into(),
+                            None => "Time since the last terminal input or PTY output".into(),
                         };
                         if let Some(age) = &idle_for {
                             text.push_str(&format!("\nReady for another task for {age}"));

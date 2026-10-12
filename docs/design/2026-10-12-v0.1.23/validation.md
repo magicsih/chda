@@ -4,7 +4,7 @@
 
 - 설계 원문·시각 시안·인수조건 작성: 완료.
 - 정확한 설계 commit 승인: `f58906aa9b158176a42b3b455187f745de34dba5` 사용자 승인 확인. [승인 기록](approval.md).
-- 엔진 구현·RED/GREEN: 아래 기록. PR code review·원격 CI·native 검수·서명 artifact·공개: 미실행.
+- 엔진 PR #234 최종 HEAD의 교차 코드 리뷰·macOS/Linux/Windows CI 통과 후 main 병합 완료. 세션 수명 구현과 회귀 검증: 아래 기록. native 검수·서명 artifact·공개: 미실행.
 - 조사 근거: main 및 원격 SHA f09aa62873a4cab100ae8fd3dbba272674a9550e 일치; 최신 public release v0.1.22; 208–231 범위의 open issue 16개; 기존 installed Claude 2.1.296/Codex 0.162.1/Zig 0.15.2.
 - 기존 `app/chda/sparkle/update-signing` catalog preflight: active, catalog errors 0. 이는 Developer ID·공증·실제 서명·릴리스 artifact 검증이 아니다.
 
@@ -83,3 +83,54 @@
 - 검증 전 변경 원본 보존·캐시 유지 테스트 RED를 확인한 뒤 준비 테스트 11개, 실제 Cargo root 추가·nested 변경·원문 복원 후 캐시 복구 3개(175.9초)가 통과했다. 임시 디렉터리 누락 시 텍스트 terminal 유지와 Kitty 파일 입력 비활성 회귀 1개 및 term clippy가 통과했다.
 - Cargo 자체 guard는 native build와 동시에 실행되는 2차 거부 장치다. build 이전 무결성 검증은 필수 준비 절차가 담당한다는 한계와 변경 소스 보존·재준비 안내를 CONTRIBUTING에 명시했다.
 - 승인 설계의 준비 경로 표기만 `.ghostty-source/<hash>`로 맞추고 CI Python 호출을 python3으로 통일했다. 동작·고정 revision·승인 범위는 바뀌지 않았다. 수정 뒤 최종 CI를 다시 확인한다.
+
+### 엔진 최종 CI와 교차 리뷰 상태
+
+- PR #234 HEAD `4159cdfe730fbbbfaff17285269cedfe9feaf95b`의 Actions run `38248539602`에서 7개 job 모두 통과했다. macOS workspace tests·clippy·Debug 무결성·실제 Cargo guard·updater 컴파일·release build, Linux/Windows release build, fmt·commit·dependency·문서 검사를 포함한다.
+- 읽기 전용 로컬 Claude 교차 리뷰 첫 요청은 weekly limit으로 실행되지 않았다. 공급자 응답의 초기화 시각은 2026-10-12 23:00 Asia/Seoul이다. 시각 이전에 재요청하지 않으며 리뷰 통과로 기록하지 않는다. CI 통과는 최종 native 인수조건이나 공개 릴리스 증거가 아니다.
+
+## 영역 2 · 활동과 세션 수명 (#208, #226, #227, #231)
+
+- RED: 수정 전 실제 PTY를 사용하는 화면 없는 UI 시나리오 네 건이 요구사항으로 실패했다. 테마 변경이 활동 시각을 갱신하고, 복원은 확인된 대화 cwd 대신 오래된 pane cwd를 사용하며, Idle parent의 Working child를 확인하지 않고, 일반 process 종료가 tab을 제거했다.
+- 실제 PTY output frame과 성공적으로 전달한 사용자 입력만 활동으로 계산한다. focus 보고·빈 입력·색·크기·스크롤 frame은 제외한다. echo 없는 입력과 화면 이벤트를 terminal/PTY 회귀로 확인했다.
+- exact provider+conversation의 cwd를 저장하고 같은 대화의 cwd 없는 보고는 기존 값을 보존한다. 다른 대화는 상속하지 않는다. 보고→캡처 launch→transcript→기존 pane 우선순위를 사용하며 확인된 디렉터리 소실 시 stopped/error로 남긴다. 과거 JSON의 추가 필드 없는 복원도 확인했다.
+- `ManagedRun`을 승인된 공통 `PaneRun`으로 일반화했다. 기존 저장 `run`과 state 값은 유지한다. 모든 최상위 process의 종료 상태·private output을 보존하며 cold restore나 입력이 shell을 자동 실행하지 않는다. Start shell과 지원되는 exact Restart만 명시적 실행이다.
+- parent Idle에서도 Working/Waiting/Unknown child가 있으면 pane shortcut·Sessions ×·tab × 모두 최신 상태로 확인한다. Cancel 기본, Tab/Shift-Tab 선택, Enter/Space/Escape 소비를 확인했다.
+- 최종 변경의 선택 검사: 새 UI lifecycle 9 tests, 기존 managed restart 3 tests, sidebar width/bounds 마우스 1 test 통과. core 69 tests, terminal 65 passed/2 ignored 및 workspace doc tests 통과. 마지막 코드 변경 뒤 workspace clippy·fmt·생성 문서 일치·제품 문서 6 tests·source 준비 무결성·diff 형식을 확인했다.
+- 전체 workspace의 두 번째 실행은 UI 180/181 통과했고 마지막 sidebar drag가 실패했다. 검사 입력이 1200px 창 내부를 건너뛰어 1385px부터 시작하는 경로를 확인했다. MouseDown 뒤 frame을 전달하고 100px 이하 간격으로 실제 창 경계를 지나도록 구동을 보완했다. width·offset·bounds assertion은 유지하며 단독 검사는 통과했다. 이 전체 실패를 통과로 표시하지 않으며 최종 HEAD의 전체 CI에서 재확인한다.
+- managed cwd 우선순위 변경 후 기존 missing-folder fixture가 낮은 우선순위의 launch cwd만 변경해 기대 오류가 발생하지 않았다. 실제 authoritative report cwd를 사라진 디렉터리로 설정하도록 fixture를 맞췄고 원래 오류·복원 assertion은 유지했다.
+- 생성 Pages를 Chromium의 desktop 1280px와 좁은 390px에서 렌더해 직접 확인했다. 13개 feature card, 이미지 로딩·가로 overflow·page error 검사가 통과했다. 이는 Pages의 실행 근거이며 chda native UI 검수 회차에 포함하지 않는다.
+- 최종 원격 CI·교차 코드 리뷰·macOS native 검수·GUI update handoff·공개는 아직 통과 근거가 없다. native 검수는 승인된 최종 후보의 3회 계획으로 진행한다.
+
+### 리뷰 수용 · 어댑터별 정확한 transcript 경로
+
+- Copilot은 `<id>/events.jsonl`, Gemini는 `.json`/`.jsonl` 안의 전체 `sessionId`로 대화를 식별한다. 공통 filename 조회는 transcript가 있어도 cwd를 찾지 못했다. 실제 저장 형식을 격리한 두 child-process 회귀가 수정 전 모두 실패했다.
+- `session_file_for_id`를 어댑터별로 제공하고 재개 가능 여부와 cwd 조회가 같은 exact 파일을 사용하도록 했다. 기존 Copilot path traversal 거부와 Gemini 전체 ID 비교를 유지한다. 사용자 환경 변수를 변경하지 않고 테스트 프로세스에만 fixture 환경을 전달한다.
+- 수정 후 agents 61 passed/기존 측정 2 ignored, doc tests 통과. 새 exact cwd 두 회귀 및 잘못된/부분 ID 거부를 포함한다. 원격 CI와 최종 교차 리뷰는 새 HEAD에서 확인한다.
+
+### macOS CI 수용 · 실제 입력과 조용한 프로세스
+
+- lifecycle HEAD `01a8dfa`의 macOS CI는 UI 179/182 통과, sidebar HEAD `79f38d5`는 UI 187/188 통과였다. quiet resize 검사는 실제 zsh의 WINCH 출력 때문에 활동 시간이 달라졌다. lifecycle의 no-echo 입력 검사와 background redraw 검사도 실패했다. Linux·Windows release 빌드와 다른 CI 검사는 두 HEAD 모두 통과했다. macOS 전체 성공으로 세지 않는다.
+- 조용한 pane과 redraw 시나리오를 준비 완료 표식을 출력한 뒤 echo 없는 `cat`으로 전환한다. 테마·resize에는 실제 출력이 없고, 원래 timestamp·redraw assertion은 유지한다.
+- 준비 출력 직후의 성공한 입력을 검사한 단독 RED에서 활동 시간 대기가 실패했다. 출력 갱신의 기존 1초 제한이 사용자 입력에도 적용되는 실제 누락이었다. 입력은 즉시 기록하고 프로그램 출력만 기존 제한을 유지한다.
+- 공유 임시 Cargo 산출물의 다른 worktree 형식 재사용으로 생긴 컴파일 실패는 RED로 세지 않는다. 해당 작업 소유 cache의 core/UI 산출물을 다시 컴파일한 뒤 위 RED를 확인했다.
+- 수정 후 lifecycle 9 tests, background redraw 1 test, UI all-targets clippy 통과. 최종 HEAD의 전체 원격 CI와 native 인수 검수는 별도로 확인한다.
+
+### 세션 수명 교차 리뷰 처리
+
+- `410f150` Claude 리뷰의 timestamp/종료 child 지적을 재현했다. 제목보다 먼저 만들어져 늦게 도착한 notify는 conversation 기록 timeout으로 실패했고, 종료된 parent의 Unknown child는 숨은 확인을 요구했다. 수정 뒤 lifecycle 10개, 실제 stand-in Codex title/notify/종료 시나리오가 통과했다. UI clippy 통과.
+- UI 관찰 시각을 exact-conversation hook producer 시각과 비교하지 않는다. top process가 종료된 pane은 중지할 PTY가 없어 오래된 child 확인을 생략한다. 살아 있는 parent의 Working/Waiting/Unknown child 확인은 유지한다.
+- 확인된 cwd가 사라지면 다른 디렉터리로 자동 재개하거나 shell을 시작하라는 제안은 승인 설계와 충돌하므로 채택하지 않았다. 복원 안내가 opened를 주장하던 부분은 fallback directory 표기로 바로잡았다. 미확인 CLI·재개 실패를 통과로 처리하지 않는다.
+- 초기 RED 두 실행의 compile 실패는 공용 target에 다른 worktree 메타데이터가 남은 결과였으며 RED로 계산하지 않는다. 이후 작업용 workspace 패키지만 정리하고 실제 실패/수정 검증을 수행했다.
+
+- 두 번째이자 마지막 세션 리뷰는 첫 수정이 종료 관찰도 순서 gate에서 제외해 종료 이전 notify가 대화를 되살릴 수 있음을 지적했다. 실제 delayed-end notify로 RED를 확인했다. 제목 상태만 제외하고 SessionEnd는 종료 경계에 기록하도록 최소 수정했다. 처리 순서를 확인하는 다음 IPC 후 대화/agent 부활이 없음을 확인했으며 직접 Codex 시나리오, lifecycle 10개, UI clippy가 통과했다. 추가 리뷰를 요청하지 않는다.
+
+### 순차 통합 · 외부 dependency 준비
+
+- 엔진 PR #234가 main `d0f0761`으로 병합됐다. 세션 PR #235의 main 통합 HEAD `6e01b64`에서 세 OS native 빌드가 고정 Codeberg `translate-c` archive의 HTTP 503으로 실패했으며 같은 HEAD 재실행도 같은 오류였다. source·Zig·Ghostty 고정값은 바꾸지 않는다.
+- 앞서 Zig가 받아 둔 정확한 package 파일과 license를 재포장한 92,974-byte archive를 격리 cache에서 실제 Zig 0.16.0 fetch로 검증했다. 원래 `translate_c-0.0.0-Q_BUWhVNBwDOEcIqub4VFPJPB6D9dgwzUMHTX5KWr8Xr`와 일치했다. archive SHA-256을 별도 metadata로 고정하고 준비 시 두 hash를 확인한 뒤 Zig cache에 공급한다. Ghostty source·patch digest·upstream `.zon` URL/hash는 그대로다.
+- archive 변조·Zig hash 불일치·fetch 실패·read-only check의 합성 회귀를 CI에 추가했다. 실제 source 준비와 격리 cache hash 검증은 별도 근거이며 세 OS 최종 CI 통과는 재확인한다.
+
+- 경로 기반 CI의 UI 198/199 통과 실행에서도 마지막 sidebar drag가 180px/기대 600px로 실패했다. GPUI 테스트 입력은 MouseDown 위치로 자동 mouse-move를 합성하지 않는다. 반복 drag의 grip에 먼저 실제 move를 전달하고 각 이동 사이 layout frame을 구동한다. 기존 width·저장값·grip bounds·최솟값/최댓값·무드래그·더블클릭 assertion은 모두 유지한다.
+
+- 수정한 반복 drag 시나리오가 실제 PTY/마우스 이벤트로 통과했다(1 test). 새 final HEAD에서 전체 macOS CI를 확인한다. dependency 준비의 3개 회귀와 Python syntax/format/doc checks를 유지한다.

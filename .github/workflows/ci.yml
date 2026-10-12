@@ -21,6 +21,7 @@ jobs:
     steps:
       - uses: actions/checkout@v7
       - run: python3 scripts/test-prepare-ghostty.py
+      - run: python3 scripts/test-ghostty-dependency.py
       - run: python3 scripts/test-product-docs.py
       - run: python3 scripts/test-appcast.py
       - run: python3 scripts/test-macos-release.py

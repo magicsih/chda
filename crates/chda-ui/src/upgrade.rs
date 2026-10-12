@@ -135,10 +135,10 @@ pub(crate) fn validate(state: &Handoff, terminals: usize) -> io::Result<()> {
                 ..
             } if *id > 0 && *id < u64::MAX - 4096 => {
                 ids.push(*id);
-                if matches!(run.as_deref(), Some(chda_core::ManagedRun::Starting { .. })) {
+                if matches!(run.as_deref(), Some(chda_core::PaneRun::Starting { .. })) {
                     return Err(io::Error::other("A pane is still starting"));
                 }
-                if !run.as_deref().is_some_and(chda_core::ManagedRun::stopped) {
+                if !run.as_deref().is_some_and(chda_core::PaneRun::stopped) {
                     live.push(*id);
                 }
             }
@@ -180,7 +180,7 @@ mod tests {
     fn stopped_panes_keep_layout_identity_without_inherited_ptys() {
         let mut ws = chda_core::Workspace::new();
         let (_, pane) = ws.new_tab();
-        ws.pane_mut(pane).unwrap().managed_run = Some(chda_core::ManagedRun::Stopped {
+        ws.pane_mut(pane).unwrap().pane_run = Some(chda_core::PaneRun::Stopped {
             code: Some(7),
             signal: None,
             error: None,
@@ -196,14 +196,13 @@ mod tests {
             "stopped panes cannot consume a live descriptor"
         );
         state.panes.clear();
-        ws.pane_mut(pane).unwrap().managed_run =
-            Some(chda_core::ManagedRun::Starting { started_at: 1 });
+        ws.pane_mut(pane).unwrap().pane_run = Some(chda_core::PaneRun::Starting { started_at: 1 });
         state.session.windows[0] = ws.handoff_snapshot();
         assert!(
             validate(&state, 0).is_err(),
             "updates wait for process preparation"
         );
-        ws.pane_mut(pane).unwrap().managed_run = None;
+        ws.pane_mut(pane).unwrap().pane_run = None;
         state.session.windows[0] = ws.handoff_snapshot();
         assert!(
             validate(&state, 0).is_err(),

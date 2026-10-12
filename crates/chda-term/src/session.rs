@@ -35,7 +35,11 @@ const SEARCH_INTERVAL: Duration = Duration::from_millis(250);
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Event {
     /// A new frame is available from [`Session::frame`].
-    Frame,
+    Frame {
+        has_output: bool,
+    },
+    /// Nonempty user input was successfully written to the PTY.
+    Input,
     TitleChanged(String),
     /// Raw OSC 7 value.
     PwdChanged(String),
@@ -58,7 +62,7 @@ pub enum Event {
     /// Reply to [`Session::find_last_diagram`]: the last Mermaid source in
     /// the scrollback, if any.
     LastDiagram(Option<String>),
-    /// Final screen and retained scrollback, only for opted-in managed runs.
+    /// Final screen and retained scrollback, for every top-level process.
     FinalOutput(Result<String, String>),
     /// The child exited; the session is finished. The status is unknown
     /// for a child adopted from an earlier chda process.
@@ -78,7 +82,6 @@ pub struct SessionOptions {
     pub command: Option<Vec<String>>,
     pub cwd: Option<std::path::PathBuf>,
     pub env: Vec<(String, String)>,
-    pub capture_exit_output: bool,
 }
 
 impl Default for SessionOptions {
@@ -91,7 +94,6 @@ impl Default for SessionOptions {
             colors: ColorConfig::default(),
             command: None,
             cwd: None,
-            capture_exit_output: false,
             env: vec![
                 ("TERM".into(), "xterm-256color".into()),
                 ("COLORTERM".into(), "truecolor".into()),
@@ -629,7 +631,9 @@ fn run(
         if dirty && (force_frame || !throttled) {
             if let Ok(frame) = term.frame() {
                 *frame_slot.lock().unwrap_or_else(|e| e.into_inner()) = Arc::new(frame);
-                emit(Event::Frame);
+                emit(Event::Frame {
+                    has_output: output_pending,
+                });
             }
             if output_pending {
                 last_output_frame = Instant::now();
@@ -675,12 +679,20 @@ fn run(
     // Keep draining while a shell flushes its PTY during exit. Stopping the
     // reader before wait can deadlock macOS tty teardown.
     stop.stop();
-    if opts.capture_exit_output {
-        emit(Event::FinalOutput(
-            term.screen_text().map_err(|e| e.to_string()),
-        ));
-    }
+    emit(Event::FinalOutput(
+        term.screen_text().map_err(|e| e.to_string()),
+    ));
     emit(Event::Exited(status));
+}
+
+/// Focus/query replies are not activity. Only successful user input counts.
+fn write_input(pty: &mut Pty, bytes: &[u8], replies: &mut Vec<Event>) {
+    if !bytes.is_empty()
+        && pty.write_all(bytes).is_ok()
+        && !matches!(replies.last(), Some(Event::Input))
+    {
+        replies.push(Event::Input);
+    }
 }
 
 /// Apply a command. Returns whether the viewport may have changed.
@@ -699,7 +711,7 @@ fn handle_command(
             {
                 term.clear_selection();
                 term.scroll_to_bottom();
-                let _ = pty.write_all(&bytes);
+                write_input(pty, &bytes, replies);
                 return true;
             }
             false
@@ -708,7 +720,7 @@ fn handle_command(
             if let Ok(bytes) = term.encode_paste(&text) {
                 term.clear_selection();
                 term.scroll_to_bottom();
-                let _ = pty.write_all(&bytes);
+                write_input(pty, &bytes, replies);
                 return true;
             }
             false
@@ -719,13 +731,13 @@ fn handle_command(
             {
                 term.clear_selection();
                 term.scroll_to_bottom();
-                let _ = pty.write_all(&bytes);
+                write_input(pty, &bytes, replies);
                 return true;
             }
             false
         }
         Command::Bytes(bytes) => {
-            let _ = pty.write_all(&bytes);
+            write_input(pty, &bytes, replies);
             false
         }
         Command::Focus(focused) => {
@@ -762,7 +774,7 @@ fn handle_command(
             if term.mouse_tracking() && !mods.shift {
                 for _ in 0..lines.unsigned_abs() {
                     if let Ok(bytes) = term.encode_wheel(up, mods, px_x, px_y) {
-                        let _ = pty.write_all(&bytes);
+                        write_input(pty, &bytes, replies);
                     }
                 }
                 return false;
@@ -780,7 +792,7 @@ fn handle_command(
                 };
                 for _ in 0..lines.unsigned_abs() {
                     if let Ok(bytes) = term.encode_key(&key) {
-                        let _ = pty.write_all(&bytes);
+                        write_input(pty, &bytes, replies);
                     }
                 }
                 return false;
@@ -802,7 +814,7 @@ fn handle_command(
                 if let Ok(bytes) = term.encode_mouse(&input)
                     && !bytes.is_empty()
                 {
-                    let _ = pty.write_all(&bytes);
+                    write_input(pty, &bytes, replies);
                 }
                 return false;
             }
@@ -931,6 +943,64 @@ mod tests {
     }
 
     #[test]
+    fn presentation_frames_and_focus_reports_are_not_io_activity() {
+        let mut p = Probe::spawn(&[
+            "/bin/sh",
+            "-c",
+            "stty -echo; echo activity-ready; read x; echo response:$x; read y",
+        ]);
+        p.wait_for_text("activity-ready");
+        while let Ok(event) = p.events.try_recv() {
+            p.seen.push(event);
+        }
+        assert!(
+            p.seen
+                .iter()
+                .any(|e| matches!(e, Event::Frame { has_output: true }))
+        );
+        p.seen.clear();
+        p.session.set_colors(ColorConfig {
+            background: Some(crate::frame::Rgb { r: 1, g: 2, b: 3 }),
+            ..Default::default()
+        });
+        assert_eq!(
+            p.wait_for(|e| matches!(e, Event::Frame { .. })),
+            Event::Frame { has_output: false }
+        );
+        p.session.resize(Size { cols: 50, rows: 8 }, 0, 0);
+        assert_eq!(
+            p.wait_for(|e| matches!(e, Event::Frame { .. })),
+            Event::Frame { has_output: false }
+        );
+        p.session.scroll_to_bottom();
+        assert_eq!(
+            p.wait_for(|e| matches!(e, Event::Frame { .. })),
+            Event::Frame { has_output: false }
+        );
+        p.session.focus(true);
+        p.session.text(String::new());
+        p.session.write(Vec::new());
+        while let Ok(event) = p.events.recv_timeout(Duration::from_millis(50)) {
+            assert!(
+                !matches!(event, Event::Input | Event::Frame { has_output: true }),
+                "{event:?}"
+            );
+        }
+        p.session.text("user-input".into());
+        assert_eq!(p.wait_for(|e| matches!(e, Event::Input)), Event::Input);
+        p.session.write(b"\n".to_vec());
+        p.wait_for_text("response:user-input");
+        while let Ok(event) = p.events.try_recv() {
+            p.seen.push(event);
+        }
+        assert!(
+            p.seen
+                .iter()
+                .any(|e| matches!(e, Event::Frame { has_output: true }))
+        );
+    }
+
+    #[test]
     fn rejected_image_handoff_keeps_the_terminal_and_child_running() {
         let mut p = Probe::spawn(&[
             "/bin/sh",
@@ -975,7 +1045,7 @@ mod tests {
             Session::prepare_adoption(SessionOptions::default(), detached, tx, || {}).unwrap();
         assert_eq!(
             rx.recv_timeout(Duration::from_secs(5)).unwrap(),
-            Event::Frame
+            Event::Frame { has_output: false }
         );
         // Output while a successor is preparing must stay unread in the PTY.
         let mut writer = Pty::adopt(recovery.pty.try_clone().unwrap()).unwrap();
@@ -1052,14 +1122,13 @@ mod tests {
     }
 
     #[test]
-    fn opted_in_exit_output_retains_scrollback_before_the_exit_event() {
+    fn every_exit_retains_scrollback_before_the_exit_event() {
         let mut p = Probe::spawn_with(SessionOptions {
             command: Some(vec![
                 "/bin/sh".into(),
                 "-c".into(),
                 "i=0; while [ $i -lt 30 ]; do echo history-$i; i=$((i+1)); done; exit 7".into(),
             ]),
-            capture_exit_output: true,
             ..Default::default()
         });
         p.wait_for(|e| matches!(e, Event::Exited(_)));
@@ -1085,7 +1154,7 @@ mod tests {
         let mut plain = Probe::spawn(&["/bin/sh", "-c", "echo plain; exit 0"]);
         plain.wait_for(|e| matches!(e, Event::Exited(_)));
         assert!(
-            !plain
+            plain
                 .seen
                 .iter()
                 .any(|e| matches!(e, Event::FinalOutput(_))),
@@ -1258,7 +1327,7 @@ mod tests {
                 let start = Instant::now();
                 session.text((*ch).to_owned());
                 loop {
-                    if let Event::Frame = rx.recv_timeout(Duration::from_secs(2)).unwrap() {
+                    if let Event::Frame { .. } = rx.recv_timeout(Duration::from_secs(2)).unwrap() {
                         let f = session.frame();
                         let y = f.cursor.map_or(0, |c| c.y);
                         if f.row_text(y).ends_with(ch) {

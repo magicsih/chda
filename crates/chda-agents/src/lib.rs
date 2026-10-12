@@ -129,16 +129,26 @@ pub trait AgentAdapter: Send + Sync {
     fn session_cwd(&self, file: &Path) -> Option<PathBuf> {
         session::head_cwd(file)
     }
-    /// Whether the agent still has the transcript of session `id`, so it can
-    /// be resumed. Claude uses exact filenames; Codex additionally confirms
-    /// the full session ID in rollout metadata. Other storage formats override it.
+    /// The transcript file of this exact conversation. Storage formats with
+    /// metadata IDs or per-session directories override this lookup once.
+    fn session_file_for_id(&self, id: &SessionId) -> Option<PathBuf> {
+        if id.0.is_empty() {
+            return None;
+        }
+        self.session_roots().iter().find_map(|root| {
+            session::jsonl_files(root)
+                .into_iter()
+                .find(|file| session::transcript_matches_id(file, self.id(), id))
+        })
+    }
+    /// Whether the agent still has the transcript, so it can be resumed.
     fn has_session(&self, id: &SessionId) -> bool {
-        !id.0.is_empty()
-            && self.session_roots().iter().any(|root| {
-                session::jsonl_files(root)
-                    .iter()
-                    .any(|f| session::transcript_matches_id(f, self.id(), id))
-            })
+        self.session_file_for_id(id).is_some()
+    }
+    /// Directory from the transcript of this exact conversation only.
+    fn session_cwd_for_id(&self, id: &SessionId) -> Option<PathBuf> {
+        self.session_file_for_id(id)
+            .and_then(|file| self.session_cwd(&file))
     }
     /// Parse one transcript file; `None` when it is not a session.
     fn parse_session(&self, file: &Path) -> Option<AgentSession>;

@@ -99,14 +99,14 @@ impl AgentAdapter for CopilotAdapter {
             .collect()
     }
 
-    fn has_session(&self, id: &SessionId) -> bool {
-        !id.0.is_empty()
-            && !id.0.contains(['/', '\\'])
-            && !matches!(id.0.as_str(), "." | "..")
-            && self
-                .session_roots()
-                .iter()
-                .any(|root| root.join(&id.0).join("events.jsonl").is_file())
+    fn session_file_for_id(&self, id: &SessionId) -> Option<PathBuf> {
+        if id.0.is_empty() || id.0.contains(['/', '\\']) || matches!(id.0.as_str(), "." | "..") {
+            return None;
+        }
+        self.session_roots()
+            .iter()
+            .map(|root| root.join(&id.0).join("events.jsonl"))
+            .find(|file| file.is_file())
     }
 
     /// The directory is in `session.start`'s `data.context.cwd`.
@@ -209,6 +209,45 @@ pub fn parse_events(file: &Path) -> Option<AgentSession> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn exact_transcript_directory_uses_the_adapter_storage_layout() {
+        const CHILD: &str = "CHDA_CopilotAdapter_CWD_TEST_CHILD";
+        if std::env::var_os(CHILD).is_some() {
+            let adapter = CopilotAdapter;
+            assert!(adapter.has_session(&SessionId("full-identity".into())));
+            assert_eq!(
+                adapter.session_cwd_for_id(&SessionId("full-identity".into())),
+                Some(PathBuf::from("/exact/copilot"))
+            );
+            for id in ["identity", "short", "", "../full-identity"] {
+                assert!(adapter.session_cwd_for_id(&SessionId(id.into())).is_none());
+            }
+            return;
+        }
+        let root =
+            std::env::temp_dir().join(format!("chda-copilot-exact-cwd-{}", std::process::id()));
+        let folder = root.join("session-state/full-identity");
+        std::fs::create_dir_all(&folder).unwrap();
+        std::fs::write(folder.join("events.jsonl"), r#"{"type":"session.start","data":{"sessionId":"full-identity","context":{"cwd":"/exact/copilot"}}}"#).unwrap();
+
+        let output = std::process::Command::new(std::env::current_exe().unwrap())
+            .args([
+                "--exact",
+                "copilot::tests::exact_transcript_directory_uses_the_adapter_storage_layout",
+            ])
+            .env(CHILD, "1")
+            .env("COPILOT_HOME", &root)
+            .output()
+            .unwrap();
+        std::fs::remove_dir_all(root).unwrap();
+        assert!(
+            output.status.success(),
+            "{}\n{}",
+            String::from_utf8_lossy(&output.stdout),
+            String::from_utf8_lossy(&output.stderr)
+        );
+    }
+
     use std::fs;
 
     #[test]

@@ -1,5 +1,5 @@
 use super::*;
-use chda_core::ManagedRun;
+use chda_core::PaneRun;
 
 fn output_name_valid(name: &str) -> bool {
     name.starts_with("previous-run-")
@@ -77,7 +77,7 @@ impl WorkspaceView {
         self.captured_agent_argv(context)
     }
 
-    pub(super) fn managed_exit(
+    pub(super) fn pane_exit(
         &mut self,
         pane: PaneId,
         status: Option<&chda_term::ExitStatus>,
@@ -89,11 +89,13 @@ impl WorkspaceView {
             .panes
             .get(&pane)
             .is_some_and(|(view, _)| view.read(cx).focus_handle(cx).is_focused(window));
+        let agents = self.pane_agents(&[pane]);
         self.ws.end_agent(pane);
+        self.resync_closed_agents(agents, cx);
         self.initializing_panes.remove(&pane);
         self.panes.remove(&pane);
         if let Some(info) = self.ws.pane_mut(pane) {
-            info.managed_run = Some(ManagedRun::Stopped {
+            info.pane_run = Some(PaneRun::Stopped {
                 code: status.map(|s| s.code),
                 signal: status.and_then(|s| s.signal.clone()),
                 error: None,
@@ -187,6 +189,45 @@ impl WorkspaceView {
         }
     }
 
+    pub(super) fn start_shell(
+        &mut self,
+        pane: PaneId,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(info) = self.ws.pane(pane) else {
+            return;
+        };
+        if !info.pane_run.as_ref().is_some_and(PaneRun::stopped) {
+            return;
+        }
+        let cwd = info.cwd.clone();
+        if let Some(path) = &cwd
+            && !path.is_dir()
+        {
+            self.ws.pane_mut(pane).unwrap().pane_run = Some(PaneRun::failed(format!(
+                "The directory {} is missing; no shell was started",
+                path.display()
+            )));
+            cx.notify();
+            return;
+        }
+        let info = self.ws.pane_mut(pane).unwrap();
+        info.agent_launch = None;
+        info.agent_session = None;
+        info.pane_run = None;
+        self.agent_report_at.remove(&pane);
+        self.previous_open.remove(&pane);
+        self.initializing_panes.insert(pane);
+        self.open_pane(pane, cwd, None, window, cx);
+        self.sync_panes(cx);
+        self.save_session();
+        if self.ws.focused_pane() == Some(pane) {
+            self.refocus_terminal(window, cx);
+        }
+        cx.notify();
+    }
+
     pub(crate) fn restart_agent(
         &mut self,
         pane: PaneId,
@@ -196,13 +237,24 @@ impl WorkspaceView {
         let Some(info) = self.ws.pane(pane) else {
             return;
         };
-        if !info.managed_run.as_ref().is_some_and(ManagedRun::stopped) {
+        if !info.pane_run.as_ref().is_some_and(PaneRun::stopped) {
             return;
         }
-        let Some(context) = info.agent_launch.clone().filter(|c| c.managed) else {
+        let Some(mut context) = info.agent_launch.clone().filter(|c| c.managed) else {
             return;
         };
+        let reported = info
+            .agent_session
+            .as_ref()
+            .filter(|s| {
+                s.agent == context.agent.as_str()
+                    && context.session.as_ref().is_some_and(|id| s.session == id.0)
+            })
+            .and_then(|s| s.cwd.clone());
         let result = (|| {
+            context.cwd =
+                chda_core::restore_agent_cwd(reported.as_deref(), Some(&context.cwd), None, None)?
+                    .unwrap();
             let argv = self.captured_resume_argv(&context)?;
             TerminalView::plan(
                 &self.settings,
@@ -210,20 +262,20 @@ impl WorkspaceView {
                 pane.raw(),
                 Some(context.cwd.clone()),
                 Some(argv),
-                true,
             )
             .map_err(|e| e.to_string())
         })();
         let plan = match result {
             Ok(plan) => plan,
             Err(e) => {
-                self.ws.pane_mut(pane).unwrap().managed_run = Some(ManagedRun::failed(e));
+                self.ws.pane_mut(pane).unwrap().pane_run = Some(PaneRun::failed(e));
                 cx.notify();
                 return;
             }
         };
+        self.ws.pane_mut(pane).unwrap().agent_launch = Some(context.clone());
         let started_at = now_ms();
-        self.ws.pane_mut(pane).unwrap().managed_run = Some(ManagedRun::Starting { started_at });
+        self.ws.pane_mut(pane).unwrap().pane_run = Some(PaneRun::Starting { started_at });
         self.previous_open.remove(&pane);
         let settings = self.settings.clone();
         let operation = self.env.windows.borrow().update.operation();
@@ -232,14 +284,14 @@ impl WorkspaceView {
             let _operation = operation;
             let prepared = task.await;
             let _ = this.update_in(cx,|view,window,cx| {
-                if view.quitting || !view.ws.pane(pane).and_then(|p|p.managed_run.as_ref())
-                    .is_some_and(|run|matches!(run,ManagedRun::Starting { started_at: at } if *at==started_at)) { return; }
+                if view.quitting || !view.ws.pane(pane).and_then(|p|p.pane_run.as_ref())
+                    .is_some_and(|run|matches!(run,PaneRun::Starting { started_at: at } if *at==started_at)) { return; }
                 match prepared {
                     Ok(prepared) => {
                         view.attach_terminal(pane,prepared,settings,Some(context.cwd),window,cx);
                         if view.ws.focused_pane()==Some(pane) { view.refocus_terminal(window,cx); }
                     }
-                    Err(e) => { view.ws.pane_mut(pane).unwrap().managed_run = Some(ManagedRun::failed(format!("Could not restart: {e}"))); }
+                    Err(e) => { view.ws.pane_mut(pane).unwrap().pane_run = Some(PaneRun::failed(format!("Could not restart: {e}"))); }
                 }
                 view.save_session();
                 cx.notify();
@@ -248,13 +300,13 @@ impl WorkspaceView {
         cx.notify();
     }
 
-    pub(super) fn render_managed_pane(&self, pane: PaneId, cx: &mut Context<Self>) -> AnyElement {
+    pub(super) fn render_process_pane(&self, pane: PaneId, cx: &mut Context<Self>) -> AnyElement {
         let Some(info) = self.ws.pane(pane) else {
             return div().into_any_element();
         };
         let bg = hsla(self.settings.colors.background.unwrap_or_default());
         let fg = hsla(self.settings.colors.foreground.unwrap_or_default());
-        let stopped = info.managed_run.as_ref().is_some_and(ManagedRun::stopped);
+        let stopped = info.pane_run.as_ref().is_some_and(PaneRun::stopped);
         let live = self.panes.get(&pane);
         let mut content = div()
             .size_full()
@@ -270,9 +322,9 @@ impl WorkspaceView {
                     c.managed && c.session.as_ref().is_some_and(|s| !s.0.is_empty())
                 });
             let mut status = div().p_3().flex().flex_col().gap_2().text_sm().child(
-                info.managed_run
+                info.pane_run
                     .as_ref()
-                    .map_or_else(|| "Process unavailable".into(), ManagedRun::label),
+                    .map_or_else(|| "Process unavailable".into(), PaneRun::label),
             );
             if let Some(context) = context {
                 status = status
@@ -292,7 +344,7 @@ impl WorkspaceView {
                     ));
                 }
             }
-            let starting = matches!(info.managed_run, Some(ManagedRun::Starting { .. }));
+            let starting = matches!(info.pane_run, Some(PaneRun::Starting { .. }));
             if can_restart || starting {
                 status = status.child(
                     div()
@@ -316,6 +368,23 @@ impl WorkspaceView {
                                     this.restart_agent(pane, window, cx)
                                 }))
                         }),
+                );
+            }
+            if stopped {
+                status = status.child(
+                    div()
+                        .id(("start-shell", pane.raw()))
+                        .debug_selector(|| "start-shell".into())
+                        .px_3()
+                        .py_1()
+                        .border_1()
+                        .border_color(fg.opacity(0.5))
+                        .rounded_sm()
+                        .cursor_pointer()
+                        .child("Start shell")
+                        .on_click(cx.listener(move |this, _, window, cx| {
+                            this.start_shell(pane, window, cx)
+                        })),
                 );
             }
             content = content.child(status);

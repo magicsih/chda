@@ -151,12 +151,10 @@ pub(crate) struct PreparedTerminal {
     session: Session,
     events: mpsc::Receiver<Event>,
     wake_rx: UnboundedReceiver<()>,
-    capture_exit_output: bool,
 }
 
 pub struct TerminalView {
     final_output: Option<Result<String, String>>,
-    capture_exit_output: bool,
     session: Session,
     events: mpsc::Receiver<Event>,
     frame: Arc<Frame>,
@@ -205,14 +203,12 @@ impl TerminalView {
         pane_id: u64,
         cwd: Option<PathBuf>,
         command: Option<Vec<String>>,
-        capture_exit_output: bool,
     ) -> std::io::Result<TerminalPlan> {
         let mut options = SessionOptions {
             colors: settings.colors.clone(),
             scrollback: settings.scrollback,
             cwd: cwd.clone(),
             command,
-            capture_exit_output,
             ..Default::default()
         };
         if let Some(lang) = env.system.pane_locale() {
@@ -290,7 +286,6 @@ impl TerminalView {
             mut options,
             inherited,
         } = plan;
-        let capture_exit_output = options.capture_exit_output;
         let (events_tx, events) = mpsc::channel();
         let (wake_tx, wake_rx) = unbounded::<()>();
         let wake = move || {
@@ -307,7 +302,6 @@ impl TerminalView {
             session,
             events,
             wake_rx,
-            capture_exit_output,
         })
     }
 
@@ -322,7 +316,6 @@ impl TerminalView {
             session,
             events,
             wake_rx,
-            capture_exit_output,
         } = prepared;
         let frame = session.frame();
 
@@ -348,7 +341,6 @@ impl TerminalView {
 
         Self {
             final_output: None,
-            capture_exit_output,
             session,
             events,
             frame,
@@ -402,7 +394,6 @@ impl TerminalView {
                 size: detached.size,
                 colors: self.settings.colors.clone(),
                 scrollback: self.settings.scrollback,
-                capture_exit_output: self.capture_exit_output,
                 ..Default::default()
             },
             detached,
@@ -511,9 +502,9 @@ impl TerminalView {
         .detach();
     }
 
-    fn note_activity(&mut self, cx: &mut Context<Self>) {
+    fn note_activity(&mut self, input: bool, cx: &mut Context<Self>) {
         let now = now_ms();
-        if now.saturating_sub(self.last_activity_sent) >= 1000 {
+        if input || now.saturating_sub(self.last_activity_sent) >= 1000 {
             self.last_activity_sent = now;
             cx.emit(TerminalEvent::Activity(now));
         }
@@ -522,12 +513,15 @@ impl TerminalView {
     fn drain_events(&mut self, _: &mut Window, cx: &mut Context<Self>) {
         while let Ok(event) = self.events.try_recv() {
             match event {
-                Event::Frame => {
+                Event::Frame { has_output } => {
                     self.frame = self.session.frame();
                     self.update_link(cx);
-                    self.note_activity(cx);
+                    if has_output {
+                        self.note_activity(false, cx);
+                    }
                     cx.notify();
                 }
+                Event::Input => self.note_activity(true, cx),
                 Event::TitleChanged(title) => cx.emit(TerminalEvent::Title(title)),
                 Event::PwdChanged(raw) => {
                     if let Some(path) = parse_pwd_report(&raw) {
@@ -684,7 +678,6 @@ impl TerminalView {
             return;
         };
         self.touch();
-        self.note_activity(cx);
         let text = ks
             .key_char
             .as_deref()

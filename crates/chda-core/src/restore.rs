@@ -83,9 +83,11 @@ pub enum SavedNode {
         #[serde(default, skip_serializing_if = "Option::is_none")]
         session: Option<String>,
         #[serde(default, skip_serializing_if = "Option::is_none")]
+        agent_cwd: Option<PathBuf>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
         launch: Option<Box<chda_agents::AgentLaunchContext>>,
         #[serde(default, skip_serializing_if = "Option::is_none")]
-        run: Option<Box<crate::ManagedRun>>,
+        run: Option<Box<crate::PaneRun>>,
         #[serde(default, skip_serializing_if = "Option::is_none")]
         previous_run: Option<String>,
         /// The pane's id, kept only when handing running panes to a new
@@ -111,7 +113,27 @@ pub struct RestoredPane {
     /// The agent conversation the pane had open.
     pub agent: Option<AgentSessionRef>,
     pub launch: Option<chda_agents::AgentLaunchContext>,
-    pub run: Option<crate::ManagedRun>,
+    pub run: Option<crate::PaneRun>,
+}
+
+/// Exact-conversation directories take precedence over the old shell directory.
+/// A missing confirmed directory must never silently resume elsewhere.
+pub fn restore_agent_cwd(
+    reported: Option<&Path>,
+    launch: Option<&Path>,
+    transcript: Option<&Path>,
+    legacy: Option<&Path>,
+) -> Result<Option<PathBuf>, String> {
+    if let Some(path) = reported.or(launch).or(transcript) {
+        if !path.is_dir() {
+            return Err(format!(
+                "The conversation directory {} is missing; no conversation was resumed",
+                path.display()
+            ));
+        }
+        return Ok(Some(path.to_path_buf()));
+    }
+    Ok(legacy.map(Path::to_path_buf))
 }
 
 /// Saved directories that no longer exist, with what replaced them.
@@ -217,9 +239,10 @@ impl Workspace {
                     cwd: info.and_then(|i| i.cwd.clone()),
                     repo: info.and_then(|i| i.repo.clone()),
                     agent: agent.as_ref().map(|a| a.agent.clone()),
+                    agent_cwd: agent.as_ref().and_then(|a| a.cwd.clone()),
                     session: agent.map(|a| a.session),
                     launch: info.and_then(|i| i.agent_launch.clone()).map(Box::new),
-                    run: info.and_then(|i| i.managed_run.clone()).map(Box::new),
+                    run: info.and_then(|i| i.pane_run.clone()).map(Box::new),
                     previous_run: info.and_then(|i| i.previous_run.clone()),
                     pane: ids.then_some(p.raw()),
                 }
@@ -294,6 +317,7 @@ impl Workspace {
                 repo,
                 agent,
                 session,
+                agent_cwd,
                 launch,
                 run,
                 previous_run,
@@ -307,17 +331,22 @@ impl Workspace {
                     }
                     other => other.clone(),
                 };
-                let agent = agent
-                    .clone()
-                    .zip(session.clone())
-                    .map(|(agent, session)| AgentSessionRef { agent, session });
+                let agent =
+                    agent
+                        .clone()
+                        .zip(session.clone())
+                        .map(|(agent, session)| AgentSessionRef {
+                            agent,
+                            session,
+                            cwd: agent_cwd.clone(),
+                        });
                 let info = PaneInfo {
                     cwd: resolved.clone(),
                     last_activity: *last_activity,
                     previous_activity: (*last_activity > 0).then_some(*last_activity),
                     agent_session: agent.clone(),
                     agent_launch: launch.as_deref().cloned(),
-                    managed_run: run.as_deref().cloned(),
+                    pane_run: run.as_deref().cloned(),
                     previous_run: previous_run.clone(),
                     ..Default::default()
                 };
@@ -358,6 +387,112 @@ mod tests {
     use super::*;
 
     #[test]
+    fn confirmed_directory_precedence_and_missing_directory_never_fall_back() {
+        let root = std::env::temp_dir().join(format!("chda-confirmed-cwd-{}", std::process::id()));
+        let paths: Vec<_> = ["report", "launch", "transcript", "legacy"]
+            .into_iter()
+            .map(|name| root.join(name))
+            .collect();
+        for p in &paths {
+            fs::create_dir_all(p).unwrap();
+        }
+        assert_eq!(
+            restore_agent_cwd(
+                Some(&paths[0]),
+                Some(&paths[1]),
+                Some(&paths[2]),
+                Some(&paths[3])
+            )
+            .unwrap(),
+            Some(paths[0].clone())
+        );
+        assert_eq!(
+            restore_agent_cwd(None, Some(&paths[1]), Some(&paths[2]), Some(&paths[3])).unwrap(),
+            Some(paths[1].clone())
+        );
+        assert_eq!(
+            restore_agent_cwd(None, None, Some(&paths[2]), Some(&paths[3])).unwrap(),
+            Some(paths[2].clone())
+        );
+        assert_eq!(
+            restore_agent_cwd(None, None, None, Some(&paths[3])).unwrap(),
+            Some(paths[3].clone())
+        );
+        fs::remove_dir(&paths[0]).unwrap();
+        assert!(
+            restore_agent_cwd(
+                Some(&paths[0]),
+                Some(&paths[1]),
+                Some(&paths[2]),
+                Some(&paths[3])
+            )
+            .unwrap_err()
+            .contains("no conversation was resumed")
+        );
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn exact_conversation_directory_round_trips_and_legacy_json_still_loads() {
+        let mut ws = Workspace::new();
+        let (_, pane) = ws.new_tab();
+        let report = std::env::temp_dir();
+        ws.set_agent_session(
+            pane,
+            Some(AgentSessionRef {
+                agent: "claude".into(),
+                session: "one".into(),
+                cwd: Some(report.clone()),
+            }),
+        );
+        // Quota and adoption reports lack cwd and must not discard the exact report.
+        ws.set_agent_session(
+            pane,
+            Some(AgentSessionRef {
+                agent: "claude".into(),
+                session: "one".into(),
+                cwd: None,
+            }),
+        );
+        assert_eq!(
+            ws.pane(pane).unwrap().agent_session.as_ref().unwrap().cwd,
+            Some(report.clone())
+        );
+        let json = serde_json::to_value(ws.snapshot()).unwrap();
+        assert_eq!(
+            json["tabs"][0]["root"]["agent_cwd"],
+            serde_json::json!(report)
+        );
+        let saved: SavedWindow = serde_json::from_value(json.clone()).unwrap();
+        let mut restored = Workspace::new();
+        let (panes, _) = restored.restore(&saved);
+        assert_eq!(panes[0].agent.as_ref().unwrap().cwd, Some(report));
+        let mut legacy = json;
+        legacy["tabs"][0]["root"]
+            .as_object_mut()
+            .unwrap()
+            .remove("agent_cwd");
+        let saved: SavedWindow = serde_json::from_value(legacy).unwrap();
+        let mut restored = Workspace::new();
+        assert_eq!(
+            restored.restore(&saved).0[0].agent.as_ref().unwrap().cwd,
+            None
+        );
+        ws.set_agent_session(
+            pane,
+            Some(AgentSessionRef {
+                agent: "claude".into(),
+                session: "two".into(),
+                cwd: None,
+            }),
+        );
+        assert_eq!(
+            ws.pane(pane).unwrap().agent_session.as_ref().unwrap().cwd,
+            None
+        );
+    }
+
+    #[test]
     fn layout_round_trips_and_missing_directories_fall_back() {
         let tmp = std::env::temp_dir().join(format!("chda-restore-{}", std::process::id()));
         let repo = tmp.join("repo");
@@ -373,6 +508,7 @@ mod tests {
         let conversation = AgentSessionRef {
             agent: "claude".into(),
             session: "s1".into(),
+            cwd: None,
         };
         assert!(ws.set_agent_session(b, Some(conversation.clone())));
         ws.resize(crate::Direction::Up, 0.2);
