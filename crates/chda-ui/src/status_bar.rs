@@ -180,10 +180,7 @@ impl StatusBar {
                 .min_w_0()
                 .cursor_pointer()
                 .tooltip(crate::tooltip::text(detail))
-                .on_click(cx.listener(|view, _, _, cx| {
-                    view.status_bar.details_open = !view.status_bar.details_open;
-                    cx.notify();
-                }))
+                .on_click(cx.listener(|view, _, window, cx| view.toggle_usage(window, cx)))
                 .child(div().font_weight(gpui::FontWeight::MEDIUM).child(label))
                 .child(
                     div()
@@ -263,10 +260,7 @@ impl StatusBar {
                             .unwrap_or_else(|| "Loading focused-pane metrics".into())
                     }),
                 ))
-                .on_click(cx.listener(|view, _, _, cx| {
-                    view.status_bar.details_open = !view.status_bar.details_open;
-                    cx.notify();
-                }))
+                .on_click(cx.listener(|view, _, window, cx| view.toggle_usage(window, cx)))
                 .child(text),
         )
         .into_any_element()
@@ -455,9 +449,8 @@ impl StatusBar {
                                     .debug_selector(|| "usage-close".into())
                                     .cursor_pointer()
                                     .px_2()
-                                    .on_click(cx.listener(|view, _, _, cx| {
-                                        view.status_bar.details_open = false;
-                                        cx.notify();
+                                    .on_click(cx.listener(|view, _, window, cx| {
+                                        view.close_usage(window, cx)
                                     }))
                                     .child("×"),
                             ),

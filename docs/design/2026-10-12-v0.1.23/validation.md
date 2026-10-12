@@ -158,3 +158,38 @@
 - main 통합 HEAD `8153534`의 CI `38284485202`는 Linux·Windows release build와 나머지 static job이 통과했지만 macOS workspace UI 188/189 통과 후 PROJECT reveal offset 검사에서 -25px/기대 -82px로 실패했다. 전체 성공으로 세지 않는다.
 - 뒤의 메뉴 PR에 이미 검토·반영되어 전체 CI가 통과한 scenario 구동만 이 앞선 PR에도 적용한다. Sessions 토글 전후와 예상 scroll delta 계산 전에 display frame을 전달하고 실제 접힘을 확인한다. 제품의 reveal 구현과 기존 offset·bounds·선택·배경 refresh assertion은 그대로다.
 - 수정한 정확한 scenario가 로컬 1 test 통과했다. 새 final HEAD의 전체 CI를 재확인하며 native 화면 검수로 세지 않는다.
+
+## 영역 4 · 메뉴·tooltip·포커스·Setup (#211, #217, #219, #220)
+
+- RED: 활성 PROJECT tooltip을 표시한 채 같은 메뉴 이벤트를 열면 tooltip이 남았다. 메뉴가 열린 동안 기존·새 hint를 숨기고 종료 후 hover를 복구하는 공통 창별 수명 관리로 수정했다. GPUI source·fork는 변경하지 않았다.
+- RED: 포인터가 머문 상태에서 section toggle 이벤트를 적용하면 이전 Collapse 문구가 남았다. 토글은 기존 hint를 무효화하며 다음 hover가 현재 Expand/Collapse 상태를 읽는다. 실제 click-only 기준 검사는 수정 전에도 통과했으므로 RED 근거로 세지 않는다.
+- RED: Usage popup의 Escape가 닫히지 않았고, launch sheet의 Down → Tab → Enter가 Cancel 대신 시작했다. Usage의 Escape·×는 원래 pane 입력을 복원한다. launch group·Cancel·Start의 Tab/Shift-Tab 이동, 방향키 policy 선택, focused button의 Enter/Space 동작을 구현했다.
+- 실제 Star/Refresh/Copy link/Open link/Reveal click 뒤 원래 pane에 고유한 shell 출력이 전달되고 Open terminal은 목적지에 입력되는 시나리오를 추가했다. 입력 복귀 구현을 제거한 격리 mutation에서 Star 이후 입력 대기가 실패했고 정확한 구현 복원 후 통과했다.
+- RED: Setup의 tracked source 오류가 상대 entry 없이 `tool exited unsuccessfully`만 표시했다. 항목별 missing/tracked/not ignored/directory/nonregular/symlink/traversal 이유를 표시한다. 열린 parent metadata와 각 component의 no-follow open, regular file handle 검사, 전부 검증한 뒤 복사하는 순서를 보존한다.
+- Git index/ignore 판정을 기존 Git CLI와 비교했다. ordinary patterns·negation·nested files·info/exclude·tracked/forced tracked 결과는 같았다. `core.ignoreCase`에서 CLI가 ignored로 허용하는 forced tracked 파일의 대소문자 alias는 같은 tracked index 파일로 판단해 거부한다. 승인된 untracked-only 복사 조건을 유지한다.
+- Setup mouse 시나리오의 첫 실패는 overlay가 그대로 있는 상태의 클릭이었다. 비동기 foreground 준비 시트가 만료된 입력 field 대신 자신의 focus를 가져야 함을 확인해 수정했다. Escape로 시트가 닫힌 뒤 badge의 실제 mouse click에서 menu x=20 / badge x=1290의 고정 좌표 RED를 확인했다. 측정한 badge bounds 아래에 메뉴를 붙이고 window edge에서 clamp한다.
+- 메뉴 9 tests, Setup UI 8 tests, launch UI 5 tests 통과. Enter·Space의 확인 press/release가 새 raw CLI에 전달되지 않는 실제 PTY 검사를 포함한다. 640×600 Setup bounds 검사 통과. core Setup 11 tests 통과.
+- 첫 전체 workspace: UI 192/195 통과. 기존 두 managed restart 검사는 permission group의 Enter를 Start로 가정했고, plain-folder 검사는 열린 메뉴에서 shell 명령을 보냈다. 명시적 Start와 메뉴 Escape를 사용하도록 검사 동작을 맞추며 기존 종료·복원·Git·입력 assertion은 유지했다. 전체 최종 UI·clippy·CI 결과는 아래에 별도로 기록한다.
+- native macOS 독립 3회 검수, 새 제품 screenshot과 최종 Pages desktop/narrow 검수, 서명 ZIP 및 공개는 아직 통과 근거가 없다.
+
+- 메뉴 최종 로컬 전체 UI 실행은 193/195 통과, 가짜 forge 테스트 2개 실패였다. 처음 로컬 URL rewrite는 forge 식별도 바꾸어 부적합하므로 제거했다. 원래 URL을 유지하고 검수 저장소의 HTTP proxy만 loopback의 닫힌 포트로 격리한 뒤 두 테스트가 모두 통과했다. 앞선 네트워크 대기 실행은 중단했으며 통과로 계산하지 않는다.
+- 기존 sidebar reveal 시나리오의 display-frame 대기를 명시하고 Sessions 실제 접힘을 확인했다. 전체 실행에서 reveal 시나리오가 통과했으며 제품의 reveal 로직은 변경하지 않았다.
+- 최종 메뉴 변경의 workspace clippy, fmt, 제품 문서 테스트 6개, 생성 문서 일치 검사가 통과했다. 정확한 PR HEAD의 전체 workspace/세 OS CI 및 최종 native 검수는 별도 확인한다.
+
+### 메뉴 교차 리뷰 처리
+
+- `38d0d35` 교차 리뷰의 이동 실패 입력 유실과 Usage 닫기에서 새로 선택한 pane을 잃는 상태를 각각 RED로 확인했다. 모든 메뉴 명령은 원래 focus를 먼저 복원하고 성공한 동작이 목적지로 옮긴다. Usage는 popup focus를 가진 경우에만 원래 focus를 복원한다.
+- 수정 뒤 메뉴 시나리오 11개와 UI clippy 통과. 리뷰는 명령 실행을 하지 않은 source review이며 native 검수를 대체하지 않는다. 실제 source 수정 뒤 최종 CI를 다시 확인한다.
+
+### 메뉴 main 통합 CI · sidebar drag의 실제 표시 frame
+
+- main 통합 HEAD `027fac0`의 CI `38290366807`은 macOS UI 197/198 통과 후 마지막 오른쪽 drag의 폭에서 180px/기대 600px로 실패했다. 다른 6개 job과 Linux·Windows release build는 통과했다. 전체 성공으로 세지 않는다.
+- 같은 원본의 로컬 단독 검사는 1개 통과, 전체 UI도 198개 통과(57.68초)했다. 로컬에서 동일 실패를 재현했다고 주장하지 않는다.
+- 고정 GPUI `f8c2cc8`의 `simulate_next_frame`은 다음 콜백만 실행하고 직접 그리지 않는다. drag 검사에 실제 `Window::draw`와 같은 App의 arena 정리를 사용해 현재 layout·hitbox를 입력 전에 그린다. 표시 grip과 설정 width의 경계 검사도 추가했다. 기존 마우스 입력·폭·저장값·pane bounds·최소/최대·double-click assertion은 유지한다. 제품의 drag 구현은 바꾸지 않았다.
+- 보완 후 폭 조절·토글 두 단독 검사가 통과했다. 새 HEAD의 전체 UI·clippy·원격 CI로 재확인하며 native 검수로 세지 않는다.
+
+- 표시 frame 보완만 적용한 전체 UI는 197/198 통과 후 같은 폭 실패였다. 임시 test-only 좌표·상태 로그에서 drag가 600px까지 정상 동작한 뒤 추가 입력 없이 180px로 되돌아갔다. 진단 로그 코드는 원문으로 복원했고 커밋하지 않는다.
+- 결정적 RED: 진행 중인 drag의 400px 상태에서 기존 `ReloadConfig`를 통해 이전 저장 폭 280px을 다시 읽으면 280px/기대 400px으로 실패했다. 자기 저장의 지연된 파일 알림이 미저장 drag 폭을 덮는 경로를 확인했다.
+- reload 중에는 진행 중인 sidebar 폭만 보존한다. 다른 설정은 적용하고 release 뒤에는 파일의 새 폭이 다시 적용된다. 저장 schema·drag pointer·clamp·종료 구현은 그대로다. 새 회귀는 다른 title 설정 적용, release 시 현재 폭 저장, release 후 외부 폭 변경과 표시 bounds를 함께 확인한다. 최종 전체 검사와 CI는 수정된 HEAD에서 확인한다.
+
+- 수정 후 결정적 reload 회귀 1개, 전체 UI **199 passed**(56.19초), UI all-targets clippy·fmt·제품 문서 6 tests·생성 문서 일치·diff 형식이 통과했다. 임시 진단 로그가 제품·검사 파일에 남지 않았음을 확인했다. 원격 최종 HEAD CI와 native는 별도 gate다.

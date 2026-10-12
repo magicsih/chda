@@ -241,6 +241,8 @@ fn a_plain_folder_is_added_as_it_is_and_turns_into_a_repository(cx: &mut TestApp
         "{labels:?}"
     );
 
+    // Close the inspected menu before sending a shell command.
+    h.keys("escape");
     // `git init` in a terminal: the next refresh shows a repository.
     h.run(
         &format!("cd {} && git init -q -b main", notes.display()),

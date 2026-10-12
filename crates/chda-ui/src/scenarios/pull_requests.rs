@@ -35,6 +35,9 @@ esac
 fn repo_with_branch(home: &Home, name: &str, remote: &str) -> PathBuf {
     let repo = home.repo(name);
     git(&repo, &["remote", "add", "origin", remote]);
+    // These host identities are fixtures; fail any fetch locally instead of
+    // waiting for the public network. Keep the original URL for badge lookup.
+    git(&repo, &["config", "http.proxy", "http://127.0.0.1:1"]);
     let wt = repo
         .parent()
         .unwrap()

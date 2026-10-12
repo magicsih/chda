@@ -355,7 +355,7 @@ impl WorkspaceView {
         let foreground = navigation == Some(self.env.windows.borrow().navigation);
         self.begin_preparation(repo, path.clone(), plan, (open, agent), false, cx);
         if foreground {
-            self.preparation_open = Some(path);
+            self.show_preparation(path, window, cx);
         }
         cx.notify();
         true
@@ -676,21 +676,31 @@ impl WorkspaceView {
                 )
             })
             .collect::<Vec<_>>();
+        let badge_bounds = std::rc::Rc::new(std::cell::Cell::new(None::<gpui::Bounds<Pixels>>));
+        let measured = badge_bounds.clone();
         Some(
             div()
-                .id("preparation-badge")
-                .debug_selector(|| "preparation-badge".into())
-                .px_2()
-                .rounded_md()
-                .cursor_pointer()
-                .child(format!("Setup · {}", jobs.len()))
-                .on_click(cx.listener(move |v, _, _, cx| {
-                    v.context_menu = Some(ContextMenu {
-                        position: point(px(20.0), px(TITLE_BAR_HEIGHT)),
-                        items: items.clone(),
-                    });
-                    cx.notify();
-                }))
+                .flex_none()
+                .on_children_prepainted(move |bounds, _, _| measured.set(bounds.first().copied()))
+                .child(
+                    div()
+                        .id("preparation-badge")
+                        .debug_selector(|| "preparation-badge".into())
+                        .px_2()
+                        .rounded_md()
+                        .cursor_pointer()
+                        .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
+                        .child(format!("Setup · {}", jobs.len()))
+                        .on_click(cx.listener(move |v, _, _, cx| {
+                            if let Some(bounds) = badge_bounds.get() {
+                                v.context_menu = Some(ContextMenu {
+                                    position: point(bounds.left(), bounds.bottom()),
+                                    items: items.clone(),
+                                });
+                                cx.notify();
+                            }
+                        })),
+                )
                 .into_any_element(),
         )
     }

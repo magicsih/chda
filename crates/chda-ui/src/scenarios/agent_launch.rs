@@ -19,6 +19,12 @@ fn supported_launches_show_the_inherited_policy_before_starting(cx: &mut TestApp
         "no process starts before the launch choice"
     );
     h.keys("enter");
+    assert_eq!(
+        h.read(|v, _| v.ws.tabs().len()),
+        1,
+        "Enter on the permission group must not activate Start"
+    );
+    h.keys("tab tab enter");
     h.wait_for("inherited Claude command", |v, cx| {
         v.focused_text(cx).contains("fake-claude")
     });
@@ -189,7 +195,7 @@ fn confirming_a_launch_sends_nothing_to_the_new_terminal(cx: &mut TestAppContext
     h.wait_prompt();
     h.cx.dispatch_action(crate::workspace_view::RunClaude);
     h.cx.run_until_parked();
-    h.keys("enter");
+    h.keys("tab tab enter");
     // On macOS the release arrives after focus moved to the new terminal.
     h.cx.simulate_event(gpui::KeyUpEvent {
         keystroke: gpui::Keystroke::parse("enter").unwrap(),
@@ -200,5 +206,18 @@ fn confirming_a_launch_sends_nothing_to_the_new_terminal(cx: &mut TestAppContext
     h.wait_prompt();
     h.cx.dispatch_action(crate::workspace_view::RunClaude);
     h.confirm_agent_launch();
+    assert_eq!(input_before_typing(&mut h), "");
+}
+
+#[gpui::test]
+fn space_launch_sends_neither_the_press_nor_release_to_the_new_terminal(cx: &mut TestAppContext) {
+    let mut h = Harness::open(cx, "launch-space", recording_claude);
+    h.wait_prompt();
+    h.cx.dispatch_action(crate::workspace_view::RunClaude);
+    h.cx.run_until_parked();
+    h.keys("shift-tab space");
+    h.cx.simulate_event(gpui::KeyUpEvent {
+        keystroke: gpui::Keystroke::parse("space").unwrap(),
+    });
     assert_eq!(input_before_typing(&mut h), "");
 }

@@ -396,3 +396,64 @@ fn mcp_preparation_and_open_requests_cannot_bypass_user_confirmation(cx: &mut Te
     h.wait_prompt();
     assert_eq!(h.read(|v, _| v.ws.tabs().len()), 2);
 }
+
+#[gpui::test]
+fn setup_menu_uses_the_badge_bounds_and_stays_inside_a_small_window(cx: &mut TestAppContext) {
+    let (mut h, _, _) = fixture(
+        cx,
+        "prep-anchor",
+        vec!["true".into()],
+        vec![],
+        chda_config::DefaultAction::Terminal,
+    );
+    for _ in 0..3 {
+        h.cx.run_until_parked();
+        h.cx.update(|window, cx| window.simulate_next_frame(cx));
+    }
+    assert!(
+        h.cx.debug_bounds("preparation-start").is_some(),
+        "the review sheet must be visible before dismissal"
+    );
+    h.keys("escape");
+    for _ in 0..3 {
+        h.cx.run_until_parked();
+        h.cx.update(|window, cx| window.simulate_next_frame(cx));
+    }
+    assert!(
+        h.cx.debug_bounds("preparation-start").is_none(),
+        "Escape must remove the preparation overlay"
+    );
+    let viewport = h.cx.update(|window, _| window.viewport_size());
+    let badge = h.cx.debug_bounds("preparation-badge").unwrap();
+    assert!(badge.right() <= viewport.width, "{viewport:?}: {badge:?}");
+    click(&mut h, "preparation-badge");
+    h.cx.update(|window, cx| window.simulate_next_frame(cx));
+    assert!(
+        h.read(|v, _| v.context_menu.is_some()),
+        "badge click must open its menu at {badge:?}; preparation still open: {}",
+        h.read(|v, _| v.preparation_jobs.len())
+    );
+    let menu = h.cx.debug_bounds("context-menu").unwrap();
+    assert!(
+        (menu.left() - badge.left().min(viewport.width - menu.size.width)).abs() < gpui::px(1.),
+        "{badge:?} -> {menu:?}"
+    );
+    assert!(
+        (menu.top() - badge.bottom()).abs() < gpui::px(1.),
+        "{badge:?} -> {menu:?}"
+    );
+    h.keys("escape");
+    h.cx.simulate_resize(gpui::size(gpui::px(640.), gpui::px(600.)));
+    h.cx.run_until_parked();
+    h.cx.update(|window, cx| window.simulate_next_frame(cx));
+    click(&mut h, "preparation-badge");
+    h.cx.update(|window, cx| window.simulate_next_frame(cx));
+    assert!(
+        h.read(|v, _| v.context_menu.is_some()),
+        "badge click must open its menu at {badge:?}; preparation still open: {}",
+        h.read(|v, _| v.preparation_jobs.len())
+    );
+    let menu = h.cx.debug_bounds("context-menu").unwrap();
+    assert!(menu.left() >= gpui::px(0.) && menu.right() <= gpui::px(640.));
+    assert!(menu.top() >= gpui::px(0.) && menu.bottom() <= gpui::px(600.));
+}
