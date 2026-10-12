@@ -502,9 +502,9 @@ impl TerminalView {
         .detach();
     }
 
-    fn note_activity(&mut self, cx: &mut Context<Self>) {
+    fn note_activity(&mut self, input: bool, cx: &mut Context<Self>) {
         let now = now_ms();
-        if now.saturating_sub(self.last_activity_sent) >= 1000 {
+        if input || now.saturating_sub(self.last_activity_sent) >= 1000 {
             self.last_activity_sent = now;
             cx.emit(TerminalEvent::Activity(now));
         }
@@ -517,11 +517,11 @@ impl TerminalView {
                     self.frame = self.session.frame();
                     self.update_link(cx);
                     if has_output {
-                        self.note_activity(cx);
+                        self.note_activity(false, cx);
                     }
                     cx.notify();
                 }
-                Event::Input => self.note_activity(cx),
+                Event::Input => self.note_activity(true, cx),
                 Event::TitleChanged(title) => cx.emit(TerminalEvent::Title(title)),
                 Event::PwdChanged(raw) => {
                     if let Some(path) = parse_pwd_report(&raw) {

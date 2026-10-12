@@ -15,9 +15,17 @@ fn background_title_spinners_and_output_do_not_redraw_the_window(cx: &mut TestAp
         std::fs::write(&home.config, format!("repos = [\"{}\"]\n", repo.display())).unwrap();
     });
     h.wait_prompt();
+    h.run(
+        "stty -echo; printf '\nredraw-background-ready\n'; exec cat",
+        "\nredraw-background-ready\n",
+    );
     let background = h.focused_terminal();
     h.keys("cmd-t");
     h.wait_prompt();
+    h.run(
+        "stty -echo; printf '\nredraw-foreground-ready\n'; exec cat",
+        "\nredraw-foreground-ready\n",
+    );
     assert_ne!(h.focused_terminal(), background);
 
     let workspace = Rc::new(Cell::new(0));
