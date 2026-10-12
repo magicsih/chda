@@ -1221,7 +1221,12 @@ impl WorkspaceView {
         {
             return;
         }
-        if let Some(pane) = ev.pane.and_then(|raw| self.ws.pane_by_raw(raw)) {
+        // UI title events have no conversation ID and use observation time.
+        // Compare exact-conversation hooks. A terminal-observed end is also
+        // a boundary: older notifications must not revive an ended agent.
+        if (!ev.session_id.is_empty() || ev.kind == HookKind::SessionEnd)
+            && let Some(pane) = ev.pane.and_then(|raw| self.ws.pane_by_raw(raw))
+        {
             if self
                 .agent_report_at
                 .get(&pane)
@@ -2166,8 +2171,12 @@ impl WorkspaceView {
             .missing
             .iter()
             .map(|(dir, to)| match to {
-                Some(repo) => format!("{} is missing (opened {})", dir.display(), repo.display()),
-                None => format!("{} is missing (opened the home directory)", dir.display()),
+                Some(repo) => format!(
+                    "{} is missing (fallback directory: {})",
+                    dir.display(),
+                    repo.display()
+                ),
+                None => format!("{} is missing (fallback directory: home)", dir.display()),
             })
             .collect();
         for p in panes {
@@ -3522,7 +3531,12 @@ impl WorkspaceView {
                     ));
                 }
             }
-            if let Some((agent, session)) = self.parent_identity(pane) {
+            if !info
+                .pane_run
+                .as_ref()
+                .is_some_and(chda_core::PaneRun::stopped)
+                && let Some((agent, session)) = self.parent_identity(pane)
+            {
                 for child in self
                     .env
                     .windows

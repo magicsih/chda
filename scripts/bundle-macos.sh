@@ -44,7 +44,7 @@ cp "$out/icon/chda.icns" "$app/Contents/Resources/chda.icns"
 # Shell integration scripts, fonts and themes are embedded in the binary;
 # their licenses travel with the app.
 cp crates/chda-ui/assets/fonts/*.txt crates/chda-config/assets/themes-LICENSE.txt \
-  "$app/Contents/Resources/"
+  resources/ghostty/LICENSE.translate-c "$app/Contents/Resources/"
 
 scripts/package-macos-updater.sh "$app"
 

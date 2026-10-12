@@ -84,6 +84,28 @@ class PreparationTests(unittest.TestCase):
         self.assertEqual((output / relative).read_bytes(), original,
                          "Git CRLF checkout must not change the integrity-checked patch")
 
+    def test_restored_source_clears_native_cache_only_after_verification(self):
+        self.run_prepare()
+        marker = self.output.with_suffix(".unverified")
+        marker.write_text("unverified build attempt")
+        with self.assertRaisesRegex(ValueError, "native cache"):
+            self.run_prepare(check=True)
+        with mock.patch.object(prepare.subprocess, "run") as clean:
+            self.run_prepare()
+        clean.assert_called_once_with(["cargo", "clean", "-p", "libghostty-vt-sys"], cwd=prepare.ROOT, check=True)
+        self.assertFalse(marker.exists())
+
+    def test_mismatched_source_does_not_clear_native_cache_or_rebuild_marker(self):
+        self.run_prepare()
+        marker = self.output.with_suffix(".unverified")
+        marker.write_text("unverified build attempt")
+        (self.output / "build.zig").write_text("changed")
+        with mock.patch.object(prepare.subprocess, "run") as clean:
+            with self.assertRaisesRegex(ValueError, "source integrity"):
+                self.run_prepare()
+        clean.assert_not_called()
+        self.assertTrue(marker.exists())
+
     def test_modified_archive_is_rejected_without_source(self):
         self.archive.write_bytes(b"changed")
         with self.assertRaisesRegex(ValueError, "archive"):
