@@ -216,18 +216,9 @@ pub struct RepoEntry {
     pub folder: bool,
 }
 
-/// Sort order for worktrees inside a repository.
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
-pub enum SortOrder {
-    #[default]
-    Activity,
-    Name,
-}
-
 #[derive(Clone, Debug, Default)]
 pub struct Sidebar {
     pub repos: Vec<RepoEntry>,
-    pub sort: SortOrder,
     pub visible: bool,
     /// The Sessions list: agent panes and other tabs, see [`crate::session_rows`].
     pub sessions: Vec<crate::SessionRow>,
@@ -300,7 +291,6 @@ impl Sidebar {
     /// Replace a repository's worktree list, keeping agent and session state
     /// for worktrees that still exist.
     pub fn set_worktrees(&mut self, repo: &Path, worktrees: Vec<WorktreeEntry>) {
-        let sort = self.sort;
         let Some(entry) = self.repo_mut(repo) else {
             return;
         };
@@ -322,7 +312,7 @@ impl Sidebar {
             .collect();
         entry.error = None;
         entry.folder = false;
-        sort_worktrees(&mut entry.worktrees, sort);
+        sort_worktrees(&mut entry.worktrees);
     }
 
     /// Show `path` as a plain folder: a single row for the folder itself,
@@ -424,7 +414,6 @@ impl Sidebar {
         w.agents.insert(agent.to_owned(), next);
         w.last_activity = w.last_activity.max(timestamp);
         let path = w.path.clone();
-        self.resort();
         Some((path, next))
     }
 
@@ -462,7 +451,6 @@ impl Sidebar {
                     .sort_by_key(|s| std::cmp::Reverse(s.last_active_at));
             }
         }
-        self.resort();
     }
 
     /// Record which panes live in which worktree.
@@ -491,18 +479,6 @@ impl Sidebar {
         }
     }
 
-    pub fn set_sort(&mut self, sort: SortOrder) {
-        self.sort = sort;
-        self.resort();
-    }
-
-    fn resort(&mut self) {
-        let sort = self.sort;
-        for repo in &mut self.repos {
-            sort_worktrees(&mut repo.worktrees, sort);
-        }
-    }
-
     /// Worktrees where an agent is waiting for the user.
     pub fn waiting(&self) -> Vec<&WorktreeEntry> {
         self.repos
@@ -513,15 +489,17 @@ impl Sidebar {
     }
 }
 
-fn sort_worktrees(worktrees: &mut [WorktreeEntry], sort: SortOrder) {
+fn sort_worktrees(worktrees: &mut [WorktreeEntry]) {
     worktrees.sort_by(|a, b| {
-        b.is_main.cmp(&a.is_main).then_with(|| match sort {
-            SortOrder::Activity => b
-                .last_activity
-                .cmp(&a.last_activity)
-                .then_with(|| a.branch.cmp(&b.branch)),
-            SortOrder::Name => a.branch.cmp(&b.branch),
-        })
+        b.is_main
+            .cmp(&a.is_main)
+            .then_with(|| match (&a.branch, &b.branch) {
+                (Some(a), Some(b)) => a.cmp(b),
+                (Some(_), None) => std::cmp::Ordering::Less,
+                (None, Some(_)) => std::cmp::Ordering::Greater,
+                (None, None) => std::cmp::Ordering::Equal,
+            })
+            .then_with(|| a.path.cmp(&b.path))
     });
 }
 
@@ -590,6 +568,80 @@ mod tests {
     }
 
     #[test]
+    fn project_order_breaks_branch_ties_by_path_and_puts_detached_rows_last() {
+        let mut rows = vec![
+            wt("/b", "same", false),
+            wt("/a", "same", false),
+            wt("/main", "zzz", true),
+            WorktreeEntry {
+                path: "/detached-b".into(),
+                ..Default::default()
+            },
+            WorktreeEntry {
+                path: "/detached-a".into(),
+                ..Default::default()
+            },
+        ];
+        sort_worktrees(&mut rows);
+        assert_eq!(
+            rows.iter()
+                .map(|w| w.path.to_str().unwrap())
+                .collect::<Vec<_>>(),
+            ["/main", "/a", "/b", "/detached-a", "/detached-b"]
+        );
+    }
+
+    #[test]
+    fn project_rows_keep_main_and_name_order_during_background_activity() {
+        let mut sidebar = Sidebar::new();
+        let repo = Path::new("/project");
+        sidebar.add_repo(repo.to_path_buf());
+        let rows = vec![
+            wt("/z", "z", false),
+            wt("/project", "main", true),
+            wt("/a", "a", false),
+        ];
+        sidebar.set_worktrees(repo, rows.clone());
+        let paths = |s: &Sidebar| {
+            s.repos[0]
+                .worktrees
+                .iter()
+                .map(|w| w.path.clone())
+                .collect::<Vec<_>>()
+        };
+        let expected = vec![
+            PathBuf::from("/project"),
+            PathBuf::from("/a"),
+            PathBuf::from("/z"),
+        ];
+        sidebar.apply_agent_event("claude", Path::new("/z"), AgentEvent::PromptSubmitted, 100);
+        assert_eq!(
+            paths(&sidebar),
+            expected,
+            "a background hook moved a PROJECT row"
+        );
+        sidebar.set_sessions(&[(
+            PathBuf::from("/z"),
+            SessionEntry {
+                agent: "claude".into(),
+                id: "late".into(),
+                last_active_at: 200,
+                started_at: 0,
+                snippet: String::new(),
+                message_count: 0,
+                usage: Default::default(),
+            },
+        )]);
+        assert_eq!(
+            paths(&sidebar),
+            expected,
+            "transcript indexing moved a PROJECT row"
+        );
+        sidebar.set_worktrees(repo, rows);
+        assert_eq!(paths(&sidebar), expected, "Git refresh moved a PROJECT row");
+    }
+
+    #[test]
     fn agent_events_drive_status_and_sorting() {
         let mut sb = Sidebar::new();
         assert!(sb.add_repo("/src/app".into()));
@@ -621,7 +673,7 @@ mod tests {
             r,
             Some((PathBuf::from("/src/app.worktrees/b"), AgentStatus::Idle))
         );
-        assert_eq!(branches(&sb), vec!["main", "b", "a"]);
+        assert_eq!(branches(&sb), vec!["main", "a", "b"]);
         sb.apply_agent_event(
             "claude",
             Path::new("/src/app.worktrees/b"),
@@ -674,7 +726,6 @@ mod tests {
             ],
         );
         assert_eq!(sb.repos[0].worktrees[1].sessions.len(), 1);
-        sb.set_sort(SortOrder::Name);
         assert_eq!(branches(&sb), vec!["main", "a"]);
         assert!(sb.remove_repo(Path::new("/src/app")));
         assert!(sb.repos.is_empty());

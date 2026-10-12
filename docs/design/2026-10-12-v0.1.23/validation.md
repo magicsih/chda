@@ -106,7 +106,21 @@
 
 - Copilot은 `<id>/events.jsonl`, Gemini는 `.json`/`.jsonl` 안의 전체 `sessionId`로 대화를 식별한다. 공통 filename 조회는 transcript가 있어도 cwd를 찾지 못했다. 실제 저장 형식을 격리한 두 child-process 회귀가 수정 전 모두 실패했다.
 - `session_file_for_id`를 어댑터별로 제공하고 재개 가능 여부와 cwd 조회가 같은 exact 파일을 사용하도록 했다. 기존 Copilot path traversal 거부와 Gemini 전체 ID 비교를 유지한다. 사용자 환경 변수를 변경하지 않고 테스트 프로세스에만 fixture 환경을 전달한다.
-- 수정 후 agents 61 passed/기존 측정 2 ignored, doc tests 통과. 새 exact cwd 두 회귀 및 잘못된/부분 ID 거부를 포함한다. 원격 CI와 최종 교차 리뷰는 새 HEAD에서 확인한다.
+- 수정 후 agents 61 passed/기존 수동 검사 2 ignored, doc tests 통과. 새 exact cwd 두 회귀 및 잘못된/부분 ID 거부를 포함한다. 원격 CI와 최종 교차 리뷰는 새 HEAD에서 확인한다.
+
+
+## 영역 3 · 사이드바 (#209, #216, #228, #230)
+
+- RED: 기존 정렬에서 background hook이 `/a` 위로 `/z`를 이동시키는 core 검사, 실제 마우스의 PROJECT/STARRED 단일 클릭 실행·agent launch sheet·포인터 아래 행 이동·독립 분할 번호 부재 다섯 시나리오와 밝은 테마의 기존 star 대비 실패를 확인했다.
+- main worktree 우선, branch 이름순, 동일 이름 path순, branch 없는 항목은 path순으로 뒤에 둔다. 사용되지 않는 활동 정렬 선택을 제거하며 transcript 목록의 최근 활동 정렬과 기존 repository 순서는 유지한다.
+- PROJECT/STARRED는 한 번 클릭해 선택만 하고 두 번째 클릭에서 기존 open을 한 번 실행한다. 우클릭은 캡처한 path의 기존 메뉴만 연다. 누락 STARRED의 선택도 표시하며 생성하지 않는다. Sessions는 단일 클릭 탐색을 유지한다.
+- 단일 선택 뒤 실제 typing focus를 잃어 `cd`가 전달되지 않는 추가 RED를 확인해 비이동 클릭 뒤 원래 pane의 입력 focus를 돌려준다. 같은 pane의 cwd 보고가 바뀌어도 다른 session focus 전까지 선택을 유지한다.
+- 분할 번호는 별도의 nonshrinking #1/#2로 표시한다. 단일 agent 행은 번호를 추가하지 않고 기존 label minimum을 유지한다. mark 색은 기존 status 색 계산을 공유해 hue를 유지하며 normal/selected/waiting/hover surface에서 3:1, diff text는 4.5:1을 요구한다. PR badge palette는 바꾸지 않았다.
+- 단계별 GREEN: 새 실제 마우스 시나리오 5개, sidebar 관련 29개(기존 PR palette·status 대비 포함)가 통과했다. 18pt terminal font·640×600·280/180px sidebar의 실제 PTY 기반 bounds 검사에서 분할 번호를 확인했다. synthetic agent가 shell prompt redraw로 종료되는 fixture를 실행 중 process로 맞췄으며 native 검수로 세지 않는다.
+- 마지막 source의 전체 workspace·clippy·fmt·문서 검사를 수행한다. 최종 native 화면·변경된 Sessions screenshot·Pages 배치·교차 리뷰와 공개 인수조건은 아직 미실행이다.
+
+- 최종 전체 workspace 실행: core 71, agents 61/수동 검사 2 ignored, terminal 65/기존 성능 측정 2 ignored 및 다른 crate 검사 통과. UI 187/188 통과, shared-row label이 180px에서 0px로 축소되는 기존 readability assertion 실패를 확인했다. 모든 행에 기존 48px label minimum을 유지한 최소 수정 뒤 해당 idle 검사 1개와 새 sidebar 시나리오 5개(번호와 닫기 bounds 포함)가 통과했다. 실패한 전체 실행을 통과로 세지 않으며 최종 HEAD CI에서 전체를 확인한다.
+- workspace clippy·fmt·제품 문서 6 tests·생성 문서 일치·diff 형식 통과. CI와 코드 리뷰, native 세 회차는 별도 확인한다.
 
 ### macOS CI 수용 · 실제 입력과 조용한 프로세스
 
@@ -115,6 +129,8 @@
 - 준비 출력 직후의 성공한 입력을 검사한 단독 RED에서 활동 시간 대기가 실패했다. 출력 갱신의 기존 1초 제한이 사용자 입력에도 적용되는 실제 누락이었다. 입력은 즉시 기록하고 프로그램 출력만 기존 제한을 유지한다.
 - 공유 임시 Cargo 산출물의 다른 worktree 형식 재사용으로 생긴 컴파일 실패는 RED로 세지 않는다. 해당 작업 소유 cache의 core/UI 산출물을 다시 컴파일한 뒤 위 RED를 확인했다.
 - 수정 후 lifecycle 9 tests, background redraw 1 test, UI all-targets clippy 통과. 최종 HEAD의 전체 원격 CI와 native 인수 검수는 별도로 확인한다.
+
+## 교차 리뷰와 순차 통합 보완
 
 ### 세션 수명 교차 리뷰 처리
 
@@ -134,3 +150,11 @@
 - 경로 기반 CI의 UI 198/199 통과 실행에서도 마지막 sidebar drag가 180px/기대 600px로 실패했다. GPUI 테스트 입력은 MouseDown 위치로 자동 mouse-move를 합성하지 않는다. 반복 drag의 grip에 먼저 실제 move를 전달하고 각 이동 사이 layout frame을 구동한다. 기존 width·저장값·grip bounds·최솟값/최댓값·무드래그·더블클릭 assertion은 모두 유지한다.
 
 - 수정한 반복 drag 시나리오가 실제 PTY/마우스 이벤트로 통과했다(1 test). 새 final HEAD에서 전체 macOS CI를 확인한다. dependency 준비의 3개 회귀와 Python syntax/format/doc checks를 유지한다.
+
+- 사이드바 최종 `7b71a1e` 교차 리뷰는 실행 가능한 코드 결함을 찾지 않았고, 영역 2 agents 검증 문단이 영역 3 아래에 중복된 문서 지적 1건을 보고했다. 중복을 제거했으며 영역 2의 정본 검증 문단을 유지했다. 리뷰는 소스 읽기만 수행했고 native 검수를 대신하지 않는다.
+
+### 사이드바 main 통합 CI의 표시 frame 준비
+
+- main 통합 HEAD `8153534`의 CI `38284485202`는 Linux·Windows release build와 나머지 static job이 통과했지만 macOS workspace UI 188/189 통과 후 PROJECT reveal offset 검사에서 -25px/기대 -82px로 실패했다. 전체 성공으로 세지 않는다.
+- 뒤의 메뉴 PR에 이미 검토·반영되어 전체 CI가 통과한 scenario 구동만 이 앞선 PR에도 적용한다. Sessions 토글 전후와 예상 scroll delta 계산 전에 display frame을 전달하고 실제 접힘을 확인한다. 제품의 reveal 구현과 기존 offset·bounds·선택·배경 refresh assertion은 그대로다.
+- 수정한 정확한 scenario가 로컬 1 test 통과했다. 새 final HEAD의 전체 CI를 재확인하며 native 화면 검수로 세지 않는다.

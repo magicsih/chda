@@ -4,7 +4,7 @@
 use super::harness::{Harness, git};
 use crate::sidebar_view::SidebarEvent;
 use crate::workspace_view::MenuAction;
-use gpui::{Modifiers, TestAppContext};
+use gpui::{Modifiers, MouseButton, MouseDownEvent, MouseUpEvent, TestAppContext};
 use std::path::{Path, PathBuf};
 
 fn menu_item(h: &mut Harness, worktree: &Path, prefix: &str) -> Option<(String, MenuAction)> {
@@ -53,6 +53,28 @@ fn click(h: &mut Harness, selector: String) {
             .unwrap_or_else(|| panic!("{selector} is drawn"))
             .center();
     h.cx.simulate_click(at, Modifiers::none());
+    h.cx.run_until_parked();
+}
+
+fn open_row(h: &mut Harness, selector: &str) {
+    click(h, selector.into());
+    let at =
+        h.cx.debug_bounds(Box::leak(selector.to_owned().into_boxed_str()))
+            .unwrap()
+            .center();
+    h.cx.simulate_event(MouseDownEvent {
+        position: at,
+        button: MouseButton::Left,
+        modifiers: Modifiers::none(),
+        click_count: 2,
+        first_mouse: false,
+    });
+    h.cx.simulate_event(MouseUpEvent {
+        position: at,
+        button: MouseButton::Left,
+        modifiers: Modifiers::none(),
+        click_count: 2,
+    });
     h.cx.run_until_parked();
 }
 
@@ -105,14 +127,14 @@ fn starred_branches_navigate_unstar_in_one_click_and_persist(cx: &mut TestAppCon
     // STARRED shows without any Sessions row for b or the feature worktree.
     let tabs = h.read(|v, _| v.ws.tabs().len());
 
-    // Clicking a label navigates with the usual worktree navigation.
-    click(&mut h, "starred-1".into());
+    // Double-clicking a label navigates with the usual worktree navigation.
+    open_row(&mut h, "starred-1");
     assert_eq!(focused_cwd(&h).as_deref(), Some(b.as_path()));
     let after_b = h.read(|v, _| v.ws.tabs().len());
     assert_eq!(after_b, tabs + 1);
-    click(&mut h, "starred-2".into());
+    open_row(&mut h, "starred-2");
     assert_eq!(focused_cwd(&h).as_deref(), Some(x.as_path()));
-    click(&mut h, "starred-1".into());
+    open_row(&mut h, "starred-1");
     assert_eq!(
         h.read(|v, _| v.ws.tabs().len()),
         after_b + 1,
@@ -139,7 +161,7 @@ fn starred_branches_navigate_unstar_in_one_click_and_persist(cx: &mut TestAppCon
             .branch_worktree(&a, "feat/x")
             .is_none()
     });
-    click(&mut h, "starred-2".into());
+    open_row(&mut h, "starred-2");
     assert_eq!(h.read(|v, _| v.ws.focused_pane()), focused);
     assert!(
         h.read(|v, _| v.notifications.latest().map(str::to_owned))
