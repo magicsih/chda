@@ -124,3 +124,9 @@
 - 초기 RED 두 실행의 compile 실패는 공용 target에 다른 worktree 메타데이터가 남은 결과였으며 RED로 계산하지 않는다. 이후 작업용 workspace 패키지만 정리하고 실제 실패/수정 검증을 수행했다.
 
 - 두 번째이자 마지막 세션 리뷰는 첫 수정이 종료 관찰도 순서 gate에서 제외해 종료 이전 notify가 대화를 되살릴 수 있음을 지적했다. 실제 delayed-end notify로 RED를 확인했다. 제목 상태만 제외하고 SessionEnd는 종료 경계에 기록하도록 최소 수정했다. 처리 순서를 확인하는 다음 IPC 후 대화/agent 부활이 없음을 확인했으며 직접 Codex 시나리오, lifecycle 10개, UI clippy가 통과했다. 추가 리뷰를 요청하지 않는다.
+
+### 순차 통합 · 외부 dependency 준비
+
+- 엔진 PR #234가 main `d0f0761`으로 병합됐다. 세션 PR #235의 main 통합 HEAD `6e01b64`에서 세 OS native 빌드가 고정 Codeberg `translate-c` archive의 HTTP 503으로 실패했으며 같은 HEAD 재실행도 같은 오류였다. source·Zig·Ghostty 고정값은 바꾸지 않는다.
+- 앞서 Zig가 받아 둔 정확한 package 파일과 license를 재포장한 92,974-byte archive를 격리 cache에서 실제 Zig 0.16.0 fetch로 검증했다. 원래 `translate_c-0.0.0-Q_BUWhVNBwDOEcIqub4VFPJPB6D9dgwzUMHTX5KWr8Xr`와 일치했다. archive SHA-256을 별도 metadata로 고정하고 준비 시 두 hash를 확인한 뒤 Zig cache에 공급한다. Ghostty source·patch digest·upstream `.zon` URL/hash는 그대로다.
+- archive 변조·Zig hash 불일치·fetch 실패·read-only check의 합성 회귀를 CI에 추가했다. 실제 source 준비와 격리 cache hash 검증은 별도 근거이며 세 OS 최종 CI 통과는 재확인한다.

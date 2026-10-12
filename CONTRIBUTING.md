@@ -87,3 +87,5 @@ retaining genuine history anchors and Debug integrity assertions. Kitty temporar
 images are restricted to the process directory after validating the opened file
 handle. Remove each corresponding patch when a pinned upstream revision includes the equivalent behavior and passes the
 same regressions; do not change optimize mode to avoid a failure.
+
+The source preparation also seeds the pinned `translate-c` package into Zig's cache from `resources/ghostty/translate-c-pinned.tar.gz`. This archive repacks the previously fetched upstream files, preserves their included license, and must match both its SHA-256 and the unchanged upstream Zig package hash. It changes no Ghostty source or dependency URL/hash. This avoids the pinned Codeberg archive's observed HTTP 503 outage. `--check` verifies the local archive without touching Zig's cache.

@@ -102,6 +102,19 @@ def prepare(manifest, patches, source, archive=None, *, check=False):
     prepare(manifest, patches, source, check=False)
 
 
+def prepare_dependency(metadata, resources, source, *, check=False):
+    archive = resources / metadata['archive']
+    if hashlib.sha256(archive.read_bytes()).hexdigest() != metadata['archive_sha256']:
+        raise ValueError('Pinned translate-c archive integrity mismatch')
+    # Keep the upstream .zon URL/hash and source digest unchanged. Zig checks
+    # the package's canonical content hash before populating its own cache.
+    if not check:
+        result = subprocess.run(['zig', 'fetch', str(archive.resolve())], cwd=source,
+                                check=True, capture_output=True, text=True)
+        if result.stdout.strip() != metadata['zig_hash']:
+            raise ValueError('Pinned translate-c Zig package hash mismatch')
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--check", action="store_true", help="Verify prepared source without downloading or changing it")
@@ -112,6 +125,8 @@ def main():
     try:
         source = ROOT / ".ghostty-source" / manifest["source_sha256"][:16]
         prepare(manifest, RESOURCES, source, args.archive, check=args.check)
+        dependency = json.loads((RESOURCES / 'translate-c.json').read_text())
+        prepare_dependency(dependency, RESOURCES, source, check=args.check)
         if args.test:
             subprocess.run(["zig", "build", "test-lib-vt", "-Demit-lib-vt=true", "-Doptimize=Debug", "-Dtest-filter=PageList chda", "-Dtest-filter=chda temporary image", "-Dtest-filter=PageList eraseRow recycled", "-Dtest-filter=PageList eraseRowBounded recycled", "-Dtest-filter=PageList resize trimmed rows", "-Dtest-filter=PageList resize grow cols with unwrap fixes viewport pin", "--summary", "failures"], cwd=source, check=True)
     except (ValueError, OSError, subprocess.CalledProcessError) as error:
