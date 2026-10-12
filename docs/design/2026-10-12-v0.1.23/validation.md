@@ -114,3 +114,12 @@
 
 - 최종 전체 workspace 실행: core 71, agents 61/수동 검사 2 ignored, terminal 65/기존 성능 측정 2 ignored 및 다른 crate 검사 통과. UI 187/188 통과, shared-row label이 180px에서 0px로 축소되는 기존 readability assertion 실패를 확인했다. 모든 행에 기존 48px label minimum을 유지한 최소 수정 뒤 해당 idle 검사 1개와 새 sidebar 시나리오 5개(번호와 닫기 bounds 포함)가 통과했다. 실패한 전체 실행을 통과로 세지 않으며 최종 HEAD CI에서 전체를 확인한다.
 - workspace clippy·fmt·제품 문서 6 tests·생성 문서 일치·diff 형식 통과. CI와 코드 리뷰, native 세 회차는 별도 확인한다.
+- 수정 후 agents 61 passed/기존 측정 2 ignored, doc tests 통과. 새 exact cwd 두 회귀 및 잘못된/부분 ID 거부를 포함한다. 원격 CI와 최종 교차 리뷰는 새 HEAD에서 확인한다.
+
+### macOS CI 수용 · 실제 입력과 조용한 프로세스
+
+- lifecycle HEAD `01a8dfa`의 macOS CI는 UI 179/182 통과, sidebar HEAD `79f38d5`는 UI 187/188 통과였다. quiet resize 검사는 실제 zsh의 WINCH 출력 때문에 활동 시간이 달라졌다. lifecycle의 no-echo 입력 검사와 background redraw 검사도 실패했다. Linux·Windows release 빌드와 다른 CI 검사는 두 HEAD 모두 통과했다. macOS 전체 성공으로 세지 않는다.
+- 조용한 pane과 redraw 시나리오를 준비 완료 표식을 출력한 뒤 echo 없는 `cat`으로 전환한다. 테마·resize에는 실제 출력이 없고, 원래 timestamp·redraw assertion은 유지한다.
+- 준비 출력 직후의 성공한 입력을 검사한 단독 RED에서 활동 시간 대기가 실패했다. 출력 갱신의 기존 1초 제한이 사용자 입력에도 적용되는 실제 누락이었다. 입력은 즉시 기록하고 프로그램 출력만 기존 제한을 유지한다.
+- 공유 임시 Cargo 산출물의 다른 worktree 형식 재사용으로 생긴 컴파일 실패는 RED로 세지 않는다. 해당 작업 소유 cache의 core/UI 산출물을 다시 컴파일한 뒤 위 RED를 확인했다.
+- 수정 후 lifecycle 9 tests, background redraw 1 test, UI all-targets clippy 통과. 최종 HEAD의 전체 원격 CI와 native 인수 검수는 별도로 확인한다.

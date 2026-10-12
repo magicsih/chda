@@ -8,8 +8,16 @@ use std::time::Duration;
 fn quiet_panes_keep_activity_when_the_theme_and_size_change(cx: &mut TestAppContext) {
     let mut h = Harness::open(cx, "quiet-activity", |_| {});
     h.wait_prompt();
+    h.run(
+        "stty -echo; printf '\nquiet-ready-one\n'; exec cat",
+        "\nquiet-ready-one\n",
+    );
     h.keys("cmd-t");
     h.wait_prompt();
+    h.run(
+        "stty -echo; printf '\nquiet-ready-two\n'; exec cat",
+        "\nquiet-ready-two\n",
+    );
     std::thread::sleep(Duration::from_millis(1100));
     h.cx.run_until_parked();
     let before = h.read(|v, _| {
@@ -229,14 +237,10 @@ fn missing_confirmed_agent_directory_keeps_a_stopped_pane_without_a_resume(
 fn committed_input_without_echo_counts_as_activity(cx: &mut TestAppContext) {
     let mut h = Harness::open(cx, "input-activity", |_| {});
     h.wait_prompt();
-    let ready = h.home.home.join("no-echo-ready");
-    h.type_text(&format!(
-        "stty -echo; touch '{}'; read line",
-        ready.display()
-    ));
-    h.keys("enter");
-    h.wait_for("no echo command", |_, _| ready.exists());
-    std::thread::sleep(Duration::from_millis(1100));
+    h.run(
+        "stty -echo; printf '\nno-echo-ready\n'; exec cat",
+        "\nno-echo-ready\n",
+    );
     h.cx.run_until_parked();
     let pane = h.read(|v, _| v.ws.focused_pane().unwrap());
     let before = h.read(|v, _| v.ws.pane(pane).unwrap().last_activity);
