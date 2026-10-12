@@ -194,16 +194,24 @@ pub struct TerminalView {
 }
 
 struct LinkCache {
-    generation: u64,
+    candidate: chda_term::Link,
     cwd: Option<PathBuf>,
-    segment: Vec<(u16, u16, u16)>,
-    link: Option<HoveredLink>,
+    link: HoveredLink,
 }
 
 fn covers(cells: &[(u16, u16, u16)], x: u16, y: u16) -> bool {
     cells
         .iter()
         .any(|&(row, start, end)| row == y && (start..=end).contains(&x))
+}
+
+fn link_exists(link: &HoveredLink) -> bool {
+    match &link.open {
+        LinkOpen::Url(_) => true,
+        LinkOpen::Path { path, is_dir, .. } => {
+            std::fs::metadata(path).is_ok_and(|meta| meta.is_dir() == *is_dir)
+        }
+    }
 }
 
 impl EventEmitter<TerminalEvent> for TerminalView {}
@@ -430,6 +438,8 @@ impl TerminalView {
         self.frame = self.session.frame();
         self.grid = (Size { cols: 0, rows: 0 }, 0, 0);
         self.layout_cache = None;
+        self.link_cache.borrow_mut().take();
+        self.hovered_link = None;
         self.final_output = None;
         Self::drive(wake_rx, window, cx);
         cx.notify();
@@ -1051,44 +1061,49 @@ impl TerminalView {
 
     /// The first link candidate at cell `(x, y)` that resolves.
     fn link_at(&self, x: u16, y: u16) -> Option<HoveredLink> {
+        let candidates = chda_term::links_at(&self.frame, x, y);
         if let Some(cache) = self.link_cache.borrow().as_ref()
-            && cache.generation == self.frame.generation
+            && candidates.first() == Some(&cache.candidate)
             && cache.cwd == self.cwd
-            && (covers(&cache.segment, x, y)
-                || cache
-                    .link
-                    .as_ref()
-                    .is_some_and(|link| covers(&link.cells, x, y)))
+            && covers(&cache.link.cells, x, y)
         {
-            return cache.link.clone().filter(|link| covers(&link.cells, x, y));
+            // Keep a displayed longest target bound to these cells even when
+            // it disappears. Repeated clicks must not switch to a prefix;
+            // recreating that same file makes it usable again.
+            return link_exists(&cache.link).then(|| cache.link.clone());
         }
-        let candidates = chda_term::link_candidates_at(&self.frame, x, y);
-        let link = candidates.links.into_iter().find_map(|link| {
-            Some(HoveredLink {
-                open: self.resolve_link(link.target)?,
-                cells: link.cells,
-            })
-        });
-        *self.link_cache.borrow_mut() = Some(LinkCache {
-            generation: self.frame.generation,
-            cwd: self.cwd.clone(),
-            segment: candidates.segment,
-            link: link.clone(),
-        });
-        link.filter(|link| covers(&link.cells, x, y))
+        let first = candidates.first().cloned();
+        let found = candidates
+            .into_iter()
+            .enumerate()
+            .find_map(|(index, link)| {
+                Some((
+                    index,
+                    HoveredLink {
+                        open: self.resolve_link(link.target)?,
+                        cells: link.cells,
+                    },
+                ))
+            });
+        // A shorter fallback cannot be cached: a previously missing longer
+        // candidate can appear without a new PTY frame.
+        *self.link_cache.borrow_mut() =
+            found
+                .as_ref()
+                .filter(|(index, _)| *index == 0)
+                .map(|(_, link)| LinkCache {
+                    candidate: first.expect("a resolved first candidate"),
+                    cwd: self.cwd.clone(),
+                    link: link.clone(),
+                });
+        found
+            .map(|(_, link)| link)
+            .filter(|link| covers(&link.cells, x, y))
     }
 
     fn action_link_at(&self, x: u16, y: u16) -> Option<HoveredLink> {
         let link = self.link_at(x, y)?;
-        if let LinkOpen::Path { path, is_dir, .. } = &link.open
-            && !std::fs::metadata(path).is_ok_and(|meta| meta.is_dir() == *is_dir)
-        {
-            if let Some(cache) = self.link_cache.borrow_mut().as_mut() {
-                cache.link = None;
-            }
-            return None;
-        }
-        Some(link)
+        link_exists(&link).then_some(link)
     }
 
     /// URLs open as they are; paths must exist, relative to the shell's

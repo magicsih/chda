@@ -91,3 +91,5 @@ separate candidates. New bare-path lookup performs at most 16 filesystem checks.
 After exhausting that bound it does not fall back to a cut legacy prefix. Results
 are shared for the frame, working directory and segment. Activating a displayed
 path checks the same target still exists rather than replacing it.
+
+Bare-path exploration checks the longest candidates first, up to 16 filesystem lookups per request. The bound includes trailing prose on the same logical line; when that would require more candidates, chda leaves the path unlinked instead of guessing a shorter prefix. Existing OSC 8, URL, quoted and prose-parenthesized paths retain precedence. Unsuccessful lookups and shorter fallback candidates are not cached. The first candidate is cached only over its resolved cells and revalidated on hover and activation. If that displayed target disappears, repeated clicks stay unresolved until the same target returns or the displayed path/cells change; they never switch to a shorter prefix. Reconnecting a terminal discards its link cache.

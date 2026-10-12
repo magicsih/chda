@@ -550,12 +550,80 @@ fn bare_paths_share_complete_hover_click_and_menu_targets_across_soft_wraps(
         );
         std::fs::remove_file(&full).unwrap();
         let count = h.system.0.borrow().opened_files.len();
-        h.cx.simulate_click(at, Modifiers::command());
-        h.cx.run_until_parked();
-        assert_eq!(
-            h.system.0.borrow().opened_files.len(),
-            count,
-            "deleted path changed to a prefix or was opened"
-        );
+        for _ in 0..2 {
+            h.cx.simulate_click(at, Modifiers::command());
+            h.cx.run_until_parked();
+            assert_eq!(
+                h.system.0.borrow().opened_files.len(),
+                count,
+                "deleted path changed to a prefix or was opened"
+            );
+        }
     }
+}
+
+#[gpui::test]
+fn missing_path_cache_does_not_hide_an_adjacent_legacy_file_or_a_new_file(
+    cx: &mut gpui::TestAppContext,
+) {
+    let mut h = Harness::open(cx, "path-cache", |home| {
+        std::fs::write(home.home.join("README.md"), "fixture").unwrap();
+    });
+    h.wait_prompt();
+    let missing = h.home.home.join("not-yet-created");
+    h.run(
+        "clear; printf 'Cache ./not-yet-created README.md\\n'",
+        "Cache",
+    );
+    h.wait_prompt();
+    let term = h.focused_terminal();
+    let first = find_on_screen(
+        &mut h,
+        &term,
+        |text| text.starts_with("Cache "),
+        "not-yet-created",
+    );
+    h.cx.simulate_mouse_move(first, None, Modifiers::command());
+    assert!(h.read(|_, cx| term.read(cx).hovered_link.is_none()));
+    let second = find_on_screen(
+        &mut h,
+        &term,
+        |text| text.starts_with("Cache "),
+        "README.md",
+    );
+    h.cx.simulate_mouse_move(second, None, Modifiers::command());
+    assert!(
+        matches!(h.read(|_,cx|term.read(cx).hovered_link.clone()).map(|link|link.open),Some(LinkOpen::Path{path,..}) if path==h.home.home.join("README.md"))
+    );
+    h.cx.simulate_mouse_move(first, None, Modifiers::command());
+    assert!(h.read(|_, cx| term.read(cx).hovered_link.is_none()));
+    std::fs::write(&missing, "now present").unwrap();
+    h.cx.simulate_mouse_move(first, None, Modifiers::command());
+    assert!(
+        matches!(h.read(|_,cx|term.read(cx).hovered_link.clone()).map(|link|link.open),Some(LinkOpen::Path{path,..}) if path==missing)
+    );
+}
+
+#[gpui::test]
+fn a_new_longest_path_replaces_an_existing_prefix_without_new_output(
+    cx: &mut gpui::TestAppContext,
+) {
+    let mut h = Harness::open(cx, "path-growth", |home| {
+        std::fs::write(home.home.join("Notes"), "short prefix").unwrap();
+    });
+    h.wait_prompt();
+    h.run("clear; printf 'Saved ./Notes Folder/report.md\\n'", "Saved");
+    h.wait_prompt();
+    let term = h.focused_terminal();
+    let at = find_on_screen(&mut h, &term, |text| text.starts_with("Saved "), "Notes");
+    h.cx.simulate_mouse_move(at, None, Modifiers::command());
+    assert!(
+        matches!(h.read(|_,cx|term.read(cx).hovered_link.clone()).map(|link|link.open),Some(LinkOpen::Path{path,..}) if path==h.home.home.join("Notes"))
+    );
+    let full = h.home.home.join("Notes Folder/report.md");
+    std::fs::create_dir_all(full.parent().unwrap()).unwrap();
+    std::fs::write(&full, "longest").unwrap();
+    h.cx.simulate_click(at, Modifiers::command());
+    h.cx.run_until_parked();
+    assert_eq!(h.system.0.borrow().opened_files.last(), Some(&full));
 }
