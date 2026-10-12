@@ -179,7 +179,10 @@ impl TempRoot {
     fn new(name: &str) -> Self {
         static NEXT: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
         let id = NEXT.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-        let dir = std::env::temp_dir().join(format!("cs-{name}-{}-{id}", std::process::id()));
+        // macOS sockaddr_un has a short path limit. PID + counter remain unique
+        // while long labels cannot overflow it in later scenarios.
+        let prefix: String = name.chars().take(8).collect();
+        let dir = std::env::temp_dir().join(format!("cs-{prefix}-{}-{id}", std::process::id()));
         let _ = std::fs::remove_dir_all(&dir);
         std::fs::create_dir_all(&dir).unwrap();
         Self(dir.canonicalize().unwrap())

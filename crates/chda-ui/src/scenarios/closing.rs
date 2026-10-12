@@ -475,11 +475,17 @@ fn stop_and_close_clears_the_worktree_working_status(cx: &mut TestAppContext) {
     working(&mut h, ending, "claude");
     assert_eq!(worktree_status(&mut h, &repo).0, AgentStatus::Working);
     Command::new("kill").arg(pid.to_string()).status().unwrap();
-    h.wait_for("the ended pane closed", move |view, _| {
-        view.ws.pane(ending).is_none()
-    });
+    h.wait_for(
+        "the ended pane retained its process status",
+        move |view, _| {
+            view.ws
+                .pane(ending)
+                .is_some_and(|p| p.pane_run.as_ref().is_some_and(chda_core::PaneRun::stopped))
+        },
+    );
     let (status, update) = worktree_status(&mut h, &repo);
     assert_ne!(status, AgentStatus::Working);
     assert_eq!(update, "enabled");
-    assert_eq!(h.read(|view, _| view.ws.tabs().len()), 1);
+    assert_eq!(h.read(|view, _| view.ws.tabs().len()), 2);
+    assert!(h.read(|view, _| !view.panes.contains_key(&ending)));
 }

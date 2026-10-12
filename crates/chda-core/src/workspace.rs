@@ -337,7 +337,7 @@ pub struct PaneInfo {
     pub agent_session: Option<AgentSessionRef>,
     /// Captured only for commands chda launched, never inferred from TUI text.
     pub agent_launch: Option<chda_agents::AgentLaunchContext>,
-    pub managed_run: Option<crate::ManagedRun>,
+    pub pane_run: Option<crate::PaneRun>,
     /// App-owned basename of the previous run's private, read-only output.
     pub previous_run: Option<String>,
 }
@@ -348,6 +348,8 @@ pub struct AgentSessionRef {
     /// Agent id, e.g. `claude` or `codex`.
     pub agent: String,
     pub session: String,
+    /// Last directory confirmed by this exact provider and conversation.
+    pub cwd: Option<PathBuf>,
 }
 
 /// An agent's state in one pane.
@@ -547,10 +549,21 @@ impl Workspace {
 
     /// Remember the conversation an agent reported from a pane, or forget it
     /// when the session ended. Returns whether anything changed.
-    pub fn set_agent_session(&mut self, pane: PaneId, session: Option<AgentSessionRef>) -> bool {
+    pub fn set_agent_session(
+        &mut self,
+        pane: PaneId,
+        mut session: Option<AgentSessionRef>,
+    ) -> bool {
         let Some(info) = self.panes.get_mut(&pane) else {
             return false;
         };
+        if let (Some(next), Some(prior)) = (&mut session, &info.agent_session)
+            && next.cwd.is_none()
+            && next.agent == prior.agent
+            && next.session == prior.session
+        {
+            next.cwd = prior.cwd.clone();
+        }
         let changed = info.agent_session != session;
         info.agent_session = session;
         changed

@@ -102,7 +102,7 @@ exit 7
         assert!(
             v.ws.pane(pane)
                 .unwrap()
-                .managed_run
+                .pane_run
                 .as_ref()
                 .unwrap()
                 .stopped()
@@ -120,14 +120,7 @@ exit 7
     h.cx.simulate_click(bounds.center(), gpui::Modifiers::default());
     h.cx.run_until_parked();
     assert!(
-        h.read(|v, _| v
-            .ws
-            .pane(pane)
-            .unwrap()
-            .managed_run
-            .as_ref()
-            .unwrap()
-            .label())
+        h.read(|v, _| v.ws.pane(pane).unwrap().pane_run.as_ref().unwrap().label())
             .contains("transcript is missing")
     );
     assert!(!h.read(|v, _| v.panes.contains_key(&pane)));
@@ -139,46 +132,32 @@ exit 7
     h.cx.simulate_click(bounds.center(), gpui::Modifiers::default());
     h.cx.run_until_parked();
     assert!(
-        h.read(|v, _| v
-            .ws
-            .pane(pane)
-            .unwrap()
-            .managed_run
-            .as_ref()
-            .unwrap()
-            .label())
+        h.read(|v, _| v.ws.pane(pane).unwrap().pane_run.as_ref().unwrap().label())
             .contains("executable is unavailable")
     );
     std::fs::rename(backup, executable).unwrap();
     h.view.update(&mut h.cx, |v, _| {
         v.ws.pane_mut(pane)
             .unwrap()
-            .agent_launch
+            .agent_session
             .as_mut()
             .unwrap()
-            .cwd = cwd.join("missing-directory")
+            .cwd = Some(cwd.join("missing-directory"))
     });
     let bounds = h.cx.debug_bounds("agent-restart").unwrap();
     h.cx.simulate_click(bounds.center(), gpui::Modifiers::default());
     h.cx.run_until_parked();
     assert!(
-        h.read(|v, _| v
-            .ws
-            .pane(pane)
-            .unwrap()
-            .managed_run
-            .as_ref()
-            .unwrap()
-            .label())
-            .contains("directory no longer exists")
+        h.read(|v, _| v.ws.pane(pane).unwrap().pane_run.as_ref().unwrap().label())
+            .contains("conversation directory")
     );
     h.view.update(&mut h.cx, |v, _| {
         v.ws.pane_mut(pane)
             .unwrap()
-            .agent_launch
+            .agent_session
             .as_mut()
             .unwrap()
-            .cwd = cwd.clone()
+            .cwd = Some(cwd.clone())
     });
     let bounds = h.cx.debug_bounds("agent-restart").unwrap();
     h.cx.simulate_click(bounds.center(), gpui::Modifiers::default());
@@ -257,7 +236,7 @@ fn no_session_identity_disables_restart_and_restore_does_not_create_a_conversati
         assert!(
             v.ws.pane(pane)
                 .unwrap()
-                .managed_run
+                .pane_run
                 .as_ref()
                 .unwrap()
                 .stopped()

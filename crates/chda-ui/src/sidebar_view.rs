@@ -1542,7 +1542,7 @@ impl SidebarView {
                 "Close terminal tab",
                 SidebarEvent::CloseTab(row.tab),
             )),
-            SessionKind::Agent if row.live_idle() => match key {
+            SessionKind::Agent => match key {
                 SessionKey::Pane(pane) => Some((
                     format!("session-close-pane-{}", pane.raw()),
                     "Close agent pane",

@@ -17,6 +17,7 @@ mod git_graph;
 mod harness;
 mod idle_agents;
 mod input;
+mod lifecycle;
 mod mcp;
 mod menus;
 mod navigation;

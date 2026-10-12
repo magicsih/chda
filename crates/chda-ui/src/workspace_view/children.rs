@@ -2,7 +2,7 @@ use super::*;
 use chda_core::agents::{ChildActivity, ChildState};
 
 impl WorkspaceView {
-    fn parent_identity(&self, pane: PaneId) -> Option<(String, String)> {
+    pub(super) fn parent_identity(&self, pane: PaneId) -> Option<(String, String)> {
         let info = self.ws.pane(pane)?;
         info.agent_session
             .as_ref()
@@ -20,6 +20,14 @@ impl WorkspaceView {
         let mut groups = Vec::new();
         for tab in self.ws.tabs() {
             for pane in tab.panes() {
+                if self
+                    .ws
+                    .pane(pane)
+                    .and_then(|p| p.pane_run.as_ref())
+                    .is_some_and(chda_core::PaneRun::stopped)
+                {
+                    continue;
+                }
                 let Some((agent, session)) = self.parent_identity(pane) else {
                     continue;
                 };

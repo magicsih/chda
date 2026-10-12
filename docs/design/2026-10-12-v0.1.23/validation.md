@@ -4,7 +4,7 @@
 
 - 설계 원문·시각 시안·인수조건 작성: 완료.
 - 정확한 설계 commit 승인: `f58906aa9b158176a42b3b455187f745de34dba5` 사용자 승인 확인. [승인 기록](approval.md).
-- 엔진 구현·RED/GREEN: 아래 기록. PR code review·원격 CI·native 검수·서명 artifact·공개: 미실행.
+- 엔진 구현·RED/GREEN·최종 원격 CI: 통과. 교차 코드 리뷰: 공급자 사용량 제한의 해제 시각 대기. 세션 수명 구현: 아래 기록. native 검수·서명 artifact·공개: 미실행.
 - 조사 근거: main 및 원격 SHA f09aa62873a4cab100ae8fd3dbba272674a9550e 일치; 최신 public release v0.1.22; 208–231 범위의 open issue 16개; 기존 installed Claude 2.1.296/Codex 0.162.1/Zig 0.15.2.
 - 기존 `app/chda/sparkle/update-signing` catalog preflight: active, catalog errors 0. 이는 Developer ID·공증·실제 서명·릴리스 artifact 검증이 아니다.
 
@@ -75,3 +75,22 @@
 
 - 세 번째 HEAD `364afb7`의 macOS CI는 workspace 전체 검사·clippy·Debug 회귀·Cargo guard·updater 컴파일·release build까지 통과했다. Linux/Windows 실패가 있어 PR 전체 통과는 아니다.
 - 새 source `9d05e6c187faa7d2`에서 명시적 Debug 회귀·Rust terminal 64 passed/2 ignored·실제 Cargo guard 2 tests·준비 9 tests·제품 문서 6 tests·fmt·생성 문서 일치를 다시 확인했다. 최종 CI 및 교차 코드 리뷰를 확인한 뒤 통합한다.
+
+
+### 엔진 최종 CI와 교차 리뷰 상태
+
+- PR #234 HEAD `4159cdfe730fbbbfaff17285269cedfe9feaf95b`의 Actions run `38248539602`에서 7개 job 모두 통과했다. macOS workspace tests·clippy·Debug 무결성·실제 Cargo guard·updater 컴파일·release build, Linux/Windows release build, fmt·commit·dependency·문서 검사를 포함한다.
+- 읽기 전용 로컬 Claude 교차 리뷰 첫 요청은 weekly limit으로 실행되지 않았다. 공급자 응답의 초기화 시각은 2026-10-12 23:00 Asia/Seoul이다. 시각 이전에 재요청하지 않으며 리뷰 통과로 기록하지 않는다. CI 통과는 최종 native 인수조건이나 공개 릴리스 증거가 아니다.
+
+## 영역 2 · 활동과 세션 수명 (#208, #226, #227, #231)
+
+- RED: 수정 전 실제 PTY를 사용하는 화면 없는 UI 시나리오 네 건이 요구사항으로 실패했다. 테마 변경이 활동 시각을 갱신하고, 복원은 확인된 대화 cwd 대신 오래된 pane cwd를 사용하며, Idle parent의 Working child를 확인하지 않고, 일반 process 종료가 tab을 제거했다.
+- 실제 PTY output frame과 성공적으로 전달한 사용자 입력만 활동으로 계산한다. focus 보고·빈 입력·색·크기·스크롤 frame은 제외한다. echo 없는 입력과 화면 이벤트를 terminal/PTY 회귀로 확인했다.
+- exact provider+conversation의 cwd를 저장하고 같은 대화의 cwd 없는 보고는 기존 값을 보존한다. 다른 대화는 상속하지 않는다. 보고→캡처 launch→transcript→기존 pane 우선순위를 사용하며 확인된 디렉터리 소실 시 stopped/error로 남긴다. 과거 JSON의 추가 필드 없는 복원도 확인했다.
+- `ManagedRun`을 승인된 공통 `PaneRun`으로 일반화했다. 기존 저장 `run`과 state 값은 유지한다. 모든 최상위 process의 종료 상태·private output을 보존하며 cold restore나 입력이 shell을 자동 실행하지 않는다. Start shell과 지원되는 exact Restart만 명시적 실행이다.
+- parent Idle에서도 Working/Waiting/Unknown child가 있으면 pane shortcut·Sessions ×·tab × 모두 최신 상태로 확인한다. Cancel 기본, Tab/Shift-Tab 선택, Enter/Space/Escape 소비를 확인했다.
+- 최종 변경의 선택 검사: 새 UI lifecycle 9 tests, 기존 managed restart 3 tests, sidebar width/bounds 마우스 1 test 통과. core 69 tests, terminal 65 passed/2 ignored 및 workspace doc tests 통과. 마지막 코드 변경 뒤 workspace clippy·fmt·생성 문서 일치·제품 문서 6 tests·source 준비 무결성·diff 형식을 확인했다.
+- 전체 workspace의 두 번째 실행은 UI 180/181 통과했고 마지막 sidebar drag가 실패했다. 검사 입력이 1200px 창 내부를 건너뛰어 1385px부터 시작하는 경로를 확인했다. MouseDown 뒤 frame을 전달하고 100px 이하 간격으로 실제 창 경계를 지나도록 구동을 보완했다. width·offset·bounds assertion은 유지하며 단독 검사는 통과했다. 이 전체 실패를 통과로 표시하지 않으며 최종 HEAD의 전체 CI에서 재확인한다.
+- managed cwd 우선순위 변경 후 기존 missing-folder fixture가 낮은 우선순위의 launch cwd만 변경해 기대 오류가 발생하지 않았다. 실제 authoritative report cwd를 사라진 디렉터리로 설정하도록 fixture를 맞췄고 원래 오류·복원 assertion은 유지했다.
+- 생성 Pages를 Chromium의 desktop 1280px와 좁은 390px에서 렌더해 직접 확인했다. 13개 feature card, 이미지 로딩·가로 overflow·page error 검사가 통과했다. 이는 Pages의 실행 근거이며 chda native UI 검수 회차에 포함하지 않는다.
+- 최종 원격 CI·교차 코드 리뷰·macOS native 검수·GUI update handoff·공개는 아직 통과 근거가 없다. native 검수는 승인된 최종 후보의 3회 계획으로 진행한다.

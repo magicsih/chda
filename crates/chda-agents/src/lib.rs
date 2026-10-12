@@ -140,6 +140,19 @@ pub trait AgentAdapter: Send + Sync {
                     .any(|f| session::transcript_matches_id(f, self.id(), id))
             })
     }
+    /// Directory from the transcript of this exact conversation only.
+    fn session_cwd_for_id(&self, id: &SessionId) -> Option<PathBuf> {
+        if id.0.is_empty() {
+            return None;
+        }
+        self.session_roots().iter().find_map(|root| {
+            session::jsonl_files(root).iter().find_map(|file| {
+                session::transcript_matches_id(file, self.id(), id)
+                    .then(|| self.session_cwd(file))
+                    .flatten()
+            })
+        })
+    }
     /// Parse one transcript file; `None` when it is not a session.
     fn parse_session(&self, file: &Path) -> Option<AgentSession>;
     /// Write hook configuration under `data_dir` so the agent reports to

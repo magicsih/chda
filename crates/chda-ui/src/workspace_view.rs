@@ -256,6 +256,7 @@ pub(crate) enum MenuAction {
 
 /// A yes/no sheet before a destructive action.
 pub(crate) struct ConfirmSheet {
+    proceed: bool,
     title: String,
     pub(crate) lines: Vec<String>,
     action: MenuAction,
@@ -375,6 +376,7 @@ pub struct WorkspaceView {
     pub(crate) status_bar: crate::status_bar::StatusBar,
     pane_navigation: HashMap<PaneId, u64>,
     initializing_panes: HashSet<PaneId>,
+    agent_report_at: HashMap<PaneId, u64>,
 }
 
 impl WorkspaceView {
@@ -537,6 +539,7 @@ impl WorkspaceView {
             },
             pane_navigation: HashMap::new(),
             initializing_panes: HashSet::new(),
+            agent_report_at: HashMap::new(),
             env,
         };
         let registry = this.env.windows.clone();
@@ -1006,6 +1009,7 @@ impl WorkspaceView {
                             Some(AgentSessionRef {
                                 agent: report.provider.clone(),
                                 session,
+                                cwd: None,
                             }),
                         );
                         self.initializing_panes.remove(&pane);
@@ -1192,7 +1196,7 @@ impl WorkspaceView {
             .pane
             .and_then(|raw| self.ws.pane_by_raw(raw))
             .and_then(|pane| self.ws.pane(pane))
-            .and_then(|info| info.managed_run.as_ref())
+            .and_then(|info| info.pane_run.as_ref())
             && (run.stopped() || run.started_at().is_some_and(|at| ev.timestamp < at))
         {
             return;
@@ -1216,6 +1220,16 @@ impl WorkspaceView {
                     .is_some_and(|s| !ev.session_id.is_empty() && s.session != ev.session_id))
         {
             return;
+        }
+        if let Some(pane) = ev.pane.and_then(|raw| self.ws.pane_by_raw(raw)) {
+            if self
+                .agent_report_at
+                .get(&pane)
+                .is_some_and(|at| ev.timestamp < *at)
+            {
+                return;
+            }
+            self.agent_report_at.insert(pane, ev.timestamp);
         }
         if matches!(ev.kind, HookKind::SessionStart | HookKind::PromptSubmitted)
             && let Some(pane) = ev.pane.and_then(|raw| self.ws.pane_by_raw(raw))
@@ -1269,6 +1283,7 @@ impl WorkspaceView {
                 Some(AgentSessionRef {
                     agent: ev.agent,
                     session: ev.session_id,
+                    cwd: Some(ev.cwd.clone()),
                 }),
             ) {
                 self.save_session();
@@ -1307,6 +1322,7 @@ impl WorkspaceView {
             let conversation = (event != AgentEvent::SessionEnd).then(|| AgentSessionRef {
                 agent: ev.agent.clone(),
                 session: ev.session_id.clone(),
+                cwd: Some(ev.cwd.clone()),
             });
             if self.ws.set_agent_session(p, conversation) {
                 self.save_session();
@@ -2163,22 +2179,71 @@ impl WorkspaceView {
                 self.owned_outputs.borrow_mut().insert(p.pane, file);
             }
             let adopting = self.env.windows.borrow().update.adopting;
-            if p.run.as_ref().is_some_and(chda_core::ManagedRun::stopped) {
+            if p.run.as_ref().is_some_and(chda_core::PaneRun::stopped) {
                 self.ws.end_agent(p.pane);
                 continue;
+            }
+            let mut p = p;
+            if !adopting && self.config.restore_agents && (p.agent.is_some() || p.launch.is_some())
+            {
+                let conversation = p
+                    .agent
+                    .as_ref()
+                    .map(|s| (s.agent.as_str(), SessionId(s.session.clone())))
+                    .or_else(|| {
+                        p.launch
+                            .as_ref()
+                            .and_then(|c| c.session.as_ref().map(|s| (c.agent.as_str(), s.clone())))
+                    });
+                let transcript = conversation.and_then(|(agent, session)| {
+                    self.adapters
+                        .iter()
+                        .find(|a| a.id().as_str() == agent)
+                        .and_then(|a| a.session_cwd_for_id(&session))
+                });
+                let reported = p.agent.as_ref().and_then(|s| s.cwd.as_deref());
+                let launch = p.launch.as_ref().map(|c| c.cwd.as_path());
+                match chda_core::restore_agent_cwd(
+                    reported,
+                    launch,
+                    transcript.as_deref(),
+                    p.cwd.as_deref(),
+                ) {
+                    Ok(cwd) => {
+                        p.cwd = cwd;
+                        if let (Some(context), Some(cwd)) = (&mut p.launch, &p.cwd) {
+                            context.cwd = cwd.clone();
+                        }
+                        if let Some(info) = self.ws.pane_mut(p.pane) {
+                            info.cwd = p.cwd.clone();
+                            info.agent_launch = p.launch.clone();
+                        }
+                    }
+                    Err(error) => {
+                        let info = self.ws.pane_mut(p.pane).unwrap();
+                        info.cwd = reported
+                            .or(launch)
+                            .or(transcript.as_deref())
+                            .map(Path::to_path_buf);
+                        info.pane_run = Some(chda_core::PaneRun::failed(error.clone()));
+                        self.ws.end_agent(p.pane);
+                        notes.push(error);
+                        continue;
+                    }
+                }
             }
             if !adopting && p.launch.is_some() && !self.config.restore_agents {
                 if let Some(info) = self.ws.pane_mut(p.pane) {
                     info.agent_launch = None;
-                    info.managed_run = None;
+                    info.pane_run = None;
                 }
             } else if !adopting && let Some(context) = &p.launch {
                 let result = self.captured_resume_argv(context);
                 match result {
                     Ok(command) => {
                         self.initializing_panes.insert(p.pane);
-                        self.ws.pane_mut(p.pane).unwrap().managed_run =
-                            Some(chda_core::ManagedRun::Starting {
+                        self.ws.pane_mut(p.pane).unwrap().pane_run =
+                            Some(chda_core::PaneRun::Starting {
                                 started_at: now_ms(),
                             });
                         self.open_pane(
@@ -2192,7 +2257,7 @@ impl WorkspaceView {
                     Err(error) => {
                         let info = self.ws.pane_mut(p.pane).unwrap();
                         info.cwd = Some(context.cwd.clone());
-                        info.managed_run = Some(chda_core::ManagedRun::failed(error));
+                        info.pane_run = Some(chda_core::PaneRun::failed(error));
                         self.ws.end_agent(p.pane);
                     }
                 }
@@ -2387,6 +2452,8 @@ impl WorkspaceView {
     }
 
     fn sync_panes(&mut self, cx: &mut Context<Self>) {
+        self.agent_report_at
+            .retain(|pane, _| self.ws.pane(*pane).is_some());
         self.previous_runs
             .retain(|pane, _| self.ws.pane(*pane).is_some());
         self.previous_open
@@ -2463,20 +2530,8 @@ impl WorkspaceView {
             info.cwd = cwd.clone();
         }
         let settings = self.settings.clone();
-        let managed = self
-            .ws
-            .pane(pane)
-            .and_then(|p| p.agent_launch.as_ref())
-            .is_some_and(|c| c.managed);
-        let result = TerminalView::plan(
-            &settings,
-            &self.env,
-            pane.raw(),
-            cwd.clone(),
-            command,
-            managed,
-        )
-        .and_then(TerminalView::prepare);
+        let result = TerminalView::plan(&settings, &self.env, pane.raw(), cwd.clone(), command)
+            .and_then(TerminalView::prepare);
         let prepared = match result {
             Ok(prepared) => prepared,
             Err(e) => {
@@ -2485,7 +2540,7 @@ impl WorkspaceView {
                     self.env.windows.borrow_mut().update.adoption_failed = true;
                 }
                 if let Some(info) = self.ws.pane_mut(pane) {
-                    info.managed_run = Some(chda_core::ManagedRun::failed(format!(
+                    info.pane_run = Some(chda_core::PaneRun::failed(format!(
                         "Could not start process: {e}"
                     )));
                     info.agent_live = false;
@@ -2524,6 +2579,7 @@ impl WorkspaceView {
                     Some(AgentSessionRef {
                         agent: context.agent.as_str().into(),
                         session: session.0,
+                        cwd: None,
                     }),
                 );
             }
@@ -2532,11 +2588,11 @@ impl WorkspaceView {
             && info.agent_launch.as_ref().is_some_and(|c| c.managed)
         {
             let started_at = info
-                .managed_run
+                .pane_run
                 .as_ref()
-                .and_then(chda_core::ManagedRun::started_at)
+                .and_then(chda_core::PaneRun::started_at)
                 .unwrap_or_else(now_ms);
-            info.managed_run = Some(chda_core::ManagedRun::Running { started_at });
+            info.pane_run = Some(chda_core::PaneRun::Running { started_at });
         }
         let view = cx.new(|cx| TerminalView::new(prepared, settings, cwd, window, cx));
         let sub = cx.subscribe_in(&view, window, move |this, _, event, window, cx| {
@@ -2647,27 +2703,9 @@ impl WorkspaceView {
         self.apply_codex_terminal_event(pane, event, window, cx);
         match event {
             TerminalEvent::Exited { status, output } => {
-                if self
-                    .ws
-                    .pane(pane)
-                    .and_then(|p| p.agent_launch.as_ref())
-                    .is_some_and(|c| c.managed)
-                {
-                    self.managed_exit(pane, status.as_ref(), output.as_ref(), window, cx);
-                    return;
+                if self.ws.pane(pane).is_some() && self.panes.contains_key(&pane) {
+                    self.pane_exit(pane, status.as_ref(), output.as_ref(), window, cx);
                 }
-                let agents = self.pane_agents(&[pane]);
-                self.ws.close_pane(pane);
-                self.panes.remove(&pane);
-                self.resync_closed_agents(agents, cx);
-                if self.ws.is_empty() {
-                    // Nothing left to restore: this removes the saved session.
-                    self.save_session();
-                    window.remove_window();
-                    return;
-                }
-                self.restore_focus(window, cx);
-                self.sync_panes(cx);
             }
             TerminalEvent::Title(title) => {
                 // Agents such as Codex animate their title while working. A
@@ -3454,35 +3492,61 @@ impl WorkspaceView {
             CloseTarget::Tab(_) => tab.panes(),
             CloseTarget::Pane(pane) => vec![pane],
         };
-        let lines: Vec<_> = panes
-            .iter()
-            .filter_map(|pane| {
-                let info = self.ws.pane(*pane)?;
-                let agent = info.agent.as_ref()?;
-                // Codex's own title still reports a turn the stored status
-                // may not show yet.
+        let mut lines = Vec::new();
+        for pane in panes {
+            let Some(info) = self.ws.pane(pane) else {
+                continue;
+            };
+            if let Some(agent) = info.agent.as_ref() {
                 let titled = (agent.agent == "codex")
                     .then(|| parse_codex_title(&info.title))
                     .flatten();
                 let status = match (agent.status, titled) {
-                    (AgentStatus::Working, _) | (_, Some(CodexRunState::Working)) => "working",
-                    (AgentStatus::WaitingInput, _) | (_, Some(CodexRunState::WaitingInput)) => {
-                        "waiting for input"
+                    (AgentStatus::Working, _) | (_, Some(CodexRunState::Working)) => {
+                        Some("working")
                     }
-                    (AgentStatus::Review | AgentStatus::Idle, _) => return None,
+                    (AgentStatus::WaitingInput, _) | (_, Some(CodexRunState::WaitingInput)) => {
+                        Some("waiting for input")
+                    }
+                    _ => None,
                 };
-                let session = info
-                    .agent_session
-                    .as_ref()
-                    .map(|session| session.session.as_str())
-                    .unwrap_or("session unavailable");
-                Some(format!(
-                    "{} · {status} · pane {} · {session}",
-                    self.agent_name(&agent.agent),
-                    pane.raw()
-                ))
-            })
-            .collect();
+                if let Some(status) = status {
+                    let session = info
+                        .agent_session
+                        .as_ref()
+                        .map_or("session unavailable", |s| s.session.as_str());
+                    lines.push(format!(
+                        "{} · {status} · pane {} · {session}",
+                        self.agent_name(&agent.agent),
+                        pane.raw()
+                    ));
+                }
+            }
+            if let Some((agent, session)) = self.parent_identity(pane) {
+                for child in self
+                    .env
+                    .windows
+                    .borrow()
+                    .children
+                    .children(&agent, &session)
+                {
+                    if matches!(
+                        child.child.state,
+                        chda_core::agents::ChildState::Unknown
+                            | chda_core::agents::ChildState::Working
+                            | chda_core::agents::ChildState::WaitingInput
+                    ) {
+                        lines.push(format!(
+                            "{} child {} · {} · pane {} · {session}",
+                            self.agent_name(&agent),
+                            child.child.id,
+                            child.child.state.label(),
+                            pane.raw()
+                        ));
+                    }
+                }
+            }
+        }
         if lines.is_empty() {
             self.finish_close(target, window, cx);
             return;
@@ -3491,6 +3555,7 @@ impl WorkspaceView {
             return;
         };
         self.confirm = Some(ConfirmSheet {
+            proceed: false,
             title: format!("Stop sessions and close “{title}”?"),
             lines,
             action: MenuAction::StopAndClose {
@@ -4234,6 +4299,7 @@ impl WorkspaceView {
                             )
                         };
                         view.confirm = Some(ConfirmSheet {
+            proceed: false,
                             title: format!("{branch} has diverged from its upstream"),
                             lines: vec![
                                 format!("{ahead} local commit(s), {behind} new upstream commit(s)."),
@@ -4600,6 +4666,7 @@ impl WorkspaceView {
                 if !force && !blockers.is_empty() {
                     let name = entry.branch.clone().unwrap_or_default();
                     self.confirm = Some(ConfirmSheet {
+                        proceed: false,
                         title: format!("{name} is not ready to clean up"),
                         lines: blockers
                             .iter()
@@ -4675,6 +4742,7 @@ impl WorkspaceView {
                     .is_none_or(|c| !matches!(c.action, MenuAction::CleanStale(_)))
                 {
                     self.confirm = Some(ConfirmSheet {
+                        proceed: false,
                         title: format!("Remove {} merged worktree(s)?", stale.len()),
                         lines: stale
                             .iter()
@@ -4782,6 +4850,7 @@ impl WorkspaceView {
                         n => lines.push(format!("Closes the {n} terminals open in it.")),
                     }
                     self.confirm = Some(ConfirmSheet {
+                        proceed: false,
                         title,
                         lines,
                         action: MenuAction::DeleteWorktreeAndBranch {
@@ -5892,9 +5961,9 @@ impl WorkspaceView {
                 if self
                     .ws
                     .pane(*pane)
-                    .is_some_and(|info| info.managed_run.is_some()) =>
+                    .is_some_and(|info| info.pane_run.is_some() || info.previous_run.is_some()) =>
             {
-                self.render_managed_pane(*pane, cx)
+                self.render_process_pane(*pane, cx)
             }
             Node::Leaf(pane) => match self.panes.get(pane) {
                 // Cached: redrawing the window (tab bar spinner, another
@@ -6069,7 +6138,11 @@ impl WorkspaceView {
                             .py_2()
                             .rounded_sm()
                             .border_1()
-                            .border_color(fg.opacity(0.2))
+                            .border_color(if !confirm.proceed {
+                                fg
+                            } else {
+                                fg.opacity(0.2)
+                            })
                             .cursor_pointer()
                             .hover(|s| s.bg(fg.opacity(0.1)))
                             .on_click(
@@ -6081,6 +6154,8 @@ impl WorkspaceView {
                         div()
                             .id("confirm-ok")
                             .debug_selector(|| "confirm-ok".into())
+                            .border_1()
+                            .border_color(if confirm.proceed { fg } else { fg.opacity(0.2) })
                             .px_3()
                             .py_2()
                             .rounded_sm()
@@ -6106,7 +6181,12 @@ impl WorkspaceView {
                             ),
                     ),
             );
-        Some(self.sheet_frame(confirm.title.clone(), body, None, "Esc cancel"))
+        Some(self.sheet_frame(
+            confirm.title.clone(),
+            body,
+            None,
+            "Tab choose · Enter / Space activate · Esc cancel",
+        ))
     }
 
     fn render_sheet(&self, cx: &mut Context<Self>) -> Option<AnyElement> {
@@ -6482,6 +6562,30 @@ impl Render for WorkspaceView {
             .key_context("Workspace")
             .track_focus(&self.focus_handle)
             .on_key_down(cx.listener(|this, event: &gpui::KeyDownEvent, window, cx| {
+                if let Some(confirm) = this.confirm.as_mut() {
+                    let key = &event.keystroke;
+                    match key.key.as_str() {
+                        "tab"
+                            if !key.modifiers.platform
+                                && !key.modifiers.control
+                                && !key.modifiers.alt =>
+                        {
+                            confirm.proceed = !confirm.proceed;
+                            cx.notify();
+                        }
+                        "enter" | "space" | " " if !key.modifiers.modified() => {
+                            if confirm.proceed {
+                                this.confirm_action(window, cx);
+                            } else {
+                                this.cancel_confirm(window, cx);
+                            }
+                        }
+                        "escape" => this.cancel_confirm(window, cx),
+                        _ => {}
+                    }
+                    cx.stop_propagation();
+                    return;
+                }
                 if this.launch_sheet.is_some()
                     && event.keystroke.key == "enter"
                     && !event.keystroke.modifiers.modified()

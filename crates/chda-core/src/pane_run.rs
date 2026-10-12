@@ -3,7 +3,7 @@ use serde::{Deserialize, Serialize};
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "state", rename_all = "snake_case")]
-pub enum ManagedRun {
+pub enum PaneRun {
     Starting {
         started_at: u64,
     },
@@ -17,7 +17,7 @@ pub enum ManagedRun {
     },
 }
 
-impl ManagedRun {
+impl PaneRun {
     pub fn started_at(&self) -> Option<u64> {
         match self {
             Self::Starting { started_at } | Self::Running { started_at } => Some(*started_at),

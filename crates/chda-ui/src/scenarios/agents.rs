@@ -487,8 +487,8 @@ done
         h.cx.debug_bounds(Box::leak(
             format!("session-close-pane-{}", pane.raw()).into_boxed_str()
         ))
-        .is_none(),
-        "a working agent's row offers no close button"
+        .is_some(),
+        "a working agent keeps its close button and checks state on click"
     );
     h.keys("cmd-w");
     assert!(
