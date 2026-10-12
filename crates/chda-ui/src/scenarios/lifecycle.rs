@@ -453,3 +453,55 @@ exit 6
     );
     assert_eq!(h.read(|v, _| v.ws.focused_pane()), Some(pane));
 }
+
+#[gpui::test]
+fn stopped_parent_with_retained_child_reports_closes_without_hidden_confirmation(
+    cx: &mut TestAppContext,
+) {
+    let mut h = Harness::open(cx, "stopped-child", |_| {});
+    h.wait_prompt();
+    let pane = h.read(|v, _| v.ws.focused_pane().unwrap());
+    h.hook_session(
+        Some(pane.raw()),
+        &h.home.home,
+        HookKind::SessionStart,
+        "ended-parent",
+    );
+    h.wait_for("parent identity", |v, _| {
+        v.ws.pane(pane).unwrap().agent_session.is_some()
+    });
+    h.view.update(&mut h.cx, |v, _| {
+        v.env
+            .windows
+            .borrow_mut()
+            .children
+            .apply(chda_core::agents::ChildActivity {
+                agent: "claude".into(),
+                parent: "ended-parent".into(),
+                observed_at: crate::terminal_view::now_ms(),
+                child: ChildEvent {
+                    id: "retained-child".into(),
+                    label: None,
+                    state: ChildState::Unknown,
+                    started: false,
+                },
+            });
+    });
+    h.type_text("exit 0");
+    h.keys("enter");
+    h.wait_for("stopped parent", |v, _| {
+        v.ws.pane(pane)
+            .unwrap()
+            .pane_run
+            .as_ref()
+            .is_some_and(chda_core::PaneRun::stopped)
+    });
+    h.keys("cmd-t");
+    h.wait_prompt();
+    click(&mut h, "tab-close-0".into());
+    assert!(
+        h.read(|v, _| v.confirm.is_none()),
+        "stopped parent asked to stop a hidden child"
+    );
+    assert!(h.read(|v, _| v.ws.pane(pane).is_none()));
+}
