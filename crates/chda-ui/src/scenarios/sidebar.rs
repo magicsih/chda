@@ -170,12 +170,12 @@ fn navigation_reveals_only_clipped_rows_and_keeps_repository_context(cx: &mut Te
     // New tabs must not change Sessions' height while measuring reveal deltas.
     for _ in 0..3 {
         h.cx.run_until_parked();
-        h.cx.update(|window, cx| window.simulate_next_frame(cx));
+        draw_sidebar_frame(&mut h);
     }
     click_row(&mut h, "sessions-section-toggle");
     for _ in 0..3 {
         h.cx.run_until_parked();
-        h.cx.update(|window, cx| window.simulate_next_frame(cx));
+        draw_sidebar_frame(&mut h);
     }
     assert!(
         h.read(|v, cx| v.config.sessions_collapsed && v.sidebar.read(cx).sessions_collapsed),
@@ -209,14 +209,14 @@ fn navigation_reveals_only_clipped_rows_and_keeps_repository_context(cx: &mut Te
                 ));
             }
             h.cx.run_until_parked();
-            h.cx.update(|window, cx| window.simulate_next_frame(cx));
+            draw_sidebar_frame(&mut h);
             h.cx.run_until_parked();
         }
         // Settle the layout before deriving the expected scroll delta too.
         // The test platform does not deliver native display frames itself.
         for _ in 0..3 {
             h.cx.run_until_parked();
-            h.cx.update(|window, cx| window.simulate_next_frame(cx));
+            draw_sidebar_frame(&mut h);
         }
         let selector = Box::leak(format!("wt:{}", path.display()).into_boxed_str());
         let before = h.cx.debug_bounds(selector).unwrap();
@@ -245,9 +245,9 @@ fn navigation_reveals_only_clipped_rows_and_keeps_repository_context(cx: &mut Te
         h.cx.run_until_parked();
         // The test platform has no display frame loop. Deliver the frame
         // scheduled after the target's layout, as the native platform does.
-        h.cx.update(|window, cx| window.simulate_next_frame(cx));
+        draw_sidebar_frame(&mut h);
         h.cx.run_until_parked();
-        h.cx.update(|window, cx| window.simulate_next_frame(cx));
+        draw_sidebar_frame(&mut h);
         h.cx.run_until_parked();
         let after = h.cx.debug_bounds(selector).unwrap();
         let viewport = h.read(|v, cx| v.sidebar.read(cx).project_scroll.bounds());
@@ -571,12 +571,12 @@ fn saved(h: &Harness) -> String {
     std::fs::read_to_string(&h.home.config).unwrap_or_default()
 }
 
-fn draw_drag_frame(h: &mut Harness) {
+fn draw_sidebar_frame(h: &mut Harness) {
     h.cx.run_until_parked();
     h.cx.update(|window, cx| {
         // simulate_next_frame drains callbacks; it does not draw the window.
-        // Mouse events need the current layout and hitboxes, even when the
-        // test platform's scheduled frame has not been delivered yet.
+        // Geometry and mouse events need the current layout and hitboxes, even
+        // when the test platform's scheduled frame has not been delivered.
         window.simulate_next_frame(cx);
         window.draw(cx).clear(cx);
     });
@@ -584,7 +584,7 @@ fn draw_drag_frame(h: &mut Harness) {
 }
 
 fn drag_grip_to(h: &mut Harness, x: f32) {
-    draw_drag_frame(h);
+    draw_sidebar_frame(h);
     let grip =
         h.cx.debug_bounds("sidebar-grip")
             .expect("the grip is drawn");
@@ -596,19 +596,19 @@ fn drag_grip_to(h: &mut Harness, x: f32) {
     // A pointer reaches the grip before pressing it. MouseDown alone does
     // not model the intervening hover/layout work after a previous drag.
     h.cx.simulate_mouse_move(start, None, Modifiers::none());
-    draw_drag_frame(h);
+    draw_sidebar_frame(h);
     h.cx.simulate_mouse_down(start, MouseButton::Left, Modifiers::none());
-    draw_drag_frame(h);
+    draw_sidebar_frame(h);
     // A real drag crosses the window before moving beyond it. Four steps to
     // 5000px would jump outside the window on the very first move.
     let steps = ((x - f32::from(start.x)).abs() / 100.0).ceil().max(4.0) as usize;
     for step in 1..=steps {
         let x = f32::from(start.x) + (x - f32::from(start.x)) * step as f32 / steps as f32;
         h.cx.simulate_mouse_move(point(px(x), start.y), MouseButton::Left, Modifiers::none());
-        draw_drag_frame(h);
+        draw_sidebar_frame(h);
     }
     h.cx.simulate_mouse_up(point(px(x), start.y), MouseButton::Left, Modifiers::none());
-    draw_drag_frame(h);
+    draw_sidebar_frame(h);
 }
 
 #[gpui::test]
@@ -662,16 +662,16 @@ fn config_reload_keeps_the_current_drag_width_and_applies_other_settings(cx: &mu
     h.wait_prompt();
     let mut on_disk = h.read(|v, _| v.config.clone());
     on_disk.save(&h.home.config).unwrap();
-    draw_drag_frame(&mut h);
+    draw_sidebar_frame(&mut h);
     let start = h.cx.debug_bounds("sidebar-grip").unwrap().center();
     h.cx.simulate_mouse_down(start, MouseButton::Left, Modifiers::none());
-    draw_drag_frame(&mut h);
+    draw_sidebar_frame(&mut h);
     h.cx.simulate_mouse_move(
         point(px(400.), start.y),
         MouseButton::Left,
         Modifiers::none(),
     );
-    draw_drag_frame(&mut h);
+    draw_sidebar_frame(&mut h);
     assert_eq!(width(&h), 400);
 
     // A queued notification for the previous saved width can arrive after
@@ -679,7 +679,7 @@ fn config_reload_keeps_the_current_drag_width_and_applies_other_settings(cx: &mu
     on_disk.tab_title = chda_config::TabTitle::Path;
     on_disk.save(&h.home.config).unwrap();
     h.cx.dispatch_action(crate::workspace_view::ReloadConfig);
-    draw_drag_frame(&mut h);
+    draw_sidebar_frame(&mut h);
     assert_eq!(width(&h), 400, "reload must not rewind an in-progress drag");
     assert_eq!(h.read(|v, _| v.ws.title_mode), chda_core::TitleMode::Path);
     h.cx.simulate_mouse_up(
@@ -687,14 +687,14 @@ fn config_reload_keeps_the_current_drag_width_and_applies_other_settings(cx: &mu
         MouseButton::Left,
         Modifiers::none(),
     );
-    draw_drag_frame(&mut h);
+    draw_sidebar_frame(&mut h);
     assert!(saved(&h).contains("sidebar-width = 400"));
 
     // Once the drag ends, a changed width in the file applies again.
     on_disk.sidebar_width = 240;
     on_disk.save(&h.home.config).unwrap();
     h.cx.dispatch_action(crate::workspace_view::ReloadConfig);
-    draw_drag_frame(&mut h);
+    draw_sidebar_frame(&mut h);
     assert_eq!(width(&h), 240);
     let grip = h.cx.debug_bounds("sidebar-grip").unwrap();
     assert!((f32::from(grip.right()) - 240.).abs() <= 2.0, "{grip:?}");

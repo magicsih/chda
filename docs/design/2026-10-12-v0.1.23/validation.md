@@ -222,3 +222,11 @@
 - 정확히 16개의 bare 후보 뒤 별도 legacy token이 17번째로 추가되는 경계를 수정 전 테스트에서 재현했다. 인용·괄호 후보와 legacy fallback까지 하나의 16개 한도를 사용하며 같은 target은 우선순위가 높은 첫 셀 범위를 유지한다. 한도를 넘은 cut token은 열지 않는다. 수정 뒤 경로 테스트 18개와 실제 PTY UI 11개, term/UI all-targets clippy가 통과했다.
 - 삭제된 표시 target의 두 번 클릭 회귀에 hovered_link가 비워지는 assertion을 추가했다. 제품 수정 없이 통과해 오래된 hint 지적은 현재 HEAD에서 해소됨을 확인했다. 포인터보다 앞에서 끝나는 후보 문제는 앞선 교차 리뷰 수정과 기존 README 뒤쪽 경로 회귀로 해소됐다.
 - missing 후보를 넓게 negative-cache하는 제안은 출력 없이 생성된 파일과 인접 경로를 다시 찾는 승인 동작을 숨기므로 채택하지 않는다. 각 탐색은 16회 한도 안에서 수행하며 잘못된 prefix나 캐시를 자동 선택하지 않는다. 추가 코드 리뷰 요청은 하지 않았다.
+
+
+### 경로 main 통합 CI · reveal의 실제 표시 frame
+
+- main 통합 HEAD `b7df185`의 CI `38295737442`는 macOS UI 201/202 통과 뒤 사이드바 이동의 scroll offset에서 -25px/기대 -82px로 실패했다. 다른 6개 job과 Linux·Windows release build는 통과했다. 전체 성공으로 계산하지 않는다.
+- 같은 원본의 로컬 단독 검사는 1개 통과(17.10초)했다. 로컬에서 동일 실패를 재현했다고 주장하지 않는다.
+- 고정 GPUI `f8c2cc8`의 `simulate_next_frame`은 예약된 콜백만 실행한다. 이미 검증된 drag 표시 helper를 sidebar 공통 검사 helper로 이름을 바꾸고, Sessions 토글·scroll 위치 변경·기대 offset 계산·reveal 전후에 실제 `Window::draw`와 같은 App의 arena 정리를 적용했다. 제품의 reveal·scroll 구현, 선택·offset·row bounds·repository context·background refresh assertion은 유지했다.
+- 보완 후 단독 이동 검사 1개(8.74초), 전체 UI **202 passed**(56.23초), UI all-targets clippy가 통과했다. 최종 HEAD의 원격 전체 CI를 재확인한다. 이 검사는 실제 macOS 화면 검수로 세지 않는다.
