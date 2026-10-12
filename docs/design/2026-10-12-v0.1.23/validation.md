@@ -160,3 +160,11 @@
 - RED: `cp /tmp/a.txt README.md`의 뒤쪽 README 대상이 앞 prefix로 해석되는 terminal 회귀가 실패했고, `Cache ./not-yet-created README.md`에서 첫 missing hover 뒤 README를 찾지 못하는 실제 UI 회귀가 실패했다. 수정 뒤 terminal links 19 tests·path UI 10 tests·term/UI all-targets clippy 통과.
 - longest-first 후보 16개를 넘는 경우 짧은 token을 자동 선택하자는 지적은 승인된 overflow 무링크 조건과 충돌해 반영하지 않았다. trailing prose도 같은 logical line의 후보 한도에 포함된다는 제한을 CONTRIBUTING에 명시하고 기존 16회 회귀를 유지했다.
 - 교차 리뷰는 source 검토이며 실제 macOS 인수조건·최종 원격 CI·릴리스 검수를 대신하지 않는다.
+
+### 경로 마지막 리뷰 수정 확인
+
+- 두 번째 읽기 전용 리뷰의 세 지적을 수용했다. 앞선 longest 후보가 아직 없을 때 선택한 짧은 prefix는 캐시하지 않는다. 첫 후보의 존재는 hover·action마다 확인하고 사라진 표시 target은 같은 경로·셀에서 반복 클릭으로 prefix에 바뀌지 않는다. cache 키는 실제 첫 후보·셀·cwd이므로 selection-only frame 갱신에도 이 제한을 유지한다. 재생성하면 같은 target을 다시 사용할 수 있다. reconnect는 cache·hover 상태를 초기화한다.
+- RED: 파일 출력 뒤 전체 경로가 새로 생긴 상황과 삭제 후 두 번째 클릭이 prefix를 여는 실제 UI 회귀가 각각 실패했다. prose 괄호 뒤 문장 끝 마침표가 있는 terminal 회귀도 실패했다. 문장 끝 마침표와 실제 확장자를 구분한다.
+- 추가 교차 리뷰는 요청하지 않는다. 수정 자체의 회귀와 clippy, 최종 HEAD의 CI를 확인하고 실제 macOS 검수는 별도로 수행한다.
+
+- 마지막 경로 수정 뒤 terminal links 19 tests, 실제 PTY path UI 11 tests, term/UI all-targets clippy 통과. 삭제 후 두 번 클릭과 출력 없는 longest 파일 생성을 포함한다.

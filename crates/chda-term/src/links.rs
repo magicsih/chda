@@ -138,11 +138,15 @@ pub fn links_at(frame: &Frame, x: u16, y: u16) -> Vec<Link> {
         // Parentheses inside an explicit filename are not prose bounds.
         let opening = range.start.saturating_sub(1);
         let before = line.text[..opening].chars().next_back();
-        let after = line.text[range.end + 1..].chars().next();
+        let tail = &line.text[range.end + 1..];
+        let after = tail.chars().next();
+        let extension = tail
+            .strip_prefix('.')
+            .is_some_and(|rest| rest.chars().next().is_some_and(|c| c.is_alphanumeric()));
         let escaped_blank =
             before == Some(' ') && line.text[..opening.saturating_sub(1)].ends_with('\\');
         if bare.as_ref().is_some_and(|segment| segment.start < opening)
-            && (matches!(before, Some('/')) || matches!(after, Some('/' | '.')) || escaped_blank)
+            && (matches!(before, Some('/')) || after == Some('/') || extension || escaped_blank)
         {
             continue;
         }
@@ -604,7 +608,7 @@ mod tests {
                 .target,
             path_target("README.md").unwrap()
         );
-        let f = frame(80, &["Error in /repo/build.log (src/My Module/a.rs)"], &[]);
+        let f = frame(80, &["Error in /repo/build.log (src/My Module/a.rs)."], &[]);
         assert_eq!(
             opened(&f, 33, 0, &["/repo/build.log", "src/My Module/a.rs"])
                 .unwrap()
