@@ -43,5 +43,11 @@
 - 최종 source 경로의 workspace clippy, fmt, cargo deny 통과. deny의 기존 unused-wrapper 안내와 외부 `block 0.1.6` future incompatibility 안내는 보존한다.
 - 전체 workspace 검사: UI **172 passed, 1 failed**. 폭 조절 시나리오의 마지막 오른쪽 drag에서 180px/기대 600px 불일치. 제품 코드를 바꾸지 않은 단독 재실행은 통과했다. 원인은 확정하지 않았으며 원격 전체 CI로 재확인한다. 다른 crate의 검사와 workspace doc tests는 통과했다.
 - 실제 준비 소스의 파일을 변경했을 때 Cargo가 source integrity mismatch로 거부했고, 정확한 원문 복원 뒤 Cargo와 source 검증이 통과했다. 미준비 소스도 자동 fallback 없이 빌드를 거부했다.
-- 준비 절차 7 tests, 제품 문서 6 tests, 생성 문서 일치, appcast 1 test, 릴리스 정책 38 tests, diff 형식 통과.
+- 준비 절차 8 tests, 제품 문서 6 tests, 생성 문서 일치, appcast 1 test, 릴리스 정책 38 tests, diff 형식 통과.
 - 최종 native font/window resize·복사·실제 이미지와 Linux/Windows release 빌드는 아직 통과 근거가 없다. 0.1.23의 최종 후보 검수와 원격 CI에서 확인한다.
+
+### 첫 원격 CI의 빌드 준비 수정
+
+- Windows: patch integrity mismatch. Git `core.autocrlf=true` 격리 checkout에서 실제 패치 바이트가 CRLF로 바뀌어 실패하는 RED를 확인했다. 해당 패치를 LF로 고정하는 Git attribute 추가 뒤 같은 검사가 통과했다.
+- macOS/Linux: 준비 성공 뒤 cache 처리 후 `GHOSTTY_SOURCE_DIR`의 `build.zig`가 없어 빌드 거부. 준비 단계를 Rust cache 뒤로 옮겼다. 릴리스 build 단계도 같은 순서를 적용했다.
+- 이 CI 실패는 통과로 세지 않는다. 수정된 최종 HEAD의 전체 CI는 재실행해 확인한다.

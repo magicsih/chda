@@ -1,0 +1,2 @@
+# Integrity-checked patches must retain the same bytes on every platform.
+resources/ghostty/*.patch text eol=lf

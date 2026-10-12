@@ -86,11 +86,11 @@ jobs:
         if: inputs.stage == 'build'
         with:
           version: ${{ env.ZIG_VERSION }}
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+        if: inputs.stage == 'build'
       - name: Prepare the verified terminal engine
         if: inputs.stage == 'build'
         run: python3 scripts/prepare-ghostty.py
-      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
-        if: inputs.stage == 'build'
       - name: Prepare existing signing credentials
         if: inputs.stage == 'build'
         env:

@@ -84,8 +84,8 @@ jobs:
       - uses: mlugg/setup-zig@v2
         with:
           version: ${{ env.ZIG_VERSION }}
-      - run: python scripts/prepare-ghostty.py
       - uses: Swatinem/rust-cache@v2
+      - run: python scripts/prepare-ghostty.py
       - run: cargo clippy --workspace --all-targets -- -D warnings
       - run: python3 scripts/test-macos-release.py
       - run: cargo test --workspace
@@ -118,8 +118,8 @@ jobs:
       - uses: mlugg/setup-zig@v2
         with:
           version: ${{ env.ZIG_VERSION }}
-      - run: python scripts/prepare-ghostty.py
       - uses: Swatinem/rust-cache@v2
+      - run: python scripts/prepare-ghostty.py
       - run: cargo build --workspace --release
 
   windows:
@@ -133,6 +133,6 @@ jobs:
       - uses: mlugg/setup-zig@v2
         with:
           version: ${{ env.ZIG_VERSION }}
-      - run: python scripts/prepare-ghostty.py
       - uses: Swatinem/rust-cache@v2
+      - run: python scripts/prepare-ghostty.py
       - run: cargo build --workspace --release

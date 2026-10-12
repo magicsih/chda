@@ -7,6 +7,7 @@ import json
 from pathlib import Path
 import tarfile
 import tempfile
+import subprocess
 import sys
 import unittest
 
@@ -51,6 +52,25 @@ class PreparationTests(unittest.TestCase):
         self.assertEqual((self.output / "build.zig").read_bytes(), b"patched\n")
         self.run_prepare(check=True)
         self.run_prepare()
+
+    def test_windows_style_checkout_preserves_the_pinned_patch_bytes(self):
+        repository = self.root / "checkout"
+        repository.mkdir()
+        subprocess.run(["git", "init", "-q", str(repository)], check=True)
+        subprocess.run(["git", "config", "core.autocrlf", "true"], cwd=repository, check=True)
+        relative = Path("resources/ghostty/resize-viewport.patch")
+        patch = repository / relative
+        patch.parent.mkdir(parents=True)
+        original = (prepare.ROOT / relative).read_bytes()
+        patch.write_bytes(original)
+        attributes = prepare.ROOT / ".gitattributes"
+        if attributes.exists():
+            (repository / ".gitattributes").write_bytes(attributes.read_bytes())
+        subprocess.run(["git", "add", "."], cwd=repository, check=True, capture_output=True)
+        output = self.root / "windows-checkout"
+        subprocess.run(["git", "checkout-index", "--all", f"--prefix={output}/"], cwd=repository, check=True)
+        self.assertEqual((output / relative).read_bytes(), original,
+                         "Git CRLF checkout must not change the integrity-checked patch")
 
     def test_modified_archive_is_rejected_without_source(self):
         self.archive.write_bytes(b"changed")

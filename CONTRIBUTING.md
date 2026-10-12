@@ -69,6 +69,8 @@ offline source preparation, pass `--archive` with the same pinned archive.
 unprepared or changed source fails the build rather than using another engine.
 The hash changes with the patch, so Cargo rebuilds the native library instead
 of reusing a previous engine. `--test` runs the pinned Debug resize and row-metadata regressions.
+CI prepares this source after restoring the Rust cache, which can clean
+non-Cargo files under `target`. Git attributes preserve patch LF bytes on Windows.
 Only Zig's `.zig-cache`, `zig-out` and `zig-pkg` generated directories are excluded
 from the source digest. Package dependencies stay pinned by `build.zig.zon`.
 
