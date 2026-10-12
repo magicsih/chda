@@ -108,3 +108,10 @@
 - 준비 출력 직후의 성공한 입력을 검사한 단독 RED에서 활동 시간 대기가 실패했다. 출력 갱신의 기존 1초 제한이 사용자 입력에도 적용되는 실제 누락이었다. 입력은 즉시 기록하고 프로그램 출력만 기존 제한을 유지한다.
 - 공유 임시 Cargo 산출물의 다른 worktree 형식 재사용으로 생긴 컴파일 실패는 RED로 세지 않는다. 해당 작업 소유 cache의 core/UI 산출물을 다시 컴파일한 뒤 위 RED를 확인했다.
 - 수정 후 lifecycle 9 tests, background redraw 1 test, UI all-targets clippy 통과. 최종 HEAD의 전체 원격 CI와 native 인수 검수는 별도로 확인한다.
+
+### 세션 수명 교차 리뷰 처리
+
+- `410f150` Claude 리뷰의 timestamp/종료 child 지적을 재현했다. 제목보다 먼저 만들어져 늦게 도착한 notify는 conversation 기록 timeout으로 실패했고, 종료된 parent의 Unknown child는 숨은 확인을 요구했다. 수정 뒤 lifecycle 10개, 실제 stand-in Codex title/notify/종료 시나리오가 통과했다. UI clippy 통과.
+- UI 관찰 시각을 exact-conversation hook producer 시각과 비교하지 않는다. top process가 종료된 pane은 중지할 PTY가 없어 오래된 child 확인을 생략한다. 살아 있는 parent의 Working/Waiting/Unknown child 확인은 유지한다.
+- 확인된 cwd가 사라지면 다른 디렉터리로 자동 재개하거나 shell을 시작하라는 제안은 승인 설계와 충돌하므로 채택하지 않았다. 복원 안내가 opened를 주장하던 부분은 fallback directory 표기로 바로잡았다. 미확인 CLI·재개 실패를 통과로 처리하지 않는다.
+- 초기 RED 두 실행의 compile 실패는 공용 target에 다른 worktree 메타데이터가 남은 결과였으며 RED로 계산하지 않는다. 이후 작업용 workspace 패키지만 정리하고 실제 실패/수정 검증을 수행했다.

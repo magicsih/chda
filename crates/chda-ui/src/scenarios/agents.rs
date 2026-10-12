@@ -208,6 +208,7 @@ done
     }));
     h.keys("cmd-t");
     h.wait_prompt();
+    let notify_created_before_title = crate::terminal_view::now_ms();
     for (step, status) in [
         ("work", AgentStatus::Working),
         ("spin", AgentStatus::Working),
@@ -243,13 +244,19 @@ done
     // A menu-launch completion notify can arrive after the title. Keep its
     // real session ID for restore without announcing the turn twice.
     let notifications = h.system.0.borrow().notifications.len();
-    h.hook_from(
-        "codex",
-        Some(pane.raw()),
-        &repo,
-        HookKind::Stopped,
-        "real-session",
-    );
+    chda_core::agents::ipc::send(
+        &chda_core::agents::ipc::socket_path(&h.home.data),
+        &chda_core::agents::HookEvent {
+            agent: "codex".into(),
+            session_id: "real-session".into(),
+            cwd: repo.clone(),
+            kind: HookKind::Stopped,
+            timestamp: notify_created_before_title,
+            pane: Some(pane.raw()),
+            child: None,
+        },
+    )
+    .unwrap();
     h.wait_for("notify records the conversation", move |v, _| {
         v.ws.pane(pane)
             .and_then(|p| p.agent_session.as_ref())
