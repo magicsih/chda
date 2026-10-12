@@ -559,3 +559,45 @@ fn bare_paths_share_complete_hover_click_and_menu_targets_across_soft_wraps(
         );
     }
 }
+
+#[gpui::test]
+fn missing_path_cache_does_not_hide_an_adjacent_legacy_file_or_a_new_file(
+    cx: &mut gpui::TestAppContext,
+) {
+    let mut h = Harness::open(cx, "path-cache", |home| {
+        std::fs::write(home.home.join("README.md"), "fixture").unwrap();
+    });
+    h.wait_prompt();
+    let missing = h.home.home.join("not-yet-created");
+    h.run(
+        "clear; printf 'Cache ./not-yet-created README.md\\n'",
+        "Cache",
+    );
+    h.wait_prompt();
+    let term = h.focused_terminal();
+    let first = find_on_screen(
+        &mut h,
+        &term,
+        |text| text.starts_with("Cache "),
+        "not-yet-created",
+    );
+    h.cx.simulate_mouse_move(first, None, Modifiers::command());
+    assert!(h.read(|_, cx| term.read(cx).hovered_link.is_none()));
+    let second = find_on_screen(
+        &mut h,
+        &term,
+        |text| text.starts_with("Cache "),
+        "README.md",
+    );
+    h.cx.simulate_mouse_move(second, None, Modifiers::command());
+    assert!(
+        matches!(h.read(|_,cx|term.read(cx).hovered_link.clone()).map(|link|link.open),Some(LinkOpen::Path{path,..}) if path==h.home.home.join("README.md"))
+    );
+    h.cx.simulate_mouse_move(first, None, Modifiers::command());
+    assert!(h.read(|_, cx| term.read(cx).hovered_link.is_none()));
+    std::fs::write(&missing, "now present").unwrap();
+    h.cx.simulate_mouse_move(first, None, Modifiers::command());
+    assert!(
+        matches!(h.read(|_,cx|term.read(cx).hovered_link.clone()).map(|link|link.open),Some(LinkOpen::Path{path,..}) if path==missing)
+    );
+}

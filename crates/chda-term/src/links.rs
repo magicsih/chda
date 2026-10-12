@@ -65,28 +65,14 @@ static LINE_SUFFIX: LazyLock<Regex> =
 /// only candidates; the caller keeps the first that exists.
 pub const MAX_BARE_PATH_CHECKS: usize = 16;
 
-/// A shared lookup segment and candidates in existing precedence order.
-/// The bare-path portion contains at most sixteen candidates, longest first.
-pub struct LinkCandidates {
-    pub links: Vec<Link>,
-    pub segment: Vec<(u16, u16, u16)>,
-}
-
 pub fn links_at(frame: &Frame, x: u16, y: u16) -> Vec<Link> {
-    link_candidates_at(frame, x, y).links
-}
-
-pub fn link_candidates_at(frame: &Frame, x: u16, y: u16) -> LinkCandidates {
-    let mut result = LinkCandidates {
-        links: Vec::new(),
-        segment: vec![(y, x, x)],
-    };
+    let mut result = Vec::new();
     if let Some(h) = frame
         .hyperlinks
         .iter()
         .find(|h| h.row == y && (h.start..=h.end).contains(&x))
     {
-        result.links.push(Link {
+        result.push(Link {
             target: url_target(&h.uri),
             cells: vec![(h.row, h.start, h.end)],
         });
@@ -104,7 +90,7 @@ pub fn link_candidates_at(frame: &Frame, x: u16, y: u16) -> LinkCandidates {
     {
         let url = trim_url(m.as_str());
         if m.start() + url.len() > byte {
-            result.links.push(Link {
+            result.push(Link {
                 cells: line.cells(m.start(), m.start() + url.len()),
                 target: url_target(url),
             });
@@ -150,9 +136,13 @@ pub fn link_candidates_at(frame: &Frame, x: u16, y: u16) -> LinkCandidates {
     let bare = bare_segment(&line.text, byte);
     for range in bounded {
         // Parentheses inside an explicit filename are not prose bounds.
-        if bare
-            .as_ref()
-            .is_some_and(|segment| segment.start < range.start.saturating_sub(1))
+        let opening = range.start.saturating_sub(1);
+        let before = line.text[..opening].chars().next_back();
+        let after = line.text[range.end + 1..].chars().next();
+        let escaped_blank =
+            before == Some(' ') && line.text[..opening.saturating_sub(1)].ends_with('\\');
+        if bare.as_ref().is_some_and(|segment| segment.start < opening)
+            && (matches!(before, Some('/')) || matches!(after, Some('/' | '.')) || escaped_blank)
         {
             continue;
         }
@@ -173,9 +163,6 @@ pub fn link_candidates_at(frame: &Frame, x: u16, y: u16) -> LinkCandidates {
     }
     let mut exceeded = false;
     if let Some(segment) = bare {
-        if out.is_empty() {
-            result.segment = line.cells(segment.start, segment.end);
-        }
         let mut ends = vec![segment.end];
         ends.extend(
             line.text[segment.clone()]
@@ -186,7 +173,7 @@ pub fn link_candidates_at(frame: &Frame, x: u16, y: u16) -> LinkCandidates {
         let mut candidates: Vec<Link> = Vec::new();
         for end in ends {
             let raw = trim_url(line.text[segment.start..end].trim_end());
-            if raw.is_empty() {
+            if segment.start + raw.len() <= byte {
                 continue;
             }
             let Some(target) = path_target(&raw.replace("\\ ", " ")) else {
@@ -224,8 +211,7 @@ pub fn link_candidates_at(frame: &Frame, x: u16, y: u16) -> LinkCandidates {
     }
     // Avoid repeating a metadata lookup for the same legacy token.
     out.dedup();
-    result.links = out;
-    result
+    out
 }
 
 fn explicit_starts(text: &str) -> impl Iterator<Item = usize> + '_ {
@@ -560,16 +546,15 @@ mod tests {
                 .join(" ")
         );
         let f = frame(400, &[&text], &[]);
-        let candidates = link_candidates_at(&f, 2, 0);
-        assert_eq!(candidates.links.len(), MAX_BARE_PATH_CHECKS);
+        let candidates = links_at(&f, 2, 0);
+        assert_eq!(candidates.len(), MAX_BARE_PATH_CHECKS);
         assert!(
             !candidates
-                .links
                 .iter()
                 .any(|link| link.target == path_target("/tmp/Notes").unwrap())
         );
         let mut checks = 0;
-        let found = candidates.links.into_iter().find(|link| {
+        let found = candidates.into_iter().find(|link| {
             checks += 1;
             link.target == path_target("/tmp/Notes").unwrap()
         });
@@ -578,7 +563,7 @@ mod tests {
     }
 
     #[test]
-    fn bare_candidates_stop_at_hard_delimiters_and_share_the_whole_segment() {
+    fn bare_candidates_stop_at_hard_delimiters_and_cover_the_complete_target() {
         for delimiter in ["\t", "|", "<", ">", "\"", "'"] {
             let text = format!("./Notes Folder/file.md{delimiter}other prose");
             let f = frame(100, &[&text], &[]);
@@ -589,7 +574,10 @@ mod tests {
                         .target,
                     path_target("./Notes Folder/file.md").unwrap()
                 );
-                assert_eq!(link_candidates_at(&f, x, 0).segment, vec![(0, 0, 21)]);
+                assert_eq!(
+                    opened(&f, x, 0, &["./Notes Folder/file.md"]).unwrap().cells,
+                    vec![(0, 0, 21)]
+                );
             }
         }
         let f = frame(40, &["./Notes Folder/file.md:4:2 trailing prose"], &[]);
@@ -604,6 +592,24 @@ mod tests {
         assert_eq!(
             opened(&f, 2, 0, &["./Notes"]).unwrap().target,
             path_target("./Notes").unwrap()
+        );
+    }
+
+    #[test]
+    fn trailing_relative_paths_and_prose_parentheses_keep_legacy_precedence() {
+        let f = frame(80, &["cp /tmp/a.txt README.md"], &[]);
+        assert_eq!(
+            opened(&f, 20, 0, &["/tmp/a.txt", "README.md"])
+                .unwrap()
+                .target,
+            path_target("README.md").unwrap()
+        );
+        let f = frame(80, &["Error in /repo/build.log (src/My Module/a.rs)"], &[]);
+        assert_eq!(
+            opened(&f, 33, 0, &["/repo/build.log", "src/My Module/a.rs"])
+                .unwrap()
+                .target,
+            path_target("src/My Module/a.rs").unwrap()
         );
     }
 

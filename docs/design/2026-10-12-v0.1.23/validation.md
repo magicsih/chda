@@ -149,3 +149,10 @@
 - 새 후보는 최대 16개/확인으로 제한하고 한도 초과 시 legacy cut-prefix fallback을 제외했다. frame generation·cwd·구간 cache를 hover/click/menu에서 재사용하고 action은 같은 대상의 metadata만 재확인한다. 누락된 대상은 해당 cache 결과를 비운다.
 - 최초 path UI 실행 8/9는 메뉴 종료 후 새 hover 없이 삭제한 fixture 상태에서 실패했다. 표시된 target을 다시 hover하고 이벤트를 안정화한 실제 삭제-클릭 순서로 보완했으며 해당 실행을 통과로 계산하지 않았다.
 - workspace clippy 통과. native #212 검수와 최종 HEAD 전체 CI/Pages 검수는 아직 수행하지 않았다.
+
+### 경로 교차 리뷰 수용
+
+- 첫 읽기 전용 교차 리뷰는 다섯 지적을 반환했다. 커서보다 앞에서 끝난 prefix가 인접 파일을 숨기는 문제, segment 전체의 negative cache, prose 괄호 경로의 잘못된 제외, 파일 생성·재생성 뒤 negative cache를 수용했다.
+- RED: `cp /tmp/a.txt README.md`의 뒤쪽 README 대상이 앞 prefix로 해석되는 terminal 회귀가 실패했고, `Cache ./not-yet-created README.md`에서 첫 missing hover 뒤 README를 찾지 못하는 실제 UI 회귀가 실패했다. 수정 뒤 terminal links 19 tests·path UI 10 tests·term/UI all-targets clippy 통과.
+- longest-first 후보 16개를 넘는 경우 짧은 token을 자동 선택하자는 지적은 승인된 overflow 무링크 조건과 충돌해 반영하지 않았다. trailing prose도 같은 logical line의 후보 한도에 포함된다는 제한을 CONTRIBUTING에 명시하고 기존 16회 회귀를 유지했다.
+- 교차 리뷰는 source 검토이며 실제 macOS 인수조건·최종 원격 CI·릴리스 검수를 대신하지 않는다.

@@ -196,7 +196,6 @@ pub struct TerminalView {
 struct LinkCache {
     generation: u64,
     cwd: Option<PathBuf>,
-    segment: Vec<(u16, u16, u16)>,
     link: Option<HoveredLink>,
 }
 
@@ -1054,25 +1053,23 @@ impl TerminalView {
         if let Some(cache) = self.link_cache.borrow().as_ref()
             && cache.generation == self.frame.generation
             && cache.cwd == self.cwd
-            && (covers(&cache.segment, x, y)
-                || cache
-                    .link
-                    .as_ref()
-                    .is_some_and(|link| covers(&link.cells, x, y)))
+            && cache
+                .link
+                .as_ref()
+                .is_some_and(|link| covers(&link.cells, x, y))
         {
             return cache.link.clone().filter(|link| covers(&link.cells, x, y));
         }
-        let candidates = chda_term::link_candidates_at(&self.frame, x, y);
-        let link = candidates.links.into_iter().find_map(|link| {
+        let candidates = chda_term::links_at(&self.frame, x, y);
+        let link = candidates.into_iter().find_map(|link| {
             Some(HoveredLink {
                 open: self.resolve_link(link.target)?,
                 cells: link.cells,
             })
         });
-        *self.link_cache.borrow_mut() = Some(LinkCache {
+        *self.link_cache.borrow_mut() = link.as_ref().map(|_| LinkCache {
             generation: self.frame.generation,
             cwd: self.cwd.clone(),
-            segment: candidates.segment,
             link: link.clone(),
         });
         link.filter(|link| covers(&link.cells, x, y))
@@ -1083,9 +1080,7 @@ impl TerminalView {
         if let LinkOpen::Path { path, is_dir, .. } = &link.open
             && !std::fs::metadata(path).is_ok_and(|meta| meta.is_dir() == *is_dir)
         {
-            if let Some(cache) = self.link_cache.borrow_mut().as_mut() {
-                cache.link = None;
-            }
+            self.link_cache.borrow_mut().take();
             return None;
         }
         Some(link)
