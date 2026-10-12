@@ -91,16 +91,9 @@ fn main() {
         manifest["source_sha256"].as_str().unwrap(),
         "Ghostty source integrity mismatch; run python3 scripts/prepare-ghostty.py --check"
     );
-    // Watch source entries but not Zig's mutable output/cache directories.
-    for entry in fs::read_dir(&source).unwrap() {
-        let path = entry.unwrap().path();
-        if !matches!(
-            path.file_name().and_then(|n| n.to_str()),
-            Some(".zig-cache" | "zig-out" | "zig-pkg")
-        ) {
-            println!("cargo:rerun-if-changed={}", path.display());
-        }
-    }
+    // Cargo scans a directory recursively, including newly added root entries.
+    // Cache changes can rerun this guard, but never enter the source digest.
+    println!("cargo:rerun-if-changed={}", source.display());
     let zig = Command::new("zig")
         .arg("version")
         .output()

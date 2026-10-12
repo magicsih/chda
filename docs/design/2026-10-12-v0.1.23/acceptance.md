@@ -1,6 +1,6 @@
 # 0.1.23 인수조건 — 설계 1.0
 
-상태: 승인 대기. 아래는 실행 결과가 아닌 검증 계약이다. 기존 catalog의 13개 feature area와 기존 release case 16개는 모든 최종 native 회차·E2E에 계속 포함한다.
+상태: 설계 1.0 승인 완료([기록](approval.md)). 아래는 실행 결과가 아닌 검증 계약이다. 기존 catalog의 13개 feature area와 기존 release case 16개는 모든 최종 native 회차·E2E에 계속 포함한다.
 
 | ID · issue | 요구되는 regression 및 native scenario |
 | --- | --- |

@@ -230,6 +230,9 @@ updater-enabled release. See [decision 0011](decisions/0011-session-preserving-u
 
 Run `python3 scripts/test-prepare-ghostty.py` for synthetic preparation guards
 and `python3 scripts/prepare-ghostty.py --check` for the real prepared source.
+With the pinned Zig on PATH, `python3 scripts/test-ghostty-build-guard.py`
+checks that actual Cargo rejects a new root file and a changed nested source,
+then restores the exact bytes and verifies a clean build.
 The `vt::tests::scrolled_resize_keeps_debug_integrity` subprocess regression
 covers row growth, preserved cursors and reflow without losing the test suite
 to Zig's abort. `growing_rows_preserves_a_viewport_still_in_history` checks the

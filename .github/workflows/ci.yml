@@ -91,6 +91,8 @@ jobs:
       - run: cargo test --workspace
       - name: Ghostty Debug integrity regressions
         run: python3 scripts/prepare-ghostty.py --test
+      - name: Cargo engine source integrity guard
+        run: python3 scripts/test-ghostty-build-guard.py
       - name: Compile the pinned native updater
         run: |
           scripts/fetch-sparkle.sh

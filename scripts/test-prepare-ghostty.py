@@ -3,6 +3,7 @@
 import hashlib
 import importlib.util
 import io
+import os
 import json
 from pathlib import Path
 import tarfile
@@ -10,6 +11,7 @@ import tempfile
 import subprocess
 import sys
 import unittest
+from unittest import mock
 
 sys.dont_write_bytecode = True
 
@@ -30,7 +32,7 @@ class PreparationTests(unittest.TestCase):
                 entry.size = len(data)
                 archive.addfile(entry, io.BytesIO(data))
         self.patch = self.root / "resize.patch"
-        self.patch.write_text("--- a/build.zig\n+++ b/build.zig\n@@ -1 +1 @@\n-original\n+patched\n")
+        self.patch.write_bytes(b"--- a/build.zig\n+++ b/build.zig\n@@ -1 +1 @@\n-original\n+patched\n")
         expected = self.root / "expected"
         (expected / "src").mkdir(parents=True)
         (expected / "build.zig").write_bytes(b"patched\n")
@@ -52,6 +54,15 @@ class PreparationTests(unittest.TestCase):
         self.assertEqual((self.output / "build.zig").read_bytes(), b"patched\n")
         self.run_prepare(check=True)
         self.run_prepare()
+
+    def test_git_global_autocrlf_does_not_change_prepared_source_bytes(self):
+        with mock.patch.dict(os.environ, {
+            "GIT_CONFIG_COUNT": "1",
+            "GIT_CONFIG_KEY_0": "core.autocrlf",
+            "GIT_CONFIG_VALUE_0": "true",
+        }):
+            self.run_prepare()
+        self.assertEqual((self.output / "build.zig").read_bytes(), b"patched\n")
 
     def test_windows_style_checkout_preserves_the_pinned_patch_bytes(self):
         repository = self.root / "checkout"

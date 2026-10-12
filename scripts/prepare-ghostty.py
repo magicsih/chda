@@ -85,8 +85,8 @@ def prepare(manifest, patches, source, archive=None, *, check=False):
             raise ValueError("Ghostty archive contains an unsafe entry") from error
         env = os.environ.copy()
         env["GIT_CEILING_DIRECTORIES"] = str(staging.parent)
-        subprocess.run(["git", "apply", "--check", str(patch.resolve())], cwd=staging, env=env, check=True)
-        subprocess.run(["git", "apply", str(patch.resolve())], cwd=staging, env=env, check=True)
+        subprocess.run(["git", "-c", "core.autocrlf=false", "apply", "--check", str(patch.resolve())], cwd=staging, env=env, check=True)
+        subprocess.run(["git", "-c", "core.autocrlf=false", "apply", str(patch.resolve())], cwd=staging, env=env, check=True)
         verify_source(manifest, staging)
         if source.exists() or source.is_symlink():
             raise ValueError("Ghostty source appeared during preparation; existing source was preserved")
