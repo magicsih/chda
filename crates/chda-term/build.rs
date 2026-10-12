@@ -86,11 +86,19 @@ fn main() {
         digest.update([0]);
         digest.update(Sha256::digest(data));
     }
-    assert_eq!(
-        format!("{:x}", digest.finalize()),
-        manifest["source_sha256"].as_str().unwrap(),
-        "Ghostty source integrity mismatch; run python3 scripts/prepare-ghostty.py --check"
+    let marker = source.with_extension("unverified");
+    if format!("{:x}", digest.finalize()) != manifest["source_sha256"].as_str().unwrap() {
+        fs::write(&marker, b"native build may have used unverified source\n")
+            .expect("record unverified native build");
+        panic!(
+            "Ghostty source integrity mismatch; move the changed source aside and run python3 scripts/prepare-ghostty.py to verify source and clear the native cache"
+        );
+    }
+    assert!(
+        !marker.exists(),
+        "Ghostty native cache is unverified; run python3 scripts/prepare-ghostty.py before Cargo"
     );
+    println!("cargo:rerun-if-changed={}", marker.display());
     // Cargo scans a directory recursively, including newly added root entries.
     // Cache changes can rerun this guard, but never enter the source digest.
     println!("cargo:rerun-if-changed={}", source.display());

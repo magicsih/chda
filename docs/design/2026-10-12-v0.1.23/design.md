@@ -84,7 +84,7 @@ View diff pager는 기존 base·stat/patch·less 옵션을 유지하고 호출�
 
 libghostty-rs `d2036baeb605d31d09a9e2ba6d0c923e04c34d54`, Ghostty `3425025e585a3403340d4dc6d65132f42e05e605`, Zig **0.16.0**를 고정한다. upstream code와 API를 가져오며 Rust crate dependency 허용은 해당 URL만 좁게 추가한다.
 
-repo의 작은 patch·manifest와 `scripts/prepare-ghostty.py`가 pinned source archive를 검증·전개해 `target/ghostty-source`를 준비한다. archive SHA-256·upstream commit·patch SHA-256·적용 후 파일 hash를 manifest에 기록한다. 기존 source가 예상과 다르면 덮어쓰지 않고 실패한다. `.cargo/config.toml`의 relative `GHOSTTY_SOURCE_DIR`는 이 task-owned source를 가리키며 임의 환경 source로 바뀌지 않게 고정한다. 준비가 안 된 일반 cargo build는 기본 upstream으로 조용히 fallback하지 않는다. 로컬 안내·macOS bundle·세 OS CI·release 경로가 같은 준비 계약을 사용한다.
+repo의 작은 patch·manifest와 `scripts/prepare-ghostty.py`가 pinned source archive를 검증·전개해 `.ghostty-source/<source hash>`를 준비한다. archive SHA-256·upstream commit·patch SHA-256·적용 후 파일 hash를 manifest에 기록한다. 기존 source가 예상과 다르면 덮어쓰지 않고 실패한다. `.cargo/config.toml`의 relative `GHOSTTY_SOURCE_DIR`는 이 task-owned source를 가리키며 임의 환경 source로 바뀌지 않게 고정한다. 준비가 안 된 일반 cargo build는 기본 upstream으로 조용히 fallback하지 않는다. 로컬 안내·macOS bundle·세 OS CI·release 경로가 같은 준비 계약을 사용한다.
 
 원인 수정은 PageList의 resizeWithoutReflow·resizeCols에서 변경된 rows/reflow로 viewport pin이 새 active 범위에 들어올 때 첫 grow 전에 정상화하는 것이다. 유효한 history pin은 보존한다. intermediate grow와 최종 상태의 integrity check를 제거하거나 약화하지 않는다. allocator failure·no-pull/reflow/preserved-cursor 경로도 검증한다. patch는 root correction과 regression test만 포함한다. upstream이 동등한 수정을 포함한 고정 revision으로 바뀌고 회귀 검증을 통과하면 로컬 patch와 필요 없어진 준비 코드를 제거한다.
 

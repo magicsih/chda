@@ -25,6 +25,7 @@ class BuildGuardTests(unittest.TestCase):
         cls.source = ROOT / ".ghostty-source" / manifest["source_sha256"][:16]
 
     def setUp(self):
+        subprocess.run([sys.executable, str(ROOT / "scripts/prepare-ghostty.py")], check=True)
         result = check()
         self.assertEqual(result.returncode, 0, result.stderr)
 
@@ -51,8 +52,23 @@ class BuildGuardTests(unittest.TestCase):
         finally:
             path.write_bytes(original)
 
+    def test_restored_source_is_blocked_until_native_cache_is_cleared(self):
+        path = self.source / "src/terminal/PageList.zig"
+        original = path.read_bytes()
+        try:
+            path.write_bytes(original + b"\n// unverified native build fixture\n")
+            self.assert_rejected()
+        finally:
+            path.write_bytes(original)
+        result = check()
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("native cache is unverified", result.stderr)
+        subprocess.run([sys.executable, str(ROOT / "scripts/prepare-ghostty.py")], check=True)
+        self.assertEqual(check().returncode, 0)
+
     @classmethod
     def tearDownClass(cls):
+        subprocess.run([sys.executable, str(ROOT / "scripts/prepare-ghostty.py")], check=True)
         result = check()
         if result.returncode != 0:
             raise AssertionError(result.stderr)
