@@ -152,3 +152,9 @@
 - 수정한 반복 drag 시나리오가 실제 PTY/마우스 이벤트로 통과했다(1 test). 새 final HEAD에서 전체 macOS CI를 확인한다. dependency 준비의 3개 회귀와 Python syntax/format/doc checks를 유지한다.
 
 - 사이드바 최종 `7b71a1e` 교차 리뷰는 실행 가능한 코드 결함을 찾지 않았고, 영역 2 agents 검증 문단이 영역 3 아래에 중복된 문서 지적 1건을 보고했다. 중복을 제거했으며 영역 2의 정본 검증 문단을 유지했다. 리뷰는 소스 읽기만 수행했고 native 검수를 대신하지 않는다.
+
+### 사이드바 main 통합 CI의 표시 frame 준비
+
+- main 통합 HEAD `8153534`의 CI `38284485202`는 Linux·Windows release build와 나머지 static job이 통과했지만 macOS workspace UI 188/189 통과 후 PROJECT reveal offset 검사에서 -25px/기대 -82px로 실패했다. 전체 성공으로 세지 않는다.
+- 뒤의 메뉴 PR에 이미 검토·반영되어 전체 CI가 통과한 scenario 구동만 이 앞선 PR에도 적용한다. Sessions 토글 전후와 예상 scroll delta 계산 전에 display frame을 전달하고 실제 접힘을 확인한다. 제품의 reveal 구현과 기존 offset·bounds·선택·배경 refresh assertion은 그대로다.
+- 수정한 정확한 scenario가 로컬 1 test 통과했다. 새 final HEAD의 전체 CI를 재확인하며 native 화면 검수로 세지 않는다.

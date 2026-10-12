@@ -168,7 +168,19 @@ fn navigation_reveals_only_clipped_rows_and_keeps_repository_context(cx: &mut Te
         })
     });
     // New tabs must not change Sessions' height while measuring reveal deltas.
+    for _ in 0..3 {
+        h.cx.run_until_parked();
+        h.cx.update(|window, cx| window.simulate_next_frame(cx));
+    }
     click_row(&mut h, "sessions-section-toggle");
+    for _ in 0..3 {
+        h.cx.run_until_parked();
+        h.cx.update(|window, cx| window.simulate_next_frame(cx));
+    }
+    assert!(
+        h.read(|v, cx| v.config.sessions_collapsed && v.sidebar.read(cx).sessions_collapsed),
+        "Sessions must be collapsed before measuring reveal geometry"
+    );
     for (path, position) in [
         (&paths[6], 0),
         (&paths[23], 0),
@@ -202,8 +214,10 @@ fn navigation_reveals_only_clipped_rows_and_keeps_repository_context(cx: &mut Te
         }
         // Settle the layout before deriving the expected scroll delta too.
         // The test platform does not deliver native display frames itself.
-        h.cx.update(|window, cx| window.simulate_next_frame(cx));
-        h.cx.run_until_parked();
+        for _ in 0..3 {
+            h.cx.run_until_parked();
+            h.cx.update(|window, cx| window.simulate_next_frame(cx));
+        }
         let selector = Box::leak(format!("wt:{}", path.display()).into_boxed_str());
         let before = h.cx.debug_bounds(selector).unwrap();
         let (offset, viewport, max) = h.read(|v, cx| {
