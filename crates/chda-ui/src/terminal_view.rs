@@ -1,5 +1,6 @@
 //! A view that owns one terminal session and forwards input to it.
 
+use std::cell::RefCell;
 use std::ops::Range;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -187,8 +188,30 @@ pub struct TerminalView {
     hover_cell: Option<(u16, u16)>,
     cmd_held: bool,
     pub hovered_link: Option<HoveredLink>,
+    link_cache: RefCell<Option<LinkCache>>,
     /// Files dragged over the window from another app.
     dragged: crate::external_drop::Dragged,
+}
+
+struct LinkCache {
+    candidate: chda_term::Link,
+    cwd: Option<PathBuf>,
+    link: HoveredLink,
+}
+
+fn covers(cells: &[(u16, u16, u16)], x: u16, y: u16) -> bool {
+    cells
+        .iter()
+        .any(|&(row, start, end)| row == y && (start..=end).contains(&x))
+}
+
+fn link_exists(link: &HoveredLink) -> bool {
+    match &link.open {
+        LinkOpen::Url(_) => true,
+        LinkOpen::Path { path, is_dir, .. } => {
+            std::fs::metadata(path).is_ok_and(|meta| meta.is_dir() == *is_dir)
+        }
+    }
 }
 
 impl EventEmitter<TerminalEvent> for TerminalView {}
@@ -364,6 +387,7 @@ impl TerminalView {
             hover_cell: None,
             cmd_held: false,
             hovered_link: None,
+            link_cache: RefCell::new(None),
             dragged: Default::default(),
         }
     }
@@ -414,6 +438,8 @@ impl TerminalView {
         self.frame = self.session.frame();
         self.grid = (Size { cols: 0, rows: 0 }, 0, 0);
         self.layout_cache = None;
+        self.link_cache.borrow_mut().take();
+        self.hovered_link = None;
         self.final_output = None;
         Self::drive(wake_rx, window, cx);
         cx.notify();
@@ -1035,14 +1061,49 @@ impl TerminalView {
 
     /// The first link candidate at cell `(x, y)` that resolves.
     fn link_at(&self, x: u16, y: u16) -> Option<HoveredLink> {
-        chda_term::links_at(&self.frame, x, y)
+        let candidates = chda_term::links_at(&self.frame, x, y);
+        if let Some(cache) = self.link_cache.borrow().as_ref()
+            && candidates.first() == Some(&cache.candidate)
+            && cache.cwd == self.cwd
+            && covers(&cache.link.cells, x, y)
+        {
+            // Keep a displayed longest target bound to these cells even when
+            // it disappears. Repeated clicks must not switch to a prefix;
+            // recreating that same file makes it usable again.
+            return link_exists(&cache.link).then(|| cache.link.clone());
+        }
+        let first = candidates.first().cloned();
+        let found = candidates
             .into_iter()
-            .find_map(|l| {
-                Some(HoveredLink {
-                    open: self.resolve_link(l.target)?,
-                    cells: l.cells,
-                })
-            })
+            .enumerate()
+            .find_map(|(index, link)| {
+                Some((
+                    index,
+                    HoveredLink {
+                        open: self.resolve_link(link.target)?,
+                        cells: link.cells,
+                    },
+                ))
+            });
+        // A shorter fallback cannot be cached: a previously missing longer
+        // candidate can appear without a new PTY frame.
+        *self.link_cache.borrow_mut() =
+            found
+                .as_ref()
+                .filter(|(index, _)| *index == 0)
+                .map(|(_, link)| LinkCache {
+                    candidate: first.expect("a resolved first candidate"),
+                    cwd: self.cwd.clone(),
+                    link: link.clone(),
+                });
+        found
+            .map(|(_, link)| link)
+            .filter(|link| covers(&link.cells, x, y))
+    }
+
+    fn action_link_at(&self, x: u16, y: u16) -> Option<HoveredLink> {
+        let link = self.link_at(x, y)?;
+        link_exists(&link).then_some(link)
     }
 
     /// URLs open as they are; paths must exist, relative to the shell's
@@ -1117,7 +1178,7 @@ impl TerminalView {
                 position: event.position,
                 link: self
                     .hover_cell
-                    .and_then(|(x, y)| self.link_at(x, y))
+                    .and_then(|(x, y)| self.action_link_at(x, y))
                     .map(|l| l.open),
                 at_prompt: self.frame.at_prompt(),
             });
@@ -1125,7 +1186,7 @@ impl TerminalView {
         }
         if wants_menu
             && let Some((x, y)) = self.hover_cell
-            && let Some(link) = self.link_at(x, y)
+            && let Some(link) = self.action_link_at(x, y)
         {
             cx.emit(TerminalEvent::LinkMenu {
                 link: link.open,
@@ -1136,7 +1197,8 @@ impl TerminalView {
         }
         if event.button == MouseButton::Left
             && event.modifiers.platform
-            && let Some(link) = self.hovered_link.clone()
+            && let Some((x, y)) = self.hover_cell
+            && let Some(link) = self.action_link_at(x, y)
         {
             match link.open {
                 LinkOpen::Url(url) => cx.open_url(&url),

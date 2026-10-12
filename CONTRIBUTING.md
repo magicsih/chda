@@ -89,3 +89,16 @@ handle. Remove each corresponding patch when a pinned upstream revision includes
 same regressions; do not change optimize mode to avoid a failure.
 
 The source preparation also seeds the pinned `translate-c` package into Zig's cache from `resources/ghostty/translate-c-pinned.tar.gz`. This archive repacks the previously fetched upstream files, preserves their included license, and must match both its SHA-256 and the unchanged upstream Zig package hash. It changes no Ghostty source or dependency URL/hash. This avoids the pinned Codeberg archive's observed HTTP 503 outage. `--check` verifies the local archive without touching Zig's cache.
+
+## Terminal path lookup
+
+OSC 8, URLs and quoted/prose-parenthesized paths retain precedence. Explicit
+unquoted paths (`/`, `~/`, `./`, `../`) then use the longest existing candidate
+across spaces and filename parentheses on the same logical line. Soft wraps join;
+hard newlines, quotes, tabs, `<`, `>` and `|`, and adjacent explicit path starts
+separate candidates. One lookup performs at most 16 filesystem checks across path candidates, including quoted/parenthesized candidates and legacy fallback.
+After exhausting that bound it does not fall back to a cut legacy prefix. Results
+are shared for the frame, working directory and segment. Activating a displayed
+path checks the same target still exists rather than replacing it.
+
+Bare-path exploration checks the longest candidates first, up to 16 filesystem lookups per request. The bound includes trailing prose on the same logical line; when that would require more candidates, chda leaves the path unlinked instead of guessing a shorter prefix. Existing OSC 8, URL, quoted and prose-parenthesized paths retain precedence. Unsuccessful lookups and shorter fallback candidates are not cached. The first candidate is cached only over its resolved cells and revalidated on hover and activation. If that displayed target disappears, repeated clicks stay unresolved until the same target returns or the displayed path/cells change; they never switch to a shorter prefix. Reconnecting a terminal discards its link cache.

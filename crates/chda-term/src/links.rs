@@ -63,22 +63,26 @@ static LINE_SUFFIX: LazyLock<Regex> =
 /// Links covering cell `(x, y)` of the viewport, most specific first: an
 /// OSC 8 hyperlink, a URL, a quoted or parenthesized path, then the plain token. Paths are
 /// only candidates; the caller keeps the first that exists.
+pub const MAX_BARE_PATH_CHECKS: usize = 16;
+
 pub fn links_at(frame: &Frame, x: u16, y: u16) -> Vec<Link> {
+    let mut result = Vec::new();
     if let Some(h) = frame
         .hyperlinks
         .iter()
         .find(|h| h.row == y && (h.start..=h.end).contains(&x))
     {
-        return vec![Link {
+        result.push(Link {
             target: url_target(&h.uri),
             cells: vec![(h.row, h.start, h.end)],
-        }];
+        });
+        return result;
     }
     let Some(line) = LogicalLine::around(frame, y) else {
-        return Vec::new();
+        return result;
     };
     let Some(byte) = line.byte_at(y, x) else {
-        return Vec::new();
+        return result;
     };
     if let Some(m) = URL
         .find_iter(&line.text)
@@ -86,10 +90,11 @@ pub fn links_at(frame: &Frame, x: u16, y: u16) -> Vec<Link> {
     {
         let url = trim_url(m.as_str());
         if m.start() + url.len() > byte {
-            return vec![Link {
+            result.push(Link {
                 cells: line.cells(m.start(), m.start() + url.len()),
                 target: url_target(url),
-            }];
+            });
+            return result;
         }
     }
     let mut out = Vec::new();
@@ -128,7 +133,23 @@ pub fn links_at(frame: &Frame, x: u16, y: u16) -> Vec<Link> {
         }
     }
     bounded.sort_by_key(|range| std::cmp::Reverse(range.len()));
+    let bare = bare_segment(&line.text, byte);
     for range in bounded {
+        // Parentheses inside an explicit filename are not prose bounds.
+        let opening = range.start.saturating_sub(1);
+        let before = line.text[..opening].chars().next_back();
+        let tail = &line.text[range.end + 1..];
+        let after = tail.chars().next();
+        let extension = tail
+            .strip_prefix('.')
+            .is_some_and(|rest| rest.chars().next().is_some_and(|c| c.is_alphanumeric()));
+        let escaped_blank =
+            before == Some(' ') && line.text[..opening.saturating_sub(1)].ends_with('\\');
+        if bare.as_ref().is_some_and(|segment| segment.start < opening)
+            && (matches!(before, Some('/')) || after == Some('/') || extension || escaped_blank)
+        {
+            continue;
+        }
         let inner = &line.text[range.clone()];
         let starts = path_starts(inner).filter(|&s| range.start + s <= byte);
         for start in std::iter::once(0).chain(starts) {
@@ -144,9 +165,43 @@ pub fn links_at(frame: &Frame, x: u16, y: u16) -> Vec<Link> {
             }
         }
     }
-    if let Some(m) = TOKEN
-        .find_iter(&line.text)
-        .find(|m| m.range().contains(&byte))
+    let mut exceeded = false;
+    if let Some(segment) = bare {
+        let mut ends = vec![segment.end];
+        ends.extend(
+            line.text[segment.clone()]
+                .char_indices()
+                .rev()
+                .filter_map(|(i, ch)| matches!(ch, ' ' | '(' | ')').then_some(segment.start + i)),
+        );
+        let mut candidates: Vec<Link> = Vec::new();
+        for end in ends {
+            let raw = trim_url(line.text[segment.start..end].trim_end());
+            if segment.start + raw.len() <= byte {
+                continue;
+            }
+            let Some(target) = path_target(&raw.replace("\\ ", " ")) else {
+                continue;
+            };
+            let candidate = Link {
+                cells: line.cells(segment.start, segment.start + raw.len()),
+                target,
+            };
+            if candidates.last() == Some(&candidate) {
+                continue;
+            }
+            if candidates.len() == MAX_BARE_PATH_CHECKS {
+                exceeded = true;
+                break;
+            }
+            candidates.push(candidate);
+        }
+        out.extend(candidates);
+    }
+    if !exceeded
+        && let Some(m) = TOKEN
+            .find_iter(&line.text)
+            .find(|m| m.range().contains(&byte))
     {
         let token = m.as_str().trim_end_matches(['.', ',', ':', ';', '!', '?']);
         if m.start() + token.len() > byte
@@ -158,7 +213,56 @@ pub fn links_at(frame: &Frame, x: u16, y: u16) -> Vec<Link> {
             });
         }
     }
-    out
+    // All path candidates share one lookup budget, including the prior
+    // quoted/parenthesized forms and a distinct legacy token. Keep the
+    // earliest (highest-priority) cells for repeated targets.
+    let mut unique = Vec::new();
+    for link in out {
+        if !unique
+            .iter()
+            .any(|known: &Link| known.target == link.target)
+        {
+            unique.push(link);
+            if unique.len() == MAX_BARE_PATH_CHECKS {
+                break;
+            }
+        }
+    }
+    unique
+}
+
+fn explicit_starts(text: &str) -> impl Iterator<Item = usize> + '_ {
+    text.char_indices().filter_map(move |(at, _)| {
+        let previous = text[..at].chars().next_back();
+        let boundary = previous.is_none_or(|ch| {
+            ch.is_whitespace() || matches!(ch, '(' | '\'' | '"' | '<' | '>' | '|')
+        });
+        let escaped_blank = previous == Some(' ') && text[..at.saturating_sub(1)].ends_with('\\');
+        (boundary
+            && !escaped_blank
+            && ["/", "~/", "./", "../"]
+                .iter()
+                .any(|prefix| text[at..].starts_with(prefix)))
+        .then_some(at)
+    })
+}
+
+fn bare_segment(text: &str, byte: usize) -> Option<std::ops::Range<usize>> {
+    let starts: Vec<_> = explicit_starts(text).collect();
+    let start = *starts.iter().rev().find(|&&start| start <= byte)?;
+    let boundary = text[start..]
+        .char_indices()
+        .find_map(|(offset, ch)| {
+            matches!(ch, '\t' | '\'' | '"' | '`' | '<' | '>' | '|').then_some(start + offset)
+        })
+        .unwrap_or(text.len());
+    let end = starts
+        .into_iter()
+        .find(|&at| at > start)
+        .unwrap_or(boundary)
+        .min(boundary);
+    let end = start + text[start..end].trim_end().len();
+    (byte < end).then_some(start..end)
 }
 
 /// Where a path starts after prose inside parentheses: `/`, `~/`, `./` or
@@ -386,6 +490,171 @@ mod tests {
             });
         }
         f
+    }
+
+    #[test]
+    fn bare_space_parenthesis_paths_cover_every_cell_and_beat_existing_prefixes() {
+        for raw in [
+            "/tmp/bare/Notes Folder/file.txt:3:2",
+            "/tmp/bare/(draft dir)/f.txt:3",
+            r"/tmp/bare/Notes\ (draft)/file.txt",
+            "./Notes Folder/file.txt:2:5",
+            "~/작업 문서/설계 (초안).md",
+        ] {
+            let f = frame(100, &[raw], &[]);
+            let target = path_target(&raw.replace("\\ ", " ")).unwrap();
+            let LinkTarget::Path { path, .. } = &target else {
+                unreachable!()
+            };
+            for x in 0..raw.chars().count() as u16 {
+                let link = opened(
+                    &f,
+                    x,
+                    0,
+                    &[path, "/tmp/bare/Notes", "/tmp/bare/", "./Notes"],
+                );
+                assert_eq!(
+                    link.as_ref().map(|l| &l.target),
+                    Some(&target),
+                    "{raw} at {x}"
+                );
+                assert_eq!(
+                    link.unwrap().cells,
+                    vec![(0, 0, raw.chars().count() as u16 - 1)]
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn bare_paths_join_soft_wraps_but_separate_newlines_and_neighbors() {
+        let f = frame(
+            15,
+            &["/tmp/Notes Fold", "er/file.md:3", "/tmp/A /tmp/B"],
+            &[0],
+        );
+        for (x, y) in [(0, 0), (13, 0), (0, 1), (8, 1)] {
+            assert_eq!(
+                opened(&f, x, y, &["/tmp/Notes Folder/file.md", "/tmp/Notes"])
+                    .unwrap()
+                    .target,
+                path_target("/tmp/Notes Folder/file.md:3").unwrap()
+            );
+        }
+        assert_eq!(
+            opened(&f, 2, 2, &["/tmp/A", "/tmp/B"]).unwrap().target,
+            path_target("/tmp/A").unwrap()
+        );
+        assert_eq!(
+            opened(&f, 10, 2, &["/tmp/A", "/tmp/B"]).unwrap().target,
+            path_target("/tmp/B").unwrap()
+        );
+        let hard = frame(16, &["/tmp/Notes Fold", "er/file.md"], &[]);
+        assert!(opened(&hard, 2, 0, &["/tmp/Notes Folder/file.md"]).is_none());
+    }
+
+    #[test]
+    fn bare_exploration_stops_at_sixteen_checks_without_a_cut_prefix_fallback() {
+        let text = format!(
+            "/tmp/Notes {}",
+            (0..30)
+                .map(|n| format!("part{n}"))
+                .collect::<Vec<_>>()
+                .join(" ")
+        );
+        let f = frame(400, &[&text], &[]);
+        let candidates = links_at(&f, 2, 0);
+        assert_eq!(candidates.len(), MAX_BARE_PATH_CHECKS);
+        assert!(
+            !candidates
+                .iter()
+                .any(|link| link.target == path_target("/tmp/Notes").unwrap())
+        );
+        let mut checks = 0;
+        let found = candidates.into_iter().find(|link| {
+            checks += 1;
+            link.target == path_target("/tmp/Notes").unwrap()
+        });
+        assert!(found.is_none());
+        assert_eq!(checks, 16);
+    }
+
+    #[test]
+    fn exact_limit_includes_legacy_and_parenthesized_candidates() {
+        let words = (0..16)
+            .map(|n| format!("part{n}"))
+            .collect::<Vec<_>>()
+            .join(" ");
+        for text in [
+            format!("/tmp/Notes {words}"),
+            format!("(see /tmp/Notes {words})"),
+        ] {
+            let f = frame(400, &[&text], &[]);
+            let x = text.find("part0").unwrap() as u16 + 2;
+            let candidates = links_at(&f, x, 0);
+            assert!(
+                candidates.len() <= MAX_BARE_PATH_CHECKS,
+                "{} candidates: {candidates:?}",
+                candidates.len()
+            );
+            assert!(
+                candidates
+                    .iter()
+                    .all(|link| link.target != path_target("part0").unwrap()),
+                "exhausted lookup must not open a cut token"
+            );
+        }
+    }
+
+    #[test]
+    fn bare_candidates_stop_at_hard_delimiters_and_cover_the_complete_target() {
+        for delimiter in ["\t", "|", "<", ">", "\"", "'"] {
+            let text = format!("./Notes Folder/file.md{delimiter}other prose");
+            let f = frame(100, &[&text], &[]);
+            for x in [0, 10, 20] {
+                assert_eq!(
+                    opened(&f, x, 0, &["./Notes Folder/file.md", "./Notes"])
+                        .unwrap()
+                        .target,
+                    path_target("./Notes Folder/file.md").unwrap()
+                );
+                assert_eq!(
+                    opened(&f, x, 0, &["./Notes Folder/file.md"]).unwrap().cells,
+                    vec![(0, 0, 21)]
+                );
+            }
+        }
+        let f = frame(40, &["./Notes Folder/file.md:4:2 trailing prose"], &[]);
+        let expected = path_target("./Notes Folder/file.md:4:2").unwrap();
+        assert_eq!(
+            opened(&f, 2, 0, &["./Notes Folder/file.md", "./Notes"])
+                .unwrap()
+                .target,
+            expected
+        );
+        let f = frame(40, &["./Notes missing-file.md"], &[]);
+        assert_eq!(
+            opened(&f, 2, 0, &["./Notes"]).unwrap().target,
+            path_target("./Notes").unwrap()
+        );
+    }
+
+    #[test]
+    fn trailing_relative_paths_and_prose_parentheses_keep_legacy_precedence() {
+        let f = frame(80, &["cp /tmp/a.txt README.md"], &[]);
+        assert_eq!(
+            opened(&f, 20, 0, &["/tmp/a.txt", "README.md"])
+                .unwrap()
+                .target,
+            path_target("README.md").unwrap()
+        );
+        let f = frame(80, &["Error in /repo/build.log (src/My Module/a.rs)."], &[]);
+        assert_eq!(
+            opened(&f, 33, 0, &["/repo/build.log", "src/My Module/a.rs"])
+                .unwrap()
+                .target,
+            path_target("src/My Module/a.rs").unwrap()
+        );
     }
 
     #[test]
