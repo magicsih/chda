@@ -50,7 +50,7 @@ exit 7
     h.cx.run_until_parked();
     let choice = h.cx.debug_bounds("launch-policy-bypass").unwrap();
     h.cx.simulate_click(choice.center(), gpui::Modifiers::default());
-    h.keys("enter");
+    h.confirm_agent_launch();
     h.wait_for("managed CLI", |v, cx| {
         v.focused_text(cx).contains("launch --settings")
     });
@@ -210,7 +210,7 @@ fn no_session_identity_disables_restart_and_restore_does_not_create_a_conversati
     });
     h.wait_prompt();
     h.cx.dispatch_action(crate::workspace_view::RunClaude);
-    h.keys("enter");
+    h.confirm_agent_launch();
     h.wait_for("exit without a conversation ID", |v, _| {
         v.ws.tabs().len() == 2
             && v.ws

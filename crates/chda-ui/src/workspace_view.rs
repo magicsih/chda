@@ -313,6 +313,8 @@ pub struct WorkspaceView {
     watcher: Option<RepoWatcher>,
     watch_events: Option<mpsc::Receiver<PathBuf>>,
     pub(crate) context_menu: Option<ContextMenu>,
+    menu_focus: Option<CloseFocus>,
+    usage_focus: Option<CloseFocus>,
     /// Installed apps the title bar can open the worktree in.
     pub(crate) folder_apps: Vec<crate::platform::FolderApp>,
     /// A newer release than the running one, until dismissed.
@@ -495,6 +497,8 @@ impl WorkspaceView {
             watcher,
             watch_events,
             context_menu: None,
+            menu_focus: None,
+            usage_focus: None,
             folder_apps: Vec::new(),
             release_notice: None,
             title_drag: false,
@@ -542,6 +546,9 @@ impl WorkspaceView {
             agent_report_at: HashMap::new(),
             env,
         };
+        let window_id = window.window_handle().window_id();
+        cx.on_release(move |_, cx| crate::tooltip::forget(window_id, cx))
+            .detach();
         let registry = this.env.windows.clone();
         window.on_window_should_close(cx, move |_, _| !registry.borrow().update.frozen);
         this.note_bounds(window);
@@ -3614,6 +3621,43 @@ impl WorkspaceView {
         self.sync_attention(cx);
     }
 
+    fn input_origin(&self) -> Option<CloseFocus> {
+        self.ws.active_tab().map(|tab| CloseFocus {
+            tab: tab.id,
+            pane: self.ws.focused_pane(),
+        })
+    }
+    fn dismiss_context_menu(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        self.context_menu = None;
+        crate::tooltip::block(window, false, cx);
+        if let Some(focus) = self.menu_focus.take() {
+            self.restore_close_focus(focus, window, cx);
+        } else {
+            self.refocus_terminal(window, cx);
+        }
+        cx.notify();
+    }
+    pub(crate) fn toggle_usage(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if self.status_bar.details_open {
+            self.close_usage(window, cx);
+        } else {
+            self.usage_focus = self.input_origin();
+            self.status_bar.details_open = true;
+            crate::tooltip::dismiss(window, cx);
+            window.focus(&self.focus_handle, cx);
+            cx.notify();
+        }
+    }
+    pub(crate) fn close_usage(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        self.status_bar.details_open = false;
+        if let Some(focus) = self.usage_focus.take() {
+            self.restore_close_focus(focus, window, cx);
+        } else {
+            self.refocus_terminal(window, cx);
+        }
+        cx.notify();
+    }
+
     fn restore_close_focus(
         &mut self,
         focus: CloseFocus,
@@ -4080,11 +4124,13 @@ impl WorkspaceView {
                 self.sync_panes(cx);
             }
             SidebarEvent::ToggleSessions => {
+                crate::tooltip::dismiss(window, cx);
                 self.config.sessions_collapsed = !self.config.sessions_collapsed;
                 self.save_config();
                 self.sync_panes(cx);
             }
             SidebarEvent::ToggleProject => {
+                crate::tooltip::dismiss(window, cx);
                 self.config.project_collapsed = !self.config.project_collapsed;
                 self.save_config();
                 self.sync_panes(cx);
@@ -4475,7 +4521,8 @@ impl WorkspaceView {
                 .collect::<Result<Vec<_>, _>>();
             match items {
                 Ok(items) if !items.is_empty() => {
-                    self.launch_sheet = Some(agent_launch::LaunchSheet { items, error: None });
+                    self.launch_sheet =
+                        Some(agent_launch::LaunchSheet::new(items, self.input_origin()));
                     self.notifications_open = false;
                     self.notification_focus = None;
                     window.focus(&self.focus_handle, cx);
@@ -4602,6 +4649,25 @@ impl WorkspaceView {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        let focus = self.menu_focus.take();
+        crate::tooltip::block(window, false, cx);
+        // Local navigation owns its destination. Other commands start from
+        // the retained input origin; an opened sheet then takes its own focus.
+        if !matches!(
+            &action,
+            MenuAction::OpenTerminal(_)
+                | MenuAction::ViewDiff(_)
+                | MenuAction::ReviewDiff(_)
+                | MenuAction::ViewGitTree(_)
+                | MenuAction::RunAgent(_, _)
+                | MenuAction::RunPreset(_, _)
+        ) {
+            if let Some(focus) = focus {
+                self.restore_close_focus(focus, window, cx);
+            } else {
+                self.refocus_terminal(window, cx);
+            }
+        }
         self.context_menu = None;
         match action {
             MenuAction::CopySelection(pane) => {
@@ -5796,6 +5862,18 @@ impl WorkspaceView {
     }
 
     fn dismiss(&mut self, _: &Dismiss, window: &mut Window, cx: &mut Context<Self>) {
+        if self.launch_sheet.is_some() {
+            self.cancel_agent_launch(window, cx);
+            return;
+        }
+        if self.context_menu.is_some() {
+            self.dismiss_context_menu(window, cx);
+            return;
+        }
+        if self.status_bar.details_open {
+            self.close_usage(window, cx);
+            return;
+        }
         if self.preparation_open.is_some() || self.preparation_editor.is_some() {
             self.close_preparation(window, cx);
             return;
@@ -6020,6 +6098,7 @@ impl WorkspaceView {
         let fg = hsla(self.settings.colors.foreground.unwrap_or_default());
         let items = menu.items.clone();
         let list = div()
+            .debug_selector(|| "context-menu".into())
             .flex()
             .flex_col()
             .min_w(px(180.0))
@@ -6083,16 +6162,16 @@ impl WorkspaceView {
                     .occlude()
                     .on_mouse_down(
                         MouseButton::Left,
-                        cx.listener(|this, _, _, cx| {
-                            this.context_menu = None;
-                            cx.notify();
+                        cx.listener(|this, _, window, cx| {
+                            this.dismiss_context_menu(window, cx);
+                            cx.stop_propagation();
                         }),
                     )
                     .on_mouse_down(
                         MouseButton::Right,
-                        cx.listener(|this, _, _, cx| {
-                            this.context_menu = None;
-                            cx.notify();
+                        cx.listener(|this, _, window, cx| {
+                            this.dismiss_context_menu(window, cx);
+                            cx.stop_propagation();
                         }),
                     )
                     .child(
@@ -6509,6 +6588,14 @@ impl Focusable for WorkspaceView {
 
 impl Render for WorkspaceView {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        let menu_open = self.context_menu.is_some();
+        crate::tooltip::block(window, menu_open, cx);
+        if menu_open && self.menu_focus.is_none() {
+            self.menu_focus = self.input_origin();
+            window.focus(&self.focus_handle, cx);
+        } else if !menu_open {
+            self.menu_focus = None;
+        }
         if self.env.windows.borrow().update.frozen {
             return div()
                 .size_full()
@@ -6590,11 +6677,7 @@ impl Render for WorkspaceView {
                     cx.stop_propagation();
                     return;
                 }
-                if this.launch_sheet.is_some()
-                    && event.keystroke.key == "enter"
-                    && !event.keystroke.modifiers.modified()
-                {
-                    this.start_agent_launch(window, cx);
+                if this.agent_launch_key(&event.keystroke, window, cx) {
                     cx.stop_propagation();
                 }
             }))

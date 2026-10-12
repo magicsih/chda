@@ -10,6 +10,42 @@ pub(super) struct LaunchItem {
 pub(super) struct LaunchSheet {
     pub items: Vec<LaunchItem>,
     pub error: Option<String>,
+    focus: LaunchFocus,
+    origin: Option<CloseFocus>,
+}
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum LaunchFocus {
+    Policy(usize),
+    Cancel,
+    Start,
+}
+impl LaunchSheet {
+    pub(super) fn new(items: Vec<LaunchItem>, origin: Option<CloseFocus>) -> Self {
+        let focus = items
+            .iter()
+            .position(|item| {
+                !item.captured && matches!(item.context.agent, AgentId::Claude | AgentId::Codex)
+            })
+            .map(LaunchFocus::Policy)
+            .unwrap_or(LaunchFocus::Cancel);
+        Self {
+            items,
+            error: None,
+            focus,
+            origin,
+        }
+    }
+    fn controls(&self) -> Vec<LaunchFocus> {
+        self.items
+            .iter()
+            .enumerate()
+            .filter(|(_, item)| {
+                !item.captured && matches!(item.context.agent, AgentId::Claude | AgentId::Codex)
+            })
+            .map(|(i, _)| LaunchFocus::Policy(i))
+            .chain([LaunchFocus::Cancel, LaunchFocus::Start])
+            .collect()
+    }
 }
 
 impl WorkspaceView {
@@ -141,10 +177,7 @@ impl WorkspaceView {
         }
         match self.launch_item(cwd, agent, options, session) {
             Ok(item) => {
-                self.launch_sheet = Some(LaunchSheet {
-                    items: vec![item],
-                    error: None,
-                });
+                self.launch_sheet = Some(LaunchSheet::new(vec![item], self.input_origin()));
                 self.notifications_open = false;
                 self.notification_focus = None;
                 window.focus(&self.focus_handle, cx);
@@ -152,6 +185,60 @@ impl WorkspaceView {
             Err(e) => self.notify_error(e),
         }
         cx.notify();
+    }
+
+    pub(super) fn cancel_agent_launch(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if let Some(sheet) = self.launch_sheet.take() {
+            if let Some(origin) = sheet.origin {
+                self.restore_close_focus(origin, window, cx);
+            } else {
+                self.refocus_terminal(window, cx);
+            }
+            cx.notify();
+        }
+    }
+    pub(super) fn agent_launch_key(
+        &mut self,
+        key: &gpui::Keystroke,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> bool {
+        let Some(sheet) = self.launch_sheet.as_mut() else {
+            return false;
+        };
+        match key.key.as_str() {
+            "tab" if !key.modifiers.platform && !key.modifiers.control && !key.modifiers.alt => {
+                let controls = sheet.controls();
+                let current = controls.iter().position(|c| *c == sheet.focus).unwrap_or(0);
+                let next = if key.modifiers.shift {
+                    (current + controls.len() - 1) % controls.len()
+                } else {
+                    (current + 1) % controls.len()
+                };
+                sheet.focus = controls[next];
+                cx.notify();
+            }
+            "up" | "down" if !key.modifiers.modified() => {
+                if let LaunchFocus::Policy(index) = sheet.focus {
+                    sheet.items[index].context.policy = if key.key == "up" {
+                        PermissionPolicy::Inherit
+                    } else {
+                        PermissionPolicy::Bypass
+                    };
+                    cx.notify();
+                }
+            }
+            "enter" | "space" | " " if !key.modifiers.modified() => {
+                match sheet.focus {
+                    LaunchFocus::Cancel => self.cancel_agent_launch(window, cx),
+                    LaunchFocus::Start => self.start_agent_launch(window, cx),
+                    LaunchFocus::Policy(_) => {} // The focused radio already shows the chosen option.
+                }
+            }
+            "escape" => self.cancel_agent_launch(window, cx),
+            _ => {}
+        }
+        true
     }
 
     pub(super) fn captured_agent_argv(
@@ -246,6 +333,13 @@ impl WorkspaceView {
                 .flex_col()
                 .gap_2()
                 .p_2()
+                .border_1()
+                .rounded_sm()
+                .border_color(fg.opacity(if sheet.focus == LaunchFocus::Policy(index) {
+                    0.65
+                } else {
+                    0.0
+                }))
                 .child(
                     div()
                         .font_weight(gpui::FontWeight::BOLD)
@@ -294,14 +388,13 @@ impl WorkspaceView {
                             }))
                             .hover(|s| s.bg(fg.opacity(0.08)))
                             .on_click(cx.listener(move |this, _, _, cx| {
-                                if let Some(item) = this
-                                    .launch_sheet
-                                    .as_mut()
-                                    .and_then(|s| s.items.get_mut(index))
+                                if let Some(sheet) = this.launch_sheet.as_mut()
+                                    && let Some(item) = sheet.items.get_mut(index)
                                     && !item.captured
                                 {
                                     item.context.policy = policy;
-                                    this.launch_sheet.as_mut().unwrap().error = None;
+                                    sheet.focus = LaunchFocus::Policy(index);
+                                    sheet.error = None;
                                     cx.notify();
                                 }
                             }))
@@ -400,11 +493,18 @@ impl WorkspaceView {
                                             .px_3()
                                             .py_1()
                                             .cursor_pointer()
+                                            .border_1()
+                                            .rounded_sm()
+                                            .border_color(fg.opacity(
+                                                if sheet.focus == LaunchFocus::Cancel {
+                                                    0.65
+                                                } else {
+                                                    0.2
+                                                },
+                                            ))
                                             .child("Cancel")
                                             .on_click(cx.listener(|this, _, window, cx| {
-                                                this.launch_sheet = None;
-                                                this.refocus_terminal(window, cx);
-                                                cx.notify();
+                                                this.cancel_agent_launch(window, cx);
                                             })),
                                     )
                                     .child(
@@ -414,7 +514,13 @@ impl WorkspaceView {
                                             .px_3()
                                             .py_1()
                                             .border_1()
-                                            .border_color(fg.opacity(0.5))
+                                            .border_color(fg.opacity(
+                                                if sheet.focus == LaunchFocus::Start {
+                                                    0.65
+                                                } else {
+                                                    0.2
+                                                },
+                                            ))
                                             .rounded_sm()
                                             .cursor_pointer()
                                             .child("Start")

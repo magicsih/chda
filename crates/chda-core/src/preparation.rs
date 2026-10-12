@@ -94,40 +94,38 @@ impl PreparationPreview {
             ));
         }
         let mut files = std::collections::HashSet::new();
-        let mut input = Vec::new();
         for path in &self.plan.files {
-            if path.as_os_str().is_empty()
-                || path
-                    .components()
-                    .any(|c| !matches!(c, std::path::Component::Normal(_)))
-                || !files.insert(path.clone())
+            let reason = if path.is_absolute() {
+                Some("choose a relative path inside the source root")
+            } else if path.as_os_str().is_empty() {
+                Some("choose a nonempty relative file path")
+            } else if path
+                .components()
+                .any(|c| !matches!(c, std::path::Component::Normal(_)))
             {
-                return Err(io::Error::other(
-                    "Choose unique relative file paths without traversal",
-                ));
+                Some("traversal outside the source root is not allowed")
+            } else if !files.insert(path.clone()) {
+                Some("the same file is listed more than once")
+            } else {
+                None
+            };
+            if let Some(reason) = reason {
+                return Err(source_error(path, reason));
             }
-            let path = path
+            let name = path
                 .to_str()
-                .ok_or_else(|| io::Error::other("Preparation paths must be UTF-8"))?;
-            if path.contains('\0') {
-                return Err(io::Error::other("File paths must contain no NUL"));
-            }
-            input.extend_from_slice(path.as_bytes());
-            input.push(0);
-        }
-        if !input.is_empty() {
-            let output = chda_agents::ipc::capture_command(
-                &mut chda_git::preparation_ignored_command(&self.identity.primary),
-                Some(&input),
-                std::time::Duration::from_secs(5),
-                1024 * 1024,
-            )?;
-            if output != input {
-                return Err(io::Error::other(
-                    "Copy sources must all be untracked and gitignored",
-                ));
+                .ok_or_else(|| source_error(path, "the path must be UTF-8"))?;
+            if name.contains('\0') {
+                return Err(source_error(path, "the path contains NUL"));
             }
         }
+        // Inspect every source before Git eligibility or any copy. Open handles
+        // keep the same no-follow boundary during review and the later copy.
+        let root = open_root(&self.identity.primary)?;
+        for path in &self.plan.files {
+            open_source(&root, path)?;
+        }
+        chda_git::validate_preparation_sources(&self.identity.primary, &self.plan.files)?;
         Ok(())
     }
     fn inspect_files(&self) -> io::Result<Vec<PreparationFile>> {
@@ -137,10 +135,7 @@ impl PreparationPreview {
             .files
             .iter()
             .map(|path| {
-                let file = open_source(&source, path)?;
-                if !file.metadata()?.is_file() {
-                    return Err(io::Error::other("Only regular local files can be copied"));
-                }
+                open_source(&source, path)?;
                 let keep_existing = match parent_dir(&destination, path, false) {
                     Ok(parent) => match parent.symlink_metadata(path.file_name().unwrap()) {
                         Ok(m) if self.retry && m.is_file() => true,
@@ -337,10 +332,9 @@ impl AuthorizedPreparation {
                 .file_name()
                 .ok_or_else(|| io::Error::other("Choose a file"))?;
             let mut input = open_source(&source, path)?;
-            let metadata = input.metadata()?;
-            if !metadata.is_file() {
-                return Err(io::Error::other("Only regular local files can be copied"));
-            }
+            let metadata = input
+                .metadata()
+                .map_err(|e| source_access_error(path, &e))?;
             let destination_parent = parent_dir(&destination, path, true)?;
             match destination_parent.symlink_metadata(leaf) {
                 Ok(m) if fresh.retry && m.is_file() => continue,
@@ -377,14 +371,81 @@ impl AuthorizedPreparation {
         Ok(())
     }
 }
+fn source_error(path: &Path, reason: &str) -> io::Error {
+    io::Error::other(format!(
+        "Cannot copy {:?}: {reason}",
+        path.to_string_lossy()
+    ))
+}
+fn source_access_error(path: &Path, error: &io::Error) -> io::Error {
+    source_error(
+        path,
+        match error.kind() {
+            io::ErrorKind::NotFound => "the source or one of its parent directories is missing",
+            io::ErrorKind::PermissionDenied => "access to the source was denied",
+            _ => "the source changed or could not be opened without following a symlink",
+        },
+    )
+}
 fn open_source(root: &cap_std::fs::Dir, path: &Path) -> io::Result<std::fs::File> {
-    use cap_fs_ext::{FollowSymlinks, OpenOptionsFollowExt, OpenOptionsSyncExt};
-    let parent = parent_dir(root, path, false)?;
+    use cap_fs_ext::{DirExt, FollowSymlinks, OpenOptionsFollowExt, OpenOptionsSyncExt};
+    let mut parent = root
+        .try_clone()
+        .map_err(|e| source_access_error(path, &e))?;
+    for component in path.parent().unwrap_or(Path::new("")).components() {
+        let std::path::Component::Normal(name) = component else {
+            return Err(source_error(
+                path,
+                "traversal outside the source root is not allowed",
+            ));
+        };
+        let metadata = parent
+            .symlink_metadata(name)
+            .map_err(|e| source_access_error(path, &e))?;
+        if metadata.is_symlink() {
+            return Err(source_error(path, "a parent directory is a symlink"));
+        }
+        if !metadata.is_dir() {
+            return Err(source_error(path, "a parent component is not a directory"));
+        }
+        parent = parent
+            .open_dir_nofollow(name)
+            .map_err(|e| source_access_error(path, &e))?;
+    }
+    let leaf = path
+        .file_name()
+        .ok_or_else(|| source_error(path, "choose a relative file"))?;
+    let metadata = parent
+        .symlink_metadata(leaf)
+        .map_err(|e| source_access_error(path, &e))?;
+    if metadata.is_symlink() {
+        return Err(source_error(path, "the source is a symlink"));
+    }
+    if metadata.is_dir() {
+        return Err(source_error(
+            path,
+            "the source is a directory, not a regular file",
+        ));
+    }
+    if !metadata.is_file() {
+        return Err(source_error(path, "the source is not a regular file"));
+    }
     let mut options = cap_std::fs::OpenOptions::new();
     options.read(true).follow(FollowSymlinks::No).nonblock(true);
-    parent
-        .open_with(path.file_name().unwrap(), &options)
-        .map(|f| f.into_std())
+    let file = parent
+        .open_with(leaf, &options)
+        .map_err(|e| source_access_error(path, &e))?;
+    if !file
+        .metadata()
+        .map_err(|e| source_access_error(path, &e))?
+        .is_file()
+    {
+        return Err(source_error(
+            path,
+            "the source changed and is no longer a regular file",
+        ));
+    }
+    Ok(file.into_std())
 }
 fn check_cancelled(cancelled: &std::sync::atomic::AtomicBool) -> io::Result<()> {
     if cancelled.load(std::sync::atomic::Ordering::Acquire) {
@@ -618,6 +679,104 @@ mod tests {
             )
             .is_err()
         );
+        assert!(!f.worktree.join("local").exists());
+    }
+    #[test]
+    fn source_git_eligibility_matches_check_ignore_without_accepting_tracked_files() {
+        let f = Fixture::new();
+        f.source();
+        std::fs::write(
+            f.primary.join(".gitignore"),
+            "*.env\n!visible.env\nlocal/**\n!local/keep.env\n",
+        )
+        .unwrap();
+        std::fs::write(f.primary.join(".git/info/exclude"), "info-ignored.txt\n").unwrap();
+        std::fs::write(f.primary.join("forced.env"), "fixture").unwrap();
+        assert!(
+            std::process::Command::new("git")
+                .current_dir(&f.primary)
+                .args(["add", "-f", "forced.env"])
+                .status()
+                .unwrap()
+                .success()
+        );
+        assert!(
+            std::process::Command::new("git")
+                .current_dir(&f.primary)
+                .args(["config", "core.ignoreCase", "true"])
+                .status()
+                .unwrap()
+                .success()
+        );
+        for path in [
+            "plain.env",
+            "visible.env",
+            "local/keep.env",
+            "local/other.env",
+            "info-ignored.txt",
+            "untracked.txt",
+            "tracked.txt",
+            "forced.env",
+            "FORCED.ENV",
+        ] {
+            let status = std::process::Command::new("git")
+                .current_dir(&f.primary)
+                .args(["check-ignore", "-q", "--", path])
+                .status()
+                .unwrap();
+            assert!(matches!(status.code(), Some(0 | 1)), "{path}: {status}");
+            let eligible =
+                chda_git::validate_preparation_sources(&f.primary, &[path.into()]).is_ok();
+            if path == "FORCED.ENV" {
+                // check-ignore accepts this spelling, but the case-insensitive
+                // index identifies the same tracked file and must still reject it.
+                assert!(
+                    !eligible,
+                    "tracked case alias must not become a copy source"
+                );
+            } else {
+                assert_eq!(eligible, status.success(), "{path}");
+            }
+        }
+    }
+
+    #[test]
+    fn rejected_source_names_the_entry_and_the_specific_reason() {
+        use cap_fs_ext::DirExt;
+        let f = Fixture::new();
+        f.source();
+        std::fs::write(f.primary.join("untracked.txt"), "fixture").unwrap();
+        let source = open_root(&f.primary).unwrap();
+        source
+            .symlink_file("local/한글 space.env", "link.env")
+            .unwrap();
+        source.symlink_dir("local", "alias").unwrap();
+        std::fs::write(f.primary.join(".gitignore"), "*.env\nlocal/\nalias/\n").unwrap();
+        for (path, reason) in [
+            ("tracked.txt", "tracked"),
+            ("untracked.txt", "gitignored"),
+            ("missing.env", "missing"),
+            ("local", "directory"),
+            ("link.env", "symlink"),
+            ("alias/한글 space.env", "symlink"),
+            ("../outside.env", "traversal"),
+            ("/outside.env", "relative"),
+        ] {
+            let error = PreparationPreview::inspect(
+                &f.primary,
+                &f.worktree,
+                PreparationPlan {
+                    commands: vec![],
+                    files: vec![path.into()],
+                },
+                false,
+            )
+            .unwrap_err()
+            .to_string();
+            assert!(error.contains(path), "{path}: {error}");
+            assert!(error.to_lowercase().contains(reason), "{path}: {error}");
+            assert!(!error.contains("os error"), "{error}");
+        }
         assert!(!f.worktree.join("local").exists());
     }
     #[test]

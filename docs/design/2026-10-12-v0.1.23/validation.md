@@ -123,3 +123,20 @@
 - 준비 출력 직후의 성공한 입력을 검사한 단독 RED에서 활동 시간 대기가 실패했다. 출력 갱신의 기존 1초 제한이 사용자 입력에도 적용되는 실제 누락이었다. 입력은 즉시 기록하고 프로그램 출력만 기존 제한을 유지한다.
 - 공유 임시 Cargo 산출물의 다른 worktree 형식 재사용으로 생긴 컴파일 실패는 RED로 세지 않는다. 해당 작업 소유 cache의 core/UI 산출물을 다시 컴파일한 뒤 위 RED를 확인했다.
 - 수정 후 lifecycle 9 tests, background redraw 1 test, UI all-targets clippy 통과. 최종 HEAD의 전체 원격 CI와 native 인수 검수는 별도로 확인한다.
+
+## 영역 4 · 메뉴·tooltip·포커스·Setup (#211, #217, #219, #220)
+
+- RED: 활성 PROJECT tooltip을 표시한 채 같은 메뉴 이벤트를 열면 tooltip이 남았다. 메뉴가 열린 동안 기존·새 hint를 숨기고 종료 후 hover를 복구하는 공통 창별 수명 관리로 수정했다. GPUI source·fork는 변경하지 않았다.
+- RED: 포인터가 머문 상태에서 section toggle 이벤트를 적용하면 이전 Collapse 문구가 남았다. 토글은 기존 hint를 무효화하며 다음 hover가 현재 Expand/Collapse 상태를 읽는다. 실제 click-only 기준 검사는 수정 전에도 통과했으므로 RED 근거로 세지 않는다.
+- RED: Usage popup의 Escape가 닫히지 않았고, launch sheet의 Down → Tab → Enter가 Cancel 대신 시작했다. Usage의 Escape·×는 원래 pane 입력을 복원한다. launch group·Cancel·Start의 Tab/Shift-Tab 이동, 방향키 policy 선택, focused button의 Enter/Space 동작을 구현했다.
+- 실제 Star/Refresh/Copy link/Open link/Reveal click 뒤 원래 pane에 고유한 shell 출력이 전달되고 Open terminal은 목적지에 입력되는 시나리오를 추가했다. 입력 복귀 구현을 제거한 격리 mutation에서 Star 이후 입력 대기가 실패했고 정확한 구현 복원 후 통과했다.
+- RED: Setup의 tracked source 오류가 상대 entry 없이 `tool exited unsuccessfully`만 표시했다. 항목별 missing/tracked/not ignored/directory/nonregular/symlink/traversal 이유를 표시한다. 열린 parent metadata와 각 component의 no-follow open, regular file handle 검사, 전부 검증한 뒤 복사하는 순서를 보존한다.
+- Git index/ignore 판정을 기존 Git CLI와 비교했다. ordinary patterns·negation·nested files·info/exclude·tracked/forced tracked 결과는 같았다. `core.ignoreCase`에서 CLI가 ignored로 허용하는 forced tracked 파일의 대소문자 alias는 같은 tracked index 파일로 판단해 거부한다. 승인된 untracked-only 복사 조건을 유지한다.
+- Setup mouse 시나리오의 첫 실패는 overlay가 그대로 있는 상태의 클릭이었다. 비동기 foreground 준비 시트가 만료된 입력 field 대신 자신의 focus를 가져야 함을 확인해 수정했다. Escape로 시트가 닫힌 뒤 badge의 실제 mouse click에서 menu x=20 / badge x=1290의 고정 좌표 RED를 확인했다. 측정한 badge bounds 아래에 메뉴를 붙이고 window edge에서 clamp한다.
+- 메뉴 9 tests, Setup UI 8 tests, launch UI 5 tests 통과. Enter·Space의 확인 press/release가 새 raw CLI에 전달되지 않는 실제 PTY 검사를 포함한다. 640×600 Setup bounds 검사 통과. core Setup 11 tests 통과.
+- 첫 전체 workspace: UI 192/195 통과. 기존 두 managed restart 검사는 permission group의 Enter를 Start로 가정했고, plain-folder 검사는 열린 메뉴에서 shell 명령을 보냈다. 명시적 Start와 메뉴 Escape를 사용하도록 검사 동작을 맞추며 기존 종료·복원·Git·입력 assertion은 유지했다. 전체 최종 UI·clippy·CI 결과는 아래에 별도로 기록한다.
+- native macOS 독립 3회 검수, 새 제품 screenshot과 최종 Pages desktop/narrow 검수, 서명 ZIP 및 공개는 아직 통과 근거가 없다.
+
+- 메뉴 최종 로컬 전체 UI 실행은 193/195 통과, 가짜 forge 테스트 2개 실패였다. 처음 로컬 URL rewrite는 forge 식별도 바꾸어 부적합하므로 제거했다. 원래 URL을 유지하고 검수 저장소의 HTTP proxy만 loopback의 닫힌 포트로 격리한 뒤 두 테스트가 모두 통과했다. 앞선 네트워크 대기 실행은 중단했으며 통과로 계산하지 않는다.
+- 기존 sidebar reveal 시나리오의 display-frame 대기를 명시하고 Sessions 실제 접힘을 확인했다. 전체 실행에서 reveal 시나리오가 통과했으며 제품의 reveal 로직은 변경하지 않았다.
+- 최종 메뉴 변경의 workspace clippy, fmt, 제품 문서 테스트 6개, 생성 문서 일치 검사가 통과했다. 정확한 PR HEAD의 전체 workspace/세 OS CI 및 최종 native 검수는 별도 확인한다.
