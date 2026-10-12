@@ -16,8 +16,8 @@ use libghostty_vt::screen::{CellWide, RowSemanticPrompt, Screen, TrackedGridRef}
 use libghostty_vt::selection::{FormatOptions, SelectLineOptions, SelectWordOptions, Selection};
 use libghostty_vt::style::{Palette, PaletteIndex, RgbColor, StyleColor, Underline as VtUnderline};
 use libghostty_vt::terminal::{
-    CursorStyle as VtCursorStyle, Mode, Options, Point, PointCoordinate, PointSpace,
-    ScrollViewport, Terminal as VtTerminal,
+    CursorStyle as VtCursorStyle, Mode, Point, PointCoordinate, PointSpace, ScrollViewport,
+    Terminal as VtTerminal,
 };
 use libghostty_vt::{focus, paste};
 
@@ -113,11 +113,16 @@ pub struct Terminal {
 impl Terminal {
     /// Create a terminal with the given size and scrollback limit in bytes.
     pub fn new(size: Size, max_scrollback: usize) -> Result<Self> {
-        let mut vt = VtTerminal::new(Options {
-            cols: size.cols,
-            rows: size.rows,
-            max_scrollback,
-        })?;
+        Self::with_temp_directory(size, max_scrollback, &std::env::temp_dir())
+    }
+
+    fn with_temp_directory(
+        size: Size,
+        max_scrollback: usize,
+        process_temp: &std::path::Path,
+    ) -> Result<Self> {
+        let mut vt = VtTerminal::new(size.cols, size.rows)?;
+        vt.set_scrollback_max_bytes(Some(max_scrollback))?;
         let hooks = Rc::new(Hooks::default());
         vt.on_pty_write({
             let h = Rc::clone(&hooks);
@@ -141,19 +146,23 @@ impl Terminal {
                 let text = write
                     .contents()
                     .find(|c| c.mime.is_empty() || c.mime.starts_with("text/"))
-                    .map(|c| c.data.to_owned())
+                    .map(|c| String::from_utf8_lossy(c.data).into_owned())
                     .unwrap_or_default();
                 *h.clipboard_write.borrow_mut() = Some(text);
-                Ok(())
+                write.reply(Ok(()), false);
             }
         })?;
 
         // libghostty asks the embedder to decode PNG payloads, on the
         // thread that owns the terminal.
         kitty::set_png_decoder(Some(Box::new(graphics::PngDecoder)))?;
+        let temp_dir = process_temp
+            .canonicalize()
+            .ok()
+            .filter(|path| path.is_dir());
         vt.set_kitty_image_storage_limit(graphics::STORAGE_LIMIT)?
-            .set_kitty_image_from_file_allowed(true)?
-            .set_kitty_image_from_temp_file_allowed(true)?
+            .set_kitty_image_from_file_allowed(temp_dir.is_some())?
+            .set_kitty_image_temp_file_dir(temp_dir.as_deref())?
             .set_kitty_image_from_shared_mem_allowed(true)?;
 
         Ok(Self {
@@ -940,9 +949,10 @@ impl Terminal {
                 Some(cached) if cached.generation == image.generation()? => Arc::clone(cached),
                 _ => {
                     let (width, height) = (image.width()?, image.height()?);
-                    let Some(rgba) =
-                        graphics::to_rgba(image.format()?, image.data()?, width, height)
-                    else {
+                    let Some(data) = image.data()? else {
+                        continue;
+                    };
+                    let Some(rgba) = graphics::to_rgba(image.format()?, data, width, height) else {
                         continue;
                     };
                     let decoded = Arc::new(Image {
@@ -1423,6 +1433,75 @@ mod tests {
         assert!(t2.take_effects().prompt_shown);
     }
 
+    // Zig's Debug integrity failure aborts the process. Keep each reproducer
+    // in a child so the test reports a failed case instead of losing the suite.
+    #[test]
+    fn scrolled_resize_keeps_debug_integrity() {
+        const CASE_ENV: &str = "CHDA_ENGINE_RESIZE_CASE";
+        if let Ok(case) = std::env::var(CASE_ENV) {
+            let mut terminal = Terminal::new(Size { cols: 8, rows: 4 }, 1024 * 1024).unwrap();
+            for i in 0..6 {
+                terminal.feed(format!("row{i}\r\n").as_bytes());
+            }
+            terminal.scroll(-1);
+            if case == "preserved-cursor" {
+                terminal.feed(b"\x1b[H");
+            }
+            let cols = if case == "reflow" { 16 } else { 8 };
+            terminal.resize(Size { cols, rows: 32 }, 8, 16).unwrap();
+            assert_eq!(terminal.frame().unwrap().size.rows, 32);
+            return;
+        }
+        for case in ["grow-rows", "preserved-cursor", "reflow"] {
+            let child = std::process::Command::new(std::env::current_exe().unwrap())
+                .args([
+                    "--exact",
+                    "vt::tests::scrolled_resize_keeps_debug_integrity",
+                    "--nocapture",
+                ])
+                .env(CASE_ENV, case)
+                .output()
+                .unwrap();
+            assert!(
+                child.status.success(),
+                "{case}: {}",
+                String::from_utf8_lossy(&child.stderr)
+            );
+        }
+    }
+
+    #[test]
+    fn reflow_recycled_rows_keep_hard_line_breaks() {
+        let mut terminal = Terminal::new(Size { cols: 6, rows: 5 }, 100_000).unwrap();
+        // The top wrapped row is discarded by a bounded scroll region.
+        // Its storage becomes a blank row and must lose the old wrap flag.
+        terminal.feed(b"AAAAAAA\x1b[1;3r\x1b[3;1H\n\x1b[4;1Hhello\x1b[r");
+        terminal.resize(Size { cols: 12, rows: 5 }, 8, 16).unwrap();
+        let frame = terminal.frame().unwrap();
+        assert_eq!(frame.row_text(2), "");
+        assert_eq!(frame.row_text(3), "hello");
+        terminal
+            .select(&mouse(MouseAction::Down { click_count: 1 }, 0, 2))
+            .unwrap();
+        terminal.select(&mouse(MouseAction::Drag, 5, 3)).unwrap();
+        assert_eq!(
+            terminal.selection_text().unwrap().as_deref(),
+            Some("\nhello")
+        );
+    }
+
+    #[test]
+    fn growing_rows_preserves_a_viewport_still_in_history() {
+        let mut terminal = Terminal::new(Size { cols: 20, rows: 4 }, 1024 * 1024).unwrap();
+        for i in 0..60 {
+            terminal.feed(format!("row{i}\r\n").as_bytes());
+        }
+        terminal.scroll(-30);
+        let before = terminal.frame().unwrap().row_text(0);
+        terminal.resize(Size { cols: 20, rows: 12 }, 8, 16).unwrap();
+        assert_eq!(terminal.frame().unwrap().row_text(0), before);
+    }
+
     #[test]
     fn scrollback_and_alternate_screen() {
         let mut term = term();
@@ -1489,6 +1568,75 @@ mod tests {
                 uri: "https://example.com/x".into()
             }]
         );
+    }
+
+    #[test]
+    fn unavailable_process_temp_directory_keeps_terminal_usable() {
+        let missing =
+            std::env::temp_dir().join(format!("chda-missing-temp-{}", std::process::id()));
+        assert!(!missing.exists());
+        let mut terminal =
+            Terminal::with_temp_directory(Size { cols: 40, rows: 4 }, 4096, &missing).unwrap();
+        assert!(!terminal.vt.is_kitty_image_from_file_allowed().unwrap());
+        terminal.feed(b"usable terminal");
+        assert!(
+            terminal
+                .frame()
+                .unwrap()
+                .row_text(0)
+                .contains("usable terminal")
+        );
+    }
+
+    #[test]
+    fn kitty_temp_images_use_only_the_canonical_process_temp_directory() {
+        use base64::Engine;
+        let mut terminal = Terminal::new(Size { cols: 20, rows: 5 }, 100_000).unwrap();
+        terminal.resize(Size { cols: 20, rows: 5 }, 10, 20).unwrap();
+        let process_temp = std::env::temp_dir().canonicalize().unwrap();
+        assert_eq!(
+            terminal.vt.kitty_image_temp_file_dir().unwrap(),
+            Some(process_temp.as_path())
+        );
+        let unique = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let root = process_temp.join(format!("chda-kitty-{}-{unique}", std::process::id()));
+        let allowed = root.join("allowed");
+        std::fs::create_dir_all(&allowed).unwrap();
+        terminal
+            .vt
+            .set_kitty_image_temp_file_dir(Some(&allowed))
+            .unwrap();
+        let inside = allowed.join("tty-graphics-protocol-image.rgba");
+        let outside = root.join("tty-graphics-protocol-image.rgba");
+        for path in [&inside, &outside] {
+            std::fs::write(path, [255, 0, 0, 255]).unwrap();
+        }
+        let mut transmit = |path: &std::path::Path, id| {
+            let encoded = base64::engine::general_purpose::STANDARD.encode(path.to_str().unwrap());
+            terminal.feed(format!("\x1b_Ga=T,t=t,f=32,s=1,v=1,i={id};{encoded}\x1b\\").as_bytes());
+            terminal.frame().unwrap()
+        };
+        assert!(
+            transmit(&inside, 33)
+                .images
+                .iter()
+                .any(|p| p.image.id == 33)
+        );
+        assert!(
+            !transmit(&outside, 44)
+                .images
+                .iter()
+                .any(|p| p.image.id == 44)
+        );
+        assert!(
+            outside.exists(),
+            "a rejected temporary image must not be deleted"
+        );
+        drop(terminal);
+        std::fs::remove_dir_all(root).unwrap();
     }
 
     #[test]

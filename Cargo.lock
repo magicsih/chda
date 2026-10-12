@@ -976,10 +976,13 @@ dependencies = [
 name = "chda-term"
 version = "0.1.22"
 dependencies = [
+ "base64",
  "chda-pty",
  "libghostty-vt",
  "png 0.18.1",
  "regex",
+ "serde_json",
+ "sha2",
 ]
 
 [[package]]
@@ -4240,9 +4243,8 @@ dependencies = [
 
 [[package]]
 name = "libghostty-vt"
-version = "0.2.2"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "16c7287a8dc35c3436224b39358af81ab9ea54bafa0f7ea2e068bd2a47bdcb2d"
+version = "0.2.1"
+source = "git+https://github.com/Uzaaft/libghostty-rs?rev=d2036baeb605d31d09a9e2ba6d0c923e04c34d54#d2036baeb605d31d09a9e2ba6d0c923e04c34d54"
 dependencies = [
  "bitflags 2.13.2",
  "int-enum",
@@ -4251,9 +4253,8 @@ dependencies = [
 
 [[package]]
 name = "libghostty-vt-sys"
-version = "0.2.2"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "df233d9b287cded4bbebba3463c6df7a8bdb516c0341ed984e870ef5594c2e6f"
+version = "0.2.1"
+source = "git+https://github.com/Uzaaft/libghostty-rs?rev=d2036baeb605d31d09a9e2ba6d0c923e04c34d54#d2036baeb605d31d09a9e2ba6d0c923e04c34d54"
 
 [[package]]
 name = "libloading"

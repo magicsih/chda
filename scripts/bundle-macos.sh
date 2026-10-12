@@ -20,6 +20,8 @@ version="${1:-$(grep -m1 '^version' Cargo.toml | sed -E 's/.*"([^"]+)".*/\1/')}"
 out=target/bundle
 app="$out/chda.app"
 
+python3 scripts/prepare-ghostty.py
+
 targets=(aarch64-apple-darwin x86_64-apple-darwin)
 for target in "${targets[@]}"; do
   cargo build --release -p chda --target "$target"

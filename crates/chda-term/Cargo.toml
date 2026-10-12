@@ -13,5 +13,12 @@ libghostty-vt.workspace = true
 png.workspace = true
 regex.workspace = true
 
+[dev-dependencies]
+base64 = "0.22.1"
+
+[build-dependencies]
+serde_json.workspace = true
+sha2 = "0.10.9"
+
 [lints]
 workspace = true

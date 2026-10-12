@@ -1,0 +1,4 @@
+# Every build uses the verified source prepared by scripts/prepare-ghostty.py.
+# Cargo resolves relative env paths from the directory above .cargo.
+[env]
+GHOSTTY_SOURCE_DIR = { value = ".ghostty-source/9d05e6c187faa7d2", relative = true, force = true }

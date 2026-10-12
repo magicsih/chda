@@ -9,3 +9,6 @@ CLAUDE.local.md
 AGENTS.local.md
 .agents/local/
 .claude/settings.local.json
+
+# Pinned native source stays outside Cargo caches.
+/.ghostty-source/

@@ -201,6 +201,10 @@ fn navigation_reveals_only_clipped_rows_and_keeps_repository_context(cx: &mut Te
             h.cx.update(|window, cx| window.simulate_next_frame(cx));
             h.cx.run_until_parked();
         }
+        // Settle the layout before deriving the expected scroll delta too.
+        // The test platform does not deliver native display frames itself.
+        h.cx.update(|window, cx| window.simulate_next_frame(cx));
+        h.cx.run_until_parked();
         let selector = Box::leak(format!("wt:{}", path.display()).into_boxed_str());
         let before = h.cx.debug_bounds(selector).unwrap();
         let (offset, viewport, max) = h.read(|v, cx| {
@@ -557,6 +561,8 @@ fn saved(h: &Harness) -> String {
 
 fn drag_grip_to(h: &mut Harness, x: f32) {
     h.cx.run_until_parked();
+    h.cx.update(|window, cx| window.simulate_next_frame(cx));
+    h.cx.run_until_parked();
     let grip =
         h.cx.debug_bounds("sidebar-grip")
             .expect("the grip is drawn");
@@ -567,6 +573,8 @@ fn drag_grip_to(h: &mut Harness, x: f32) {
         h.cx.simulate_mouse_move(point(px(x), start.y), MouseButton::Left, Modifiers::none());
     }
     h.cx.simulate_mouse_up(point(px(x), start.y), MouseButton::Left, Modifiers::none());
+    h.cx.run_until_parked();
+    h.cx.update(|window, cx| window.simulate_next_frame(cx));
     h.cx.run_until_parked();
 }
 

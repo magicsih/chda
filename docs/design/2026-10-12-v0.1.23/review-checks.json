@@ -1,0 +1,28 @@
+{
+  "kind": "synthetic-design-review",
+  "product_native_qa": false,
+  "checks": [
+    "single click selects without opening",
+    "double click opens once",
+    "context menu opens without terminal",
+    "double click target does not reuse old menu target",
+    "menu action uses captured row",
+    "background report preserves order and selection",
+    "cancel initially focused",
+    "initial Enter cancels",
+    "Tab focuses stop",
+    "Space confirms only focused stop",
+    "Escape cancels and returns focus",
+    "document at 640px has no horizontal overflow",
+    "180px sidebar #1 stays visible",
+    "180px sidebar #2 stays visible",
+    "document at 390px has no horizontal overflow",
+    "no JavaScript errors"
+  ],
+  "viewports": [
+    "1280x900 dark 280px",
+    "640x900 light 180px",
+    "390x844 document overflow"
+  ],
+  "result": "passed"
+}
