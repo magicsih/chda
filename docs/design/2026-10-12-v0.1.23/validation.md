@@ -141,6 +141,10 @@
 - 기존 sidebar reveal 시나리오의 display-frame 대기를 명시하고 Sessions 실제 접힘을 확인했다. 전체 실행에서 reveal 시나리오가 통과했으며 제품의 reveal 로직은 변경하지 않았다.
 - 최종 메뉴 변경의 workspace clippy, fmt, 제품 문서 테스트 6개, 생성 문서 일치 검사가 통과했다. 정확한 PR HEAD의 전체 workspace/세 OS CI 및 최종 native 검수는 별도 확인한다.
 
+### 메뉴 교차 리뷰 처리
+
+- `38d0d35` 교차 리뷰의 이동 실패 입력 유실과 Usage 닫기에서 새로 선택한 pane을 잃는 상태를 각각 RED로 확인했다. 모든 메뉴 명령은 원래 focus를 먼저 복원하고 성공한 동작이 목적지로 옮긴다. Usage는 popup focus를 가진 경우에만 원래 focus를 복원한다.
+- 수정 뒤 메뉴 시나리오 11개와 UI clippy 통과. 리뷰는 명령 실행을 하지 않은 source review이며 native 검수를 대체하지 않는다. 실제 source 수정 뒤 최종 CI를 다시 확인한다.
 ## 영역 5 · 경로와 diff
 
 - 승인 설계 1.0 및 #210/#212에 맞춰 기존 OSC 8/URL/인용/외부 괄호 우선순위를 유지했다. 파일명 안의 괄호는 외부 prose 경계로 해석하지 않고 명시적 시작점의 가장 긴 existing path부터 확인한다. soft wrap만 연결하고 hard newline·인접 explicit path·hard delimiter는 분리한다.
