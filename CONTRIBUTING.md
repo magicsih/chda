@@ -67,6 +67,13 @@ existing source on a mismatch. `--check` verifies without downloading. For an
 offline source preparation, pass `--archive` with the same pinned archive.
 `.cargo/config.toml` forces `GHOSTTY_SOURCE_DIR` to `.ghostty-source/<source hash>`;
 unprepared or changed source fails the build rather than using another engine.
+Always prepare before Cargo: Cargo's own source guard runs concurrently with
+native dependency builds and is a secondary rejection check. A failed guard
+records an unverified native-cache marker. Even after restoring the exact source,
+Cargo refuses the cache until preparation verifies it and clears only
+`libghostty-vt-sys` build artifacts. `--check` remains read-only and reports that
+recovery is needed. If the source is still changed, move that task-owned source
+directory aside and rerun preparation; it preserves the changed files.
 The hash changes with the patch, so Cargo rebuilds the native library instead
 of reusing a previous engine. `--test` runs the pinned Debug resize, row-metadata and Kitty boundary regressions.
 The source stays outside Cargo's target cache, which may prune non-Cargo

@@ -4,7 +4,7 @@
 
 - 설계 원문·시각 시안·인수조건 작성: 완료.
 - 정확한 설계 commit 승인: `f58906aa9b158176a42b3b455187f745de34dba5` 사용자 승인 확인. [승인 기록](approval.md).
-- 엔진 구현·RED/GREEN·최종 원격 CI: 통과. 교차 코드 리뷰: 공급자 사용량 제한의 해제 시각 대기. 세션 수명 구현: 아래 기록. native 검수·서명 artifact·공개: 미실행.
+- 엔진 PR #234 최종 HEAD의 교차 코드 리뷰·macOS/Linux/Windows CI 통과 후 main 병합 완료. 세션 수명 구현과 회귀 검증: 아래 기록. native 검수·서명 artifact·공개: 미실행.
 - 조사 근거: main 및 원격 SHA f09aa62873a4cab100ae8fd3dbba272674a9550e 일치; 최신 public release v0.1.22; 208–231 범위의 open issue 16개; 기존 installed Claude 2.1.296/Codex 0.162.1/Zig 0.15.2.
 - 기존 `app/chda/sparkle/update-signing` catalog preflight: active, catalog errors 0. 이는 Developer ID·공증·실제 서명·릴리스 artifact 검증이 아니다.
 
@@ -76,6 +76,13 @@
 - 세 번째 HEAD `364afb7`의 macOS CI는 workspace 전체 검사·clippy·Debug 회귀·Cargo guard·updater 컴파일·release build까지 통과했다. Linux/Windows 실패가 있어 PR 전체 통과는 아니다.
 - 새 source `9d05e6c187faa7d2`에서 명시적 Debug 회귀·Rust terminal 64 passed/2 ignored·실제 Cargo guard 2 tests·준비 9 tests·제품 문서 6 tests·fmt·생성 문서 일치를 다시 확인했다. 최종 CI 및 교차 코드 리뷰를 확인한 뒤 통합한다.
 
+### 엔진 교차 리뷰 처리
+
+- Claude 두 번째 요청이 완료되었다. HEAD `4159cdf`를 읽은 결과는 조건부 Medium 1건·Low 3건·문서 지적 2건이다. 외부 diff 파일 접근 실패와 명령 미실행이라는 리뷰 한계도 그대로 기록한다.
+- 실제 고정 `libghostty-vt-sys` `d2036bae`의 build.rs는 소스 변경을 감시하지 않음을 확인했다. source guard 실패를 source 옆의 unverified marker에 기록하고, 정확한 원문 복원만으로는 Cargo가 통과하지 않게 수정했다. 준비 스크립트가 소스 검증 후 해당 native crate 캐시를 비우고 marker를 해제한다. 변경된 source는 보존하며 `--check`는 읽기 전용이다.
+- 검증 전 변경 원본 보존·캐시 유지 테스트 RED를 확인한 뒤 준비 테스트 11개, 실제 Cargo root 추가·nested 변경·원문 복원 후 캐시 복구 3개(175.9초)가 통과했다. 임시 디렉터리 누락 시 텍스트 terminal 유지와 Kitty 파일 입력 비활성 회귀 1개 및 term clippy가 통과했다.
+- Cargo 자체 guard는 native build와 동시에 실행되는 2차 거부 장치다. build 이전 무결성 검증은 필수 준비 절차가 담당한다는 한계와 변경 소스 보존·재준비 안내를 CONTRIBUTING에 명시했다.
+- 승인 설계의 준비 경로 표기만 `.ghostty-source/<hash>`로 맞추고 CI Python 호출을 python3으로 통일했다. 동작·고정 revision·승인 범위는 바뀌지 않았다. 수정 뒤 최종 CI를 다시 확인한다.
 
 ### 엔진 최종 CI와 교차 리뷰 상태
 
