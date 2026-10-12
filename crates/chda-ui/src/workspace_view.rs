@@ -782,7 +782,11 @@ impl WorkspaceView {
         let mut problems = Vec::new();
         if let Some(path) = self.env.config_path.clone() {
             match ChdaConfig::load(&path) {
-                Ok(config) => {
+                Ok(mut config) => {
+                    // A delayed save notification must not rewind a live drag.
+                    if self.sidebar_drag {
+                        config.sidebar_width = self.config.sidebar_width;
+                    }
                     if config != self.config {
                         self.apply_config(config, window, cx);
                     }

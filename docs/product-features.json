@@ -74,7 +74,7 @@
     },
     {
       "area": "Config",
-      "details": "Reads your Ghostty font, colors and padding; chda's own settings in one TOML file; edits apply without a restart; executable discovery uses the login-shell PATH, with a validated ~/.local/bin/claude fallback for native Claude Code installations",
+      "details": "Reads your Ghostty font, colors and padding; chda's own settings in one TOML file; edits apply without a restart; executable discovery uses the login-shell PATH, with a validated ~/.local/bin/claude fallback for native Claude Code installations Live configuration reload keeps the current sidebar width while its border is being dragged; other settings still apply, and file-based width changes apply again after release.",
       "title": "Your terminal, your settings",
       "summary": "Reuse your Ghostty font, colors and padding. Edit chda's TOML settings without restarting. Homebrew and version-manager agents are found through your login shell's PATH."
     }

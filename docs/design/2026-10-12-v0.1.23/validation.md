@@ -180,3 +180,16 @@
 
 - `38d0d35` 교차 리뷰의 이동 실패 입력 유실과 Usage 닫기에서 새로 선택한 pane을 잃는 상태를 각각 RED로 확인했다. 모든 메뉴 명령은 원래 focus를 먼저 복원하고 성공한 동작이 목적지로 옮긴다. Usage는 popup focus를 가진 경우에만 원래 focus를 복원한다.
 - 수정 뒤 메뉴 시나리오 11개와 UI clippy 통과. 리뷰는 명령 실행을 하지 않은 source review이며 native 검수를 대체하지 않는다. 실제 source 수정 뒤 최종 CI를 다시 확인한다.
+
+### 메뉴 main 통합 CI · sidebar drag의 실제 표시 frame
+
+- main 통합 HEAD `027fac0`의 CI `38290366807`은 macOS UI 197/198 통과 후 마지막 오른쪽 drag의 폭에서 180px/기대 600px로 실패했다. 다른 6개 job과 Linux·Windows release build는 통과했다. 전체 성공으로 세지 않는다.
+- 같은 원본의 로컬 단독 검사는 1개 통과, 전체 UI도 198개 통과(57.68초)했다. 로컬에서 동일 실패를 재현했다고 주장하지 않는다.
+- 고정 GPUI `f8c2cc8`의 `simulate_next_frame`은 다음 콜백만 실행하고 직접 그리지 않는다. drag 검사에 실제 `Window::draw`와 같은 App의 arena 정리를 사용해 현재 layout·hitbox를 입력 전에 그린다. 표시 grip과 설정 width의 경계 검사도 추가했다. 기존 마우스 입력·폭·저장값·pane bounds·최소/최대·double-click assertion은 유지한다. 제품의 drag 구현은 바꾸지 않았다.
+- 보완 후 폭 조절·토글 두 단독 검사가 통과했다. 새 HEAD의 전체 UI·clippy·원격 CI로 재확인하며 native 검수로 세지 않는다.
+
+- 표시 frame 보완만 적용한 전체 UI는 197/198 통과 후 같은 폭 실패였다. 임시 test-only 좌표·상태 로그에서 drag가 600px까지 정상 동작한 뒤 추가 입력 없이 180px로 되돌아갔다. 진단 로그 코드는 원문으로 복원했고 커밋하지 않는다.
+- 결정적 RED: 진행 중인 drag의 400px 상태에서 기존 `ReloadConfig`를 통해 이전 저장 폭 280px을 다시 읽으면 280px/기대 400px으로 실패했다. 자기 저장의 지연된 파일 알림이 미저장 drag 폭을 덮는 경로를 확인했다.
+- reload 중에는 진행 중인 sidebar 폭만 보존한다. 다른 설정은 적용하고 release 뒤에는 파일의 새 폭이 다시 적용된다. 저장 schema·drag pointer·clamp·종료 구현은 그대로다. 새 회귀는 다른 title 설정 적용, release 시 현재 폭 저장, release 후 외부 폭 변경과 표시 bounds를 함께 확인한다. 최종 전체 검사와 CI는 수정된 HEAD에서 확인한다.
+
+- 수정 후 결정적 reload 회귀 1개, 전체 UI **199 passed**(56.19초), UI all-targets clippy·fmt·제품 문서 6 tests·생성 문서 일치·diff 형식이 통과했다. 임시 진단 로그가 제품·검사 파일에 남지 않았음을 확인했다. 원격 최종 HEAD CI와 native는 별도 gate다.
