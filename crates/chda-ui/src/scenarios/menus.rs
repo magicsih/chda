@@ -406,3 +406,51 @@ fn nonnavigation_menus_return_input_and_new_terminal_keeps_its_destination(
             == Some(&repo)
     });
 }
+
+#[gpui::test]
+fn failed_navigation_menu_keeps_input_in_its_original_pane(cx: &mut TestAppContext) {
+    let mut repo = std::path::PathBuf::new();
+    let mut h = Harness::open(cx, "failed-menu-nav", |home| {
+        repo = home.repo("app");
+        std::fs::write(&home.config, format!("repos = [\"{}\"]\n", repo.display())).unwrap();
+    });
+    h.wait_prompt();
+    let origin = h.read(|v, _| v.ws.focused_pane());
+    h.wait_for("worktree", |v, cx| {
+        v.sidebar.read(cx).model.worktree_for_path(&repo).is_some()
+    });
+    worktree_menu(&mut h, &repo);
+    // The row had a diff when rendered, but it disappeared before activation.
+    h.cx.update(|window, cx| {
+        h.view.update(cx, |v, cx| {
+            v.run_menu_action(
+                crate::workspace_view::MenuAction::ViewDiff(repo.clone()),
+                window,
+                cx,
+            )
+        })
+    });
+    assert_eq!(h.read(|v, _| v.ws.focused_pane()), origin);
+    h.run(
+        "printf 'failed-navigation-input\\n'",
+        "failed-navigation-input\n",
+    );
+}
+
+#[gpui::test]
+fn usage_close_keeps_a_pane_selected_while_the_popup_was_open(cx: &mut TestAppContext) {
+    let mut h = Harness::open(cx, "usage-new-focus", |_| {});
+    h.wait_prompt();
+    let first = h.read(|v, _| v.ws.focused_pane().unwrap());
+    h.keys("cmd-t");
+    h.wait_prompt();
+    let second = h.read(|v, _| v.ws.focused_pane().unwrap());
+    h.keys("cmd-1");
+    h.cx.update(|window, cx| h.view.update(cx, |v, cx| v.toggle_usage(window, cx)));
+    h.keys("cmd-2");
+    assert_eq!(h.read(|v, _| v.ws.focused_pane()), Some(second));
+    h.cx.update(|window, cx| h.view.update(cx, |v, cx| v.close_usage(window, cx)));
+    assert_eq!(h.read(|v, _| v.ws.focused_pane()), Some(second));
+    assert_ne!(Some(first), Some(second));
+    h.run("printf 'usage-new-pane-input\\n'", "usage-new-pane-input\n");
+}

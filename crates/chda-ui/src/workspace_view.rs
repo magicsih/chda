@@ -3650,10 +3650,15 @@ impl WorkspaceView {
     }
     pub(crate) fn close_usage(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         self.status_bar.details_open = false;
-        if let Some(focus) = self.usage_focus.take() {
-            self.restore_close_focus(focus, window, cx);
-        } else {
-            self.refocus_terminal(window, cx);
+        let origin = self.usage_focus.take();
+        // Respect a pane or tab the user selected while this floating popup
+        // was open. Only the popup's own focus needs an origin restoration.
+        if self.focus_handle.is_focused(window) {
+            if let Some(focus) = origin {
+                self.restore_close_focus(focus, window, cx);
+            } else {
+                self.refocus_terminal(window, cx);
+            }
         }
         cx.notify();
     }
@@ -4653,20 +4658,12 @@ impl WorkspaceView {
         crate::tooltip::block(window, false, cx);
         // Local navigation owns its destination. Other commands start from
         // the retained input origin; an opened sheet then takes its own focus.
-        if !matches!(
-            &action,
-            MenuAction::OpenTerminal(_)
-                | MenuAction::ViewDiff(_)
-                | MenuAction::ReviewDiff(_)
-                | MenuAction::ViewGitTree(_)
-                | MenuAction::RunAgent(_, _)
-                | MenuAction::RunPreset(_, _)
-        ) {
-            if let Some(focus) = focus {
-                self.restore_close_focus(focus, window, cx);
-            } else {
-                self.refocus_terminal(window, cx);
-            }
+        // A failed navigation has no destination. Restore the origin first;
+        // a successful action or sheet then takes focus where it belongs.
+        if let Some(focus) = focus {
+            self.restore_close_focus(focus, window, cx);
+        } else {
+            self.refocus_terminal(window, cx);
         }
         self.context_menu = None;
         match action {

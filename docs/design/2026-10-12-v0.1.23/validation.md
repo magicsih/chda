@@ -140,3 +140,8 @@
 - 메뉴 최종 로컬 전체 UI 실행은 193/195 통과, 가짜 forge 테스트 2개 실패였다. 처음 로컬 URL rewrite는 forge 식별도 바꾸어 부적합하므로 제거했다. 원래 URL을 유지하고 검수 저장소의 HTTP proxy만 loopback의 닫힌 포트로 격리한 뒤 두 테스트가 모두 통과했다. 앞선 네트워크 대기 실행은 중단했으며 통과로 계산하지 않는다.
 - 기존 sidebar reveal 시나리오의 display-frame 대기를 명시하고 Sessions 실제 접힘을 확인했다. 전체 실행에서 reveal 시나리오가 통과했으며 제품의 reveal 로직은 변경하지 않았다.
 - 최종 메뉴 변경의 workspace clippy, fmt, 제품 문서 테스트 6개, 생성 문서 일치 검사가 통과했다. 정확한 PR HEAD의 전체 workspace/세 OS CI 및 최종 native 검수는 별도 확인한다.
+
+### 메뉴 교차 리뷰 처리
+
+- `38d0d35` 교차 리뷰의 이동 실패 입력 유실과 Usage 닫기에서 새로 선택한 pane을 잃는 상태를 각각 RED로 확인했다. 모든 메뉴 명령은 원래 focus를 먼저 복원하고 성공한 동작이 목적지로 옮긴다. Usage는 popup focus를 가진 경우에만 원래 focus를 복원한다.
+- 수정 뒤 메뉴 시나리오 11개와 UI clippy 통과. 리뷰는 명령 실행을 하지 않은 source review이며 native 검수를 대체하지 않는다. 실제 source 수정 뒤 최종 CI를 다시 확인한다.
