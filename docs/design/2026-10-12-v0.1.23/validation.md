@@ -115,3 +115,5 @@
 - UI 관찰 시각을 exact-conversation hook producer 시각과 비교하지 않는다. top process가 종료된 pane은 중지할 PTY가 없어 오래된 child 확인을 생략한다. 살아 있는 parent의 Working/Waiting/Unknown child 확인은 유지한다.
 - 확인된 cwd가 사라지면 다른 디렉터리로 자동 재개하거나 shell을 시작하라는 제안은 승인 설계와 충돌하므로 채택하지 않았다. 복원 안내가 opened를 주장하던 부분은 fallback directory 표기로 바로잡았다. 미확인 CLI·재개 실패를 통과로 처리하지 않는다.
 - 초기 RED 두 실행의 compile 실패는 공용 target에 다른 worktree 메타데이터가 남은 결과였으며 RED로 계산하지 않는다. 이후 작업용 workspace 패키지만 정리하고 실제 실패/수정 검증을 수행했다.
+
+- 두 번째이자 마지막 세션 리뷰는 첫 수정이 종료 관찰도 순서 gate에서 제외해 종료 이전 notify가 대화를 되살릴 수 있음을 지적했다. 실제 delayed-end notify로 RED를 확인했다. 제목 상태만 제외하고 SessionEnd는 종료 경계에 기록하도록 최소 수정했다. 처리 순서를 확인하는 다음 IPC 후 대화/agent 부활이 없음을 확인했으며 직접 Codex 시나리오, lifecycle 10개, UI clippy가 통과했다. 추가 리뷰를 요청하지 않는다.

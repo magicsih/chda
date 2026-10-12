@@ -1222,8 +1222,9 @@ impl WorkspaceView {
             return;
         }
         // UI title events have no conversation ID and use observation time.
-        // Compare producer timestamps only for exact-conversation hooks.
-        if !ev.session_id.is_empty()
+        // Compare exact-conversation hooks. A terminal-observed end is also
+        // a boundary: older notifications must not revive an ended agent.
+        if (!ev.session_id.is_empty() || ev.kind == HookKind::SessionEnd)
             && let Some(pane) = ev.pane.and_then(|raw| self.ws.pane_by_raw(raw))
         {
             if self
