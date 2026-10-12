@@ -571,35 +571,44 @@ fn saved(h: &Harness) -> String {
     std::fs::read_to_string(&h.home.config).unwrap_or_default()
 }
 
+fn draw_drag_frame(h: &mut Harness) {
+    h.cx.run_until_parked();
+    h.cx.update(|window, cx| {
+        // simulate_next_frame drains callbacks; it does not draw the window.
+        // Mouse events need the current layout and hitboxes, even when the
+        // test platform's scheduled frame has not been delivered yet.
+        window.simulate_next_frame(cx);
+        window.draw(cx).clear(cx);
+    });
+    h.cx.run_until_parked();
+}
+
 fn drag_grip_to(h: &mut Harness, x: f32) {
-    h.cx.run_until_parked();
-    h.cx.update(|window, cx| window.simulate_next_frame(cx));
-    h.cx.run_until_parked();
+    draw_drag_frame(h);
     let grip =
         h.cx.debug_bounds("sidebar-grip")
             .expect("the grip is drawn");
+    assert!(
+        (f32::from(grip.right()) - width(h) as f32).abs() <= 2.0,
+        "the displayed grip follows the configured width: {grip:?}"
+    );
     let start = grip.center();
     // A pointer reaches the grip before pressing it. MouseDown alone does
     // not model the intervening hover/layout work after a previous drag.
     h.cx.simulate_mouse_move(start, None, Modifiers::none());
-    h.cx.update(|window, cx| window.simulate_next_frame(cx));
-    h.cx.run_until_parked();
+    draw_drag_frame(h);
     h.cx.simulate_mouse_down(start, MouseButton::Left, Modifiers::none());
-    h.cx.update(|window, cx| window.simulate_next_frame(cx));
-    h.cx.run_until_parked();
+    draw_drag_frame(h);
     // A real drag crosses the window before moving beyond it. Four steps to
     // 5000px would jump outside the window on the very first move.
     let steps = ((x - f32::from(start.x)).abs() / 100.0).ceil().max(4.0) as usize;
     for step in 1..=steps {
         let x = f32::from(start.x) + (x - f32::from(start.x)) * step as f32 / steps as f32;
         h.cx.simulate_mouse_move(point(px(x), start.y), MouseButton::Left, Modifiers::none());
-        h.cx.update(|window, cx| window.simulate_next_frame(cx));
-        h.cx.run_until_parked();
+        draw_drag_frame(h);
     }
     h.cx.simulate_mouse_up(point(px(x), start.y), MouseButton::Left, Modifiers::none());
-    h.cx.run_until_parked();
-    h.cx.update(|window, cx| window.simulate_next_frame(cx));
-    h.cx.run_until_parked();
+    draw_drag_frame(h);
 }
 
 #[gpui::test]
@@ -645,6 +654,50 @@ fn dragging_the_border_resizes_the_sidebar_within_bounds(cx: &mut TestAppContext
     });
     h.cx.run_until_parked();
     assert_eq!(width(&h), 280);
+}
+
+#[gpui::test]
+fn config_reload_keeps_the_current_drag_width_and_applies_other_settings(cx: &mut TestAppContext) {
+    let mut h = Harness::open(cx, "sidebar-drag-reload", |_| {});
+    h.wait_prompt();
+    let mut on_disk = h.read(|v, _| v.config.clone());
+    on_disk.save(&h.home.config).unwrap();
+    draw_drag_frame(&mut h);
+    let start = h.cx.debug_bounds("sidebar-grip").unwrap().center();
+    h.cx.simulate_mouse_down(start, MouseButton::Left, Modifiers::none());
+    draw_drag_frame(&mut h);
+    h.cx.simulate_mouse_move(
+        point(px(400.), start.y),
+        MouseButton::Left,
+        Modifiers::none(),
+    );
+    draw_drag_frame(&mut h);
+    assert_eq!(width(&h), 400);
+
+    // A queued notification for the previous saved width can arrive after
+    // the pointer has moved. Other edited settings still reload normally.
+    on_disk.tab_title = chda_config::TabTitle::Path;
+    on_disk.save(&h.home.config).unwrap();
+    h.cx.dispatch_action(crate::workspace_view::ReloadConfig);
+    draw_drag_frame(&mut h);
+    assert_eq!(width(&h), 400, "reload must not rewind an in-progress drag");
+    assert_eq!(h.read(|v, _| v.ws.title_mode), chda_core::TitleMode::Path);
+    h.cx.simulate_mouse_up(
+        point(px(400.), start.y),
+        MouseButton::Left,
+        Modifiers::none(),
+    );
+    draw_drag_frame(&mut h);
+    assert!(saved(&h).contains("sidebar-width = 400"));
+
+    // Once the drag ends, a changed width in the file applies again.
+    on_disk.sidebar_width = 240;
+    on_disk.save(&h.home.config).unwrap();
+    h.cx.dispatch_action(crate::workspace_view::ReloadConfig);
+    draw_drag_frame(&mut h);
+    assert_eq!(width(&h), 240);
+    let grip = h.cx.debug_bounds("sidebar-grip").unwrap();
+    assert!((f32::from(grip.right()) - 240.).abs() <= 2.0, "{grip:?}");
 }
 
 #[gpui::test]
