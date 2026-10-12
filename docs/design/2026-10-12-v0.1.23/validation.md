@@ -230,3 +230,16 @@
 - 같은 원본의 로컬 단독 검사는 1개 통과(17.10초)했다. 로컬에서 동일 실패를 재현했다고 주장하지 않는다.
 - 고정 GPUI `f8c2cc8`의 `simulate_next_frame`은 예약된 콜백만 실행한다. 이미 검증된 drag 표시 helper를 sidebar 공통 검사 helper로 이름을 바꾸고, Sessions 토글·scroll 위치 변경·기대 offset 계산·reveal 전후에 실제 `Window::draw`와 같은 App의 arena 정리를 적용했다. 제품의 reveal·scroll 구현, 선택·offset·row bounds·repository context·background refresh assertion은 유지했다.
 - 보완 후 단독 이동 검사 1개(8.74초), 전체 UI **202 passed**(56.23초), UI all-targets clippy가 통과했다. 최종 HEAD의 원격 전체 CI를 재확인한다. 이 검사는 실제 macOS 화면 검수로 세지 않는다.
+
+## 영역 6 · 공유 복사와 릴리스 인수조건 (#229)
+
+- Claude Code 2.1.296와 Codex 0.162.1이 실제 100×50 PTY에서 격리된 합성 대화를 resume했다. model endpoint는 닫힌 loopback으로 고정했으며 외부 model 요청은 없었다. 고정 Ghostty VT에 ANSI를 재생하고 실제 mouse selection으로 Claude code+nested-list 부분과 Codex code 부분을 추출했다. Claude의 raw ANSI 문자열에는 cursor 이동 때문에 문장 공백이 연속 byte로 없었지만 VT replay는 전체 fixture를 표시했다. 두 CLI의 독립 native 최종 검수를 대신하는 근거는 아니다.
+- RED: 옛 whole-answer gutter 구현은 실제 Claude 부분 선택의 code/list indent를 복원하지 못했다. 불완전 exact transcript를 건너뛰어 유일한 source로 오인하는 별도 회귀도 실패했다.
+- 확인된 버전별 gutter·hidden fence projection을 source offsets에 묶어 선택한 source ranges만 연결한다. Claude의 확인된 even-indent hyphen list nesting은 표시된 각 여백 cell을 원래 whitespace group으로 대응한다. Unicode 경계·partial first/last line·중복/overlapping source·원문 내 pipe/quote/table·불완전/unknown layout은 회귀로 확인한다. 일반 Copy와 기존 preview scope·clipboard-before-confirm은 유지한다.
+- 수정 후 sharing unit 8 tests, 실제 PTY sharing UI 6 tests 통과. 새 UI는 ordinary Copy의 원래 선택, 공유 preview의 선택 indent, 확정 후 clipboard를 함께 확인한다. 최초 UI fixture 입력에서 raw 개행이 shell 편집기로 소비된 실패와 shell 출력 전 injected hook이 해제된 실패는 제품 RED로 세지 않는다. printf escape와 출력 후 exact hook으로 실제 source scope를 맞췄다.
+- 릴리스 정책 RED: v0.1.23이 과거 16개 coverage만으로 통과하던 합성 회귀가 실패했다. 버전별 계약 뒤 41 policy tests 통과. 16 ISSUE case 각각을 모든 round와 두 E2E에서 하나씩 제거해 거부를 확인하며 v0.1.21/v0.1.22 기존 계약과 예외의 version 한정을 보존한다. 이 합성 결과는 실제 릴리스 증거가 아니다.
+
+### 공유 복사 교차 리뷰와 순차 통합
+
+- 공유 복사·릴리스 검증기의 `5c0c22e` 읽기 전용 교차 리뷰는 지적 없음으로 완료했다. 이 리뷰는 native 인수 검수나 실제 릴리스 증거가 아니다.
+- 최신 경로·메뉴·sidebar·세션 변경과 고정 dependency 준비를 공유 복사 브랜치에 통합했다. 제품 문서 6개, source 준비 11개, dependency 3개, release policy 41개와 생성 문서 일치 검사를 다시 확인했다.

@@ -50,5 +50,31 @@
     "matched": false,
     "ansi_sha256": "3690a20816a8b4e0f1044b48eb1db6bd3db68d8c714ff9d6991c0b58a54284aa",
     "external_model_requests": 0
+  },
+  {
+    "agent": "claude",
+    "version": "2.1.296",
+    "layout": "partial-code-and-list",
+    "columns": 100,
+    "rows": 50,
+    "original": "V023 FORMAT FIXTURE\n\n```python\ndef sample():\n    if True:\n        return 42\n```\n\n- outer\n    - nested\n\n| Column | Value |\n| --- | --- |\n| Keep | pipe |\n\n> deliberate quote\n\nEND V023 FIXTURE",
+    "selected": "def sample():\n      if True:\n          return 42\n\n  - outer\n    - nested",
+    "expected": "def sample():\n    if True:\n        return 42\n\n- outer\n    - nested",
+    "matched": true,
+    "ansi_sha256": "990cd30d16f254e2e359c9acf615af0718a2ec6e8762ad84bc7fcf6b97d27e65",
+    "external_model_requests": 0
+  },
+  {
+    "agent": "codex",
+    "version": "0.162.1",
+    "layout": "partial-code",
+    "columns": 100,
+    "rows": 50,
+    "original": "V023 FORMAT FIXTURE\n\n```python\ndef sample():\n    if True:\n        return 42\n```\n\n- outer\n    - nested\n\n| Column | Value |\n| --- | --- |\n| Keep | pipe |\n\n> deliberate quote\n\nEND V023 FIXTURE",
+    "selected": "def sample():\n      if True:\n          return 42",
+    "expected": "def sample():\n    if True:\n        return 42",
+    "matched": true,
+    "ansi_sha256": "1a5b4d449f9231c4a33700e5cb06574a0cf43a17b7aeef6fb194dd78a68a0430",
+    "external_model_requests": 0
   }
 ]

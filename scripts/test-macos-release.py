@@ -144,6 +144,43 @@ class EvidenceTests(unittest.TestCase):
             release.read_json_text(' ' * 65537)
 
 
+class V023CoverageTests(unittest.TestCase):
+    def test_v023_rejects_historical_coverage_in_every_round_and_e2e(self):
+        data = evidence()
+        data['candidate']['tag'] = 'v0.1.23'
+        with self.assertRaises(ValueError):
+            release.validate_evidence(data, 'v0.1.23', SHA, TREE, CONFIG,
+                                      'before-build', now=NOW)
+
+    def test_v023_requires_every_issue_in_each_round_and_both_final_runs(self):
+        for stage in ('before-build', 'before-deploy'):
+            data = evidence(stage)
+            data['candidate']['tag'] = 'v0.1.23'
+            for run in [*data['rounds'], data['run']]:
+                run['cases'] = sorted(release.V023_CASES)
+            kwargs = dict(built_at=timestamp(2), artifact_sha256='a' * 64) if stage == 'before-deploy' else {}
+            release.validate_evidence(data, 'v0.1.23', SHA, TREE, CONFIG, stage, now=NOW, **kwargs)
+            for n in range(4):
+                for case in release.V023_CASES - release.CASES:
+                    incomplete = copy.deepcopy(data)
+                    target = incomplete['rounds'][n] if n < 3 else incomplete['run']
+                    target['cases'].remove(case)
+                    with self.subTest(stage=stage, run=n, case=case), self.assertRaises(ValueError):
+                        release.validate_evidence(incomplete, 'v0.1.23', SHA, TREE, CONFIG, stage, now=NOW, **kwargs)
+
+    def test_historical_contract_remains_exact_and_future_versions_keep_regressions(self):
+        for tag in ('v0.1.21', 'v0.1.22'):
+            data=evidence()
+            data['candidate']['tag']=tag
+            release.validate_evidence(data, tag, SHA, TREE, CONFIG, 'before-build', now=NOW)
+            data['run']['cases'].append('ISSUE-229')
+            with self.assertRaises(ValueError):
+                release.validate_evidence(data, tag, SHA, TREE, CONFIG, 'before-build', now=NOW)
+        self.assertEqual(release.cases_for('v0.1.23'), release.V023_CASES)
+        self.assertEqual(release.cases_for('v0.1.24'), release.V023_CASES)
+        self.assertEqual(release.cases_for('v0.2.0'), release.V023_CASES)
+
+
 def exception_record(sha=SHA, tree=TREE):
     return json.dumps({
         'schema': 1, 'tag': 'v0.1.21', 'sha': sha, 'tree': tree,
