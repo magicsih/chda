@@ -122,7 +122,7 @@ document do not run. Mermaid blocks inside Markdown become diagrams too.
 </p>
 
 <p align="center">
-  <img src="docs/media/sessions.png" alt="The Sessions list in a light theme: a working Claude Code pane, a Codex pane in the same tab, an agent waiting for input, an idle agent and a plain terminal, above PROJECT with the focused branch highlighted" width="880">
+  <img src="docs/media/sessions.png" alt="The Sessions list in a light theme: a working Claude Code #1 pane and a waiting Codex #2 pane in the same split tab, with a plain terminal above PROJECT and the focused main branch highlighted" width="880">
 </p>
 <!-- END GENERATED FEATURES -->
 
