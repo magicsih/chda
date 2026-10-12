@@ -197,3 +197,9 @@
 - 추가 교차 리뷰는 요청하지 않는다. 수정 자체의 회귀와 clippy, 최종 HEAD의 CI를 확인하고 실제 macOS 검수는 별도로 수행한다.
 
 - 마지막 경로 수정 뒤 terminal links 19 tests, 실제 PTY path UI 11 tests, term/UI all-targets clippy 통과. 삭제 후 두 번 클릭과 출력 없는 longest 파일 생성을 포함한다.
+
+### 도착한 경로 리뷰 thread 처리
+
+- 정확히 16개의 bare 후보 뒤 별도 legacy token이 17번째로 추가되는 경계를 수정 전 테스트에서 재현했다. 인용·괄호 후보와 legacy fallback까지 하나의 16개 한도를 사용하며 같은 target은 우선순위가 높은 첫 셀 범위를 유지한다. 한도를 넘은 cut token은 열지 않는다. 수정 뒤 경로 테스트 18개와 실제 PTY UI 11개, term/UI all-targets clippy가 통과했다.
+- 삭제된 표시 target의 두 번 클릭 회귀에 hovered_link가 비워지는 assertion을 추가했다. 제품 수정 없이 통과해 오래된 hint 지적은 현재 HEAD에서 해소됨을 확인했다. 포인터보다 앞에서 끝나는 후보 문제는 앞선 교차 리뷰 수정과 기존 README 뒤쪽 경로 회귀로 해소됐다.
+- missing 후보를 넓게 negative-cache하는 제안은 출력 없이 생성된 파일과 인접 경로를 다시 찾는 승인 동작을 숨기므로 채택하지 않는다. 각 탐색은 16회 한도 안에서 수행하며 잘못된 prefix나 캐시를 자동 선택하지 않는다. 추가 코드 리뷰 요청은 하지 않았다.

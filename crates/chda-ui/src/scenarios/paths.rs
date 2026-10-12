@@ -558,6 +558,10 @@ fn bare_paths_share_complete_hover_click_and_menu_targets_across_soft_wraps(
                 count,
                 "deleted path changed to a prefix or was opened"
             );
+            assert!(
+                h.read(|_, cx| term.read(cx).hovered_link.is_none()),
+                "rejected target must lose its underline and path hint"
+            );
         }
     }
 }
