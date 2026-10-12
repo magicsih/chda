@@ -6,7 +6,10 @@ from pathlib import Path
 import subprocess
 import tempfile
 import unittest
+import sys
 from unittest.mock import patch
+
+sys.dont_write_bytecode = True
 
 spec = importlib.util.spec_from_file_location('prepare', Path(__file__).with_name('prepare-ghostty.py'))
 prepare = importlib.util.module_from_spec(spec)

@@ -130,3 +130,7 @@
 - 엔진 PR #234가 main `d0f0761`으로 병합됐다. 세션 PR #235의 main 통합 HEAD `6e01b64`에서 세 OS native 빌드가 고정 Codeberg `translate-c` archive의 HTTP 503으로 실패했으며 같은 HEAD 재실행도 같은 오류였다. source·Zig·Ghostty 고정값은 바꾸지 않는다.
 - 앞서 Zig가 받아 둔 정확한 package 파일과 license를 재포장한 92,974-byte archive를 격리 cache에서 실제 Zig 0.16.0 fetch로 검증했다. 원래 `translate_c-0.0.0-Q_BUWhVNBwDOEcIqub4VFPJPB6D9dgwzUMHTX5KWr8Xr`와 일치했다. archive SHA-256을 별도 metadata로 고정하고 준비 시 두 hash를 확인한 뒤 Zig cache에 공급한다. Ghostty source·patch digest·upstream `.zon` URL/hash는 그대로다.
 - archive 변조·Zig hash 불일치·fetch 실패·read-only check의 합성 회귀를 CI에 추가했다. 실제 source 준비와 격리 cache hash 검증은 별도 근거이며 세 OS 최종 CI 통과는 재확인한다.
+
+- 경로 기반 CI의 UI 198/199 통과 실행에서도 마지막 sidebar drag가 180px/기대 600px로 실패했다. GPUI 테스트 입력은 MouseDown 위치로 자동 mouse-move를 합성하지 않는다. 반복 drag의 grip에 먼저 실제 move를 전달하고 각 이동 사이 layout frame을 구동한다. 기존 width·저장값·grip bounds·최솟값/최댓값·무드래그·더블클릭 assertion은 모두 유지한다.
+
+- 수정한 반복 drag 시나리오가 실제 PTY/마우스 이벤트로 통과했다(1 test). 새 final HEAD에서 전체 macOS CI를 확인한다. dependency 준비의 3개 회귀와 Python syntax/format/doc checks를 유지한다.

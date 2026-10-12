@@ -567,6 +567,11 @@ fn drag_grip_to(h: &mut Harness, x: f32) {
         h.cx.debug_bounds("sidebar-grip")
             .expect("the grip is drawn");
     let start = grip.center();
+    // A pointer reaches the grip before pressing it. MouseDown alone does
+    // not model the intervening hover/layout work after a previous drag.
+    h.cx.simulate_mouse_move(start, None, Modifiers::none());
+    h.cx.update(|window, cx| window.simulate_next_frame(cx));
+    h.cx.run_until_parked();
     h.cx.simulate_mouse_down(start, MouseButton::Left, Modifiers::none());
     h.cx.update(|window, cx| window.simulate_next_frame(cx));
     h.cx.run_until_parked();
@@ -576,6 +581,8 @@ fn drag_grip_to(h: &mut Harness, x: f32) {
     for step in 1..=steps {
         let x = f32::from(start.x) + (x - f32::from(start.x)) * step as f32 / steps as f32;
         h.cx.simulate_mouse_move(point(px(x), start.y), MouseButton::Left, Modifiers::none());
+        h.cx.update(|window, cx| window.simulate_next_frame(cx));
+        h.cx.run_until_parked();
     }
     h.cx.simulate_mouse_up(point(px(x), start.y), MouseButton::Left, Modifiers::none());
     h.cx.run_until_parked();
