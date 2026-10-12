@@ -149,3 +149,11 @@
 - 새 후보는 최대 16개/확인으로 제한하고 한도 초과 시 legacy cut-prefix fallback을 제외했다. frame generation·cwd·구간 cache를 hover/click/menu에서 재사용하고 action은 같은 대상의 metadata만 재확인한다. 누락된 대상은 해당 cache 결과를 비운다.
 - 최초 path UI 실행 8/9는 메뉴 종료 후 새 hover 없이 삭제한 fixture 상태에서 실패했다. 표시된 target을 다시 hover하고 이벤트를 안정화한 실제 삭제-클릭 순서로 보완했으며 해당 실행을 통과로 계산하지 않았다.
 - workspace clippy 통과. native #212 검수와 최종 HEAD 전체 CI/Pages 검수는 아직 수행하지 않았다.
+
+## 영역 6 · 공유 복사와 릴리스 인수조건 (#229)
+
+- Claude Code 2.1.296와 Codex 0.162.1이 실제 100×50 PTY에서 격리된 합성 대화를 resume했다. model endpoint는 닫힌 loopback으로 고정했으며 외부 model 요청은 없었다. 고정 Ghostty VT에 ANSI를 재생하고 실제 mouse selection으로 Claude code+nested-list 부분과 Codex code 부분을 추출했다. Claude의 raw ANSI 문자열에는 cursor 이동 때문에 문장 공백이 연속 byte로 없었지만 VT replay는 전체 fixture를 표시했다. 두 CLI의 독립 native 최종 검수를 대신하는 근거는 아니다.
+- RED: 옛 whole-answer gutter 구현은 실제 Claude 부분 선택의 code/list indent를 복원하지 못했다. 불완전 exact transcript를 건너뛰어 유일한 source로 오인하는 별도 회귀도 실패했다.
+- 확인된 버전별 gutter·hidden fence projection을 source offsets에 묶어 선택한 source ranges만 연결한다. Claude의 확인된 even-indent hyphen list nesting은 표시된 각 여백 cell을 원래 whitespace group으로 대응한다. Unicode 경계·partial first/last line·중복/overlapping source·원문 내 pipe/quote/table·불완전/unknown layout은 회귀로 확인한다. 일반 Copy와 기존 preview scope·clipboard-before-confirm은 유지한다.
+- 수정 후 sharing unit 8 tests, 실제 PTY sharing UI 6 tests 통과. 새 UI는 ordinary Copy의 원래 선택, 공유 preview의 선택 indent, 확정 후 clipboard를 함께 확인한다. 최초 UI fixture 입력에서 raw 개행이 shell 편집기로 소비된 실패와 shell 출력 전 injected hook이 해제된 실패는 제품 RED로 세지 않는다. printf escape와 출력 후 exact hook으로 실제 source scope를 맞췄다.
+- 릴리스 정책 RED: v0.1.23이 과거 16개 coverage만으로 통과하던 합성 회귀가 실패했다. 버전별 계약 뒤 41 policy tests 통과. 16 ISSUE case 각각을 모든 round와 두 E2E에서 하나씩 제거해 거부를 확인하며 v0.1.21/v0.1.22 기존 계약과 예외의 version 한정을 보존한다. 이 합성 결과는 실제 릴리스 증거가 아니다.

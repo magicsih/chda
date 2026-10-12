@@ -267,3 +267,90 @@ fn an_open_sharing_preview_defers_update_and_never_copies_after_tab_navigation(
     assert!(h.read(|v, _| v.share_sheet.is_none()));
     assert_eq!(h.read(|v, _| v.ws.focused_pane().unwrap()), focused);
 }
+
+#[gpui::test]
+fn uniquely_matched_partial_code_and_nested_list_restore_in_the_preview(cx: &mut TestAppContext) {
+    use chda_core::agents::HookKind;
+    let cases: serde_json::Value = serde_json::from_str(include_str!(
+        "../../../chda-agents/tests/fixtures/sharing-cli-renderings.json"
+    ))
+    .unwrap();
+    let case = cases
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|case| case["layout"] == "partial-code-and-list")
+        .unwrap();
+    let original = case["original"].as_str().unwrap();
+    let selected = case["selected"].as_str().unwrap();
+    let expected = case["expected"].as_str().unwrap();
+    let mut h = Harness::open(cx, "share-partial", |home| {
+        std::fs::create_dir_all(&home.claude_projects).unwrap();
+        let row = serde_json::json!({"type":"assistant","sessionId":"exact","uuid":"synthetic-a1","version":"2.1.296","cwd":home.home,"message":{"role":"assistant","content":[{"type":"text","text":original}]}});
+        std::fs::write(home.claude_projects.join("exact.jsonl"), format!("{row}\n")).unwrap();
+    });
+    h.wait_prompt();
+    let pane = h.read(|v, _| v.ws.focused_pane().unwrap());
+    let display = format!("  {selected}").replace('\n', r"\r\n");
+    h.run(
+        &format!(
+            "printf '\\033[2J\\033[H%b\\r\\n' {}",
+            chda_term::shell_quote(&display)
+        ),
+        "def sample",
+    );
+    h.wait_prompt();
+    let term = h.focused_terminal();
+    let rows = selected.lines().count();
+    h.wait_for("the partial draft on the terminal grid", |_, cx| {
+        term.read(cx)
+            .frame()
+            .row_text(0)
+            .starts_with("  def sample")
+    });
+    h.hook_session(
+        Some(pane.raw()),
+        &h.home.home,
+        HookKind::SessionStart,
+        "exact",
+    );
+    h.wait_for("the exact selected conversation", |v, _| {
+        v.ws.pane(pane)
+            .unwrap()
+            .agent_session
+            .as_ref()
+            .is_some_and(|s| s.session == "exact")
+    });
+    let (first, last) = h.read(|_, cx| {
+        let g = term.read(cx).geometry.unwrap();
+        (
+            point(
+                g.origin.x + g.cell_width * 2.5,
+                g.origin.y + g.line_height * 0.5,
+            ),
+            point(
+                g.origin.x
+                    + g.cell_width
+                        * (selected.lines().last().unwrap().chars().count() as f32 - 0.5),
+                g.origin.y + g.line_height * (rows as f32 - 0.5),
+            ),
+        )
+    });
+    select(&mut h, first, last);
+    let copy = action(&mut h, "Copy");
+    run(&mut h, copy);
+    h.wait_for("ordinary Copy retains the displayed selection", |_, cx| {
+        cx.read_from_clipboard().and_then(|c| c.text()).as_deref() == Some(selected)
+    });
+    select(&mut h, first, last);
+    preview(&mut h);
+    let input = h.read(|v, _| v.share_sheet.as_ref().unwrap().input.clone().unwrap());
+    assert_eq!(input.read_with(&h.cx, |i, _| i.text().to_owned()), expected);
+    assert_eq!(
+        clipboard(&h).as_deref(),
+        Some(selected),
+        "preview does not change the clipboard"
+    );
+    h.keys("enter");
+    assert_eq!(clipboard(&h).as_deref(), Some(expected));
+}

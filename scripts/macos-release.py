@@ -22,6 +22,16 @@ REPO = 'magicsih/chda'
 CASES = frozenset(('PATH-164 NAV-149 PR-150 TREE-151 REMOVE-152 QUOTA-153 '
                    'CLOSE-154 NOTIFY-155 COPY-158 POLICY-159 RESTART-160 '
                    'CHILD-161 REVIEW-162 PREP-163 PICKER-181 SESSIONS-182').split())
+V023_CASES = CASES | frozenset(f'ISSUE-{n}' for n in (
+    208, 209, 210, 211, 212, 216, 217, 219, 220, 224, 226, 227, 228, 229, 230, 231))
+
+
+def cases_for(tag):
+    # The candidate validator has already required a stable SemVer tag.
+    version = tuple(int(part) for part in tag.removeprefix('v').split('.'))
+    return V023_CASES if version >= (0, 1, 23) else CASES
+
+
 FEATURES = frozenset(('Terminal', 'Tabs and splits', 'App updates', 'Title bar',
                       'Notifications', 'Sidebar', 'Worktrees', 'Git history',
                       'Diff review', 'Agents', 'Status bar', 'Palette', 'Config'))
@@ -121,7 +131,7 @@ def candidate(value, tag, sha, tree, config):
             'Evidence belongs to another candidate or configuration')
 
 
-def validate_run(run, implementer, now, is_round=False):
+def validate_run(run, implementer, now, is_round=False, expected_cases=CASES):
     names = ('kind', 'result', 'started_at', 'completed_at', 'reviewer_sha256',
              'plan_sha256', 'evidence_sha256', 'cases', 'features', 'environment')
     if is_round:
@@ -132,7 +142,7 @@ def validate_run(run, implementer, now, is_round=False):
     for name in ('reviewer_sha256', 'plan_sha256', 'evidence_sha256'):
         digest(run[name])
     require(run['reviewer_sha256'] != implementer, 'An independent reviewer is required')
-    unique_items(run['cases'], CASES)
+    unique_items(run['cases'], expected_cases)
     unique_items(run['features'], FEATURES)
     env = run['environment']
     fields(env, ('os', 'os_version', 'architecture', 'claude_version', 'codex_version', 'isolated'))
@@ -284,7 +294,8 @@ def validate_evidence(data, tag, sha, tree, config, stage, now=None,
     previous_end = None
     evidence_hashes = set()
     for number, review in enumerate(rounds, 1):
-        start, end = validate_run(review, data['implementer_sha256'], now, is_round=True)
+        start, end = validate_run(review, data['implementer_sha256'], now, is_round=True,
+                                  expected_cases=cases_for(tag))
         require(type(review['number']) is int and review['number'] == number,
                 'Review rounds must be ordered 1, 2, 3')
         digest(review['sha'], 40)
@@ -294,7 +305,7 @@ def validate_evidence(data, tag, sha, tree, config, stage, now=None,
         require(review['evidence_sha256'] not in evidence_hashes, 'Review evidence was reused')
         evidence_hashes.add(review['evidence_sha256'])
         previous_end = end
-    start, end = validate_run(data['run'], data['implementer_sha256'], now)
+    start, end = validate_run(data['run'], data['implementer_sha256'], now, expected_cases=cases_for(tag))
     require(previous_end <= start and data['run']['evidence_sha256'] not in evidence_hashes,
             'The final E2E must be a separate run after the three review rounds')
     # Freshness is checked at the runner immediately before the relevant action.
