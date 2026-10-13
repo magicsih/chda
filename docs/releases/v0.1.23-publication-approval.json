@@ -1,0 +1,22 @@
+{
+  "accepted_at": "2026-10-13T13:45:44Z",
+  "accepted_interpretation": "publish-with-incomplete-native-validation",
+  "blocked_evidence_sha256": "a6246f6205af19f6a7b828f01f3500605bf6634c3a2fd7a62f89cac4a21b53d1",
+  "config_sha256": "092918dfb79c3e1bf04e437576c222f0df58a0098c33bd16c73e2296d54c50be",
+  "incomplete_checks": [
+    "before-build-native-e2e",
+    "before-deploy-native-e2e",
+    "gui-ipc",
+    "session-preserving-update",
+    "shell-pid-preservation",
+    "signed-launch",
+    "three-native-review-rounds"
+  ],
+  "independent_assessment_sha256": "bd3541197ea1c77611841649c6d6549e21ae92b31e856e0a26b325c4c3fa4692",
+  "owner": "magicsih",
+  "owner_instruction": "PR 병합하고 공개해 빨리. 아무도 쓰는 사람도 없는데 뭘 자꾸 뜸을드려 빨리 빨리 좀 해 그냥",
+  "schema": 1,
+  "sha": "529cb42937bb769a065c156bd7137f52fbe5bcd1",
+  "tag": "v0.1.23",
+  "tree": "451c23e43d1e99a7ac0a8d0b751e17d42e4a446b"
+}

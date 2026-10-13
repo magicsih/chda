@@ -262,6 +262,54 @@ class ExceptionEvidenceTests(unittest.TestCase):
             self.verify(data, record, built_at=timestamp(-1), artifact_sha256='a' * 64)
 
 
+
+class V023PublicationApprovalTests(unittest.TestCase):
+    def approval(self):
+        value = json.loads(exception_record())
+        value.update(tag='v0.1.23', owner_instruction='PR 병합하고 공개해 빨리. 아무도 쓰는 사람도 없는데 뭘 자꾸 뜸을드려 빨리 빨리 좀 해 그냥')
+        return json.dumps(value, sort_keys=True)
+
+    def evidence(self, record, stage='before-build'):
+        value = exception_evidence(record, stage)
+        value['candidate']['tag'] = 'v0.1.23'
+        return value
+
+    def verify(self, data, record, tag='v0.1.23', **kwargs):
+        return release.validate_evidence(data, tag, SHA, TREE, CONFIG,
+            data['stage'], now=NOW, exception_record=record, **kwargs)
+
+    def test_new_owner_approval_preserves_incomplete_build_and_deploy(self):
+        record = self.approval()
+        before = self.evidence(record)
+        self.assertEqual(self.verify(before, record)['native_result'], 'blocked')
+        after = self.evidence(record, 'before-deploy')
+        self.verify(after, record, built_at=timestamp(1), artifact_sha256='a' * 64)
+
+    def test_old_approval_future_tag_fake_pass_and_changed_archive_are_rejected(self):
+        record = self.approval()
+        for other in (None, exception_record(), reduced_exception_record()):
+            with self.subTest(record=other), self.assertRaises(ValueError):
+                self.verify(self.evidence(record), other)
+        for mutate in (
+            lambda d: d.update(native_result='passed'),
+            lambda d: d['incomplete_checks'].remove('gui-ipc'),
+            lambda d: d['candidate'].update(sha='9' * 40),
+        ):
+            data = self.evidence(record)
+            mutate(data)
+            with self.subTest(mutate=mutate), self.assertRaises(ValueError):
+                self.verify(data, record)
+        future_record = json.loads(record)
+        future_record['tag'] = 'v0.1.24'
+        future_record = json.dumps(future_record, sort_keys=True)
+        future = self.evidence(future_record)
+        future['candidate']['tag'] = 'v0.1.24'
+        with self.assertRaises(ValueError):
+            self.verify(future, future_record, tag='v0.1.24')
+        with self.assertRaises(ValueError):
+            self.verify(self.evidence(record, 'before-deploy'), record,
+                        built_at=timestamp(1), artifact_sha256='d' * 64)
+
 def reduced_exception_record():
     record = json.loads(exception_record())
     record.update(tag='v0.1.22', owner_instruction='예외 출시: 반복 검수 생략 (권장)',
