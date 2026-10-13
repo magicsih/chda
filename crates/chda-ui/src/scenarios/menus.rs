@@ -85,11 +85,22 @@ fn agent_presets_start_from_the_palette_and_the_sidebar_menu(cx: &mut TestAppCon
 }
 
 #[gpui::test]
-fn codex_sessions_resume_with_the_login_shell_path(cx: &mut TestAppContext) {
+fn codex_legacy_sessions_are_listed_and_resume_with_the_login_shell_path(cx: &mut TestAppContext) {
     use crate::sidebar_view::{SessionPick, SidebarEvent};
     use std::os::unix::fs::PermissionsExt;
+    let mut repo = std::path::PathBuf::new();
     let mut h = Harness::open(cx, "codex-path", |home| {
-        home.codex_session(&home.home, "saved-session");
+        repo = home.repo("app");
+        std::fs::write(&home.config, format!("repos = [\"{}\"]\n", repo.display())).unwrap();
+        home.codex_session(&repo, "saved-session");
+        let transcript = home
+            .home
+            .join(".codex/sessions/rollout-2026-10-01-saved-session.jsonl");
+        let metadata = std::fs::read_to_string(&transcript).unwrap();
+        std::fs::write(&transcript, format!("{metadata}{}\n{}\n",
+            serde_json::json!({"type":"response_item","payload":{"type":"message","role":"user","content":[{"type":"input_text","text":"resume this exact conversation"}]}}),
+            serde_json::json!({"type":"event_msg","payload":{"type":"user_message","message":"resume this exact conversation"}}),
+        )).unwrap();
         let bin = home.bin.join("codex");
         std::fs::create_dir_all(&home.bin).unwrap();
         std::fs::write(
@@ -106,7 +117,25 @@ fn codex_sessions_resume_with_the_login_shell_path(cx: &mut TestAppContext) {
         .unwrap();
     });
     h.wait_prompt();
-    let cwd = h.home.home.clone();
+    h.wait_for(
+        "the default Codex conversation in the worktree resume list",
+        {
+            let repo = repo.clone();
+            move |v, cx| {
+                v.sidebar
+                    .read(cx)
+                    .model
+                    .worktree_for_path(&repo)
+                    .is_some_and(|(_, w)| {
+                        w.sessions.len() == 1
+                            && w.sessions[0].id == "saved-session"
+                            && w.sessions[0].snippet == "resume this exact conversation"
+                            && w.sessions[0].message_count == 1
+                    })
+            }
+        },
+    );
+    let cwd = repo;
     h.cx.update(|window, cx| {
         h.view.update(cx, |v, cx| {
             v.on_sidebar_event(

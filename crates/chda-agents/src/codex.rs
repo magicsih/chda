@@ -167,6 +167,51 @@ fn user_message_text(item: &Value) -> Option<String> {
     }
 }
 
+// These eight contextual wrappers recognized by Codex 0.162.1 use complete,
+// case-insensitive markers with leading/trailing whitespace ignored. A partial wrapper or
+// markers inside a normal prompt remain user input.
+fn is_context_message(text: &str) -> bool {
+    const WRAPPERS: &[(&str, &str)] = &[
+        ("# AGENTS.md instructions", "</INSTRUCTIONS>"),
+        ("<environment_context>", "</environment_context>"),
+        ("<skill>", "</skill>"),
+        ("<user_shell_command>", "</user_shell_command>"),
+        ("<turn_aborted>", "</turn_aborted>"),
+        ("<subagent_notification>", "</subagent_notification>"),
+        (
+            "<agent_message_board_notification>",
+            "</agent_message_board_notification>",
+        ),
+        ("<recommended_plugins>", "</recommended_plugins>"),
+    ];
+    let text = text.trim();
+    WRAPPERS.iter().any(|(open, close)| {
+        text.get(..open.len())
+            .is_some_and(|s| s.eq_ignore_ascii_case(open))
+            && text
+                .get(text.len().saturating_sub(close.len())..)
+                .is_some_and(|s| s.eq_ignore_ascii_case(close))
+    })
+}
+
+fn response_user_text(item: &Value) -> Option<String> {
+    if item.get("type").and_then(Value::as_str) != Some("message")
+        || item.get("role").and_then(Value::as_str) != Some("user")
+    {
+        return None;
+    }
+    let blocks = item.get("content")?.as_array()?;
+    let text: Vec<&str> = blocks
+        .iter()
+        .filter(|b| b.get("type").and_then(Value::as_str) == Some("input_text"))
+        .filter_map(|b| b.get("text").and_then(Value::as_str))
+        .collect();
+    if text.is_empty() || text.iter().any(|s| is_context_message(s)) {
+        return None;
+    }
+    Some(text.join(" "))
+}
+
 /// Token usage of a rollout, fed line by line. `token_count` events carry
 /// running totals for the session; each increase is counted toward the
 /// model of the turn it happened in (`turn_context`), so a session that
@@ -218,18 +263,23 @@ impl UsageTracker {
     }
 }
 
-/// Parse a Codex rollout: `session_meta` for id and cwd, then
-/// `event_msg`/`item_completed` with a `UserMessage` item per prompt.
+/// Parse both Codex history modes. Explicit user events/items are authoritative;
+/// response-only rollouts fall back to user input without contextual wrappers.
+/// Model-input copies never double-count an explicit prompt.
 pub fn parse_rollout(file: &Path) -> Option<AgentSession> {
     let mut id = None;
     let mut cwd = None;
     let mut started_at = None;
     let mut first = None;
     let mut count = 0;
+    let mut response_first = None;
+    let mut response_count = 0;
     let mut tracker = UsageTracker::default();
     let needles = &[
         "session_meta",
         "UserMessage",
+        "\"user_message\"",
+        "\"input_text\"",
         "\"turn_context\"",
         "\"token_count\"",
     ];
@@ -264,27 +314,43 @@ pub fn parse_rollout(file: &Path) -> Option<AgentSession> {
             }
             Some("event_msg") => {
                 let Some(p) = payload else { continue };
-                match p.get("type").and_then(Value::as_str) {
+                let text = match p.get("type").and_then(Value::as_str) {
                     Some("token_count") => {
                         tracker.token_count(p);
                         continue;
                     }
-                    Some("item_completed") => {}
-                    _ => continue,
-                }
-                let Some(item) = p.get("item") else { continue };
-                if item.get("type").and_then(Value::as_str) != Some("UserMessage") {
-                    continue;
-                }
-                if let Some(text) = user_message_text(item) {
+                    Some("user_message") => {
+                        p.get("message").and_then(Value::as_str).map(str::to_owned)
+                    }
+                    Some("item_completed") => p
+                        .get("item")
+                        .filter(|item| {
+                            item.get("type").and_then(Value::as_str) == Some("UserMessage")
+                        })
+                        .and_then(user_message_text),
+                    _ => None,
+                };
+                if let Some(text) = text {
                     count += 1;
                     if first.is_none() {
                         first = Some(text);
                     }
                 }
             }
+            Some("response_item") => {
+                if let Some(text) = payload.and_then(response_user_text) {
+                    response_count += 1;
+                    if response_first.is_none() {
+                        response_first = Some(text);
+                    }
+                }
+            }
             _ => {}
         }
+    }
+    if first.is_none() {
+        first = response_first;
+        count = response_count;
     }
     let first = first?;
     let last_active_at = file_mtime_ms(file)?;
@@ -304,6 +370,134 @@ pub fn parse_rollout(file: &Path) -> Option<AgentSession> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn parse_test_rollout(name: &str, rows: &[Value]) -> Option<AgentSession> {
+        let dir = std::env::temp_dir().join(format!("chda-codex-{name}-{}", std::process::id()));
+        fs::create_dir_all(&dir).unwrap();
+        let file = dir.join("rollout.jsonl");
+        fs::write(
+            &file,
+            rows.iter()
+                .map(Value::to_string)
+                .collect::<Vec<_>>()
+                .join("\n"),
+        )
+        .unwrap();
+        let session = parse_rollout(&file);
+        fs::remove_dir_all(dir).unwrap();
+        session
+    }
+
+    fn metadata() -> Value {
+        serde_json::json!({"type":"session_meta", "payload":{
+            "id":"thread-legacy", "cwd":"/work/app",
+            "timestamp":"2026-10-12T18:00:00Z"
+        }})
+    }
+
+    fn user_response(text: &str) -> Value {
+        serde_json::json!({"type":"response_item", "payload":{
+            "type":"message", "role":"user",
+            "content":[{"type":"input_text", "text":text}]
+        }})
+    }
+
+    #[test]
+    fn legacy_user_events_keep_repeated_prompts_without_counting_response_copies() {
+        let message = serde_json::json!({"type":"event_msg", "payload":{
+            "type":"user_message", "message":"같은 요청을 다시 실행해줘"
+        }});
+        let session = parse_test_rollout(
+            "legacy",
+            &[
+                metadata(),
+                user_response(
+                    "# AGENTS.md instructions for /work/app\n<INSTRUCTIONS>context</INSTRUCTIONS>",
+                ),
+                user_response("같은 요청을 다시 실행해줘"),
+                message.clone(),
+                user_response("같은 요청을 다시 실행해줘"),
+                message,
+            ],
+        )
+        .expect("the default Codex history must appear in Resume");
+        assert_eq!(session.id, SessionId("thread-legacy".into()));
+        assert_eq!(session.cwd, PathBuf::from("/work/app"));
+        assert_eq!(
+            session.started_at,
+            parse_rfc3339_ms("2026-10-12T18:00:00Z").unwrap()
+        );
+        assert_eq!(session.snippet, "같은 요청을 다시 실행해줘");
+        assert_eq!(session.message_count, 2);
+    }
+
+    #[test]
+    fn response_only_history_uses_user_input_and_ignores_other_roles() {
+        let session = parse_test_rollout("responses", &[
+            metadata(),
+            serde_json::json!({"type":"response_item", "payload":{
+                "type":"message", "role":"developer", "content":[{"type":"input_text", "text":"developer context"}]
+            }}),
+            user_response("코드 정리해줘"),
+            serde_json::json!({"type":"response_item", "payload":{
+                "type":"message", "role":"assistant", "content":[{"type":"output_text", "text":"answer"}]
+            }}),
+            user_response("코드 정리해줘"),
+        ]).expect("a response-only saved conversation must remain resumable");
+        assert_eq!(session.snippet, "코드 정리해줘");
+        assert_eq!(session.message_count, 2);
+        assert_eq!(session.cwd, PathBuf::from("/work/app"));
+    }
+
+    #[test]
+    fn response_fallback_excludes_complete_context_blocks_but_keeps_normal_prompts() {
+        let context = [
+            "  # agents.md instructions for /work/app\n<INSTRUCTIONS>context</instructions>  ",
+            " <ENVIRONMENT_CONTEXT>context</environment_context> ",
+            "<skill>context</skill>",
+            "<user_shell_command>context</user_shell_command>",
+            "<turn_aborted>context</turn_aborted>",
+            "<subagent_notification>context</subagent_notification>",
+            "<agent_message_board_notification>context</agent_message_board_notification>",
+            "<recommended_plugins>context</recommended_plugins>",
+        ];
+        let mut rows = vec![metadata()];
+        rows.extend(context.iter().map(|s| user_response(s)));
+        rows.push(serde_json::json!({"type":"response_item", "payload":{
+            "type":"message", "role":"user", "content":[
+                {"type":"input_text", "text":"<environment_context>context</environment_context>"},
+                {"type":"input_text", "text":"another context block"}
+            ]
+        }}));
+        rows.push(serde_json::json!({"type":"response_item", "payload":{
+            "type":"message", "role":"user", "content":[{"type":"output_text", "text":"not input"}]
+        }}));
+        assert!(parse_test_rollout("context-only", &rows).is_none());
+        rows.push(user_response(
+            "Explain <environment_context>context</environment_context>",
+        ));
+        rows.push(user_response(
+            "<environment_context>this prompt has no closing wrapper",
+        ));
+        let session = parse_test_rollout("context-and-prompt", &rows).unwrap();
+        assert_eq!(
+            session.snippet,
+            "Explain <environment_context>context</environment_context>"
+        );
+        assert_eq!(session.message_count, 2);
+    }
+
+    #[test]
+    fn paginated_user_items_take_precedence_over_response_copies() {
+        let session = parse_test_rollout("paginated", &[
+            metadata(), user_response("context copied into model input"),
+            serde_json::json!({"type":"event_msg", "payload":{
+                "type":"item_completed", "item":{"type":"UserMessage", "content":[{"type":"text", "text":"visible request"}]}
+            }}),
+        ]).unwrap();
+        assert_eq!(session.snippet, "visible request");
+        assert_eq!(session.message_count, 1);
+    }
 
     #[test]
     fn runtime_titles_distinguish_work_user_input_and_background_waiting() {

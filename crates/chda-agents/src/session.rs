@@ -36,7 +36,7 @@ pub struct AgentSession {
 const CACHE_FILE: &str = "session-index.json";
 
 /// Bumped when the cached data changes shape or meaning.
-const CACHE_VERSION: u32 = 3;
+const CACHE_VERSION: u32 = 4;
 
 /// What is known about one transcript file at a given mtime and size.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
@@ -383,6 +383,56 @@ mod tests {
             &SessionId("parent-session".into())
         ));
         std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn pre_legacy_cache_reparses_an_unchanged_codex_rollout() {
+        let dir = std::env::temp_dir().join(format!("chda-legacy-cache-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let file = dir.join("rollout.jsonl");
+        std::fs::write(&file, concat!(
+            r#"{"type":"session_meta","payload":{"id":"legacy","cwd":"/work/app"}}"#, "\n",
+            r#"{"type":"event_msg","payload":{"type":"user_message","message":"actual prompt"}}"#, "\n",
+        )).unwrap();
+        let mut entries = HashMap::new();
+        entries.insert(
+            file.clone(),
+            Entry {
+                mtime_ms: file_mtime_ms(&file).unwrap(),
+                len: std::fs::metadata(&file).unwrap().len(),
+                cwd: Some("/work/app".into()),
+                parsed: Some(Some(AgentSession {
+                    id: SessionId("legacy".into()),
+                    agent: AgentId::Codex,
+                    cwd: "/work/app".into(),
+                    started_at: 1,
+                    last_active_at: 1,
+                    snippet: "stale context".into(),
+                    message_count: 99,
+                    file: file.clone(),
+                    usage: Default::default(),
+                })),
+            },
+        );
+        std::fs::write(
+            dir.join(CACHE_FILE),
+            serde_json::to_vec(&CacheFile {
+                version: 3,
+                entries,
+            })
+            .unwrap(),
+        )
+        .unwrap();
+        let session = SessionCache::load(&dir).session(
+            &file,
+            |_| true,
+            || head_cwd(&file),
+            || crate::codex::parse_rollout(&file),
+        );
+        std::fs::remove_dir_all(dir).unwrap();
+        let session = session.expect("old cached semantics must be re-indexed");
+        assert_eq!(session.snippet, "actual prompt");
+        assert_eq!(session.message_count, 1);
     }
 
     #[test]
