@@ -43,6 +43,7 @@ EXCEPTION_PATH = 'docs/releases/v0.1.21-native-input-exception.json'
 EXCEPTION_PATHS = {
     'v0.1.21': EXCEPTION_PATH,
     'v0.1.22': 'docs/releases/v0.1.22-native-validation-exception.json',
+    'v0.1.23': 'docs/releases/v0.1.23-publication-approval.json',
 }
 POSTBUILD_EXCEPTION_PATH = 'docs/releases/v0.1.22-signed-update-exception.json'
 POSTBUILD_CHECKS = {
@@ -169,7 +170,9 @@ def validate_exception(data, record_text, tag, sha, tree, config, stage, now,
     if reduced:
         record_names += ('observed_failures',)
     fields(record, record_names)
-    instruction = ('예외 출시: 반복 검수 생략 (권장)' if reduced else '이제 좀 공개해라 좀')
+    instruction = ('PR 병합하고 공개해 빨리. 아무도 쓰는 사람도 없는데 뭘 자꾸 뜸을드려 빨리 빨리 좀 해 그냥'
+                   if tag == 'v0.1.23' else
+                   ('예외 출시: 반복 검수 생략 (권장)' if reduced else '이제 좀 공개해라 좀'))
     require(type(record['schema']) is int and record['schema'] == 1
             and record['owner'] == 'magicsih'
             and record['owner_instruction'] == instruction
@@ -599,7 +602,13 @@ def main():
         notes = command('bash', 'scripts/release-notes.sh', tag)
         require(bool(notes), 'The release-plz changelog section is empty')
         if before['schema'] == 2:
-            if tag == 'v0.1.22':
+            if tag == 'v0.1.23':
+                notes = ('추가 네이티브 검수는 사용자의 공개 지시에 따라 생략했습니다. '
+                         '미완료 검수와 업데이트 완료 미확인은 통과로 표시하지 않았습니다. '
+                         '기존 Developer ID 서명, 공증, 업데이트 서명과 동일 ZIP 검증은 유지합니다. '
+                         '[공개 지시 기록](https://github.com/%s/blob/main/%s).\n\n'
+                         % (REPO, EXCEPTION_PATHS[tag])) + notes
+            elif tag == 'v0.1.22':
                 notes = ('Native UI validation is incomplete in this release. The owner approved omitting '
                          'repeated native review rounds and the two full native E2E runs. '
                          'A completed Codex child can remain Unknown (CHILD-161); this observed failure '
