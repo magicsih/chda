@@ -4,6 +4,18 @@ All notable changes to chda. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); entries are
 generated from conventional commit messages by release-plz.
 
+## [0.1.23](https://github.com/magicsih/chda/compare/v0.1.22...v0.1.23) - 2026-10-13
+
+### Fixed
+
+- *(agents)* Codex 기본 대화를 재개 목록에 표시 ([#245](https://github.com/magicsih/chda/pull/245))
+- *(sharing)* 유일한 부분 선택의 들여쓰기와 0.1.23 인수조건을 검증 ([#240](https://github.com/magicsih/chda/pull/240))
+- *(paths)* 공백·괄호를 포함한 전체 경로와 UTF-8 diff를 표시 ([#238](https://github.com/magicsih/chda/pull/238))
+- *(ui)* 메뉴와 실행 시트의 입력·포커스·Setup 동작을 수정 ([#237](https://github.com/magicsih/chda/pull/237))
+- *(sidebar)* 브랜치를 선택한 뒤 더블클릭으로 열고 행과 분할 번호를 유지 ([#236](https://github.com/magicsih/chda/pull/236))
+- *(session)* 실제 입출력과 대화 디렉터리를 추적하고 종료 출력을 보존
+- *(term)* 스크롤백 크기 변경과 엔진 소스 무결성을 수정
+
 ## [0.1.22](https://github.com/magicsih/chda/compare/v0.1.21...v0.1.22) - 2026-10-11
 
 ### Added
