@@ -71,6 +71,7 @@ jobs:
           fetch-depth: 0
       - name: Select the validated tag with the main verifier
         run: |
+          python3 scripts/test-ghostty-git-boundary.py
           cp scripts/macos-release.py "$RUNNER_TEMP/chda-release-gate.py"
           cp scripts/verify-macos-update.swift "$RUNNER_TEMP/verify-macos-update.swift"
           python3 "$RUNNER_TEMP/chda-release-gate.py" select
@@ -133,7 +134,7 @@ jobs:
         run: |
           set -euo pipefail
           python3 "$RUNNER_TEMP/chda-release-gate.py" check-build
-          scripts/bundle-macos.sh "${RELEASE_TAG#v}"
+          GIT_CEILING_DIRECTORIES="$GITHUB_WORKSPACE/.ghostty-source" scripts/bundle-macos.sh "${RELEASE_TAG#v}"
       - name: Retain signed assets and checksums in a draft
         if: inputs.stage == 'build'
         run: python3 "$RUNNER_TEMP/chda-release-gate.py" draft
