@@ -112,6 +112,8 @@ pub struct ChdaConfig {
     pub sessions_collapsed: bool,
     /// Hide registered folders and starred branches beneath PROJECT.
     pub project_collapsed: bool,
+    /// Repositories whose worktree lists are collapsed in PROJECT.
+    pub collapsed_repos: Vec<PathBuf>,
     /// Agents offered in the sidebar and the palette, by id (`claude`,
     /// `codex`, `gemini`, `copilot`, `opencode`).
     pub agents: Vec<String>,
@@ -156,6 +158,7 @@ impl Default for ChdaConfig {
             active_label: ActiveLabel::Alias,
             sessions_collapsed: false,
             project_collapsed: false,
+            collapsed_repos: Vec::new(),
             agents: vec!["claude".into(), "codex".into()],
             sidebar_width: 280,
             sidebar_visible: true,

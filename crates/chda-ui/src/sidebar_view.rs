@@ -33,6 +33,9 @@ pub enum SidebarEvent {
     AddRepo,
     /// Restore typing focus after a repository disclosure changes.
     RefocusTerminal,
+    /// Repositories were collapsed or expanded: save the state and restore
+    /// typing focus.
+    ReposCollapsed,
     /// Folders were dropped on the sidebar: add them as repositories.
     AddRepos(Vec<PathBuf>),
     /// Open a URL (a pull request badge was clicked).
@@ -159,6 +162,8 @@ const ICON_MISSING: &str = "\u{f0dcc}"; // nf-md-folder_alert
 const ICON_PANES: &str = "\u{f04e9}"; // nf-md-tab
 const ICON_DELETING: &str = "\u{f0a7a}"; // nf-md-trash_can_outline
 const ICON_BUSY: &str = "\u{eb19}"; // nf-cod-loading
+const ICON_COLLAPSE_ALL: &str = "\u{eac5}"; // nf-cod-collapse_all
+const ICON_EXPAND_ALL: &str = "\u{eb95}"; // nf-cod-expand_all
 
 /// A badge icon in the icon font.
 fn icon_text(icon: &'static str) -> gpui::Div {
@@ -632,8 +637,35 @@ impl SidebarView {
         if let Some(r) = self.model.repo_mut(path) {
             r.collapsed = !r.collapsed;
         }
-        cx.emit(SidebarEvent::RefocusTerminal);
+        cx.emit(SidebarEvent::ReposCollapsed);
         cx.notify();
+    }
+
+    /// Collapse or expand every repository's worktrees at once. A pending
+    /// navigation does not expand one again afterwards.
+    pub(crate) fn set_all_repos_collapsed(&mut self, collapsed: bool, cx: &mut Context<Self>) {
+        for repo in &mut self.model.repos {
+            repo.collapsed = collapsed;
+        }
+        self.reveal = None;
+        self.pending_reveal = None;
+        cx.emit(SidebarEvent::ReposCollapsed);
+        cx.notify();
+    }
+
+    /// Whether the PROJECT bulk action collapses: some repository is open.
+    pub(crate) fn any_repo_expanded(&self) -> bool {
+        self.model.repos.iter().any(|r| !r.collapsed)
+    }
+
+    /// Repositories whose worktree lists are collapsed, to save.
+    pub(crate) fn collapsed_repos(&self) -> Vec<PathBuf> {
+        self.model
+            .repos
+            .iter()
+            .filter(|r| r.collapsed)
+            .map(|r| r.path.clone())
+            .collect()
     }
 
     /// Show or hide a worktree's past sessions.
@@ -1912,13 +1944,44 @@ impl Render for SidebarView {
                 cx.emit(SidebarEvent::AddRepo);
             }))
             .child("+ repo");
+        // One bulk disclosure for every repository; with fewer than two
+        // the repository's own header does the same.
+        let collapse = self.any_repo_expanded();
+        let bulk = (self.model.repos.len() >= 2).then(|| {
+            let (icon, tip) = if collapse {
+                (ICON_COLLAPSE_ALL, "Collapse all repositories")
+            } else {
+                (ICON_EXPAND_ALL, "Expand all repositories")
+            };
+            div()
+                .id("repos-bulk-toggle")
+                .debug_selector(|| "repos-bulk-toggle".into())
+                .px_1()
+                .rounded_sm()
+                .cursor_pointer()
+                .hover(|s| s.bg(fg.opacity(0.15)))
+                .tooltip(crate::tooltip::text(tip))
+                .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
+                .on_click(cx.listener(move |s, _, window, cx| {
+                    cx.stop_propagation();
+                    crate::tooltip::dismiss(window, cx);
+                    s.set_all_repos_collapsed(collapse, cx);
+                }))
+                .child(icon_text(icon))
+        });
+        let project_buttons = div()
+            .flex()
+            .items_center()
+            .gap_1()
+            .children(bulk)
+            .child(add_repo);
         let project_header = self
             .section_header(
                 "PROJECT",
                 self.project_collapsed,
                 self.model.repos.len(),
                 SidebarEvent::ToggleProject,
-                add_repo,
+                project_buttons,
                 cx,
             )
             .mt_1()

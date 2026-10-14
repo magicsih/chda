@@ -77,6 +77,8 @@ actions!(
         EqualizeSplits,
         ToggleZoom,
         ToggleSidebar,
+        ExpandAllRepositories,
+        CollapseAllRepositories,
         AddRepo,
         NewWorktree,
         TogglePalette,
@@ -601,8 +603,12 @@ impl WorkspaceView {
         })
         .detach();
         for repo in this.config.repos.clone() {
+            let collapsed = this.config.collapsed_repos.contains(&repo);
             this.sidebar.update(cx, |s, _| {
                 s.model.add_repo(repo.clone());
+                if let Some(entry) = s.model.repo_mut(&repo) {
+                    entry.collapsed = collapsed;
+                }
             });
             this.watch_repo(&repo);
         }
@@ -3832,6 +3838,26 @@ impl WorkspaceView {
         }
     }
 
+    fn expand_all_repositories(
+        &mut self,
+        _: &ExpandAllRepositories,
+        _: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.sidebar
+            .update(cx, |s, cx| s.set_all_repos_collapsed(false, cx));
+    }
+
+    fn collapse_all_repositories(
+        &mut self,
+        _: &CollapseAllRepositories,
+        _: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.sidebar
+            .update(cx, |s, cx| s.set_all_repos_collapsed(true, cx));
+    }
+
     fn toggle_sidebar(&mut self, _: &ToggleSidebar, window: &mut Window, cx: &mut Context<Self>) {
         self.sidebar_visible = !self.sidebar_visible;
         self.config.sidebar_visible = self.sidebar_visible;
@@ -4009,6 +4035,11 @@ impl WorkspaceView {
         match event {
             SidebarEvent::ChildDetails(child) => self.open_child_details(child, window, cx),
             SidebarEvent::RefocusTerminal => self.refocus_terminal(window, cx),
+            SidebarEvent::ReposCollapsed => {
+                self.config.collapsed_repos = self.sidebar.read(cx).collapsed_repos();
+                self.save_config();
+                self.refocus_terminal(window, cx);
+            }
             SidebarEvent::OpenWorktree(path) => self.open_worktree(&path, window, cx),
             SidebarEvent::WorktreeMenu(path, position) => {
                 let repo = self
@@ -5593,6 +5624,16 @@ impl WorkspaceView {
             ("Toggle zoom", "cmd-shift-enter", "zoom"),
             ("Equalize splits", "cmd-ctrl-=", "equalize"),
             ("Toggle sidebar", "cmd-b", "sidebar"),
+            (
+                "Expand all repositories",
+                "every worktree list in PROJECT",
+                "expand_repos",
+            ),
+            (
+                "Collapse all repositories",
+                "every worktree list in PROJECT",
+                "collapse_repos",
+            ),
             ("Add repository...", "cmd-shift-o", "add_repo"),
             ("Rename tab", "double-click the tab", "rename_tab"),
             ("Increase font size", "cmd-=", "font_bigger"),
@@ -5896,6 +5937,10 @@ impl WorkspaceView {
                     self.restore_focus(window, cx);
                 }
                 "sidebar" => self.toggle_sidebar(&ToggleSidebar, window, cx),
+                "expand_repos" => self.expand_all_repositories(&ExpandAllRepositories, window, cx),
+                "collapse_repos" => {
+                    self.collapse_all_repositories(&CollapseAllRepositories, window, cx)
+                }
                 "add_repo" => {
                     self.add_repo(&AddRepo, window, cx);
                     self.restore_focus(window, cx);
@@ -6829,6 +6874,8 @@ impl Render for WorkspaceView {
             }))
             .on_action(cx.listener(Self::close_surface))
             .on_action(cx.listener(Self::toggle_sidebar))
+            .on_action(cx.listener(Self::expand_all_repositories))
+            .on_action(cx.listener(Self::collapse_all_repositories))
             .on_action(cx.listener(Self::add_repo))
             .on_action(cx.listener(Self::new_worktree_action))
             .on_action(cx.listener(Self::toggle_palette))

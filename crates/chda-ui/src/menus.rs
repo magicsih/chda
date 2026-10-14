@@ -77,6 +77,8 @@ fn menus() -> Vec<Menu> {
         ]),
         Menu::new("View").items([
             MenuItem::action("Toggle Sidebar", ToggleSidebar),
+            MenuItem::action("Expand All Repositories", ExpandAllRepositories),
+            MenuItem::action("Collapse All Repositories", CollapseAllRepositories),
             MenuItem::action("Command Palette", TogglePalette),
             MenuItem::separator(),
             MenuItem::action("Zoom Split", ToggleZoom),

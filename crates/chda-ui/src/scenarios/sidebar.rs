@@ -495,8 +495,10 @@ fn project_is_a_peer_section_and_collapses_without_hiding_sessions(cx: &mut Test
     assert!(h.cx.debug_bounds("repo-0").unwrap().top() >= project.bottom());
     assert!(h.cx.debug_bounds("repo-1").is_some());
     assert!(
-        h.cx.debug_bounds("expand-all").is_none() && h.cx.debug_bounds("collapse-all").is_none()
+        h.cx.debug_bounds("expand-all").is_none() && h.cx.debug_bounds("collapse-all").is_none(),
+        "the two-icon header removed in #152 stays gone"
     );
+    assert!(h.cx.debug_bounds("repos-bulk-toggle").is_some());
     click_row(&mut h, "project-section-toggle");
     assert!(h.cx.debug_bounds("repo-0").is_none());
     assert!(h.cx.debug_bounds("sessions-section-toggle").is_some());
@@ -974,4 +976,91 @@ fn header_buttons_show_their_own_tooltips(cx: &mut TestAppContext) {
         assert!(!tooltip(&mut h, toggle_tip), "{toggle_tip} on {button}");
         hover(&mut h, away);
     }
+}
+
+/// One PROJECT button collapses or expands every repository (#242); the
+/// repositories' own headers and the section toggle keep their own scope.
+#[gpui::test]
+fn one_button_collapses_or_expands_every_repository(cx: &mut TestAppContext) {
+    use super::harness::wait_until;
+    let mut h = Harness::open(cx, "bulk-repos", |home| {
+        let repos = ["app", "api", "web"].map(|name| home.repo(name));
+        let list: Vec<_> = repos
+            .iter()
+            .map(|r| format!("\"{}\"", r.display()))
+            .collect();
+        std::fs::write(&home.config, format!("repos = [{}]\n", list.join(", "))).unwrap();
+    });
+    h.wait_prompt();
+    h.wait_for("three repositories", |v, cx| {
+        v.sidebar.read(cx).model.repos.len() == 3
+    });
+    let tabs = h.read(|v, _| v.ws.tabs().len());
+    let collapsed = |h: &Harness| -> Vec<bool> {
+        h.read(|v, cx| {
+            v.sidebar
+                .read(cx)
+                .model
+                .repos
+                .iter()
+                .map(|r| r.collapsed)
+                .collect()
+        })
+    };
+    // Mixed: one repository collapsed by its own header.
+    click_row(&mut h, "repo-1");
+    assert_eq!(collapsed(&h), [false, true, false]);
+    let button = h.cx.debug_bounds("repos-bulk-toggle").unwrap().center();
+    hover(&mut h, button);
+    assert!(tooltip(&mut h, "Collapse all repositories"));
+    click_row(&mut h, "repos-bulk-toggle");
+    assert_eq!(collapsed(&h), [true, true, true]);
+    hover(&mut h, button);
+    assert!(
+        tooltip(&mut h, "Expand all repositories"),
+        "the hint follows the new state after a click"
+    );
+    assert!(!tooltip(&mut h, "Collapse all repositories"));
+    // The section stays open and its own toggle stays separate.
+    assert!(h.cx.debug_bounds("repo-0").is_some());
+    assert!(h.cx.debug_bounds("project-section-toggle").is_some());
+    // A repository header still toggles only its repository.
+    click_row(&mut h, "repo-2");
+    assert_eq!(collapsed(&h), [true, true, false]);
+    click_row(&mut h, "repos-bulk-toggle");
+    assert_eq!(collapsed(&h), [true, true, true]);
+    click_row(&mut h, "repos-bulk-toggle");
+    assert_eq!(collapsed(&h), [false, false, false]);
+    // The View menu and palette actions do the same.
+    h.cx.dispatch_action(crate::workspace_view::CollapseAllRepositories);
+    h.cx.run_until_parked();
+    assert_eq!(collapsed(&h), [true, true, true]);
+    assert_eq!(
+        h.read(|v, _| v.ws.tabs().len()),
+        tabs,
+        "no tab opens or closes"
+    );
+    // Typing focus returned to the terminal.
+    h.run("printf 'bulk-%s\\n' focus", "bulk-focus");
+    click_row(&mut h, "repo-0");
+    assert_eq!(collapsed(&h), [false, true, true]);
+    let (mut cx2, view2) = h.reopen();
+    wait_until(&mut cx2, &view2, "restored repositories", |v, cx| {
+        v.sidebar.read(cx).model.repos.len() == 3
+    });
+    view2.read_with(&cx2, |v, cx| {
+        let states: Vec<_> = v
+            .sidebar
+            .read(cx)
+            .model
+            .repos
+            .iter()
+            .map(|r| r.collapsed)
+            .collect();
+        assert_eq!(
+            states,
+            [false, true, true],
+            "states persist across restarts"
+        );
+    });
 }
