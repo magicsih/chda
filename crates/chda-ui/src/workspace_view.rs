@@ -405,6 +405,9 @@ impl WorkspaceView {
         });
         let adapters = Arc::clone(&env.adapters);
         let quotas = env.windows.borrow().quotas.clone();
+        if let Some(dir) = &env.data_dir {
+            quotas.borrow_mut().load_cache(dir);
+        }
         let notifications = env
             .windows
             .borrow_mut()
@@ -1026,7 +1029,13 @@ impl WorkspaceView {
                         );
                         self.initializing_panes.remove(&pane);
                     }
-                    self.status_bar.quotas.borrow_mut().report(report);
+                    let usage = !report.windows.is_empty();
+                    let mut quotas = self.status_bar.quotas.borrow_mut();
+                    quotas.report(report);
+                    if usage && let Some(dir) = &self.env.data_dir {
+                        quotas.save_cache(dir, now_ms());
+                    }
+                    drop(quotas);
                     self.save_session();
                     cx.notify();
                     let entries = self.env.windows.borrow().entries.clone();

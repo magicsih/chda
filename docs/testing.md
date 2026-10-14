@@ -98,6 +98,7 @@ Three layers, all run by `cargo test --workspace` (CI: the macOS job).
 | Codex typed directly in a worktree terminal | `agents::directly_typed_codex_tracks_each_turn_and_exits` | |
 | Provider details anchor above the left controls, represent only reported windows and update within a narrow window | `quota::details_open_above_both_left_controls_and_visualize_only_reported_windows` | #153 |
 | Quota startup and restart wait for reports; empty Claude reports retain usage; multiple windows share one Codex query and retry after its original window closes | `quota::*` | |
+| Claude usage follows the focused session's configuration folder: a session without a reading shows the folder's newest reading, folders never mix, empty states say what chda waits for, and the last reading per folder survives a restart marked previous run | `status_bar::tests::*`, `quota::a_restart_keeps_the_last_claude_reading_until_a_new_one` | #244 |
 | Agent launch presets from the palette and the worktree menu | `menus::agent_presets_start_from_the_palette_and_the_sidebar_menu` | #16 |
 | Explicit per-launch Claude/Codex permissions, preserved preset arguments, conflict cancellation and captured exact-session options after preset changes, resume and restore | `agent_launch::*`, `chda-agents` `launch::tests::*` | #159 |
 | Confirming the launch sheet with Return (press and release) or Start sends no bytes to the launched CLI; headless only, so the native macOS key path still needs a native check | `agent_launch::confirming_a_launch_sends_nothing_to_the_new_terminal` | #159 |

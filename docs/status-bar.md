@@ -6,16 +6,27 @@ Details keep every window and scope; reports are never added together.
 
 Claude Code supplies five-hour, seven-day and gateway spend-limit windows
 through a per-launch status-line command. Reset timestamps come from the
-provider. The payload has no verified account identity, so reports stay
-separate by session. Reports arrive on CLI status-line events and become stale
-after five minutes. Before the first usage report, the bar says **Waiting for
-usage**, including after a restart. Claude supplies subscription windows only
-after its first API response. An event without quota does not erase the same
-session's last valid reading or change its observation time. Another session
-does not inherit those values. Existing user/project status-line commands still receive
-the original payload and produce their usual output. User settings are not
-overwritten. A custom status line can change Claude footer hints; unsupported
-versions or project overrides can make quota unavailable. See the
+provider. The payload has no verified account identity, so chda groups reports
+by the session's configuration folder (`CLAUDE_CONFIG_DIR`, or `~/.claude`),
+which holds one sign-in. The bar shows the newest reading with usage from the
+focused session's folder, so a new or freshly resumed session does not hide
+another session's reading; folders never mix, and a report without a folder
+stays with its own session. A pane without a Claude session shows the newest
+reading. Details name the source session and its age, and say when the
+reading comes from another session. Reports arrive on CLI status-line events
+and become stale after five minutes. Claude supplies subscription windows only
+after its first API response; before any reading the bar says **Waiting for
+usage**, and the details tell apart a session that has not answered yet, a
+session that answered without limits (for example an API key) and a session
+whose status line never reported to chda. An event without quota does not
+erase the same session's last valid reading or change its observation time.
+The newest reading with usage per folder is kept in `quota-cache.json` in the
+data folder (percentages, windows and times only) and shown after a restart or
+update marked **previous run** until a new reading arrives. Existing
+user/project status-line commands still receive the original payload and
+produce their usual output. User settings are not overwritten. A custom status
+line can change Claude footer hints; unsupported versions or project overrides
+can make quota unavailable. See the
 [official reference](https://code.claude.com/docs/en/statusline).
 
 All windows share provider reports and one Codex query loop. Closing the first

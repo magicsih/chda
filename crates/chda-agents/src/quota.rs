@@ -94,6 +94,16 @@ pub struct QuotaSnapshot {
     pub pane: Option<u64>,
     pub session: Option<String>,
     pub windows: Vec<QuotaWindow>,
+    /// Claude Code's configuration folder. It holds one sign-in, so reports
+    /// from the same folder describe the same account's limits.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub config_dir: Option<String>,
+    /// The session had received a model response when it reported.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub responded: bool,
+    /// Kept from chda's previous run rather than reported in this one.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub previous_run: bool,
 }
 
 fn window(
@@ -137,6 +147,10 @@ pub fn claude_quota(value: &Value, pane: Option<u64>, now: u64) -> Option<QuotaS
         )
     })
     .collect();
+    let responded = value
+        .pointer("/cost/total_api_duration_ms")
+        .and_then(Value::as_f64)
+        .is_some_and(|ms| ms > 0.0);
     Some(QuotaSnapshot {
         provider: "claude".into(),
         scope: format!("Session {session}"),
@@ -146,6 +160,9 @@ pub fn claude_quota(value: &Value, pane: Option<u64>, now: u64) -> Option<QuotaS
         pane,
         session: Some(session),
         windows,
+        config_dir: None,
+        responded,
+        previous_run: false,
     })
 }
 
@@ -197,6 +214,9 @@ pub fn codex_quota(value: &Value, account: &Value, now: u64) -> Option<QuotaSnap
         pane: None,
         session: None,
         windows,
+        config_dir: None,
+        responded: false,
+        previous_run: false,
     })
 }
 
@@ -229,7 +249,14 @@ impl QuotaSnapshot {
             ));
         }
         if self.windows.is_empty() {
-            lines.push("Quota not available for this session or authentication mode".into());
+            lines.push(match (self.provider.as_str(), self.responded) {
+                ("claude", false) => {
+                    "No reading yet: Claude Code reports usage after the next Claude response"
+                        .into()
+                }
+                ("claude", true) => "No subscription limits were reported after a Claude response; this sign-in may not have them (for example an API key)".into(),
+                _ => "Quota not available for this session or authentication mode".into(),
+            });
         }
         if !self.account_known {
             lines.push("Account identity is not provided; sessions are kept separate, never added together".into());
@@ -458,7 +485,15 @@ mod tests {
         assert_eq!(report.windows.len(), 2);
         assert_eq!(report.representative().unwrap().used_percent, 100.0);
         assert!(!report.account_known);
+        assert!(!report.responded);
         assert_eq!(report.pane, Some(5));
+        let answered = claude_quota(
+            &json!({"session_id":"s", "cost":{"total_api_duration_ms":3105}}),
+            None,
+            0,
+        )
+        .unwrap();
+        assert!(answered.responded, "an API response has happened");
         assert!(
             claude_quota(&json!({"session_id":"s"}), None, 0)
                 .unwrap()

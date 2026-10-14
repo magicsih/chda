@@ -12,11 +12,16 @@ use std::{
     process::Command,
 };
 
-fn existing_status_line(home: &Path, cwd: &Path) -> Option<Value> {
-    let config = std::env::var_os("CLAUDE_CONFIG_DIR")
+/// The configuration folder Claude Code reads: `CLAUDE_CONFIG_DIR`, or
+/// `~/.claude`. It holds the session's sign-in.
+fn config_dir(home: &Path) -> PathBuf {
+    std::env::var_os("CLAUDE_CONFIG_DIR")
         .map(PathBuf::from)
-        .unwrap_or_else(|| home.join(".claude"));
-    let mut files = vec![config.join("settings.json")];
+        .unwrap_or_else(|| home.join(".claude"))
+}
+
+fn existing_status_line(home: &Path, cwd: &Path) -> Option<Value> {
+    let mut files = vec![config_dir(home).join("settings.json")];
     // Project settings live at the repository root, not necessarily the pane cwd.
     let root = cwd
         .ancestors()
@@ -78,9 +83,12 @@ pub fn main(args: &[String]) -> i32 {
             .duration_since(std::time::UNIX_EPOCH)
             .unwrap_or_default()
             .as_millis() as u64;
-        if let Some(report) = claude_quota(&value, pane, now)
+        if let Some(mut report) = claude_quota(&value, pane, now)
             && let Some(dir) = data_dir()
         {
+            // Claude Code runs this bridge, so its environment is the session's.
+            report.config_dir = std::env::var_os("HOME")
+                .map(|home| config_dir(Path::new(&home)).to_string_lossy().into_owned());
             let _ = ipc::send_quota(&ipc::socket_path(&dir), &report);
         }
     }

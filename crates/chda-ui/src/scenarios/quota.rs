@@ -124,8 +124,32 @@ fn startup_and_restart_wait_for_usage_and_empty_reports_keep_the_last_reading(
         v.ws.focused_pane().is_some()
     });
     reopened.read_with(&reopened_cx, |v, _| {
+        // The bridge in tests sends no configuration folder, so nothing is
+        // kept across the restart.
         assert_eq!(text(v, "claude"), "Waiting for usage");
         assert_eq!(text(v, "codex"), "Loading");
+    });
+}
+
+#[gpui::test]
+fn a_restart_keeps_the_last_claude_reading_until_a_new_one(cx: &mut TestAppContext) {
+    let mut h = Harness::open(cx, "quota-cache", |_| {});
+    h.wait_prompt();
+    let pane = h.read(|v, _| v.ws.focused_pane().unwrap());
+    let mut report = claude_quota(
+        &json!({"session_id":"s", "rate_limits":{"five_hour":{"used_percentage":25}}}),
+        Some(pane.raw()),
+        crate::terminal_view::now_ms(),
+    )
+    .unwrap();
+    report.config_dir = Some("/home/.claude".into());
+    ipc::send_quota(&ipc::socket_path(&h.home.data), &report).unwrap();
+    h.wait_for("reported Claude quota", |v, _| {
+        text(v, "claude") == "25% · 5h"
+    });
+    let (mut reopened_cx, reopened) = h.reopen();
+    wait_until(&mut reopened_cx, &reopened, "the kept reading", |v, _| {
+        text(v, "claude") == "25% · 5h · previous run"
     });
 }
 

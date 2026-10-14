@@ -10,7 +10,7 @@ use chda_core::{
     resources::Resources,
 };
 use gpui::{AnyElement, Context, Window, div, prelude::*, px};
-use std::{cell::RefCell, collections::HashMap, rc::Rc};
+use std::{cell::RefCell, collections::HashMap, path::Path, rc::Rc};
 
 #[derive(Default)]
 pub(crate) enum CodexQuotaStatus {
@@ -25,7 +25,13 @@ pub(crate) enum CodexQuotaStatus {
 pub(crate) struct ProviderQuotas {
     pub reports: HashMap<(String, String), QuotaSnapshot>,
     pub codex: CodexQuotaStatus,
+    cache_loaded: bool,
+    cache_saved_at: Option<u64>,
 }
+
+/// The last Claude reading per configuration folder, kept across restarts
+/// and updates in the data folder.
+const QUOTA_CACHE: &str = "quota-cache.json";
 
 #[derive(Default)]
 pub(crate) struct StatusBar {
@@ -82,26 +88,114 @@ impl ProviderQuotas {
             };
             return self.reports.get(&(provider.into(), scope.into()));
         }
+        self.claude(pane)
+    }
+
+    /// The Claude reading for `pane`: the newest one with usage from the
+    /// configuration folder of the pane's own session, which shares its
+    /// sign-in, else the pane's own report. Different folders never mix.
+    /// A pane without a Claude session gets the newest reading with usage.
+    fn claude(&self, pane: Option<PaneId>) -> Option<&QuotaSnapshot> {
+        let reports = || self.reports.values().filter(|q| q.provider == "claude");
+        let newest_with_usage = |dir: Option<&str>| {
+            reports()
+                .filter(|q| {
+                    !q.windows.is_empty()
+                        && dir.is_none_or(|dir| q.config_dir.as_deref() == Some(dir))
+                })
+                .max_by_key(|q| (q.observed_at, !q.previous_run))
+        };
+        match self.own_claude(pane) {
+            Some(own) => own
+                .config_dir
+                .as_deref()
+                .and_then(|dir| newest_with_usage(Some(dir)))
+                .or(Some(own)),
+            None => newest_with_usage(None).or_else(|| reports().max_by_key(|q| q.observed_at)),
+        }
+    }
+
+    fn own_claude(&self, pane: Option<PaneId>) -> Option<&QuotaSnapshot> {
+        let pane = pane?.raw();
         self.reports
             .values()
-            .filter(|q| q.provider == provider)
-            .max_by_key(|q| {
-                (
-                    q.pane.is_some() && q.pane == pane.map(PaneId::raw),
-                    q.observed_at,
-                )
+            .filter(|q| q.provider == "claude" && q.pane == Some(pane))
+            .max_by_key(|q| q.observed_at)
+    }
+
+    /// Restore the readings saved by [`Self::save_cache`], once per run.
+    pub fn load_cache(&mut self, data_dir: &Path) {
+        if std::mem::replace(&mut self.cache_loaded, true) {
+            return;
+        }
+        let Ok(bytes) = std::fs::read(data_dir.join(QUOTA_CACHE)) else {
+            return;
+        };
+        let cached: Vec<QuotaSnapshot> = serde_json::from_slice(&bytes).unwrap_or_default();
+        for mut quota in cached {
+            if quota.provider != "claude" || quota.windows.is_empty() || quota.config_dir.is_none()
+            {
+                continue;
+            }
+            quota.previous_run = true;
+            quota.pane = None;
+            self.reports
+                .entry((quota.provider.clone(), quota.scope.clone()))
+                .or_insert(quota);
+        }
+    }
+
+    /// Save the newest Claude reading with usage per configuration folder,
+    /// at most once a minute. Only percentages and times are written.
+    pub fn save_cache(&mut self, data_dir: &Path, now: u64) {
+        if self
+            .cache_saved_at
+            .is_some_and(|at| now.saturating_sub(at) < 60_000)
+        {
+            return;
+        }
+        let mut newest: HashMap<&str, &QuotaSnapshot> = HashMap::new();
+        for quota in self.reports.values() {
+            if quota.provider != "claude" || quota.windows.is_empty() {
+                continue;
+            }
+            let Some(dir) = quota.config_dir.as_deref() else {
+                continue;
+            };
+            if newest
+                .get(dir)
+                .is_none_or(|q| q.observed_at < quota.observed_at)
+            {
+                newest.insert(dir, quota);
+            }
+        }
+        let cached: Vec<QuotaSnapshot> = newest
+            .into_values()
+            .map(|q| QuotaSnapshot {
+                pane: None,
+                previous_run: false,
+                ..q.clone()
             })
+            .collect();
+        if let Ok(json) = serde_json::to_vec(&cached)
+            && std::fs::write(data_dir.join(QUOTA_CACHE), json).is_ok()
+        {
+            self.cache_saved_at = Some(now);
+        }
     }
     pub fn text(&self, provider: &str, pane: Option<PaneId>, now: u64) -> String {
         let report = self.provider(provider, pane);
         if let Some(quota) = report.and_then(QuotaSnapshot::representative) {
             let retrying = provider == "codex" && matches!(self.codex, CodexQuotaStatus::Failed(_));
-            let suffix = match (report.is_some_and(|q| q.stale(now)), retrying) {
-                (true, true) => " · stale · retrying",
-                (true, false) => " · stale",
-                (false, true) => " · retrying",
-                (false, false) => "",
-            };
+            let mut suffix = String::new();
+            if report.is_some_and(|q| q.previous_run) {
+                suffix.push_str(" · previous run");
+            } else if report.is_some_and(|q| q.stale(now)) {
+                suffix.push_str(" · stale");
+            }
+            if retrying {
+                suffix.push_str(" · retrying");
+            }
             return format!("{:.0}% · {}{suffix}", quota.used_percent, quota.name);
         }
         match (provider, &self.codex) {
@@ -112,14 +206,39 @@ impl ProviderQuotas {
         .into()
     }
 
-    pub fn details(&self, provider: &str, pane: Option<PaneId>, now: u64) -> String {
-        let mut detail = self.provider(provider, pane).map(|q| q.details(now)).unwrap_or_else(|| {
-            if provider == "claude" {
-                "Waiting for Claude Code to report usage after its first response. Subscription limits appear only when the CLI provides them.".into()
-            } else {
+    /// `live_claude`: the pane runs a live Claude Code session.
+    pub fn details(
+        &self,
+        provider: &str,
+        pane: Option<PaneId>,
+        now: u64,
+        live_claude: bool,
+    ) -> String {
+        let report = self.provider(provider, pane);
+        let mut detail = report.map(|q| q.details(now)).unwrap_or_else(|| {
+            if provider != "claude" {
                 "Loading the local Codex CLI account quota.".into()
+            } else if live_claude {
+                "This Claude Code session has not reported through chda's status line. Sessions started outside chda, or with settings that replace its status line, report no usage.".into()
+            } else {
+                "No reading yet: Claude Code reports usage after its next response in a chda pane. Subscription limits appear only when the CLI provides them.".into()
             }
         });
+        if provider == "claude"
+            && let Some(q) = report.filter(|q| !q.windows.is_empty())
+        {
+            if q.previous_run {
+                detail.push_str(
+                    "\nKept from before chda restarted; it updates after the next Claude response.",
+                );
+            } else if q.pane != pane.map(PaneId::raw) {
+                detail.push_str(if self.own_claude(pane).is_some() {
+                    "\nFrom another Claude Code session with the same configuration folder, which shares one sign-in's limits."
+                } else {
+                    "\nFrom the most recent Claude Code session with a reading."
+                });
+            }
+        }
         if provider == "codex"
             && let CodexQuotaStatus::Failed(error) = &self.codex
         {
@@ -134,6 +253,14 @@ impl ProviderQuotas {
     }
 }
 
+/// Whether `pane` runs a live Claude Code session.
+fn live_claude(view: &WorkspaceView, pane: Option<PaneId>) -> bool {
+    pane.and_then(|pane| view.ws.pane(pane))
+        .is_some_and(|info| {
+            info.agent_live && info.agent.as_ref().is_some_and(|a| a.agent == "claude")
+        })
+}
+
 impl StatusBar {
     pub fn render(
         &self,
@@ -144,6 +271,7 @@ impl StatusBar {
         let fg = hsla(view.settings.colors.foreground.unwrap_or_default());
         let bg = hsla(view.settings.colors.background.unwrap_or_default());
         let pane = view.ws.focused_pane();
+        let live_claude = live_claude(view, pane);
         let quotas = self.quotas.borrow();
         let now = now_ms();
         let narrow = f32::from(window.viewport_size().width) < 850.0;
@@ -165,7 +293,7 @@ impl StatusBar {
         for (provider, label) in [("claude", "Claude"), ("codex", "Codex")] {
             let report = quotas.provider(provider, pane);
             let quota = report.and_then(QuotaSnapshot::representative);
-            let detail = quotas.details(provider, pane, now);
+            let detail = quotas.details(provider, pane, now, live_claude);
             let text = quotas.text(provider, pane, now);
             let color = match quota.map(|q| q.used_percent) {
                 Some(p) if p >= 90.0 => gpui::rgb(0xe07a5f).into(),
@@ -278,6 +406,7 @@ impl StatusBar {
         let quotas = self.quotas.borrow();
         let now = now_ms();
         let pane = view.ws.focused_pane();
+        let live_claude = live_claude(view, pane);
         let mut reports: Vec<_> = quotas.reports.values().collect();
         reports.sort_by(|a, b| (&a.provider, &a.scope).cmp(&(&b.provider, &b.scope)));
         let mut content: Vec<AnyElement> = reports
@@ -383,7 +512,7 @@ impl StatusBar {
                             div()
                                 .text_xs()
                                 .text_color(fg.opacity(0.7))
-                                .child(quotas.details(provider, pane, now)),
+                                .child(quotas.details(provider, pane, now, live_claude)),
                         )
                         .into_any_element(),
                 );
@@ -494,27 +623,141 @@ mod tests {
 
     #[test]
     fn empty_claude_reports_preserve_usage_and_its_actual_age() {
+        let (a, b) = panes();
         let mut quotas = ProviderQuotas::default();
         let report = claude_quota(
             &json!({"session_id":"s", "rate_limits":{"five_hour":{"used_percentage":25}}}),
-            Some(1),
+            Some(a.raw()),
             100,
         )
         .unwrap();
         quotas.report(report.clone());
         // A later event without usage must not erase the reading or make it fresh.
-        quotas.report(claude_quota(&json!({"session_id":"s"}), Some(2), 200).unwrap());
-        let kept = quotas.provider("claude", None).unwrap();
+        quotas.report(claude_quota(&json!({"session_id":"s"}), Some(b.raw()), 200).unwrap());
+        let kept = quotas.provider("claude", Some(b)).unwrap();
         assert_eq!(kept.windows, report.windows);
         assert_eq!(kept.observed_at, 100);
-        assert_eq!(kept.pane, Some(2));
-        assert_eq!(quotas.text("claude", None, 300101), "25% · 5h · stale");
-        quotas.report(claude_quota(&json!({"session_id":"other"}), Some(2), 300).unwrap());
+        assert_eq!(kept.pane, Some(b.raw()));
+        assert_eq!(quotas.text("claude", Some(b), 300101), "25% · 5h · stale");
+        quotas.report(claude_quota(&json!({"session_id":"other"}), Some(b.raw()), 300).unwrap());
         assert_eq!(
-            quotas.text("claude", None, 300),
+            quotas.text("claude", Some(b), 300),
             "Waiting for usage",
-            "another session never inherits the earlier session's quota"
+            "a session without a known configuration folder never inherits another's quota"
         );
+    }
+
+    /// A Claude status line report from `session` in `pane`, with a 5h
+    /// window at `used` percent, from the configuration folder `dir`.
+    fn claude(session: &str, pane: PaneId, dir: &str, used: Option<f64>, at: u64) -> QuotaSnapshot {
+        let value = match used {
+            Some(used) => {
+                json!({"session_id":session, "rate_limits":{"five_hour":{"used_percentage":used}}})
+            }
+            None => json!({"session_id":session}),
+        };
+        let mut report = claude_quota(&value, Some(pane.raw()), at).unwrap();
+        report.config_dir = Some(dir.into());
+        report
+    }
+
+    fn panes() -> (PaneId, PaneId) {
+        let mut ws = chda_core::Workspace::new();
+        (ws.new_tab().1, ws.new_tab().1)
+    }
+
+    #[test]
+    fn a_session_without_a_reading_shows_its_configuration_folders_latest_usage() {
+        let (a, b) = panes();
+        let mut quotas = ProviderQuotas::default();
+        quotas.report(claude("a", a, "/home/.claude", Some(25.0), 100));
+        // The focused session is newer and has no reading yet (#244).
+        quotas.report(claude("b", b, "/home/.claude", None, 200));
+        assert_eq!(quotas.text("claude", Some(b), 300), "25% · 5h");
+        assert!(
+            quotas
+                .details("claude", Some(b), 300, true)
+                .contains("From another Claude Code session with the same configuration folder")
+        );
+        assert_eq!(quotas.text("claude", Some(a), 300), "25% · 5h");
+        // A newer reading from either session wins for both.
+        quotas.report(claude("b", b, "/home/.claude", Some(40.0), 400));
+        assert_eq!(quotas.text("claude", Some(a), 500), "40% · 5h");
+    }
+
+    #[test]
+    fn readings_never_cross_configuration_folders() {
+        let (a, b) = panes();
+        let mut quotas = ProviderQuotas::default();
+        quotas.report(claude("a", a, "/home/.claude", Some(25.0), 100));
+        quotas.report(claude("b", b, "/work/.claude", None, 200));
+        assert_eq!(quotas.text("claude", Some(b), 300), "Waiting for usage");
+        assert!(
+            quotas
+                .details("claude", Some(b), 300, true)
+                .contains("after the next Claude response")
+        );
+        // A pane without a Claude session shows the newest reading.
+        assert_eq!(quotas.text("claude", None, 300), "25% · 5h");
+    }
+
+    #[test]
+    fn empty_states_say_what_chda_is_waiting_for() {
+        let (a, _) = panes();
+        let mut quotas = ProviderQuotas::default();
+        assert!(
+            quotas
+                .details("claude", Some(a), 0, true)
+                .contains("has not reported through chda's status line")
+        );
+        assert!(
+            quotas
+                .details("claude", Some(a), 0, false)
+                .contains("after its next response")
+        );
+        let mut answered = claude_quota(
+            &json!({"session_id":"a", "cost":{"total_api_duration_ms":3105}}),
+            Some(a.raw()),
+            100,
+        )
+        .unwrap();
+        answered.config_dir = Some("/home/.claude".into());
+        quotas.report(answered);
+        assert_eq!(quotas.text("claude", Some(a), 200), "Waiting for usage");
+        assert!(
+            quotas
+                .details("claude", Some(a), 200, true)
+                .contains("this sign-in may not have them")
+        );
+    }
+
+    #[test]
+    fn the_last_reading_per_folder_survives_a_restart_marked_as_previous() {
+        let dir = std::env::temp_dir().join(format!("chda-quota-cache-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let (a, b) = panes();
+        let mut quotas = ProviderQuotas::default();
+        quotas.report(claude("a", a, "/home/.claude", Some(25.0), 100));
+        quotas.save_cache(&dir, 100);
+        // Within a minute nothing is rewritten.
+        quotas.report(claude("a", a, "/home/.claude", Some(30.0), 200));
+        quotas.save_cache(&dir, 200);
+
+        let mut restarted = ProviderQuotas::default();
+        restarted.load_cache(&dir);
+        restarted.report(claude("b", b, "/home/.claude", None, 300));
+        assert_eq!(
+            restarted.text("claude", Some(b), 400),
+            "25% · 5h · previous run"
+        );
+        assert!(
+            restarted
+                .details("claude", Some(b), 400, true)
+                .contains("Kept from before chda restarted")
+        );
+        restarted.report(claude("b", b, "/home/.claude", Some(50.0), 500));
+        assert_eq!(restarted.text("claude", Some(b), 600), "50% · 5h");
+        std::fs::remove_dir_all(dir).unwrap();
     }
 
     #[test]
@@ -548,7 +791,7 @@ mod tests {
         assert_eq!(quotas.text("codex", None, 200), "20% · codex 5h · retrying");
         assert!(
             quotas
-                .details("codex", None, 200)
+                .details("codex", None, 200, false)
                 .contains("Last known usage")
         );
         assert_eq!(quotas.provider("codex", None).unwrap().observed_at, 100);
