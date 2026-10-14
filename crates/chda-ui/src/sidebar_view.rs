@@ -47,7 +47,8 @@ pub enum SidebarEvent {
     FocusPane(PaneId),
     ClosePane(PaneId),
     CloseTab(TabId),
-    ChildDetails(chda_core::agents::ChildActivity),
+    /// Right-click on a parent's child summary: list its children.
+    ChildMenu(Vec<chda_core::agents::ChildActivity>, Point<Pixels>),
     /// Switch Sessions labels between branch aliases and branch names.
     ToggleActiveLabel,
     ToggleSessions,
@@ -233,7 +234,6 @@ pub(crate) type Focus = (TabId, Option<PaneId>);
 pub struct SidebarView {
     pub model: Sidebar,
     pub(crate) child_groups: Vec<ChildGroup>,
-    pub(crate) child_collapsed: std::collections::HashSet<(String, String)>,
     pub active_label: chda_config::ActiveLabel,
     pub(crate) sessions_collapsed: bool,
     pub(crate) project_collapsed: bool,
@@ -379,54 +379,115 @@ fn pr_badge(pr: &PrInfo, bg: Hsla) -> (&'static str, Hsla) {
     (icon, gpui::rgb(color).into())
 }
 
-/// A child group's counts. Unknown children are counted on their own, so
-/// the group never claims that nothing runs when the provider cannot tell.
-fn child_counts(children: &[chda_core::agents::ChildActivity]) -> String {
-    use chda_core::agents::ChildState;
-    let active = children.iter().filter(|e| e.child.state.active()).count();
-    let unknown = children
-        .iter()
-        .filter(|e| e.child.state == ChildState::Unknown)
-        .count();
-    let mut counts = Vec::new();
-    if active > 0 || unknown == 0 {
-        counts.push(format!("{active} active"));
-    }
-    if unknown > 0 {
-        counts.push(format!("{unknown} unknown"));
-    }
-    counts.push(format!("{} children", children.len()));
-    counts.join(" · ")
+/// Child agents of one parent by state. Waiting and unknown children have
+/// their own counts, so the summary never hides a child that needs the user
+/// and never claims that nothing runs when the provider cannot tell.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub(crate) struct ChildCounts {
+    pub working: usize,
+    pub waiting: usize,
+    pub unknown: usize,
+    pub total: usize,
 }
 
+impl ChildCounts {
+    pub(crate) fn of(children: &[chda_core::agents::ChildActivity]) -> Self {
+        use chda_core::agents::ChildState;
+        let count = |state| children.iter().filter(|e| e.child.state == state).count();
+        Self {
+            working: count(ChildState::Working),
+            waiting: count(ChildState::WaitingInput),
+            unknown: count(ChildState::Unknown),
+            total: children.len(),
+        }
+    }
+
+    /// Show the working count, even zero, unless waiting or unknown
+    /// children make a zero misleading.
+    fn show_working(&self) -> bool {
+        self.working > 0 || (self.waiting == 0 && self.unknown == 0)
+    }
+
+    /// The summary in words, for the hover hint.
+    pub(crate) fn describe(&self, agent: &str) -> String {
+        let mut parts = Vec::new();
+        if self.show_working() {
+            parts.push(format!("{} working", self.working));
+        }
+        if self.waiting > 0 {
+            parts.push(format!("{} waiting for input", self.waiting));
+        }
+        if self.unknown > 0 {
+            parts.push(format!("{} unknown", self.unknown));
+        }
+        let children = match self.total {
+            1 => "1 child".to_owned(),
+            n => format!("{n} children"),
+        };
+        parts.push(children);
+        format!("{agent}: {}. Right-click for details.", parts.join(", "))
+    }
+}
+
+const ICON_CHILD_WORKING: &str = "\u{f040a}"; // nf-md-play
+const ICON_CHILD_WAITING: &str = "\u{f03e4}"; // nf-md-pause
+const ICON_CHILD_UNKNOWN: &str = "\u{f0625}"; // nf-md-help_circle_outline
+const ICON_CHILDREN: &str = "\u{f04c1}"; // nf-md-source_fork
+
 impl SidebarView {
-    fn render_children(&self, group: &ChildGroup, now: u64, cx: &mut Context<Self>) -> AnyElement {
-        let key = (group.agent.clone(), group.session.clone());
-        let collapsed = self.child_collapsed.contains(&key);
+    /// One parent's children on its Sessions row: a count per state with an
+    /// icon, the waiting count in the waiting color. Hover names the agent
+    /// and counts; right-click lists every child.
+    fn render_child_summary(&self, group: &ChildGroup, cx: &mut Context<Self>) -> AnyElement {
         let fg = self.fg;
         let pane = group.pane.raw();
-        div().flex().flex_col().min_w_0()
-            .child(div().id(ElementId::Name(format!("children-toggle-{pane}").into())).debug_selector(move || format!("children-toggle-{pane}"))
-                .pl_4().pr_2().py_0p5().flex().gap_1().text_xs().text_color(fg.opacity(0.7)).cursor_pointer()
-                .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
-                .on_click(cx.listener(move |s, _, _, cx| { cx.stop_propagation(); if !s.child_collapsed.remove(&key) { s.child_collapsed.insert(key.clone()); } cx.emit(SidebarEvent::RefocusTerminal); cx.notify(); }))
-                .child(if collapsed { "▸" } else { "▾" })
-                .child(format!("{} · {}", group.agent, child_counts(&group.children)))
-                .tooltip(crate::tooltip::text(format!("{}\nExact parent: {}\nCounts reflect provider reports; usage is already included in the existing session total.", group.label, group.session))))
-            .when(!collapsed, |d| d.children(group.children.iter().map(|entry| {
-                let child = entry.clone();
-                let id = entry.child.id.clone();
-                let state = entry.child.state;
-                let label = entry.child.label.clone().unwrap_or_else(|| entry.child.id.clone());
-                let age = activity_age(now, entry.observed_at);
-                div().id(ElementId::Name(format!("child-{pane}-{id}").into())).debug_selector(move || format!("child-{pane}-{id}"))
-                    .pl_6().pr_2().py_0p5().flex().flex_col().min_w_0().text_xs().cursor_pointer().hover(|s| s.bg(fg.opacity(0.08)))
-                    .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
-                    .on_click(cx.listener(move |_, _, _, cx| { cx.stop_propagation(); cx.emit(SidebarEvent::ChildDetails(child.clone())); }))
-                    .child(div().min_w_0().overflow_hidden().whitespace_nowrap().text_ellipsis().text_color(fg).child(label))
-                    .child(div().text_color(fg.opacity(0.65)).child(format!("{} · reported {age} ago", state.label())))
-                    .into_any_element()
-            })))
+        let counts = ChildCounts::of(&group.children);
+        let name = self
+            .agents
+            .iter()
+            .find(|a| a.id == group.agent)
+            .map_or_else(|| group.agent.clone(), |a| a.name.clone());
+        let count = |icon: &'static str, n: usize, color: Hsla| {
+            div()
+                .flex()
+                .flex_shrink_0()
+                .items_center()
+                .gap_0p5()
+                .text_color(color)
+                .child(icon_text(icon))
+                .child(n.to_string())
+        };
+        let waiting = status_color(Some(AgentStatus::WaitingInput), self.fg, self.bg);
+        let children = group.children.clone();
+        div()
+            .id(ElementId::Name(format!("children-{pane}").into()))
+            .debug_selector(move || format!("children-{pane}"))
+            .flex()
+            .flex_row()
+            .items_center()
+            .gap_1()
+            .min_w_0()
+            .overflow_hidden()
+            .whitespace_nowrap()
+            .text_xs()
+            .tooltip(crate::tooltip::text(counts.describe(&name)))
+            .on_mouse_down(
+                MouseButton::Right,
+                cx.listener(move |_, e: &MouseDownEvent, _, cx| {
+                    cx.stop_propagation();
+                    cx.emit(SidebarEvent::ChildMenu(children.clone(), e.position));
+                }),
+            )
+            .when(counts.waiting > 0, |d| {
+                d.child(count(ICON_CHILD_WAITING, counts.waiting, waiting))
+            })
+            .when(counts.show_working(), |d| {
+                d.child(count(ICON_CHILD_WORKING, counts.working, fg.opacity(0.7)))
+            })
+            .when(counts.unknown > 0, |d| {
+                d.child(count(ICON_CHILD_UNKNOWN, counts.unknown, fg.opacity(0.7)))
+            })
+            .child(count(ICON_CHILDREN, counts.total, fg.opacity(0.5)))
             .into_any_element()
     }
 
@@ -489,7 +550,6 @@ impl SidebarView {
         Self {
             model: Sidebar::new(),
             child_groups: Vec::new(),
-            child_collapsed: Default::default(),
             active_label: Default::default(),
             sessions_collapsed: false,
             project_collapsed: false,
@@ -1643,17 +1703,24 @@ impl SidebarView {
         let fg = self.fg;
         let key = row.key;
         let id = session_id(key);
-        let agent_name = row.agent.as_ref().map(|agent| {
-            self.agents
-                .iter()
-                .find(|a| a.id == *agent)
-                .map_or_else(|| agent.clone(), |a| a.name.clone())
-        });
-        let kind = match (row.kind, &agent_name) {
-            (SessionKind::Agent, Some(name)) => name.clone(),
-            (SessionKind::Agent, None) => "Agent".into(),
-            (SessionKind::Terminal, _) => "Terminal".into(),
-            (SessionKind::View(_), _) => "View".into(),
+        let agent_label = row
+            .agent
+            .as_ref()
+            .and_then(|agent| self.agents.iter().find(|a| a.id == *agent));
+        let agent_name = row
+            .agent
+            .as_ref()
+            .map(|agent| agent_label.map_or_else(|| agent.clone(), |a| a.name.clone()));
+        // Agents show their short label in their color; the hover hint
+        // names them.
+        let (kind, kind_color) = match (row.kind, agent_label) {
+            (SessionKind::Agent, Some(a)) => (a.short.clone(), a.color),
+            (SessionKind::Agent, None) => (
+                agent_name.clone().unwrap_or_else(|| "Agent".into()),
+                fg.opacity(0.5),
+            ),
+            (SessionKind::Terminal, _) => ("Terminal".into(), fg.opacity(0.5)),
+            (SessionKind::View(_), _) => ("View".into(), fg.opacity(0.5)),
         };
         // Branch names read with their repository; an alias stands alone.
         let label = match (&row.repo, &row.branch) {
@@ -1742,6 +1809,10 @@ impl SidebarView {
             )
             .child(
                 div()
+                    .debug_selector({
+                        let id = id.clone();
+                        move || format!("session-kind-{id}")
+                    })
                     .text_xs()
                     .flex_shrink_1()
                     .min_w_0()
@@ -1749,8 +1820,15 @@ impl SidebarView {
                     .overflow_hidden()
                     .whitespace_nowrap()
                     .text_ellipsis()
-                    .text_color(fg.opacity(0.5))
+                    .text_color(kind_color)
                     .child(kind),
+            )
+            // Child agents stay on the parent's row, clipped before the
+            // label, number and age when the sidebar is narrow (#246).
+            .children(
+                children
+                    .into_iter()
+                    .map(|group| self.render_child_summary(group, cx)),
             )
             .when(row.kind == SessionKind::Agent && row.shares_tab, |d| {
                 d.child(
@@ -1810,17 +1888,7 @@ impl SidebarView {
                         .child("\u{00d7}"),
                 )
             });
-        div()
-            .flex()
-            .flex_col()
-            .min_w_0()
-            .child(line)
-            .children(
-                children
-                    .into_iter()
-                    .map(|g| self.render_children(g, now, cx)),
-            )
-            .into_any_element()
+        line.into_any_element()
     }
 }
 
@@ -2248,9 +2316,9 @@ mod tests {
     }
 
     #[test]
-    fn child_counts_never_claim_zero_active_for_unknown_children() {
+    fn child_counts_never_claim_zero_working_and_keep_waiting_apart() {
         use chda_core::agents::{ChildActivity, ChildEvent, ChildState};
-        let group = |states: &[ChildState]| {
+        let counts = |states: &[ChildState]| {
             let children: Vec<_> = states
                 .iter()
                 .enumerate()
@@ -2266,17 +2334,32 @@ mod tests {
                     observed_at: 1,
                 })
                 .collect();
-            child_counts(&children)
+            ChildCounts::of(&children).describe("Codex")
         };
         use ChildState::*;
-        assert_eq!(group(&[TurnComplete]), "0 active · 1 children");
-        assert_eq!(group(&[Working, Ended]), "1 active · 2 children");
-        assert_eq!(group(&[Unknown, Unknown]), "2 unknown · 2 children");
+        let tail = ". Right-click for details.";
         assert_eq!(
-            group(&[Working, Unknown, TurnComplete]),
-            "1 active · 1 unknown · 3 children"
+            counts(&[TurnComplete]),
+            format!("Codex: 0 working, 1 child{tail}")
         );
-        assert_eq!(group(&[Unknown, TurnComplete]), "1 unknown · 2 children");
+        assert_eq!(
+            counts(&[Working, Ended]),
+            format!("Codex: 1 working, 2 children{tail}")
+        );
+        assert_eq!(
+            counts(&[Unknown, Unknown]),
+            format!("Codex: 2 unknown, 2 children{tail}"),
+            "no zero working beside unknown children"
+        );
+        assert_eq!(
+            counts(&[Working, WaitingInput, Unknown, TurnComplete]),
+            format!("Codex: 1 working, 1 waiting for input, 1 unknown, 4 children{tail}")
+        );
+        assert_eq!(
+            counts(&[WaitingInput, Ended]),
+            format!("Codex: 1 waiting for input, 2 children{tail}"),
+            "a waiting child is not hidden inside a working count"
+        );
     }
 
     #[test]

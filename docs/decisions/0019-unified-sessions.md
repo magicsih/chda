@@ -45,7 +45,7 @@ sections when its status changed.
 
 ## Alternatives
 
-A tab row with pane sub-rows nests three levels once child agents expand.
+A tab row with pane sub-rows nests three levels once child agents expand. Since #246 child agents add no rows at all: their counts sit on the parent's row.
 Leaving PROJECT untouched on session clicks hides the session's branch,
 which the design review rejected. A draggable divider between the regions
 is a larger change, to propose separately if needed.

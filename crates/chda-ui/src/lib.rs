@@ -134,7 +134,6 @@ fn run_inner(inherited: Option<(chda_core::handoff::Handoff, chda_term::handoff:
         registry.update.adopting = true;
         registry.inherited_notifications = state.notifications.into_iter().collect();
         registry.children = state.children;
-        registry.inherited_child_collapsed = state.child_collapsed.into_iter().collect();
         registry.update.frozen = true;
         registry.update.progress = chda_core::self_update::UpdateProgress::Reconnecting;
         if let Some(update) = &state.update {

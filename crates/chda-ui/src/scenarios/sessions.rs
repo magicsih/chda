@@ -573,10 +573,12 @@ fn status_changes_keep_session_rows_in_place(cx: &mut TestAppContext) {
         !v.sidebar.read(cx).child_groups.is_empty()
     });
     check(h, "child update");
+    // The child summary stays on its parent's row and adds no line (#246).
     let parent = bounds(h, &selector(SessionKey::Pane(first))).unwrap();
-    let child = bounds(h, &format!("child-{}-child", first.raw())).expect("child row");
+    let child = bounds(h, &format!("children-{}", first.raw())).expect("child summary");
     let next = bounds(h, &selector(SessionKey::Pane(second))).unwrap();
-    assert!(parent.bottom() <= child.top() && child.bottom() <= next.top());
+    assert!(parent.top() <= child.top() && child.bottom() <= parent.bottom());
+    assert!(parent.bottom() <= next.top());
 }
 
 /// The only pane of a worktree, beside terminal tabs, for an agent that

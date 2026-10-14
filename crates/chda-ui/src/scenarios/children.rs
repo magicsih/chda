@@ -3,6 +3,19 @@ use super::harness::{Harness, wait_until};
 use chda_core::agents::{ChildEvent, ChildState, HookEvent, HookKind, ipc};
 use gpui::{TestAppContext, VisualContext};
 
+/// Right-click a parent's child summary, as on a real Sessions row.
+fn child_menu(cx: &mut gpui::VisualTestContext, parent: chda_core::PaneId) {
+    for _ in 0..3 {
+        cx.run_until_parked();
+        cx.update(|window, cx| window.simulate_next_frame(cx));
+    }
+    let selector: &'static str = Box::leak(format!("children-{}", parent.raw()).into_boxed_str());
+    let at = cx.debug_bounds(selector).expect(selector).center();
+    cx.simulate_mouse_down(at, gpui::MouseButton::Right, gpui::Modifiers::none());
+    cx.simulate_mouse_up(at, gpui::MouseButton::Right, gpui::Modifiers::none());
+    cx.run_until_parked();
+}
+
 fn send(h: &Harness, pane: u64, parent: &str, id: &str, state: ChildState, at: u64) {
     send_from(h, "claude", pane, parent, id, state, at);
 }
@@ -105,19 +118,28 @@ fn children_remain_under_their_parent_after_a_turn_and_never_focus_a_shared_dire
             ChildState::WaitingInput
         );
     });
-    let child_selector: &'static str =
-        Box::leak(format!("child-{}-child1", first.raw()).into_boxed_str());
-    let toggle_selector: &'static str =
-        Box::leak(format!("children-toggle-{}", first.raw()).into_boxed_str());
-    let row = h.cx.debug_bounds(child_selector).unwrap();
-    h.cx.simulate_click(row.center(), gpui::Modifiers::default());
+    // One line per parent: the summary sits on the parent's own row (#246).
+    let row =
+        h.cx.debug_bounds(Box::leak(
+            format!("session-pane-{}", first.raw()).into_boxed_str(),
+        ))
+        .unwrap();
+    let summary =
+        h.cx.debug_bounds(Box::leak(
+            format!("children-{}", first.raw()).into_boxed_str(),
+        ))
+        .unwrap();
+    assert!(row.top() <= summary.top() && summary.bottom() <= row.bottom());
+    // Right-click lists the children; choosing one shows its details.
+    child_menu(&mut h.cx, first);
+    let item = h.read(|v, _| v.context_menu.as_ref().unwrap().items[0].0.clone());
+    assert!(item.starts_with("Explore \u{2014} Working"), "{item}");
+    let item_at = h.cx.debug_bounds("menu-item-0").unwrap().center();
+    h.cx.simulate_click(item_at, gpui::Modifiers::default());
     assert_eq!(h.read(|v, _| v.ws.focused_pane()), Some(second));
     assert!(h.cx.debug_bounds("child-details").is_some());
     h.keys("escape");
     assert!(h.read(|v, _| v.child_detail.is_none()));
-    let toggle = h.cx.debug_bounds(toggle_selector).unwrap();
-    h.cx.simulate_click(toggle.center(), gpui::Modifiers::default());
-    assert!(h.cx.debug_bounds(child_selector).is_none());
     send(
         &h,
         first.raw(),
@@ -235,10 +257,9 @@ fn children_route_to_exact_parents_across_windows_and_focus_only_a_known_child_p
             .as_ref()
             .is_some_and(|s| s.session == "dedicated-child")
     });
-    let selector: &'static str =
-        Box::leak(format!("child-{}-dedicated-child", parent.raw()).into_boxed_str());
-    let row = second_cx.debug_bounds(selector).unwrap();
-    second_cx.simulate_click(row.center(), gpui::Modifiers::default());
+    child_menu(&mut second_cx, parent);
+    let at = second_cx.debug_bounds("menu-item-0").unwrap().center();
+    second_cx.simulate_click(at, gpui::Modifiers::default());
     h.cx.run_until_parked();
     assert_eq!(
         env.windows.borrow().active,
@@ -325,4 +346,108 @@ fn codex_poll_failure_keeps_child_states(cx: &mut TestAppContext) {
         1
     );
     assert_eq!(h.read(states), expected);
+}
+
+/// Each parent's children take no extra line: a count per state on the
+/// parent's row, also in a narrow sidebar (#246).
+#[gpui::test]
+fn child_states_are_counted_on_the_parent_row(cx: &mut TestAppContext) {
+    use crate::sidebar_view::ChildCounts;
+    let mut h = Harness::open(cx, "child-summary", |home| {
+        std::fs::write(&home.config, "sidebar-width = 180\n").unwrap();
+    });
+    h.wait_prompt();
+    let parent = h.read(|v, _| v.ws.focused_pane().unwrap());
+    h.hook_session(
+        Some(parent.raw()),
+        &h.home.home,
+        HookKind::SessionStart,
+        "p1",
+    );
+    h.keys("cmd-t");
+    h.wait_prompt();
+    let other = h.read(|v, _| v.ws.focused_pane().unwrap());
+    h.hook_session(
+        Some(other.raw()),
+        &h.home.home,
+        HookKind::SessionStart,
+        "p2",
+    );
+    let at = crate::terminal_view::now_ms();
+    for (i, state) in [
+        ChildState::Working,
+        ChildState::WaitingInput,
+        ChildState::Unknown,
+        ChildState::Ended,
+    ]
+    .into_iter()
+    .enumerate()
+    {
+        send(
+            &h,
+            parent.raw(),
+            "p1",
+            &format!("c{i}"),
+            state,
+            at + i as u64,
+        );
+    }
+    h.wait_for("four children", |v, cx| {
+        v.sidebar
+            .read(cx)
+            .child_groups
+            .first()
+            .is_some_and(|g| g.children.len() == 4)
+    });
+    let counts = h.read(|v, cx| ChildCounts::of(&v.sidebar.read(cx).child_groups[0].children));
+    assert_eq!(
+        counts,
+        ChildCounts {
+            working: 1,
+            waiting: 1,
+            unknown: 1,
+            total: 4
+        }
+    );
+    for _ in 0..3 {
+        h.cx.run_until_parked();
+        h.cx.update(|window, cx| window.simulate_next_frame(cx));
+    }
+    let leak = |s: String| -> &'static str { Box::leak(s.into_boxed_str()) };
+    let row =
+        h.cx.debug_bounds(leak(format!("session-pane-{}", parent.raw())))
+            .unwrap();
+    let summary =
+        h.cx.debug_bounds(leak(format!("children-{}", parent.raw())))
+            .unwrap();
+    assert!(row.top() <= summary.top() && summary.bottom() <= row.bottom());
+    assert!(summary.right() <= row.right());
+    let label =
+        h.cx.debug_bounds(leak(format!("session-label-pane-{}", parent.raw())))
+            .unwrap();
+    assert!(label.size.width >= gpui::px(47.5), "{label:?}");
+    // A parent without children gets nothing extra.
+    assert!(
+        h.cx.debug_bounds(leak(format!("children-{}", other.raw())))
+            .is_none()
+    );
+    // Every child, with its state, is one right-click away.
+    child_menu(&mut h.cx, parent);
+    let items: Vec<String> = h.read(|v, _| {
+        v.context_menu
+            .as_ref()
+            .unwrap()
+            .items
+            .iter()
+            .map(|(text, _)| text.clone())
+            .collect()
+    });
+    assert_eq!(items.len(), 4);
+    assert!(
+        items.iter().any(|i| i.contains("Waiting for input")),
+        "{items:?}"
+    );
+    assert!(items.iter().any(|i| i.contains("Ended")), "{items:?}");
+    h.keys("escape");
+    assert!(h.read(|v, _| v.context_menu.is_none()));
 }

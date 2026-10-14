@@ -165,6 +165,8 @@ pub(crate) struct CloseFocus {
 #[derive(Clone, Debug)]
 pub(crate) enum MenuAction {
     CopySelection(PaneId),
+    /// Focus a child agent's exact pane, or show its details.
+    ChildDetails(chda_core::agents::ChildActivity),
     ShareSelection {
         pane: PaneId,
         identity: Option<(String, String)>,
@@ -424,15 +426,6 @@ impl WorkspaceView {
             .inherited_notifications
             .pop_front()
             .unwrap_or_default();
-        let child_collapsed = env
-            .windows
-            .borrow_mut()
-            .inherited_child_collapsed
-            .pop_front()
-            .unwrap_or_default();
-        sidebar.update(cx, |s, _| {
-            s.child_collapsed = child_collapsed.into_iter().collect()
-        });
         let window_handle = window.window_handle();
         env.windows
             .borrow_mut()
@@ -4088,7 +4081,30 @@ impl WorkspaceView {
     ) {
         self.context_menu = None;
         match event {
-            SidebarEvent::ChildDetails(child) => self.open_child_details(child, window, cx),
+            SidebarEvent::ChildMenu(children, position) => {
+                crate::tooltip::dismiss(window, cx);
+                let now = now_ms();
+                let items = children
+                    .into_iter()
+                    .map(|child| {
+                        let label = child
+                            .child
+                            .label
+                            .clone()
+                            .unwrap_or_else(|| child.child.id.clone());
+                        let age = chda_core::activity_age(now, child.observed_at);
+                        (
+                            format!(
+                                "{label} \u{2014} {} \u{b7} {age} ago",
+                                child.child.state.label()
+                            ),
+                            MenuAction::ChildDetails(child),
+                        )
+                    })
+                    .collect();
+                self.context_menu = Some(ContextMenu { position, items });
+                cx.notify();
+            }
             SidebarEvent::RefocusTerminal => self.refocus_terminal(window, cx),
             SidebarEvent::ReposCollapsed => {
                 self.config.collapsed_repos = self.sidebar.read(cx).collapsed_repos();
@@ -4897,6 +4913,7 @@ impl WorkspaceView {
         }
         self.context_menu = None;
         match action {
+            MenuAction::ChildDetails(child) => self.open_child_details(child, window, cx),
             MenuAction::CopySelection(pane) => {
                 if let Some((term, _)) = self.panes.get(&pane) {
                     term.read(cx).copy_selection();

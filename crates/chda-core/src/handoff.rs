@@ -29,9 +29,6 @@ pub struct Handoff {
     pub notifications: Vec<crate::notifications::NotificationQueue>,
     #[serde(default)]
     pub children: chda_agents::ChildBoard,
-    /// Per-window disclosure state, in session.windows order.
-    #[serde(default)]
-    pub child_collapsed: Vec<Vec<(String, String)>>,
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
@@ -148,6 +145,14 @@ mod tests {
     }
 
     #[test]
+    fn handoffs_from_versions_with_child_disclosure_state_still_decode() {
+        // Before #246 each window carried which child groups were collapsed.
+        let header = r#"{"session":{"windows":[],"active_window":0},"panes":[],"child_collapsed":[[["claude","parent"]]]}"#;
+        let decoded = Handoff::decode(format!("{header}\n").as_bytes()).unwrap();
+        assert_eq!(decoded, Handoff::default());
+    }
+
+    #[test]
     fn handoff_round_trips_with_binary_snapshots() {
         let mut first = HandoffPane::new(7, 80, 24, b"\x1b[?2004h\nline\n".to_vec());
         first.title = "build".into();
@@ -178,7 +183,6 @@ mod tests {
             session: SavedSession::default(),
             panes: vec![first, HandoffPane::new(9, 100, 30, vec![0, 255, 10])],
             notifications: vec![notifications],
-            child_collapsed: vec![vec![("claude".into(), "parent".into())]],
             children: {
                 let mut board = chda_agents::ChildBoard::default();
                 board.apply(chda_agents::ChildActivity {
