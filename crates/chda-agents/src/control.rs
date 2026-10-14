@@ -9,8 +9,8 @@ use serde_json::Value;
 
 use crate::HookEvent;
 
-/// Something the app should do. `pane` is the chda pane the caller runs in
-/// (from `CHDA_PANE_ID`), when it runs in one.
+/// Something the app should do. `cwd` is the caller's working directory;
+/// read-only requests answer only for the repository it is in.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "action", rename_all = "snake_case")]
 pub enum Request {
@@ -40,7 +40,38 @@ pub enum Request {
     /// The worktrees of the repository containing `cwd`, or of every
     /// repository in the sidebar when `cwd` is in none.
     ListWorktrees { cwd: PathBuf },
+    /// Agent sessions and terminals in the repository containing `cwd`.
+    ListSessions { cwd: PathBuf },
+    /// Recent text of the pane chda knows as `pane`, at most `lines` lines,
+    /// never what the user is still typing.
+    ReadOutput {
+        cwd: PathBuf,
+        pane: u64,
+        #[serde(default)]
+        lines: Option<usize>,
+    },
+    /// Answer once the agent in `pane` reaches one of `states`, the pane
+    /// closes or `timeout_ms` passes.
+    WaitForStatus {
+        cwd: PathBuf,
+        pane: u64,
+        states: Vec<String>,
+        #[serde(default)]
+        timeout_ms: Option<u64>,
+    },
 }
+
+/// Agent states a caller can wait for, as `list_sessions` reports them.
+pub const AGENT_STATES: [&str; 5] = [
+    "working",
+    "waiting_for_input",
+    "turn_complete",
+    "idle",
+    "ended",
+];
+
+/// Longest wait one request may ask for, below the socket's reply timeout.
+pub const MAX_WAIT_MS: u64 = 55_000;
 
 /// The app's answer to a [`Request`].
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
@@ -117,5 +148,27 @@ mod tests {
             r#"{"request":{"action":"list_worktrees","cwd":"/w"}}"#
         );
         assert!(serde_json::from_str::<HookEvent>(&line).is_err());
+        let wait: Request = serde_json::from_str(
+            r#"{"action":"wait_for_status","cwd":"/w","pane":7,"states":["turn_complete"]}"#,
+        )
+        .unwrap();
+        assert_eq!(
+            wait,
+            Request::WaitForStatus {
+                cwd: "/w".into(),
+                pane: 7,
+                states: vec!["turn_complete".into()],
+                timeout_ms: None,
+            }
+        );
+        assert_eq!(
+            serde_json::to_string(&Request::ReadOutput {
+                cwd: "/w".into(),
+                pane: 7,
+                lines: Some(20),
+            })
+            .unwrap(),
+            r#"{"action":"read_output","cwd":"/w","pane":7,"lines":20}"#
+        );
     }
 }

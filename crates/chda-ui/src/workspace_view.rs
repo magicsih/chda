@@ -20,6 +20,7 @@ use chda_core::release::{Release, ReleaseCheck, parse_latest};
 mod agent_launch;
 mod agent_restart;
 mod children;
+mod coordination;
 mod notifications;
 pub(crate) mod preparation;
 mod review;
@@ -357,6 +358,9 @@ pub struct WorkspaceView {
     /// When each pane's programs last asked for desktop notifications, to
     /// keep a flood out of the history and the OS notification center.
     program_notices: HashMap<PaneId, std::collections::VecDeque<u64>>,
+    /// `wait_for_status` calls waiting on this window's panes.
+    pub(crate) status_waits: Vec<coordination::StatusWait>,
+    next_status_wait: u64,
     /// The title last given to the OS window.
     window_title: String,
     /// A session save for new terminal activity is scheduled.
@@ -529,6 +533,8 @@ impl WorkspaceView {
             child_detail: None,
             child_focus: None,
             program_notices: HashMap::new(),
+            status_waits: Vec::new(),
+            next_status_wait: 0,
             notification_focus: None,
             window_title: String::new(),
             activity_save_pending: false,
@@ -1076,7 +1082,26 @@ impl WorkspaceView {
                     }
                 }
             }
-            Incoming::Event(ev) => self.apply_hook_event(ev, window, cx),
+            Incoming::Event(ev) => {
+                self.apply_hook_event(ev, window, cx);
+                self.resolve_status_waits();
+            }
+            Incoming::Request(_, reply) if self.env.windows.borrow().update.frozen => {
+                let _ = reply.send(Reply::err("chda is reconnecting; retry shortly"));
+            }
+            // Transcript reads and waits answer later; the caller blocks.
+            Incoming::Request(Request::ReadOutput { cwd, pane, lines }, reply) => {
+                self.read_output(&cwd, pane, lines, reply, cx)
+            }
+            Incoming::Request(
+                Request::WaitForStatus {
+                    cwd,
+                    pane,
+                    states,
+                    timeout_ms,
+                },
+                reply,
+            ) => self.wait_for_status(&cwd, pane, states, timeout_ms, reply, cx),
             Incoming::Request(request, reply) => {
                 // An agent's request is not the user's navigation.
                 self.agent_request = true;
@@ -1192,6 +1217,11 @@ impl WorkspaceView {
                     format!("{} worktrees", worktrees.len()),
                     serde_json::json!({ "worktrees": worktrees }),
                 )
+            }
+            Request::ListSessions { cwd } => self.list_sessions(&cwd, cx),
+            // Answered in `receive_hook`, which keeps their reply channel.
+            Request::ReadOutput { .. } | Request::WaitForStatus { .. } => {
+                Reply::err("this request needs its reply channel")
             }
         }
     }
@@ -2660,6 +2690,7 @@ impl WorkspaceView {
         });
         self.sync_sidebar_selection(false, cx);
         self.sync_children(cx);
+        self.resolve_status_waits();
         self.save_session();
         // The title bar also depends on refreshed worktree metadata.
         cx.notify();
@@ -2853,6 +2884,18 @@ impl WorkspaceView {
     }
 
     fn on_pane_event(
+        &mut self,
+        pane: PaneId,
+        event: &TerminalEvent,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.handle_pane_event(pane, event, window, cx);
+        // Titles, prompts and exits change agent states others wait for.
+        self.resolve_status_waits();
+    }
+
+    fn handle_pane_event(
         &mut self,
         pane: PaneId,
         event: &TerminalEvent,

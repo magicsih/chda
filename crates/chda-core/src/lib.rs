@@ -44,7 +44,8 @@ pub mod agents {
         HookEvent, HookInstallReport, HookKind, LaunchHistory, LimitUsage, ModelUsage, PANE_ENV,
         PermissionPolicy, SessionCache, SessionId, SharePreview, Usage, adapters,
         codex_notify_config, command_argv, compact_tokens, ipc, parse_codex_title,
-        permission_arguments, read_codex_children, sharing_preview, validate_resume_options,
+        permission_arguments, read_codex_children, recent_answers, sharing_preview,
+        validate_resume_options,
     };
     pub use chda_agents::{control, quota, statusline, which};
 }

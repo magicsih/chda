@@ -70,7 +70,7 @@
       "area": "Palette",
       "details": "`cmd-shift-p`: every action, worktree, agent launch and session in one fuzzy list",
       "title": "Every action in one place",
-      "summary": "Press `cmd-shift-p` to find worktrees, launch agents, resume sessions and run actions. Agents can create worktrees and open tabs through `chda mcp`."
+      "summary": "Press `cmd-shift-p` to find worktrees, launch agents, resume sessions and run actions. Agents can create worktrees and open tabs through `chda mcp`, and follow the other agents of their repository: list them, read their latest answers and wait for them to finish."
     },
     {
       "area": "Config",

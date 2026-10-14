@@ -152,3 +152,216 @@ fn an_agent_creates_a_worktree_opens_tabs_and_lists_worktrees(cx: &mut TestAppCo
     assert_eq!(task["note"], "Fix login redirect");
     assert_eq!(task["main"], false);
 }
+
+/// Send `request` like [`ask`] without waiting; the reply lands in the slot.
+fn ask_later(h: &Harness, request: Request) -> Arc<Mutex<Option<Reply>>> {
+    let socket = ipc::socket_path(&h.home.data);
+    let slot = Arc::new(Mutex::new(None));
+    let filled = Arc::clone(&slot);
+    std::thread::spawn(move || {
+        *filled.lock().unwrap() = Some(ipc::request(&socket, &request).unwrap());
+    });
+    slot
+}
+
+fn answered(h: &mut Harness, slot: &Arc<Mutex<Option<Reply>>>) -> Reply {
+    let waiting = Arc::clone(slot);
+    h.wait_for("the app's reply", move |_, _| {
+        waiting.lock().unwrap().is_some()
+    });
+    slot.lock().unwrap().take().unwrap()
+}
+
+/// A coordinating agent lists the sessions of its repository, reads a
+/// pane's output and waits for another agent to finish (#249).
+#[gpui::test]
+fn an_agent_lists_reads_and_waits_for_other_sessions_of_its_repository(cx: &mut TestAppContext) {
+    use chda_core::agents::HookKind;
+    let (mut repo, mut other) = Default::default();
+    let mut h = Harness::open(cx, "mcp-coordinate", |home| {
+        repo = home.repo("app");
+        other = home.repo("lib");
+        std::fs::write(
+            &home.config,
+            format!(
+                "repos = [\"{}\", \"{}\"]\n",
+                repo.display(),
+                other.display()
+            ),
+        )
+        .unwrap();
+        // The helper's conversation: the user's prompt and its answer.
+        home.claude_session(&repo, "helper", "write the tests");
+        let transcript = home.claude_projects.join("project/helper.jsonl");
+        let answer = serde_json::json!({"type":"assistant","sessionId":"helper","uuid":"a1","message":{"role":"assistant","content":[{"type":"text","text":"Tests written and passing."}]}});
+        let text = std::fs::read_to_string(&transcript).unwrap();
+        std::fs::write(&transcript, format!("{text}{answer}\n")).unwrap();
+    });
+    h.wait_prompt();
+    h.run(
+        &format!("cd '{}'; printf 'in-%s\\n' app", repo.display()),
+        "in-app",
+    );
+    let helper = h.read(|v, _| v.ws.focused_pane().unwrap());
+    // The helper agent holds its terminal, as a real one does: a shell
+    // prompt would end it.
+    h.type_text("cat");
+    h.keys("enter");
+    h.hook_session(Some(helper.raw()), &repo, HookKind::SessionStart, "helper");
+    h.hook_session(
+        Some(helper.raw()),
+        &repo,
+        HookKind::PromptSubmitted,
+        "helper",
+    );
+    h.wait_for("the helper working", move |v, _| {
+        v.ws.pane(helper).is_some_and(|i| {
+            i.agent_live
+                && i.agent
+                    .as_ref()
+                    .is_some_and(|a| a.status == chda_core::AgentStatus::Working)
+        })
+    });
+    h.keys("cmd-d");
+    h.wait_prompt();
+    h.run(
+        &format!("cd '{}'; printf 'out-%s\\n' visible", repo.display()),
+        "out-visible",
+    );
+    let shell = h.read(|v, _| v.ws.focused_pane().unwrap());
+    h.keys("cmd-t");
+    h.wait_prompt();
+    h.run(
+        &format!("cd '{}'; printf 'in-%s\\n' lib", other.display()),
+        "in-lib",
+    );
+    let elsewhere = h.read(|v, _| v.ws.focused_pane().unwrap());
+    h.wait_for("panes in their repositories", move |v, _| {
+        [helper, shell, elsewhere]
+            .iter()
+            .all(|p| v.ws.pane(*p).is_some_and(|i| i.repo.is_some()))
+    });
+    let focused = h.read(|v, _| v.ws.focused_pane());
+
+    let listed = ask(&mut h, Request::ListSessions { cwd: repo.clone() });
+    assert!(listed.ok, "{}", listed.message);
+    let sessions = listed.data["sessions"].as_array().unwrap().clone();
+    let helper_row = sessions
+        .iter()
+        .find(|s| s["pane"] == helper.raw())
+        .expect("the helper agent is listed");
+    assert_eq!(helper_row["status"], "working", "{sessions:#?}");
+    assert_eq!(helper_row["agent"], "claude");
+    assert!(
+        sessions.iter().all(|s| s["pane"] != elsewhere.raw()),
+        "only the caller's repository: {sessions:?}"
+    );
+
+    // The shell's screen up to its prompt, never the line being typed.
+    h.type_text("unfinished-draft");
+    let read = ask(
+        &mut h,
+        Request::ReadOutput {
+            cwd: repo.clone(),
+            pane: shell.raw(),
+            lines: Some(50),
+        },
+    );
+    assert!(read.ok, "{}", read.message);
+    let text = read.data["text"].as_str().unwrap();
+    assert!(text.contains("out-visible"), "{text}");
+    assert!(!text.contains("unfinished-draft"), "{text}");
+    // An agent's latest answer comes from its exact transcript.
+    let answer = ask(
+        &mut h,
+        Request::ReadOutput {
+            cwd: repo.clone(),
+            pane: helper.raw(),
+            lines: None,
+        },
+    );
+    assert_eq!(answer.data["source"], "transcript", "{}", answer.message);
+    assert_eq!(answer.data["text"], "Tests written and passing.");
+    // Another repository's pane stays out of reach.
+    let refused = ask(
+        &mut h,
+        Request::ReadOutput {
+            cwd: repo.clone(),
+            pane: elsewhere.raw(),
+            lines: None,
+        },
+    );
+    assert!(!refused.ok && refused.message.contains("not in your repository"));
+
+    // Wait for the helper to finish its turn.
+    let waiting = ask_later(
+        &h,
+        Request::WaitForStatus {
+            cwd: repo.clone(),
+            pane: helper.raw(),
+            states: vec!["turn_complete".into(), "waiting_for_input".into()],
+            timeout_ms: Some(20_000),
+        },
+    );
+    h.hook_session(Some(helper.raw()), &repo, HookKind::Stopped, "helper");
+    let done = answered(&mut h, &waiting);
+    assert_eq!(done.data["state"], "turn_complete", "{}", done.message);
+    assert_eq!(done.data["timed_out"], false);
+    // A state it already has answers at once.
+    let now = ask(
+        &mut h,
+        Request::WaitForStatus {
+            cwd: repo.clone(),
+            pane: helper.raw(),
+            states: vec!["turn_complete".into()],
+            timeout_ms: None,
+        },
+    );
+    assert_eq!(now.data["waited_ms"], 0);
+    // The timeout is honored.
+    let slow = ask_later(
+        &h,
+        Request::WaitForStatus {
+            cwd: repo.clone(),
+            pane: helper.raw(),
+            states: vec!["working".into()],
+            timeout_ms: Some(1_000),
+        },
+    );
+    h.wait_for("the wait to register", |v, _| !v.status_waits.is_empty());
+    h.cx.executor()
+        .advance_clock(std::time::Duration::from_secs(2));
+    let expired = answered(&mut h, &slow);
+    assert_eq!(expired.data["timed_out"], true);
+    assert_eq!(expired.data["state"], "turn_complete");
+    // A closing pane ends the wait.
+    let closing = ask_later(
+        &h,
+        Request::WaitForStatus {
+            cwd: repo.clone(),
+            pane: shell.raw(),
+            states: vec!["working".into()],
+            timeout_ms: Some(20_000),
+        },
+    );
+    h.wait_for("the wait to register", |v, _| !v.status_waits.is_empty());
+    assert_eq!(
+        h.read(|v, _| v.ws.focused_pane()),
+        focused,
+        "tools never move focus"
+    );
+    h.cx.update(|window, cx| {
+        h.view.update(cx, |v, cx| {
+            v.on_sidebar_event(
+                crate::sidebar_view::SidebarEvent::FocusPane(shell),
+                window,
+                cx,
+            )
+        })
+    });
+    h.cx.run_until_parked();
+    assert_eq!(h.read(|v, _| v.ws.focused_pane()), Some(shell));
+    h.keys("cmd-w");
+    let closed = answered(&mut h, &closing);
+    assert_eq!(closed.data["state"], "closed", "{}", closed.message);
+}

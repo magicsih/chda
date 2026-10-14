@@ -13,7 +13,7 @@ use std::path::PathBuf;
 
 use serde_json::{Value, json};
 
-use crate::control::{Reply, Request};
+use crate::control::{AGENT_STATES, Reply, Request};
 use crate::hook::{HookEvent, HookKind, PANE_ENV, data_dir, now_ms};
 use crate::{AgentId, ipc};
 
@@ -221,6 +221,49 @@ impl Server {
             "list_worktrees" => Request::ListWorktrees {
                 cwd: self.cwd.clone(),
             },
+            "list_sessions" => Request::ListSessions {
+                cwd: self.cwd.clone(),
+            },
+            "read_output" | "wait_for_status" => {
+                let Some(pane) = args.get("pane").and_then(Value::as_u64) else {
+                    return Ok(Reply::err("say which pane with `pane`, from list_sessions"));
+                };
+                if name == "read_output" {
+                    Request::ReadOutput {
+                        cwd: self.cwd.clone(),
+                        pane,
+                        lines: args
+                            .get("lines")
+                            .and_then(Value::as_u64)
+                            .map(|n| n as usize),
+                    }
+                } else {
+                    let states: Vec<String> = args
+                        .get("states")
+                        .and_then(Value::as_array)
+                        .into_iter()
+                        .flatten()
+                        .filter_map(|s| s.as_str().map(str::to_owned))
+                        .collect();
+                    if states.is_empty()
+                        || states.iter().any(|s| !AGENT_STATES.contains(&s.as_str()))
+                    {
+                        return Ok(Reply::err(format!(
+                            "`states` must list some of {}",
+                            AGENT_STATES.join(", ")
+                        )));
+                    }
+                    Request::WaitForStatus {
+                        cwd: self.cwd.clone(),
+                        pane,
+                        states,
+                        timeout_ms: args
+                            .get("timeout_seconds")
+                            .and_then(Value::as_f64)
+                            .map(|s| (s.max(0.0) * 1000.0) as u64),
+                    }
+                }
+            }
             "report_status" => return Ok(self.report_status(args, agent)),
             _ => {
                 return Err(RpcError::new(
@@ -341,6 +384,52 @@ fn tools() -> Value {
             "annotations": { "readOnlyHint": true }
         },
         {
+            "name": "list_sessions",
+            "title": "List sessions",
+            "description": "List the coding agents and terminals open in chda for the repository \
+                you are in: pane id, agent, status (working, waiting_for_input, turn_complete, \
+                idle, ended), worktree, branch or alias, tab, pane number, last activity and \
+                child agent counts. Use the pane id with read_output and wait_for_status. Reading \
+                changes nothing in chda.",
+            "inputSchema": { "type": "object", "properties": {} },
+            "annotations": { "readOnlyHint": true }
+        },
+        {
+            "name": "read_output",
+            "title": "Read output",
+            "description": "Read the recent text of one pane in your repository: for a Claude \
+                Code or Codex session, its latest answers from the conversation transcript; for \
+                a shell, its visible screen up to the current prompt. Never includes what the \
+                user is still typing. Full-screen programs without a transcript cannot be read.",
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "pane": { "type": "integer", "description": "Pane id from list_sessions." },
+                    "lines": { "type": "integer", "minimum": 1, "maximum": 500, "description": "Most recent lines to return. Default 100." }
+                },
+                "required": ["pane"]
+            },
+            "annotations": { "readOnlyHint": true }
+        },
+        {
+            "name": "wait_for_status",
+            "title": "Wait for an agent",
+            "description": "Wait until the agent in a pane of your repository reaches one of the \
+                given states, for example turn_complete or waiting_for_input. Answers at once \
+                when it already has one, when the pane closes, or after the timeout (at most 55 \
+                seconds; call again to keep waiting). Unknown states are never guessed.",
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "pane": { "type": "integer", "description": "Pane id from list_sessions." },
+                    "states": { "type": "array", "items": { "type": "string", "enum": AGENT_STATES }, "minItems": 1 },
+                    "timeout_seconds": { "type": "number", "minimum": 0, "maximum": 55, "description": "Default 30." }
+                },
+                "required": ["pane", "states"]
+            },
+            "annotations": { "readOnlyHint": true }
+        },
+        {
             "name": "report_status",
             "title": "Report status",
             "description": "Tell the user, through chda's sidebar, tab dot and notifications, what \
@@ -433,6 +522,9 @@ mod tests {
                 "create_worktree",
                 "open_tab",
                 "list_worktrees",
+                "list_sessions",
+                "read_output",
+                "wait_for_status",
                 "report_status"
             ]
         );
@@ -539,6 +631,21 @@ mod tests {
             ),
         );
         assert_eq!(bad["result"]["isError"], true);
+        // Coordination tools check their arguments before asking the app.
+        for arguments in [
+            json!({"states": ["turn_complete"]}),
+            json!({"pane": 3, "states": ["finished"]}),
+            json!({"pane": 3, "states": []}),
+        ] {
+            let refused = call(
+                &mut s,
+                modern(
+                    "tools/call",
+                    json!({"name": "wait_for_status", "arguments": arguments}),
+                ),
+            );
+            assert_eq!(refused["result"]["isError"], true, "{arguments}");
+        }
 
         std::fs::remove_dir_all(&dir).unwrap();
         let offline = call(

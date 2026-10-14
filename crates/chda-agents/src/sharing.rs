@@ -28,7 +28,7 @@ pub fn sharing_preview(
         return fallback();
     }
     let deadline = std::time::Instant::now() + std::time::Duration::from_secs(2);
-    let answers = answers(agent, session, roots, deadline);
+    let answers = answers(agent, session, roots, deadline, None);
     let mut found: Option<(usize, Vec<std::ops::Range<usize>>)> = None;
     for (index, answer) in answers.iter().enumerate() {
         if std::time::Instant::now() >= deadline {
@@ -85,6 +85,29 @@ struct Answer {
     id: String,
     text: String,
     version: Option<String>,
+}
+
+/// The last `count` assistant text blocks of the exact conversation
+/// `session`, oldest first: what the agent answered, never what the user is
+/// typing. `None` when the transcript cannot be read within two seconds.
+pub fn recent_answers(
+    agent: AgentId,
+    session: &SessionId,
+    roots: &[PathBuf],
+    count: usize,
+) -> Option<Vec<String>> {
+    if session.0.is_empty()
+        || session.0.len() > 256
+        || session.0.contains(['/', '\\'])
+        || !matches!(agent, AgentId::Claude | AgentId::Codex)
+        || count == 0
+    {
+        return None;
+    }
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(2);
+    let answers = answers(agent, session, roots, deadline, Some(count));
+    (std::time::Instant::now() < deadline && !answers.is_empty())
+        .then(|| answers.into_iter().map(|a| a.text).collect())
 }
 
 struct Span {
@@ -242,11 +265,15 @@ fn occurrences<'a>(text: &'a str, selected: &'a str) -> impl Iterator<Item = usi
     })
 }
 
+/// Assistant text blocks of the exact conversation. `last` keeps only that
+/// many of the newest; without it the lookup must be complete, as uniqueness
+/// checks need, and gives up past 2048 blocks.
 fn answers(
     agent: AgentId,
     session: &SessionId,
     roots: &[PathBuf],
     deadline: std::time::Instant,
+    last: Option<usize>,
 ) -> Vec<Answer> {
     use std::io::{BufRead, Read};
     let mut stack: Vec<_> = roots.iter().cloned().map(|p| (p, 0)).collect();
@@ -261,7 +288,10 @@ fn answers(
         for entry in entries {
             let Ok(entry) = entry else { return Vec::new() };
             visited += 1;
-            if visited > 20_000 || out.len() >= 2048 || std::time::Instant::now() >= deadline {
+            if visited > 20_000
+                || (last.is_none() && out.len() >= 2048)
+                || std::time::Instant::now() >= deadline
+            {
                 return Vec::new(); // Incomplete lookup cannot prove uniqueness.
             }
             let Ok(kind) = entry.file_type() else {
@@ -351,8 +381,11 @@ fn answers(
                     let Some(text) = block["text"].as_str() else {
                         continue;
                     };
-                    if text.len() > 1_048_576 || out.len() >= 2048 {
+                    if text.len() > 1_048_576 || (last.is_none() && out.len() >= 2048) {
                         return Vec::new();
+                    }
+                    if last.is_some_and(|n| out.len() >= n) {
+                        out.remove(0);
                     }
                     out.push(Answer {
                         id: format!(
@@ -410,6 +443,31 @@ mod tests {
         .unwrap();
         root
     }
+    #[test]
+    fn recent_answers_keep_the_newest_of_the_exact_conversation() {
+        for agent in [AgentId::Claude, AgentId::Codex] {
+            let many: Vec<String> = (0..3000).map(|n| format!("answer {n}")).collect();
+            let refs: Vec<&str> = many.iter().map(String::as_str).collect();
+            let root = fixture(agent, "s1", &refs);
+            let session = SessionId("s1".into());
+            assert_eq!(
+                recent_answers(agent, &session, std::slice::from_ref(&root), 2),
+                Some(vec!["answer 2998".to_owned(), "answer 2999".to_owned()]),
+                "{agent:?} keeps the newest past the uniqueness cap"
+            );
+            assert_eq!(
+                recent_answers(
+                    agent,
+                    &SessionId("other".into()),
+                    std::slice::from_ref(&root),
+                    2
+                ),
+                None
+            );
+            std::fs::remove_dir_all(root).unwrap();
+        }
+    }
+
     #[test]
     fn full_confirmed_gutter_matches_only_the_selected_conversation() {
         let root = fixture(

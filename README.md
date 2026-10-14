@@ -202,8 +202,16 @@ runs in: `create_worktree` (new branch and folder, optional base, note and
 agent to start in a new tab), `open_tab`, `list_worktrees`, and
 `report_status` (working, waiting for input, done) for agents without hooks.
 It acts through the running app, so new worktrees follow your
-`worktree-path-template` and show up in the sidebar at once. Add it once per
-agent:
+`worktree-path-template` and show up in the sidebar at once.
+
+A coordinating agent can also follow the helpers it started, read-only and
+only in its own repository: `list_sessions` (agents and terminals with pane
+id, status, worktree, branch, last activity and child counts),
+`read_output` (a Claude Code or Codex session's latest answers from its
+transcript, or a shell's screen up to its prompt; never what you are still
+typing) and `wait_for_status` (until an agent's turn completes, it waits for
+input, its pane closes or up to 55 seconds pass). These calls never move
+focus or change what the sidebar shows. Add the server once per agent:
 
 ```sh
 claude mcp add --scope user chda -- chda mcp

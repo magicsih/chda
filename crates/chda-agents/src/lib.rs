@@ -40,7 +40,7 @@ pub use launch::{
 pub use mcp::mcp_main;
 pub use opencode::OpenCodeAdapter;
 pub use session::{AgentSession, SessionCache, SessionId};
-pub use sharing::{SharePreview, sharing_preview};
+pub use sharing::{SharePreview, recent_answers, sharing_preview};
 pub use usage::{LimitUsage, ModelUsage, Usage, compact_tokens};
 
 /// Which agent a thing belongs to.

@@ -30,6 +30,28 @@ the sidebar's repositories, the worktree path template, the tabs.
 - chda does not register itself in agents' MCP configs; the user adds it
   once per agent (`claude mcp add chda -- chda mcp`, ...).
 
+## Read-only coordination (#249)
+
+`list_sessions`, `read_output` and `wait_for_status` let a coordinating agent
+follow the agents it started without the user relaying:
+
+- They answer only for the repository the caller's directory is in. A pane in
+  another repository is refused; wider access needs a new decision.
+- Status comes from the same hooks, titles and provider-confirmed child
+  activity as the sidebar (ADR 0015); a pane without a live agent is `ended`
+  or `terminal`, and unknown child states stay counted as unknown.
+- `read_output` never returns what the user is still typing. A live Claude
+  Code or Codex session is read from its exact conversation's transcript
+  (the latest answers, as in ADR 0016); a shell is read from its visible
+  screen up to the current OSC 133 prompt. Other live agents and full-screen
+  programs are refused, since their screen may hold an input box. Output is
+  capped at 500 lines and 64 KB.
+- `wait_for_status` answers at once when the state already matches, else
+  when it is reached, the pane closes or the timeout (at most 55 seconds,
+  below the socket's reply timeout) passes. The owning window keeps the wait.
+- None of them changes focus, rows or seen state. Sending text to another
+  agent remains out of scope ([ADR 0020](0020-session-addressed-prompt-delivery.md) proposes it).
+
 ## Consequences
 
 - Tools act on the window the user sees and follow `config.toml`
