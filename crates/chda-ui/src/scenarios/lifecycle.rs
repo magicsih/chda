@@ -90,7 +90,8 @@ fn exact_hook_directory_wins_over_a_stale_shell_directory_on_restore(cx: &mut Te
     wait_until(&mut cx2, &view2, "CLI resume directory", |v, cx| {
         v.focused_text(cx).contains("resumed-cwd:")
     });
-    let text = view2.read_with(&cx2, |v, cx| v.focused_text(cx));
+    // A long temporary directory soft-wraps across rows.
+    let text = view2.read_with(&cx2, |v, cx| v.focused_text(cx).replace('\n', ""));
     assert!(
         text.contains(&format!("resumed-cwd:{}", repo.display())),
         "{text}"
