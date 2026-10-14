@@ -96,6 +96,43 @@ pub struct StarredBranch {
     pub branch: String,
 }
 
+/// A `[[commands]]` entry: a command line run through the login shell in a
+/// worktree, e.g. `name = "lazygit"`, `run = "lazygit"`, `open = "floating"`,
+/// `key = "cmd-shift-g"`. Every field is optional here so one broken entry
+/// does not hide the others; [`ChdaConfig::valid_commands`] checks them.
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(default, rename_all = "kebab-case")]
+pub struct UserCommand {
+    pub name: String,
+    pub run: String,
+    /// `tab` (the default), `split` or `floating`.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub open: Option<String>,
+    /// A shortcut such as `cmd-shift-g`.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub key: Option<String>,
+}
+
+/// Where a [`UserCommand`] runs.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum CommandTarget {
+    Tab,
+    Split,
+    /// A terminal over the window that closes when the command succeeds.
+    Floating,
+}
+
+impl UserCommand {
+    pub fn target(&self) -> Option<CommandTarget> {
+        match self.open.as_deref().map(str::trim) {
+            None | Some("tab") => Some(CommandTarget::Tab),
+            Some("split") => Some(CommandTarget::Split),
+            Some("floating") => Some(CommandTarget::Floating),
+            Some(_) => None,
+        }
+    }
+}
+
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(default, rename_all = "kebab-case")]
 pub struct ChdaConfig {
@@ -138,6 +175,9 @@ pub struct ChdaConfig {
     pub pull: PullStrategy,
     /// Named agent launches for the sidebar menu and the palette.
     pub agent_presets: Vec<AgentPreset>,
+    /// Commands run for a worktree from the palette, a worktree's menu or a
+    /// shortcut. Only this file defines them.
+    pub commands: Vec<UserCommand>,
     /// The app the title bar's open button uses, e.g. `vscode`; picked in
     /// the title bar and saved here.
     pub open_in: Option<String>,
@@ -170,6 +210,7 @@ impl Default for ChdaConfig {
             repo_hosts: BTreeMap::new(),
             pull: PullStrategy::FfOnly,
             agent_presets: Vec::new(),
+            commands: Vec::new(),
             open_in: None,
             update_check: true,
             starred: Vec::new(),
@@ -235,6 +276,37 @@ impl ChdaConfig {
         }
         let text = toml::to_string_pretty(self).map_err(io::Error::other)?;
         fs::write(path, text)
+    }
+
+    /// The `[[commands]]` that can run, and one problem per entry that
+    /// cannot: no name or command, a name used before, or an unknown `open`.
+    pub fn valid_commands(&self) -> (Vec<UserCommand>, Vec<String>) {
+        let mut valid: Vec<UserCommand> = Vec::new();
+        let mut problems = Vec::new();
+        for (i, command) in self.commands.iter().enumerate() {
+            let name = command.name.trim();
+            let which = if name.is_empty() {
+                format!("commands entry {}", i + 1)
+            } else {
+                format!("command {name:?}")
+            };
+            let problem = if name.is_empty() {
+                Some("has no name")
+            } else if command.run.trim().is_empty() {
+                Some("has nothing to run")
+            } else if valid.iter().any(|c| c.name.trim() == name) {
+                Some("repeats an earlier name")
+            } else if command.target().is_none() {
+                Some("has an unknown `open`; use tab, split or floating")
+            } else {
+                None
+            };
+            match problem {
+                Some(why) => problems.push(format!("{which} {why}")),
+                None => valid.push(command.clone()),
+            }
+        }
+        (valid, problems)
     }
 
     /// Add a branch to STARRED; false when it is already there.
@@ -387,6 +459,50 @@ mod tests {
             ["main", "feat/x"]
         );
         fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn broken_commands_are_reported_and_the_rest_load() {
+        let config: ChdaConfig = toml::from_str(
+            r#"
+[[commands]]
+name = "lazygit"
+run = "lazygit"
+open = "floating"
+key = "cmd-shift-g"
+
+[[commands]]
+run = "nameless"
+
+[[commands]]
+name = "lazygit"
+run = "again"
+
+[[commands]]
+name = "watch"
+run = "cargo watch"
+open = "window"
+
+[[commands]]
+name = "tests"
+run = "cargo test"
+open = "split"
+"#,
+        )
+        .unwrap();
+        let (valid, problems) = config.valid_commands();
+        let names: Vec<_> = valid.iter().map(|c| c.name.as_str()).collect();
+        assert_eq!(names, ["lazygit", "tests"]);
+        assert_eq!(valid[0].target(), Some(CommandTarget::Floating));
+        assert_eq!(valid[1].target(), Some(CommandTarget::Split));
+        assert_eq!(problems.len(), 3, "{problems:?}");
+        assert!(problems[0].contains("entry 2 has no name"), "{problems:?}");
+        assert!(problems[1].contains("repeats"), "{problems:?}");
+        assert!(problems[2].contains("unknown `open`"), "{problems:?}");
+        // Saving keeps every entry as written.
+        let text = toml::to_string(&config).unwrap();
+        let again: ChdaConfig = toml::from_str(&text).unwrap();
+        assert_eq!(again.commands, config.commands);
     }
 
     #[test]

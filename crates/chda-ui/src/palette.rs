@@ -32,6 +32,8 @@ pub enum PaletteCommand {
     SetThemeFor(chda_config::Appearance, String),
     /// Move a running pane to another tab or window.
     MovePane(chda_core::PaneId, crate::workspace_view::PaneDestination),
+    /// Run a `[[commands]]` entry for the focused worktree.
+    RunCommand(String),
     /// Render a Markdown file and open it in the browser.
     PreviewMarkdown(PathBuf),
     /// Open the focused worktree in the app with this `FolderApp` id.

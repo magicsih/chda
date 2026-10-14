@@ -20,6 +20,7 @@ use chda_core::release::{Release, ReleaseCheck, parse_latest};
 mod agent_launch;
 mod agent_restart;
 mod children;
+mod commands;
 mod coordination;
 mod moves;
 pub(crate) use moves::PaneDestination;
@@ -170,6 +171,8 @@ pub(crate) enum MenuAction {
     CopySelection(PaneId),
     /// Focus a child agent's exact pane, or show its details.
     ChildDetails(chda_core::agents::ChildActivity),
+    /// Run a `[[commands]]` entry in this worktree.
+    RunCommand(PathBuf, String),
     /// Move a running pane to another tab or window.
     MovePane {
         pane: PaneId,
@@ -365,6 +368,8 @@ pub struct WorkspaceView {
     /// When each pane's programs last asked for desktop notifications, to
     /// keep a flood out of the history and the OS notification center.
     program_notices: HashMap<PaneId, std::collections::VecDeque<u64>>,
+    /// A `[[commands]]` entry running over the window (#251).
+    pub(crate) floating: Option<commands::Floating>,
     /// `wait_for_status` calls waiting on this window's panes.
     pub(crate) status_waits: Vec<coordination::StatusWait>,
     next_status_wait: u64,
@@ -541,6 +546,7 @@ impl WorkspaceView {
             child_focus: None,
             program_notices: HashMap::new(),
             status_waits: Vec::new(),
+            floating: None,
             next_status_wait: 0,
             notification_focus: None,
             window_title: String::new(),
@@ -634,6 +640,15 @@ impl WorkspaceView {
         }
         this.sync_starred(cx);
         this.install_hooks();
+        // Command shortcuts are app-wide; entries that cannot run are
+        // reported once, as a config reload would.
+        this.apply_command_keys(cx);
+        let problems = this.user_commands().1;
+        if !problems.is_empty() {
+            let problem = problems.join(" ");
+            this.notify_error(problem.clone());
+            this.config_problem = Some(problem);
+        }
         crate::environment::watch_shell_path(this.env.clone(), cx);
         let moving = this.env.windows.borrow_mut().moving_pane.take();
         match (saved, moving) {
@@ -821,7 +836,9 @@ impl WorkspaceView {
                     }
                     if config != self.config {
                         self.apply_config(config, window, cx);
+                        self.apply_command_keys(cx);
                     }
+                    problems.extend(self.user_commands().1);
                 }
                 Err(e) => problems.push(format!(
                     "{}: {e}. Kept the previous values.",
@@ -2913,6 +2930,11 @@ impl WorkspaceView {
     ) {
         self.apply_codex_terminal_event(pane, event, window, cx);
         match event {
+            TerminalEvent::Exited { status, .. }
+                if self.floating.as_ref().is_some_and(|f| f.pane == pane) =>
+            {
+                self.floating_exited(status.as_ref(), window, cx);
+            }
             TerminalEvent::Exited { status, output } => {
                 if self.ws.pane(pane).is_some() && self.panes.contains_key(&pane) {
                     self.pane_exit(pane, status.as_ref(), output.as_ref(), window, cx);
@@ -3658,6 +3680,9 @@ impl WorkspaceView {
     }
 
     fn close_surface(&mut self, _: &CloseSurface, window: &mut Window, cx: &mut Context<Self>) {
+        if self.dismiss_floating(true, window, cx) {
+            return;
+        }
         if self.preparation_open.is_some() || self.preparation_editor.is_some() {
             self.close_preparation(window, cx);
             return;
@@ -4448,7 +4473,13 @@ impl WorkspaceView {
                 MenuAction::RunPreset(path.to_path_buf(), p.name.clone()),
             )
         });
-        agents.chain(presets).collect()
+        let commands = self.config.valid_commands().0.into_iter().map(|c| {
+            (
+                format!("Run {}", c.name.trim()),
+                MenuAction::RunCommand(path.to_path_buf(), c.name.trim().to_owned()),
+            )
+        });
+        agents.chain(presets).chain(commands).collect()
     }
 
     /// Focus a pane already in the worktree, else open a tab there.
@@ -4982,6 +5013,9 @@ impl WorkspaceView {
         match action {
             MenuAction::ChildDetails(child) => self.open_child_details(child, window, cx),
             MenuAction::MovePane { pane, to } => self.move_pane(pane, to, window, cx),
+            MenuAction::RunCommand(path, name) => {
+                self.run_user_command(&name, Some(path), window, cx)
+            }
             MenuAction::CopySelection(pane) => {
                 if let Some((term, _)) = self.panes.get(&pane) {
                     term.read(cx).copy_selection();
@@ -5804,6 +5838,17 @@ impl WorkspaceView {
             command: PaletteCommand::Action(action),
         })
         .collect();
+        for command in self.config.valid_commands().0 {
+            items.push(PaletteItem {
+                label: format!("Run {}", command.name.trim()),
+                detail: format!(
+                    "{} · {}",
+                    command.run.trim(),
+                    command.open.as_deref().unwrap_or("tab")
+                ),
+                command: PaletteCommand::RunCommand(command.name.trim().to_owned()),
+            });
+        }
         if let Some(pane) = self.ws.focused_pane() {
             for (label, action) in self.pane_move_items(pane) {
                 if let MenuAction::MovePane { pane, to } = action {
@@ -6222,6 +6267,7 @@ impl WorkspaceView {
                 self.restore_focus(window, cx);
             }
             PaletteCommand::MovePane(pane, to) => self.move_pane(pane, to, window, cx),
+            PaletteCommand::RunCommand(name) => self.run_user_command(&name, None, window, cx),
             PaletteCommand::SetThemeFor(appearance, name) => {
                 self.previewing_theme = false;
                 let base = self.theme_value();
@@ -6283,6 +6329,9 @@ impl WorkspaceView {
     }
 
     fn dismiss(&mut self, _: &Dismiss, window: &mut Window, cx: &mut Context<Self>) {
+        if self.dismiss_floating(false, window, cx) {
+            return;
+        }
         if self.launch_sheet.is_some() {
             self.cancel_agent_launch(window, cx);
             return;
@@ -7149,6 +7198,7 @@ impl Render for WorkspaceView {
                 crate::open_workspace_window(None, this.env.clone(), cx);
             }))
             .on_action(cx.listener(Self::close_surface))
+            .on_action(cx.listener(Self::run_user_command_action))
             .on_action(cx.listener(Self::toggle_sidebar))
             .on_action(cx.listener(Self::expand_all_repositories))
             .on_action(cx.listener(Self::collapse_all_repositories))
@@ -7330,6 +7380,7 @@ impl Render for WorkspaceView {
             .children(self.render_note_sheet(cx))
             .children(self.render_preparation(cx))
             .children(self.render_confirm(cx))
+            .children(self.render_floating())
             .children(self.render_palette())
             .children(self.render_notifications(cx))
             .children(self.render_child_details(cx))

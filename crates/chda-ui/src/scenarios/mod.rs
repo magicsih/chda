@@ -8,6 +8,7 @@ mod agent_restart;
 mod agents;
 mod children;
 mod closing;
+mod commands;
 mod config;
 mod diagrams;
 mod diff;

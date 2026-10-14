@@ -858,6 +858,21 @@ impl Workspace {
         self.split(axis)
     }
 
+    /// Register a pane shown outside every tab, such as a floating command
+    /// (#251). Sessions, saved layouts and tab operations do not see it.
+    pub fn add_floating_pane(&mut self, info: PaneInfo) -> PaneId {
+        let pane = PaneId(self.next());
+        self.panes.insert(pane, info);
+        pane
+    }
+
+    /// Forget a pane from [`Self::add_floating_pane`]; panes in tabs stay.
+    pub fn remove_floating_pane(&mut self, pane: PaneId) {
+        if !self.tabs.iter().any(|t| t.panes().contains(&pane)) {
+            self.panes.remove(&pane);
+        }
+    }
+
     /// Move tab `id` to position `to` among all tabs (#248).
     pub fn move_tab(&mut self, id: TabId, to: usize) -> bool {
         let Some(from) = self.tabs.iter().position(|t| t.id == id) else {
