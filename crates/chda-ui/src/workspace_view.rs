@@ -605,6 +605,7 @@ impl WorkspaceView {
         }
         this.sync_starred(cx);
         this.install_hooks();
+        crate::environment::watch_shell_path(this.env.clone(), cx);
         match saved {
             Some(saved) => this.restore_session(&saved, window, cx),
             None => this.new_tab(&NewTab, window, cx),
@@ -1167,6 +1168,12 @@ impl WorkspaceView {
         else {
             return Err(Reply::err(format!("unknown agent {id}")));
         };
+        if self.env.shell_path.pending() {
+            return Err(Reply::err(
+                "chda is still reading the login shell's PATH; try again in a few seconds"
+                    .to_owned(),
+            ));
+        }
         if !adapter
             .executable(&self.env.home(), &self.env.search_path())
             .is_some()
@@ -1810,10 +1817,29 @@ impl WorkspaceView {
                 if env.windows.borrow().quitting || env.windows.borrow().entries.is_empty() {
                     break;
                 }
-                let executable = chda_core::agents::which("codex", &env.search_path());
+                if env.shell_path.pending() {
+                    let _ = env.shell_path.changed().await;
+                    continue;
+                }
+                let searched = env.search_path();
+                let executable = env
+                    .adapters
+                    .iter()
+                    .find(|a| a.id() == AgentId::Codex)
+                    .and_then(|a| a.executable(&env.home(), &searched));
+                let searched = searched.to_string_lossy().into_owned();
+                let missing = match env.shell_path.state() {
+                    crate::environment::ShellPathState::Failed(error) => {
+                        chda_core::agents::quota::CodexQuotaError::PathUnavailable {
+                            error,
+                            searched,
+                        }
+                    }
+                    _ => chda_core::agents::quota::CodexQuotaError::NotInstalled { searched },
+                };
                 let task = cx.background_spawn(async move {
                     executable
-                        .ok_or(chda_core::agents::quota::CodexQuotaError::NotInstalled)
+                        .ok_or(missing)
                         .and_then(|path| chda_core::agents::quota::read_codex(&path, now_ms()))
                 });
                 let result = task.await;
@@ -1845,7 +1871,9 @@ impl WorkspaceView {
                         let _ = entry.view.update(cx, |_, cx| cx.notify());
                     }
                 });
-                cx.background_executor().timer(delay).await;
+                // A newly captured login shell PATH is looked through at once.
+                let timer = cx.background_executor().timer(delay);
+                futures::future::select(Box::pin(timer), env.shell_path.changed()).await;
             }
             env.windows.borrow_mut().codex_polling = false;
         })
@@ -2190,137 +2218,40 @@ impl WorkspaceView {
                 None => format!("{} is missing (fallback directory: home)", dir.display()),
             })
             .collect();
+        // Agents resume through the login shell's PATH; while a slow shell
+        // is still reporting it, those panes wait instead of opening a shell.
+        let mut waiting = Vec::new();
         for p in panes {
-            if let Some(file) = self
-                .ws
-                .pane(p.pane)
-                .and_then(|info| info.previous_run.clone())
-            {
-                self.owned_outputs.borrow_mut().insert(p.pane, file);
-            }
-            let adopting = self.env.windows.borrow().update.adopting;
-            if p.run.as_ref().is_some_and(chda_core::PaneRun::stopped) {
-                self.ws.end_agent(p.pane);
-                continue;
-            }
-            let mut p = p;
-            if !adopting && self.config.restore_agents && (p.agent.is_some() || p.launch.is_some())
-            {
-                let conversation = p
-                    .agent
-                    .as_ref()
-                    .map(|s| (s.agent.as_str(), SessionId(s.session.clone())))
-                    .or_else(|| {
-                        p.launch
-                            .as_ref()
-                            .and_then(|c| c.session.as_ref().map(|s| (c.agent.as_str(), s.clone())))
-                    });
-                let transcript = conversation.and_then(|(agent, session)| {
-                    self.adapters
-                        .iter()
-                        .find(|a| a.id().as_str() == agent)
-                        .and_then(|a| a.session_cwd_for_id(&session))
+            if self.env.shell_path.pending() && self.restores_agent(&p) {
+                let placeholder = self.ws.pane_mut(p.pane).is_some_and(|info| {
+                    let empty = info.pane_run.is_none();
+                    if empty {
+                        info.pane_run = Some(chda_core::PaneRun::Starting {
+                            started_at: now_ms(),
+                        });
+                    }
+                    empty
                 });
-                let reported = p.agent.as_ref().and_then(|s| s.cwd.as_deref());
-                let launch = p.launch.as_ref().map(|c| c.cwd.as_path());
-                match chda_core::restore_agent_cwd(
-                    reported,
-                    launch,
-                    transcript.as_deref(),
-                    p.cwd.as_deref(),
-                ) {
-                    Ok(cwd) => {
-                        p.cwd = cwd;
-                        if let (Some(context), Some(cwd)) = (&mut p.launch, &p.cwd) {
-                            context.cwd = cwd.clone();
-                        }
-                        if let Some(info) = self.ws.pane_mut(p.pane) {
-                            info.cwd = p.cwd.clone();
-                            info.agent_launch = p.launch.clone();
-                        }
-                    }
-                    Err(error) => {
-                        let info = self.ws.pane_mut(p.pane).unwrap();
-                        info.cwd = reported
-                            .or(launch)
-                            .or(transcript.as_deref())
-                            .map(Path::to_path_buf);
-                        info.pane_run = Some(chda_core::PaneRun::failed(error.clone()));
-                        self.ws.end_agent(p.pane);
-                        notes.push(error);
-                        continue;
-                    }
-                }
-            }
-            if !adopting && p.launch.is_some() && !self.config.restore_agents {
-                if let Some(info) = self.ws.pane_mut(p.pane) {
-                    info.agent_launch = None;
-                    info.pane_run = None;
-                }
-            } else if !adopting && let Some(context) = &p.launch {
-                let result = self.captured_resume_argv(context);
-                match result {
-                    Ok(command) => {
-                        self.initializing_panes.insert(p.pane);
-                        self.ws.pane_mut(p.pane).unwrap().pane_run =
-                            Some(chda_core::PaneRun::Starting {
-                                started_at: now_ms(),
-                            });
-                        self.open_pane(
-                            p.pane,
-                            Some(context.cwd.clone()),
-                            Some(command),
-                            window,
-                            cx,
-                        );
-                    }
-                    Err(error) => {
-                        let info = self.ws.pane_mut(p.pane).unwrap();
-                        info.cwd = Some(context.cwd.clone());
-                        info.pane_run = Some(chda_core::PaneRun::failed(error));
-                        self.ws.end_agent(p.pane);
-                    }
-                }
+                waiting.push((p, placeholder));
                 continue;
             }
-            self.initializing_panes.insert(p.pane);
-            let command = if adopting {
-                None
-            } else {
-                match &p.agent {
-                    Some(conversation) if self.config.restore_agents => {
-                        let cwd = p.cwd.clone().unwrap_or_default();
-                        let argv = self.resume_argv(&cwd, conversation);
-                        match argv {
-                            Ok(argv) => Some(argv),
-                            Err(why) => {
-                                notes.push(why);
-                                None
-                            }
-                        }
+            self.restore_pane(p, &mut notes, window, cx);
+        }
+        if !waiting.is_empty() {
+            self.after_shell_path(window, cx, move |this, window, cx| {
+                let mut notes = Vec::new();
+                for (p, placeholder) in waiting {
+                    if placeholder && let Some(info) = this.ws.pane_mut(p.pane) {
+                        info.pane_run = None;
                     }
-                    _ => None,
+                    this.restore_pane(p, &mut notes, window, cx);
                 }
-            };
-            if adopting {
-                if let Some((meta, _)) = self
-                    .env
-                    .windows
-                    .borrow()
-                    .update
-                    .inherited
-                    .get(&p.pane.raw())
-                    && let Some(info) = self.ws.pane_mut(p.pane)
-                {
-                    info.title = meta.title.clone();
-                    info.agent = meta.agent.clone();
-                    info.agent_live = meta.agent_live;
+                if !notes.is_empty() {
+                    this.notify(format!("Restored the last session; {}", notes.join("; ")));
                 }
-                self.initializing_panes.remove(&p.pane);
-            } else if command.is_none() {
-                self.ws.set_agent_session(p.pane, None);
-            }
-            self.open_pane(p.pane, p.cwd, command, window, cx);
+                this.sync_panes(cx);
+                cx.notify();
+            });
         }
         let graphs: Vec<_> = self
             .ws
@@ -2355,6 +2286,149 @@ impl WorkspaceView {
         // The restored focus is revealed inside PROJECT once its worktree is
         // listed, as for any navigation; a collapsed PROJECT stays collapsed.
         self.focus_active(window, cx);
+    }
+
+    /// Whether restoring `p` starts an agent.
+    fn restores_agent(&self, p: &chda_core::RestoredPane) -> bool {
+        let adopting = self.env.windows.borrow().update.adopting;
+        !adopting
+            && self.config.restore_agents
+            && (p.agent.is_some() || p.launch.is_some())
+            && !p.run.as_ref().is_some_and(chda_core::PaneRun::stopped)
+    }
+
+    /// Reopen one saved pane: its process output, captured agent launch,
+    /// agent conversation or plain shell.
+    fn restore_pane(
+        &mut self,
+        p: chda_core::RestoredPane,
+        notes: &mut Vec<String>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if let Some(file) = self
+            .ws
+            .pane(p.pane)
+            .and_then(|info| info.previous_run.clone())
+        {
+            self.owned_outputs.borrow_mut().insert(p.pane, file);
+        }
+        let adopting = self.env.windows.borrow().update.adopting;
+        if p.run.as_ref().is_some_and(chda_core::PaneRun::stopped) {
+            self.ws.end_agent(p.pane);
+            return;
+        }
+        let mut p = p;
+        if !adopting && self.config.restore_agents && (p.agent.is_some() || p.launch.is_some()) {
+            let conversation = p
+                .agent
+                .as_ref()
+                .map(|s| (s.agent.as_str(), SessionId(s.session.clone())))
+                .or_else(|| {
+                    p.launch
+                        .as_ref()
+                        .and_then(|c| c.session.as_ref().map(|s| (c.agent.as_str(), s.clone())))
+                });
+            let transcript = conversation.and_then(|(agent, session)| {
+                self.adapters
+                    .iter()
+                    .find(|a| a.id().as_str() == agent)
+                    .and_then(|a| a.session_cwd_for_id(&session))
+            });
+            let reported = p.agent.as_ref().and_then(|s| s.cwd.as_deref());
+            let launch = p.launch.as_ref().map(|c| c.cwd.as_path());
+            match chda_core::restore_agent_cwd(
+                reported,
+                launch,
+                transcript.as_deref(),
+                p.cwd.as_deref(),
+            ) {
+                Ok(cwd) => {
+                    p.cwd = cwd;
+                    if let (Some(context), Some(cwd)) = (&mut p.launch, &p.cwd) {
+                        context.cwd = cwd.clone();
+                    }
+                    if let Some(info) = self.ws.pane_mut(p.pane) {
+                        info.cwd = p.cwd.clone();
+                        info.agent_launch = p.launch.clone();
+                    }
+                }
+                Err(error) => {
+                    let info = self.ws.pane_mut(p.pane).unwrap();
+                    info.cwd = reported
+                        .or(launch)
+                        .or(transcript.as_deref())
+                        .map(Path::to_path_buf);
+                    info.pane_run = Some(chda_core::PaneRun::failed(error.clone()));
+                    self.ws.end_agent(p.pane);
+                    notes.push(error);
+                    return;
+                }
+            }
+        }
+        if !adopting && p.launch.is_some() && !self.config.restore_agents {
+            if let Some(info) = self.ws.pane_mut(p.pane) {
+                info.agent_launch = None;
+                info.pane_run = None;
+            }
+        } else if !adopting && let Some(context) = &p.launch {
+            let result = self.captured_resume_argv(context);
+            match result {
+                Ok(command) => {
+                    self.initializing_panes.insert(p.pane);
+                    self.ws.pane_mut(p.pane).unwrap().pane_run =
+                        Some(chda_core::PaneRun::Starting {
+                            started_at: now_ms(),
+                        });
+                    self.open_pane(p.pane, Some(context.cwd.clone()), Some(command), window, cx);
+                }
+                Err(error) => {
+                    let info = self.ws.pane_mut(p.pane).unwrap();
+                    info.cwd = Some(context.cwd.clone());
+                    info.pane_run = Some(chda_core::PaneRun::failed(error));
+                    self.ws.end_agent(p.pane);
+                }
+            }
+            return;
+        }
+        self.initializing_panes.insert(p.pane);
+        let command = if adopting {
+            None
+        } else {
+            match &p.agent {
+                Some(conversation) if self.config.restore_agents => {
+                    let cwd = p.cwd.clone().unwrap_or_default();
+                    let argv = self.resume_argv(&cwd, conversation);
+                    match argv {
+                        Ok(argv) => Some(argv),
+                        Err(why) => {
+                            notes.push(why);
+                            None
+                        }
+                    }
+                }
+                _ => None,
+            }
+        };
+        if adopting {
+            if let Some((meta, _)) = self
+                .env
+                .windows
+                .borrow()
+                .update
+                .inherited
+                .get(&p.pane.raw())
+                && let Some(info) = self.ws.pane_mut(p.pane)
+            {
+                info.title = meta.title.clone();
+                info.agent = meta.agent.clone();
+                info.agent_live = meta.agent_live;
+            }
+            self.initializing_panes.remove(&p.pane);
+        } else if command.is_none() {
+            self.ws.set_agent_session(p.pane, None);
+        }
+        self.open_pane(p.pane, p.cwd, command, window, cx);
     }
 
     /// The command that reopens a saved agent conversation in `cwd`, or why
@@ -4435,6 +4509,24 @@ impl WorkspaceView {
         Some(chda_core::agents::command_argv(&cmd))
     }
 
+    /// Run `f` once the login shell's PATH stops being pending, so agent
+    /// lookups started during a slow shell startup see the user's PATH.
+    fn after_shell_path(
+        &self,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+        f: impl FnOnce(&mut Self, &mut Window, &mut Context<Self>) + 'static,
+    ) {
+        let env = self.env.clone();
+        cx.spawn_in(window, async move |this, cx| {
+            while env.shell_path.pending() {
+                let _ = env.shell_path.changed().await;
+            }
+            let _ = this.update_in(cx, |this, window, cx| f(this, window, cx));
+        })
+        .detach();
+    }
+
     fn open_default_action(&mut self, cwd: &Path, window: &mut Window, cx: &mut Context<Self>) {
         if let Some(agent) = self.config.default_action.agent().and_then(AgentId::parse) {
             self.run_agent(cwd, agent, None, window, cx);
@@ -4451,6 +4543,13 @@ impl WorkspaceView {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        if self.env.shell_path.pending() {
+            let cwd = cwd.to_path_buf();
+            self.after_shell_path(window, cx, move |this, window, cx| {
+                this.run_agent(&cwd, agent, resume, window, cx)
+            });
+            return;
+        }
         if self.require_preparation(cwd, window, cx) {
             return;
         }
@@ -4474,6 +4573,13 @@ impl WorkspaceView {
 
     /// Start the `agent-presets` entry called `name` in a new tab at `cwd`.
     fn run_preset(&mut self, cwd: &Path, name: &str, window: &mut Window, cx: &mut Context<Self>) {
+        if self.env.shell_path.pending() {
+            let (cwd, name) = (cwd.to_path_buf(), name.to_owned());
+            self.after_shell_path(window, cx, move |this, window, cx| {
+                this.run_preset(&cwd, &name, window, cx)
+            });
+            return;
+        }
         if self.require_preparation(cwd, window, cx) {
             return;
         }
@@ -4522,6 +4628,12 @@ impl WorkspaceView {
         if self.launch_sheet.is_some() {
             self.notify_error("Finish or cancel the current agent launch first".into());
             cx.notify();
+            return;
+        }
+        if self.env.shell_path.pending() {
+            self.after_shell_path(window, cx, move |this, window, cx| {
+                this.resume_sessions(picks, window, cx)
+            });
             return;
         }
         if picks.iter().any(|pick| {

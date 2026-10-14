@@ -207,3 +207,59 @@ done
         "failed refresh retries promptly rather than after a minute"
     );
 }
+
+#[gpui::test]
+fn codex_usage_appears_when_the_login_shell_is_slower_than_the_launch_wait(
+    cx: &mut TestAppContext,
+) {
+    let mut h = Harness::open(cx, "quota-slow-path", |home| {
+        use std::os::unix::fs::PermissionsExt;
+        let script = r#"#!/bin/sh
+while IFS= read -r line; do
+    case "$line" in
+        *'"method":"initialize"'*) printf '%s\n' '{"id":1,"result":{}}' ;;
+        *'"method":"account/read"'*) printf '%s\n' '{"id":2,"result":{"account":{"type":"chatgpt","email":"test@example.test"}}}' ;;
+        *'"method":"account/rateLimits/read"'*) printf '%s\n' '{"id":3,"result":{"rateLimits":{"primary":{"usedPercent":35,"windowDurationMins":300}}}}' ;;
+    esac
+done
+"#;
+        std::fs::create_dir_all(&home.bin).unwrap();
+        let executable = home.bin.join("codex");
+        std::fs::write(&executable, script).unwrap();
+        std::fs::set_permissions(&executable, std::fs::Permissions::from_mode(0o700)).unwrap();
+        // A Dock launch inherits launchd's PATH; only the login shell adds
+        // the CLI's directory, after more than the two-second launch wait.
+        std::fs::write(home.home.join("gui-path"), "/usr/bin:/bin:/usr/sbin:/sbin").unwrap();
+        std::fs::write(
+            home.home.join(".zprofile"),
+            format!("sleep 3\nexport PATH='{}':$PATH\n", home.bin.display()),
+        )
+        .unwrap();
+        std::fs::write(
+            home.home.join(".zshrc"),
+            "PS1='test%# '\nPROMPT_EOL_MARK=''\n",
+        )
+        .unwrap();
+    });
+    h.cx.update(|_, cx| h.view.update(cx, |v, cx| v.start_codex_quota(cx)));
+    h.wait_for("Codex usage through the late PATH", |v, _| {
+        text(v, "codex") == "35% · codex 5h"
+    });
+}
+
+#[test]
+fn missing_codex_names_the_paths_searched_and_a_failed_capture() {
+    use chda_core::agents::quota::CodexQuotaError;
+    let missing = CodexQuotaError::NotInstalled {
+        searched: "/opt/homebrew/bin:/usr/bin".into(),
+    };
+    assert_eq!(missing.label(), "Not installed");
+    assert!(missing.details().contains("/opt/homebrew/bin:/usr/bin"));
+    let unread = CodexQuotaError::PathUnavailable {
+        error: "timed out".into(),
+        searched: "/usr/bin:/bin".into(),
+    };
+    assert_eq!(unread.label(), "Could not read the shell PATH");
+    assert!(unread.details().contains("timed out"));
+    assert!(unread.details().contains("/usr/bin:/bin"));
+}

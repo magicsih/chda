@@ -122,7 +122,7 @@ impl WorkspaceView {
         else {
             return;
         };
-        let environment = self.env.pane_env.clone();
+        let environment = self.env.pane_env();
         state.child_polling = true;
         let operation = state.update.operation();
         drop(state);

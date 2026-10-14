@@ -85,7 +85,9 @@ fn agent_presets_start_from_the_palette_and_the_sidebar_menu(cx: &mut TestAppCon
 }
 
 #[gpui::test]
-fn codex_legacy_sessions_are_listed_and_resume_with_the_login_shell_path(cx: &mut TestAppContext) {
+fn codex_legacy_sessions_are_listed_and_resume_with_a_slow_login_shell_path(
+    cx: &mut TestAppContext,
+) {
     use crate::sidebar_view::{SessionPick, SidebarEvent};
     use std::os::unix::fs::PermissionsExt;
     let mut repo = std::path::PathBuf::new();
@@ -110,9 +112,10 @@ fn codex_legacy_sessions_are_listed_and_resume_with_the_login_shell_path(cx: &mu
         .unwrap();
         std::fs::set_permissions(&bin, std::fs::Permissions::from_mode(0o700)).unwrap();
         std::fs::write(home.home.join("gui-path"), "/usr/bin:/bin:/usr/sbin:/sbin").unwrap();
+        // Slower than the launch wait (#243): the PATH arrives afterwards.
         std::fs::write(
             home.home.join(".zprofile"),
-            format!("export PATH='{}':$PATH\n", home.bin.display()),
+            format!("sleep 3\nexport PATH='{}':$PATH\n", home.bin.display()),
         )
         .unwrap();
     });

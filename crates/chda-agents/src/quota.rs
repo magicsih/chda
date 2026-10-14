@@ -5,7 +5,16 @@ use serde_json::Value;
 /// A missing installation/authentication is different from a failed refresh.
 #[derive(Clone, Debug, PartialEq)]
 pub enum CodexQuotaError {
-    NotInstalled,
+    /// No `codex` on the captured login shell PATH, `searched`.
+    NotInstalled {
+        searched: String,
+    },
+    /// The login shell's PATH could not be read, so only the inherited
+    /// PATH, `searched`, was looked through.
+    PathUnavailable {
+        error: String,
+        searched: String,
+    },
     SignInRequired,
     Unsupported,
     Retry {
@@ -25,21 +34,30 @@ impl CodexQuotaError {
 
     pub fn label(&self) -> &'static str {
         match self {
-            Self::NotInstalled => "Not installed",
+            Self::NotInstalled { .. } => "Not installed",
+            Self::PathUnavailable { .. } => "Could not read the shell PATH",
             Self::SignInRequired => "Sign in",
             Self::Unsupported => "No quota",
             Self::Retry { .. } => "Retrying",
         }
     }
 
-    pub fn details(&self) -> &str {
+    pub fn details(&self) -> String {
         match self {
-            Self::NotInstalled => "Install the Codex CLI to show its account quota.",
-            Self::SignInRequired => "Sign in to the Codex CLI with ChatGPT to show account quota.",
+            Self::NotInstalled { searched } => format!(
+                "Install the Codex CLI to show its account quota. No codex was found on the login shell's PATH: {searched}"
+            ),
+            Self::PathUnavailable { error, searched } => format!(
+                "chda could not read the login shell's PATH ({error}) and will try again. No codex was found on the inherited PATH: {searched}"
+            ),
+            Self::SignInRequired => {
+                "Sign in to the Codex CLI with ChatGPT to show account quota.".into()
+            }
             Self::Unsupported => {
                 "This CLI or authentication mode does not provide an identifiable ChatGPT quota."
+                    .into()
             }
-            Self::Retry { message, .. } => message,
+            Self::Retry { message, .. } => message.clone(),
         }
     }
 
@@ -420,7 +438,13 @@ mod tests {
             .collect();
         assert_eq!(delays, [2, 5, 10, 30, 30, 30]);
         for error in [
-            CodexQuotaError::NotInstalled,
+            CodexQuotaError::NotInstalled {
+                searched: "/usr/bin".into(),
+            },
+            CodexQuotaError::PathUnavailable {
+                error: "timed out".into(),
+                searched: "/usr/bin".into(),
+            },
             CodexQuotaError::SignInRequired,
             CodexQuotaError::Unsupported,
         ] {

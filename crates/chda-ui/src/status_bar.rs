@@ -125,9 +125,9 @@ impl ProviderQuotas {
         {
             if self.provider(provider, pane).is_some() {
                 detail.push_str("\nLast known usage; the current account was verified, but its quota refresh failed.\n");
-                detail.push_str(error.details());
+                detail.push_str(&error.details());
             } else {
-                detail = error.details().into();
+                detail = error.details();
             }
         }
         detail

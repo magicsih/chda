@@ -35,6 +35,70 @@ fn tabs_splits_and_directories_come_back(cx: &mut TestAppContext) {
     });
 }
 
+/// A Codex stand-in that prints its arguments, found only through a login
+/// shell slower than the launch wait (#243).
+fn slow_shell_codex(home: &super::harness::Home) {
+    use std::os::unix::fs::PermissionsExt;
+    std::fs::create_dir_all(&home.bin).unwrap();
+    let bin = home.bin.join("codex");
+    std::fs::write(
+        &bin,
+        "#!/usr/bin/env sh\nprintf 'fake-codex %s\\n' \"$*\"\nexec /bin/cat >/dev/null\n",
+    )
+    .unwrap();
+    std::fs::set_permissions(&bin, std::fs::Permissions::from_mode(0o700)).unwrap();
+    std::fs::write(home.home.join("gui-path"), "/usr/bin:/bin:/usr/sbin:/sbin").unwrap();
+    std::fs::write(
+        home.home.join(".zprofile"),
+        format!("sleep 3\nexport PATH='{}':$PATH\n", home.bin.display()),
+    )
+    .unwrap();
+}
+
+#[gpui::test]
+fn codex_conversations_wait_for_a_slow_login_shell_path_to_reopen(cx: &mut TestAppContext) {
+    let mut h = Harness::open(cx, "restore-slow-path", |home| {
+        slow_shell_codex(home);
+        home.codex_session(&home.home, "saved-session");
+    });
+    h.wait_prompt();
+    let pane = h.read(|v, _| v.ws.focused_pane().unwrap());
+    let home = h.home.home.clone();
+    h.hook_from(
+        "codex",
+        Some(pane.raw()),
+        &home,
+        HookKind::SessionStart,
+        "saved-session",
+    );
+    h.wait_for("the pane to know its conversation", move |v, _| {
+        v.ws.pane(pane)
+            .and_then(|info| info.agent_session.clone())
+            .is_some_and(|a| a.session == "saved-session")
+    });
+
+    let (mut cx2, view2) = h.reopen();
+    wait_until(
+        &mut cx2,
+        &view2,
+        "Codex to resume once the PATH arrives",
+        |v, cx| {
+            let first = v.ws.tabs()[0].panes()[0];
+            v.pane_text(first, cx)
+                .contains("fake-codex resume saved-session")
+        },
+    );
+    view2.read_with(&cx2, |v, _| {
+        assert!(
+            v.notifications
+                .latest()
+                .is_none_or(|note| !note.contains("not on PATH")),
+            "{:?}",
+            v.notifications.latest()
+        );
+    });
+}
+
 #[gpui::test]
 fn agent_conversations_reopen_in_their_panes(cx: &mut TestAppContext) {
     let mut h = Harness::open(cx, "restore-agents", |home| {

@@ -331,10 +331,14 @@ other host goes to whichever of the three is logged in to it. SSH aliases from
 logged in shows the command to run instead of badges.
 
 **Agents missing when launched from the Dock?** chda reads the PATH from your
-login shell's startup files once at launch and uses it for both agent detection
+login shell's startup files at launch and uses it for both agent detection
 and terminal processes. This includes Homebrew, npm and version-manager
 locations configured in zsh, bash or fish. Restart chda after changing that PATH.
-If the shell cannot report it within two seconds, the inherited PATH is kept.
+If the shell takes longer than two seconds, chda keeps reading it in the
+background for up to 20 seconds, retries after 30 seconds, 2 minutes and then
+every 10 minutes, and starts or restores agents once it arrives. Until then the
+inherited PATH applies, and the Codex usage meter says **Could not read the shell
+PATH** with the directories it searched.
 
 **Other shells?** Status, directory tracking and prompt jumping come from shell
 integration for zsh, bash and fish. Other shells fall back to polling the

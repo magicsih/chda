@@ -32,7 +32,10 @@ retrying label and its original observation time. If account verification
 fails or the server rejects a request, history remains only in details until
 verification succeeds again. Signed-out, missing-CLI and unsupported modes say
 **Sign in**, **Not installed** and **No quota**, respectively; these are checked
-again once per minute. No login, conversation,
+again once per minute. **Not installed** means the login shell's PATH, named in
+the details, has no `codex`. While that PATH is still being read the meter says
+**Loading**; when it cannot be read it says **Could not read the shell PATH**, and
+it checks again as soon as a retry captures the PATH. No login, conversation,
 model request or credential-file reader is introduced. See the
 [official reference](https://developers.openai.com/codex/app-server/).
 

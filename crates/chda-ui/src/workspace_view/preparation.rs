@@ -510,7 +510,7 @@ impl WorkspaceView {
         let finished = WorkerFinished(job.finished.clone());
         job.stage = PreparationStage::Running(PreparationProgress::Copying);
         let shell = self.env.shell.clone();
-        let environment = self.env.pane_env.clone();
+        let environment = self.env.pane_env();
         let (tx, mut rx) = unbounded::<RunMessage>();
         let background_operation = self.env.windows.borrow().update.operation();
         let completion_operation = self.env.windows.borrow().update.operation();

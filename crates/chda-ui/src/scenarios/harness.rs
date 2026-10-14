@@ -356,22 +356,27 @@ fn open_window(
                 .config_files,
             theme_dirs: Vec::new(),
         };
-        let mut pane_env = vec![
+        let mut pane_env: Vec<(String, String)> = vec![
             // Codex's command runner exports GIT_PAGER=cat; scenarios page
             // diffs like the app does, independently of that host setting.
             ("GIT_PAGER".into(), "less -+F -R".into()),
             ("HOME".into(), home.home.to_string_lossy().into_owned()),
             ("ZDOTDIR".into(), home.home.to_string_lossy().into_owned()),
         ];
-        // Tests may model a Dock launch without mutating the test process PATH.
-        if let Ok(path) = std::fs::read_to_string(home.home.join("gui-path")) {
-            pane_env.push(("PATH".into(), path));
-            pane_env.extend(crate::environment::shell_path_env(
-                Path::new("/bin/zsh"),
-                &home.home,
-                &pane_env,
-            ));
-        }
+        // Tests may model a Dock launch without mutating the test process
+        // PATH: the inherited PATH comes from `gui-path`, and the login
+        // shell's PATH is captured as the app does at launch.
+        let shell_path = match std::fs::read_to_string(home.home.join("gui-path")) {
+            Ok(path) => {
+                pane_env.push(("PATH".into(), path));
+                let (env, home) = (pane_env.clone(), home.home.clone());
+                crate::environment::ShellPath::start(Some(Arc::new(move |deadline| {
+                    let pairs: Vec<_> = env.iter().map(|(k, v)| (k.as_str(), v.as_str())).collect();
+                    chda_term::shell_path(Path::new("/bin/zsh"), &home, &pairs, deadline)
+                })))
+            }
+            Err(_) => crate::environment::ShellPath::start(None),
+        };
         let env = Rc::new(Environment {
             collect_telemetry: false,
             update_launcher: {
@@ -405,6 +410,7 @@ fn open_window(
             ghostty: paths.clone(),
             shell: Some(PathBuf::from("/bin/zsh")),
             pane_env,
+            shell_path,
             adapters: Arc::new(
                 adapters()
                     .into_iter()

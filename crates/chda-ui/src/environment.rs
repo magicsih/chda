@@ -2,9 +2,11 @@
 //! The app builds one from the user's real locations; tests build one over
 //! temporary directories with a [`System`] that records instead of acting.
 
+use std::cell::{Cell, RefCell};
 use std::path::{Path, PathBuf};
 use std::rc::Rc;
 use std::sync::Arc;
+use std::time::Duration;
 
 use chda_config::{ChdaConfig, Paths};
 use chda_core::ForgeClis;
@@ -99,8 +101,11 @@ pub struct Environment {
     pub ghostty: Paths,
     /// Shell for new panes.
     pub shell: Option<PathBuf>,
-    /// Extra environment for every pane's shell.
+    /// Extra environment for every pane's shell, before the login shell's
+    /// PATH; read it through [`Environment::pane_env`].
     pub pane_env: Vec<(String, String)>,
+    /// The login shell's PATH, which can arrive after launch.
+    pub shell_path: ShellPath,
     pub adapters: Arc<Vec<Box<dyn AgentAdapter>>>,
     /// The forge CLIs (`gh`, `glab`, `tea`) to ask for pull request state.
     pub forge_clis: ForgeClis,
@@ -110,29 +115,159 @@ pub struct Environment {
     pub latest_release: Arc<dyn Fn() -> Option<String> + Send + Sync>,
 }
 
-/// PATH for panes and agent discovery, captured once from the login shell.
-/// A failed probe preserves the inherited environment.
-pub(crate) fn shell_path_env(
-    shell: &Path,
-    home: &Path,
-    env: &[(String, String)],
-) -> Vec<(String, String)> {
-    let pairs: Vec<_> = env.iter().map(|(k, v)| (k.as_str(), v.as_str())).collect();
-    match chda_term::shell_path(shell, home, &pairs, std::time::Duration::from_secs(2)) {
-        Ok(path) => vec![("PATH".into(), path)],
-        Err(_) => Vec::new(),
+/// Reads the login shell's PATH within a deadline. Runs off the main thread.
+pub type CapturePath = Arc<dyn Fn(Duration) -> std::io::Result<String> + Send + Sync>;
+
+/// Where the login shell's PATH stands.
+#[derive(Clone, Debug, PartialEq)]
+pub enum ShellPathState {
+    /// Not captured by design (no login shell); the inherited PATH applies.
+    Inherited,
+    /// The quick capture at launch timed out; a longer one is running.
+    Pending,
+    Ready(String),
+    /// The last capture failed; the inherited PATH applies until a retry
+    /// succeeds.
+    Failed(String),
+}
+
+/// The login shell's PATH for panes and agent discovery. Launch waits
+/// [`ShellPath::QUICK`] for it; when the shell is slower, the window keeps
+/// capturing in the background (see [`watch_shell_path`]).
+pub struct ShellPath {
+    state: RefCell<ShellPathState>,
+    capture: Option<CapturePath>,
+    watching: Cell<bool>,
+    waiters: RefCell<Vec<futures::channel::oneshot::Sender<()>>>,
+}
+
+impl ShellPath {
+    pub const QUICK: Duration = Duration::from_secs(2);
+    pub const LONG: Duration = Duration::from_secs(20);
+    /// Waits between failed background captures; the last one repeats.
+    pub const RETRIES: [Duration; 3] = [
+        Duration::from_secs(30),
+        Duration::from_secs(120),
+        Duration::from_secs(600),
+    ];
+
+    /// Try `capture` once with [`ShellPath::QUICK`]; `None` keeps the
+    /// inherited PATH.
+    pub fn start(capture: Option<CapturePath>) -> Self {
+        let mut capture = capture;
+        let state = match &capture {
+            None => ShellPathState::Inherited,
+            Some(attempt) => match attempt(Self::QUICK) {
+                Ok(path) => ShellPathState::Ready(path),
+                Err(e) if e.kind() == std::io::ErrorKind::Unsupported => {
+                    capture = None;
+                    ShellPathState::Failed(e.to_string())
+                }
+                Err(_) => ShellPathState::Pending,
+            },
+        };
+        Self {
+            state: RefCell::new(state),
+            capture,
+            watching: Cell::new(false),
+            waiters: RefCell::default(),
+        }
     }
+
+    pub fn state(&self) -> ShellPathState {
+        self.state.borrow().clone()
+    }
+
+    pub fn pending(&self) -> bool {
+        matches!(*self.state.borrow(), ShellPathState::Pending)
+    }
+
+    pub fn path(&self) -> Option<String> {
+        match &*self.state.borrow() {
+            ShellPathState::Ready(path) => Some(path.clone()),
+            _ => None,
+        }
+    }
+
+    /// Resolves at the next change of state.
+    pub fn changed(&self) -> futures::channel::oneshot::Receiver<()> {
+        let (tx, rx) = futures::channel::oneshot::channel();
+        let mut waiters = self.waiters.borrow_mut();
+        waiters.retain(|waiter| !waiter.is_canceled());
+        waiters.push(tx);
+        rx
+    }
+
+    fn set(&self, state: ShellPathState) {
+        *self.state.borrow_mut() = state;
+        for waiter in self.waiters.borrow_mut().drain(..) {
+            let _ = waiter.send(());
+        }
+    }
+}
+
+/// Keep capturing the login shell's PATH while it is pending or failed, and
+/// redraw every window when it changes. One loop per app.
+pub(crate) fn watch_shell_path(env: Rc<Environment>, cx: &mut gpui::App) {
+    let path = &env.shell_path;
+    let Some(capture) = path.capture.clone() else {
+        return;
+    };
+    if path.watching.get() || !matches!(*path.state.borrow(), ShellPathState::Pending) {
+        return;
+    }
+    path.watching.set(true);
+    cx.spawn(async move |cx| {
+        let mut failures = 0;
+        loop {
+            if env.windows.borrow().quitting {
+                break;
+            }
+            let attempt = capture.clone();
+            let result =
+                gpui::AppContext::background_spawn(cx, async move { attempt(ShellPath::LONG) })
+                    .await;
+            let done = match result {
+                Ok(path) => {
+                    env.shell_path.set(ShellPathState::Ready(path));
+                    true
+                }
+                Err(e) => {
+                    env.shell_path.set(ShellPathState::Failed(e.to_string()));
+                    false
+                }
+            };
+            let entries = env.windows.borrow().entries.clone();
+            cx.update(|cx| {
+                for entry in entries {
+                    let _ = entry.view.update(cx, |_, cx| cx.notify());
+                }
+            });
+            if done {
+                break;
+            }
+            let delay = ShellPath::RETRIES[failures.min(ShellPath::RETRIES.len() - 1)];
+            failures += 1;
+            cx.background_executor().timer(delay).await;
+        }
+        env.shell_path.watching.set(false);
+    })
+    .detach();
 }
 
 impl Environment {
     /// The current user's locations and the real OS.
     pub fn for_user() -> Self {
         let shell = chda_term::login_shell();
-        let pane_env = shell
-            .as_deref()
-            .zip(std::env::var_os("HOME"))
-            .map(|(shell, home)| shell_path_env(shell, Path::new(&home), &[]))
-            .unwrap_or_default();
+        let capture =
+            shell
+                .clone()
+                .zip(std::env::var_os("HOME"))
+                .map(|(shell, home)| -> CapturePath {
+                    Arc::new(move |deadline| {
+                        chda_term::shell_path(&shell, Path::new(&home), &[], deadline)
+                    })
+                });
         Self {
             collect_telemetry: true,
             update_launcher: Arc::new(platform::update::start),
@@ -141,7 +276,8 @@ impl Environment {
             data_dir: data_dir(),
             ghostty: Paths::default_for_user(),
             shell,
-            pane_env,
+            pane_env: Vec::new(),
+            shell_path: ShellPath::start(capture),
             adapters: Arc::new(adapters()),
             forge_clis: ForgeClis::default(),
             system: Rc::new(NativeSystem),
@@ -159,13 +295,29 @@ impl Environment {
             .unwrap_or_default()
     }
 
-    /// Exactly the PATH inherited by a PTY launched with `pane_env`.
+    /// The environment every pane's shell and helper process gets: the
+    /// extra variables plus the login shell's PATH once it is known.
+    pub fn pane_env(&self) -> Vec<(String, String)> {
+        let mut env = self.pane_env.clone();
+        if let Some(path) = self.shell_path.path() {
+            env.retain(|(k, _)| k != "PATH");
+            env.push(("PATH".into(), path));
+        }
+        env
+    }
+
+    /// Exactly the PATH inherited by a PTY launched with [`Self::pane_env`].
     pub fn search_path(&self) -> std::ffi::OsString {
-        self.pane_env
-            .iter()
-            .rev()
-            .find(|(k, _)| k == "PATH")
-            .map(|(_, v)| v.into())
+        self.shell_path
+            .path()
+            .or_else(|| {
+                self.pane_env
+                    .iter()
+                    .rev()
+                    .find(|(k, _)| k == "PATH")
+                    .map(|(_, v)| v.clone())
+            })
+            .map(Into::into)
             .or_else(|| std::env::var_os("PATH"))
             .unwrap_or_default()
     }
