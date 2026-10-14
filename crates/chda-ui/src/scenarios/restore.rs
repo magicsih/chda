@@ -175,3 +175,38 @@ fn agent_conversations_reopen_in_their_panes(cx: &mut TestAppContext) {
         assert!(v.ws.pane(first).unwrap().agent_session.is_none());
     });
 }
+
+#[gpui::test]
+fn full_screen_keeps_the_windowed_size_for_the_next_launch(cx: &mut TestAppContext) {
+    use gpui::{px, size};
+    let mut h = Harness::open(cx, "restore-full-screen", |_| {});
+    h.wait_prompt();
+    h.cx.simulate_resize(size(px(900.0), px(600.0)));
+    h.cx.run_until_parked();
+    let saved = |h: &Harness| {
+        let bounds = chda_core::SavedWindow::load(&h.home.data)
+            .and_then(|w| w.bounds)
+            .expect("saved bounds");
+        (bounds.width, bounds.height)
+    };
+    assert_eq!(saved(&h), (900.0, 600.0));
+
+    // Native full screen resizes the window to the screen.
+    h.cx.update(|window, _| window.toggle_fullscreen());
+    h.cx.simulate_resize(size(px(1710.0), px(1107.0)));
+    h.cx.run_until_parked();
+    assert_eq!(
+        saved(&h),
+        (900.0, 600.0),
+        "a full-screen frame is not saved as the windowed size"
+    );
+
+    h.cx.update(|window, _| window.toggle_fullscreen());
+    h.cx.simulate_resize(size(px(1000.0), px(700.0)));
+    h.cx.run_until_parked();
+    assert_eq!(
+        saved(&h),
+        (1000.0, 700.0),
+        "leaving full screen records again"
+    );
+}

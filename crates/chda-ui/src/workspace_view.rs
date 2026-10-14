@@ -2483,8 +2483,13 @@ impl WorkspaceView {
     }
 
     /// The window's origin and content size: a window opens with the size
-    /// of its content, while its frame also counts the title bar.
+    /// of its content, while its frame also counts the title bar. Full
+    /// screen keeps the last windowed bounds: its screen-sized frame would
+    /// reopen as a normal window that looks full screen (#241).
     fn note_bounds(&mut self, window: &Window) {
+        if window.is_fullscreen() && self.bounds.is_some() {
+            return;
+        }
         let origin = window.window_bounds().get_bounds().origin;
         let size = window.viewport_size();
         self.bounds = Some(SavedBounds {
