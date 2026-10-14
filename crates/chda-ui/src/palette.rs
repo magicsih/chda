@@ -30,6 +30,8 @@ pub enum PaletteCommand {
     SetTheme(Option<String>),
     /// The theme for one appearance, keeping the other's.
     SetThemeFor(chda_config::Appearance, String),
+    /// Move a running pane to another tab or window.
+    MovePane(chda_core::PaneId, crate::workspace_view::PaneDestination),
     /// Render a Markdown file and open it in the browser.
     PreviewMarkdown(PathBuf),
     /// Open the focused worktree in the app with this `FolderApp` id.

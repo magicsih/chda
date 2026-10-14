@@ -49,6 +49,8 @@ pub enum SidebarEvent {
     CloseTab(TabId),
     /// Right-click on a parent's child summary: list its children.
     ChildMenu(Vec<chda_core::agents::ChildActivity>, Point<Pixels>),
+    /// Right-click on a Sessions row: its pane's menu.
+    SessionMenu(SessionKey, Point<Pixels>),
     /// Switch Sessions labels between branch aliases and branch names.
     ToggleActiveLabel,
     ToggleSessions,
@@ -1782,6 +1784,15 @@ impl SidebarView {
             .hover(|s| s.bg(fg.opacity(0.08)))
             .tooltip(crate::tooltip::text(tooltip))
             .on_click(cx.listener(move |_, _, _, cx| cx.emit(click.clone())))
+            .when(!matches!(row.kind, SessionKind::View(_)), |d| {
+                d.on_mouse_down(
+                    MouseButton::Right,
+                    cx.listener(move |_, e: &MouseDownEvent, _, cx| {
+                        cx.stop_propagation();
+                        cx.emit(SidebarEvent::SessionMenu(key, e.position));
+                    }),
+                )
+            })
             .child(
                 div()
                     .id(ElementId::Name(format!("session-status:{id}").into()))

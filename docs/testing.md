@@ -63,6 +63,7 @@ Three layers, all run by `cargo test --workspace` (CI: the macOS job).
 | Ghostty's `config.ghostty` file name, live | `config::config_ghostty_wins_over_the_legacy_name_live` | #47 |
 | Session restore | `restore::tabs_splits_and_directories_come_back` | #10 |
 | Native full screen never replaces the saved windowed size, and leaving it records again | `restore::full_screen_keeps_the_windowed_size_for_the_next_launch` | #241 |
+| Dragging a tab reorders the tab bar and restores that order; a running pane moves through the tab menu to another tab, to a new tab and to another window with the same shell process and its scrollback, and an emptied tab closes | `moves::*`, `chda-core` `workspace::tests::tabs_reorder_and_panes_move_with_their_state` | #248 |
 | Session restore reopens agent conversations | `restore::agent_conversations_reopen_in_their_panes` | #31 |
 | Deleting a worktree takes one confirmation, even locked, large or with a terminal open in it | `worktrees::create_then_delete_a_worktree_in_one_go` | #29 |
 | PR badges per host, login hint for the other | `pull_requests::badges_per_host_and_a_login_hint_for_the_other` | #33 |

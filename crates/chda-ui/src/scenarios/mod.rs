@@ -20,6 +20,7 @@ mod input;
 mod lifecycle;
 mod mcp;
 mod menus;
+mod moves;
 mod navigation;
 mod notifications;
 mod palette;

@@ -21,6 +21,8 @@ mod agent_launch;
 mod agent_restart;
 mod children;
 mod coordination;
+mod moves;
+pub(crate) use moves::PaneDestination;
 mod notifications;
 pub(crate) mod preparation;
 mod review;
@@ -168,6 +170,11 @@ pub(crate) enum MenuAction {
     CopySelection(PaneId),
     /// Focus a child agent's exact pane, or show its details.
     ChildDetails(chda_core::agents::ChildActivity),
+    /// Move a running pane to another tab or window.
+    MovePane {
+        pane: PaneId,
+        to: PaneDestination,
+    },
     ShareSelection {
         pane: PaneId,
         identity: Option<(String, String)>,
@@ -628,9 +635,11 @@ impl WorkspaceView {
         this.sync_starred(cx);
         this.install_hooks();
         crate::environment::watch_shell_path(this.env.clone(), cx);
-        match saved {
-            Some(saved) => this.restore_session(&saved, window, cx),
-            None => this.new_tab(&NewTab, window, cx),
+        let moving = this.env.windows.borrow_mut().moving_pane.take();
+        match (saved, moving) {
+            (Some(saved), _) => this.restore_session(&saved, window, cx),
+            (None, Some((pane, info))) => this.receive_pane(pane, info, window, cx),
+            (None, None) => this.new_tab(&NewTab, window, cx),
         }
         this.refresh_all(cx);
         this.refresh_sessions(cx);
@@ -4124,6 +4133,21 @@ impl WorkspaceView {
     ) {
         self.context_menu = None;
         match event {
+            SidebarEvent::SessionMenu(key, position) => {
+                let pane = match key {
+                    chda_core::SessionKey::Pane(pane) => Some(pane),
+                    chda_core::SessionKey::Tab(tab) => self
+                        .ws
+                        .tabs()
+                        .iter()
+                        .find(|t| t.id == tab)
+                        .and_then(|t| t.focused_pane()),
+                };
+                if let Some(pane) = pane {
+                    crate::tooltip::dismiss(window, cx);
+                    self.open_pane_menu(pane, position, cx);
+                }
+            }
             SidebarEvent::ChildMenu(children, position) => {
                 crate::tooltip::dismiss(window, cx);
                 let now = now_ms();
@@ -4957,6 +4981,7 @@ impl WorkspaceView {
         self.context_menu = None;
         match action {
             MenuAction::ChildDetails(child) => self.open_child_details(child, window, cx),
+            MenuAction::MovePane { pane, to } => self.move_pane(pane, to, window, cx),
             MenuAction::CopySelection(pane) => {
                 if let Some((term, _)) = self.panes.get(&pane) {
                     term.read(cx).copy_selection();
@@ -5779,6 +5804,17 @@ impl WorkspaceView {
             command: PaletteCommand::Action(action),
         })
         .collect();
+        if let Some(pane) = self.ws.focused_pane() {
+            for (label, action) in self.pane_move_items(pane) {
+                if let MenuAction::MovePane { pane, to } = action {
+                    items.push(PaletteItem {
+                        label: format!("Pane: {label}"),
+                        detail: "keeps the running process".into(),
+                        command: PaletteCommand::MovePane(pane, to),
+                    });
+                }
+            }
+        }
         let now = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
             .map(|d| d.as_millis() as u64)
@@ -6185,6 +6221,7 @@ impl WorkspaceView {
                 self.save_config();
                 self.restore_focus(window, cx);
             }
+            PaletteCommand::MovePane(pane, to) => self.move_pane(pane, to, window, cx),
             PaletteCommand::SetThemeFor(appearance, name) => {
                 self.previewing_theme = false;
                 let base = self.theme_value();
@@ -6372,9 +6409,39 @@ impl WorkspaceView {
                 let dot = agent.map(|a| {
                     crate::status_icon::status_icon(Some(a.status), self.spin, fg, bar_bg)
                 });
+                let drag = moves::TabDrag {
+                    tab: tab_id,
+                    title: title.clone(),
+                };
+                let focused_pane = tab.focused_pane();
                 div()
                     .id(("tab", i))
                     .debug_selector(move || format!("tab-{i}"))
+                    // Drag a tab onto another to put it there (#248).
+                    .on_drag(drag, move |drag: &moves::TabDrag, _, _, cx| {
+                        crate::external_drop::start_internal(cx);
+                        let title = drag.title.clone();
+                        cx.new(|_| moves::TabDragPreview {
+                            title,
+                            fg,
+                            bg: blend(bg, fg, 0.12),
+                        })
+                    })
+                    .drag_over::<moves::TabDrag>(move |style, _, _, _| {
+                        style.border_l_2().border_color(fg.opacity(0.6))
+                    })
+                    .on_drop(cx.listener(move |this, drag: &moves::TabDrag, _, cx| {
+                        this.drop_tab(drag.tab, tab_id, cx)
+                    }))
+                    .when_some(focused_pane, |d, pane| {
+                        d.on_mouse_down(
+                            MouseButton::Right,
+                            cx.listener(move |this, e: &MouseDownEvent, _, cx| {
+                                cx.stop_propagation();
+                                this.open_pane_menu(pane, e.position, cx);
+                            }),
+                        )
+                    })
                     .min_w(px(104.0))
                     .flex_shrink_0()
                     .flex()

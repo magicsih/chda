@@ -20,3 +20,15 @@ Layout, titles, directories, exact supported conversation IDs and last output
 timestamps persist. Newly started processes are never marked live because they
 were saved. Previous activity stays separate, and shell initialization does
 not become new working activity.
+
+## Moving panes and tabs (#248)
+
+Tabs reorder by dragging within the tab bar; the saved order is the restored
+order. A running pane moves to another tab, a new tab or another window
+without restarting its process. Within a window the pane's terminal view
+stays and only the split tree changes. Between windows the source detaches
+the session as a session-preserving update does (ADR 0011), and the target
+adopts it by its unchanged pane id, keeping scrollback, agent status, child
+activity and conversation identity. Because pane ids are unique per process,
+Sessions rows, notifications and agent routing follow the pane. A tab left
+without panes closes without asking; a window left without tabs closes.

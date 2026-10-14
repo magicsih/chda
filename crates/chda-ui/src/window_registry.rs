@@ -29,6 +29,8 @@ pub(crate) struct WindowRegistry {
     pub child_polling: bool,
     pub children: chda_core::agents::ChildBoard,
     pub update: crate::upgrade::UpdateState,
+    /// A pane on its way to a window being opened for it (#248).
+    pub moving_pane: Option<(PaneId, chda_core::PaneInfo)>,
     pub replay: Vec<Incoming>,
     pub ipc_server: Option<chda_core::agents::ipc::Server>,
     pub inherited_notifications:

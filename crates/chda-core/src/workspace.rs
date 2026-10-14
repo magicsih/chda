@@ -858,6 +858,87 @@ impl Workspace {
         self.split(axis)
     }
 
+    /// Move tab `id` to position `to` among all tabs (#248).
+    pub fn move_tab(&mut self, id: TabId, to: usize) -> bool {
+        let Some(from) = self.tabs.iter().position(|t| t.id == id) else {
+            return false;
+        };
+        let tab = self.tabs.remove(from);
+        self.tabs.insert(to.min(self.tabs.len()), tab);
+        true
+    }
+
+    /// Take a pane out of its tab with its state, to put it elsewhere with
+    /// [`Self::insert_pane_as_tab`] or [`Self::insert_pane_into_tab`]. The
+    /// tab closes when this was its last pane; that tab is returned too.
+    pub fn take_pane(&mut self, pane: PaneId) -> Option<(PaneInfo, Option<TabId>)> {
+        let info = self.panes.get(&pane)?.clone();
+        self.tabs.iter().position(|t| t.panes().contains(&pane))?;
+        let closed = self.close_pane(pane);
+        Some((info, closed))
+    }
+
+    /// Put a taken pane in a new tab after the active one and activate it.
+    pub fn insert_pane_as_tab(&mut self, pane: PaneId, info: PaneInfo) -> TabId {
+        let tab = TabId(self.next());
+        self.panes.insert(pane, info);
+        let at = self
+            .active_index()
+            .map(|i| i + 1)
+            .unwrap_or(self.tabs.len());
+        self.tabs.insert(
+            at,
+            Tab {
+                id: tab,
+                content: TabContent::Terminal(TerminalTab {
+                    root: Node::Leaf(pane),
+                    focused: pane,
+                    zoomed: None,
+                }),
+                custom_title: None,
+            },
+        );
+        self.active = Some(tab);
+        tab
+    }
+
+    /// Put a taken pane into terminal tab `tab`, beside its focused pane
+    /// along that pane's longer side (`aspect`: the tab's width over its
+    /// height), and focus it there.
+    pub fn insert_pane_into_tab(
+        &mut self,
+        pane: PaneId,
+        info: PaneInfo,
+        tab: TabId,
+        aspect: f32,
+    ) -> bool {
+        let Some(target) = self.tabs.iter().position(|t| t.id == tab) else {
+            return false;
+        };
+        let Some(focused) = self.tabs[target].focused_pane() else {
+            return false;
+        };
+        let axis = match self.tabs[target]
+            .layout()
+            .into_iter()
+            .find(|(p, _)| *p == focused)
+        {
+            Some((_, rect)) if rect.w * aspect < rect.h => Axis::Vertical,
+            _ => Axis::Horizontal,
+        };
+        let Some(terminal) = self.tabs[target].terminal_mut() else {
+            return false;
+        };
+        terminal.zoomed = None;
+        if !terminal.root.split(focused, axis, pane) {
+            return false;
+        }
+        terminal.focused = pane;
+        self.panes.insert(pane, info);
+        self.active = Some(tab);
+        true
+    }
+
     /// Remove a pane wherever it is. Empty tabs are removed too. Returns the
     /// tab that was closed, if any.
     pub fn close_pane(&mut self, pane: PaneId) -> Option<TabId> {
@@ -989,6 +1070,49 @@ mod tests {
             .find(|(p, _)| *p == pane)
             .unwrap()
             .1
+    }
+
+    #[test]
+    fn tabs_reorder_and_panes_move_with_their_state() {
+        let mut ws = Workspace::new();
+        let (a, pa) = ws.new_tab();
+        let (b, pb) = ws.new_tab();
+        let (c, pc) = ws.new_tab();
+        ws.pane_mut(pb).unwrap().title = "agent".into();
+        assert!(ws.move_tab(c, 0));
+        let order: Vec<_> = ws.tabs().iter().map(|t| t.id).collect();
+        assert_eq!(order, [c, a, b]);
+        assert!(ws.move_tab(c, 99), "past the end goes last");
+        assert_eq!(ws.tabs().last().unwrap().id, c);
+
+        // The last pane of a tab moves out; the tab closes, nothing else.
+        let (info, closed) = ws.take_pane(pb).unwrap();
+        assert_eq!(closed, Some(b));
+        assert_eq!(info.title, "agent");
+        assert!(ws.pane(pb).is_none());
+        assert!(ws.insert_pane_into_tab(pb, info, a, 16.0 / 9.0));
+        assert_eq!(ws.tabs()[0].panes(), [pa, pb]);
+        assert_eq!(ws.tabs()[0].focused_pane(), Some(pb));
+        assert_eq!(ws.pane(pb).unwrap().title, "agent", "state moves with it");
+        assert_eq!(ws.active_tab().unwrap().id, a);
+        // Out of a split into its own tab, keeping the sibling.
+        let (info, closed) = ws.take_pane(pb).unwrap();
+        assert_eq!(closed, None);
+        assert_eq!(ws.tabs()[0].panes(), [pa]);
+        let new = ws.insert_pane_as_tab(pb, info);
+        assert_eq!(ws.active_tab().unwrap().id, new);
+        assert_eq!(ws.tabs().len(), 3);
+        assert!(ws.tabs().iter().any(|t| t.panes() == [pc]));
+        // A tall tab stacks the moved pane.
+        let (info, _) = ws.take_pane(pc).unwrap();
+        assert!(ws.insert_pane_into_tab(pc, info, a, 0.5));
+        assert!(matches!(
+            ws.tabs()[0].terminal().unwrap().root,
+            Node::Split {
+                axis: Axis::Vertical,
+                ..
+            }
+        ));
     }
 
     #[test]
