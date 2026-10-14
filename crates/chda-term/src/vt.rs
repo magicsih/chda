@@ -61,6 +61,40 @@ pub struct Effects {
     pub clipboard_write: Option<String>,
     /// The cursor arrived on a shell prompt (OSC 133 A): a command ended.
     pub prompt_shown: bool,
+    /// Desktop notifications a program asked for with OSC 9 or OSC 777, as
+    /// plain, truncated title and body text.
+    pub notifications: Vec<Notification>,
+}
+
+/// A program's desktop notification request (OSC 9 or OSC 777 `notify`).
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct Notification {
+    /// Empty for OSC 9, which carries only a message.
+    pub title: String,
+    pub body: String,
+}
+
+impl Notification {
+    pub const TITLE_CHARS: usize = 80;
+    pub const BODY_CHARS: usize = 200;
+    /// Requests kept per feed; a flood beyond this is dropped.
+    const PER_FEED: usize = 16;
+
+    /// The program's bytes as plain text: lossy UTF-8 without control
+    /// characters, cut to `max` characters with an ellipsis.
+    fn plain(bytes: &[u8], max: usize) -> String {
+        let text: String = String::from_utf8_lossy(bytes)
+            .chars()
+            .map(|c| if c.is_control() { ' ' } else { c })
+            .collect();
+        let text = text.trim();
+        if text.chars().count() <= max {
+            return text.to_owned();
+        }
+        let mut cut: String = text.chars().take(max - 1).collect();
+        cut.push('…');
+        cut
+    }
 }
 
 #[derive(Default)]
@@ -71,6 +105,7 @@ struct Hooks {
     pwd_changed: StdCell<bool>,
     clipboard_write: RefCell<Option<String>>,
     prompt_shown: StdCell<bool>,
+    notifications: RefCell<Vec<Notification>>,
 }
 
 /// An active scrollback search.
@@ -139,6 +174,18 @@ impl Terminal {
         .on_pwd_changed({
             let h = Rc::clone(&hooks);
             move |_| h.pwd_changed.set(true)
+        })?
+        .on_desktop_notification({
+            let h = Rc::clone(&hooks);
+            move |_, request| {
+                let mut list = h.notifications.borrow_mut();
+                if list.len() < Notification::PER_FEED {
+                    list.push(Notification {
+                        title: Notification::plain(request.title(), Notification::TITLE_CHARS),
+                        body: Notification::plain(request.body(), Notification::BODY_CHARS),
+                    });
+                }
+            }
         })?
         .on_clipboard_write({
             let h = Rc::clone(&hooks);
@@ -222,6 +269,7 @@ impl Terminal {
             pwd_changed: h.pwd_changed.replace(false),
             clipboard_write: h.clipboard_write.borrow_mut().take(),
             prompt_shown: h.prompt_shown.replace(false),
+            notifications: std::mem::take(&mut *h.notifications.borrow_mut()),
         }
     }
 
@@ -1254,6 +1302,38 @@ mod tests {
         assert_eq!(term.title(), "my title");
         assert_eq!(term.pwd(), "file://host/tmp/x");
         assert_eq!(term.take_effects(), Effects::default());
+    }
+
+    #[test]
+    fn osc_9_and_777_ask_for_plain_truncated_notifications() {
+        let mut term = term();
+        term.feed(b"\x1b]9;build done\x07\x1b]777;notify;Tests;42 passed\x1b\\");
+        let notice = |title: &str, body: &str| Notification {
+            title: title.into(),
+            body: body.into(),
+        };
+        assert_eq!(
+            term.take_effects().notifications,
+            [notice("", "build done"), notice("Tests", "42 passed")]
+        );
+        // iTerm2's progress (9;4) and other 9;n commands are not notifications.
+        term.feed(b"\x1b]9;4;1;50\x07\x1b]9;4;0\x07");
+        assert!(term.take_effects().notifications.is_empty());
+        // Controls become spaces; long text is cut with an ellipsis.
+        let long = "x".repeat(300);
+        term.feed(format!("\x1b]777;notify;a\u{85}b;{long}\x07").as_bytes());
+        let fx = term.take_effects();
+        let title = &fx.notifications[0].title;
+        assert!(title.starts_with('a') && title.ends_with('b'), "{title:?}");
+        assert!(!title.chars().any(char::is_control), "{title:?}");
+        assert_eq!(
+            fx.notifications[0].body.chars().count(),
+            Notification::BODY_CHARS
+        );
+        assert!(fx.notifications[0].body.ends_with('…'));
+        // A flood within one feed keeps a bounded number.
+        term.feed("\x1b]9;spam\x07".repeat(100).as_bytes());
+        assert_eq!(term.take_effects().notifications.len(), 16);
     }
 
     #[test]

@@ -65,6 +65,8 @@ pub enum TerminalEvent {
     /// Working directory, from OSC 7 or the process fallback.
     Cwd(PathBuf),
     Bell,
+    /// A program asked for a desktop notification (OSC 9 or OSC 777).
+    Notification(chda_term::Notification),
     /// The user clicked into this pane.
     Focused,
     /// A command finished and the shell shows its prompt again.
@@ -558,6 +560,7 @@ impl TerminalView {
                 Event::Cwd(Some(path)) => self.set_cwd(path, cx),
                 Event::Cwd(None) => {}
                 Event::Bell => cx.emit(TerminalEvent::Bell),
+                Event::Notification(request) => cx.emit(TerminalEvent::Notification(request)),
                 Event::PromptShown => cx.emit(TerminalEvent::Prompt),
                 Event::ClipboardWrite(text) | Event::SelectionText(Some(text)) => {
                     cx.write_to_clipboard(ClipboardItem::new_string(text))

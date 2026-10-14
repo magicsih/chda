@@ -44,6 +44,8 @@ pub enum Event {
     /// Raw OSC 7 value.
     PwdChanged(String),
     Bell,
+    /// A program asked for a desktop notification (OSC 9 or OSC 777).
+    Notification(crate::Notification),
     /// An application asked to set the clipboard (OSC 52).
     ClipboardWrite(String),
     /// Reply to [`Session::copy_selection`]; absent when nothing is selected.
@@ -643,6 +645,9 @@ fn run(
         }
         if fx.bell {
             emit(Event::Bell);
+        }
+        for notification in fx.notifications {
+            emit(Event::Notification(notification));
         }
         if fx.title_changed {
             emit(Event::TitleChanged(term.title()));

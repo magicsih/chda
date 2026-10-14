@@ -25,7 +25,7 @@ pub use session::{DEFAULT_SCROLLBACK, DetachedSession, Event, Session, SessionOp
 pub use shell_integration::{
     ShellIntegration, ShellLaunch, default_data_dir, launch_for, login_shell,
 };
-pub use vt::{Effects, Error, Result, Terminal};
+pub use vt::{Effects, Error, Notification, Result, Terminal};
 
 /// Login-shell PATH capture lives with platform process handling.
 pub use chda_pty::shell_path;

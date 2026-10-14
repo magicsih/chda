@@ -18,6 +18,73 @@ impl WorkspaceView {
         }
     }
 
+    /// A program in `pane` asked for a desktop notification with OSC 9 or
+    /// OSC 777: an entry in the history, a mark on its tab and, while the
+    /// pane is out of view, an OS notification that leads back to it. Panes
+    /// with a live agent are skipped: its hooks already notify. A pane gets
+    /// at most one a second and ten a minute.
+    pub(super) fn program_notification(
+        &mut self,
+        pane: PaneId,
+        request: chda_term::Notification,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if !self.config.notifications {
+            return;
+        }
+        let Some(info) = self.ws.pane(pane) else {
+            return;
+        };
+        if info.agent_live {
+            return;
+        }
+        let now = now_ms();
+        let panes = &self.panes;
+        self.program_notices.retain(|p, _| panes.contains_key(p));
+        let sent = self.program_notices.entry(pane).or_default();
+        sent.retain(|at| now.saturating_sub(*at) < 60_000);
+        if sent.len() >= 10
+            || sent
+                .back()
+                .is_some_and(|at| now.saturating_sub(*at) < 1_000)
+        {
+            return;
+        }
+        sent.push_back(now);
+        let looking = window.is_window_active() && self.ws.focused_pane() == Some(pane);
+        let chda_term::Notification { title, body } = request;
+        let message = match (title.is_empty(), body.is_empty()) {
+            (true, true) => "A program asked for a notification".to_owned(),
+            (true, false) => body.clone(),
+            (false, true) => title.clone(),
+            (false, false) => format!("{title}: {body}"),
+        };
+        let context = self.notification_pane_context(Some(pane));
+        let worktree = context.repository.clone().unwrap_or_default();
+        self.notifications
+            .record(now, Severity::Info, message.clone(), context, None);
+        if !looking {
+            if let Some(info) = self.ws.pane_mut(pane) {
+                info.bell = true;
+            }
+            let (heading, text) = if title.is_empty() {
+                ("Terminal".to_owned(), message)
+            } else {
+                (title, body)
+            };
+            self.env.system.notify(
+                &heading,
+                &text,
+                &platform::NotificationTarget {
+                    pane: Some(pane.raw()),
+                    worktree,
+                },
+            );
+        }
+        cx.notify();
+    }
+
     pub(super) fn notify(&mut self, message: String) {
         self.notifications.record(
             now_ms(),

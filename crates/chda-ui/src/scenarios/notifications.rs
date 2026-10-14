@@ -122,3 +122,95 @@ fn agent_notifications_keep_the_exact_source_and_do_not_steal_focus(cx: &mut Tes
     assert_eq!(h.read(|v, _| v.ws.focused_pane()), Some(source));
     assert!(!h.read(|v, _| v.notifications_open));
 }
+
+fn notice_count(h: &Harness, message: &str) -> usize {
+    h.read(|v, _| {
+        v.notifications
+            .newest()
+            .iter()
+            .filter(|e| e.message == message)
+            .count()
+    })
+}
+
+/// Programs ask for desktop notifications with OSC 9 and OSC 777 (#250).
+#[gpui::test]
+fn program_notifications_reach_the_history_and_their_exact_pane(cx: &mut TestAppContext) {
+    use chda_core::agents::HookKind;
+    let mut h = Harness::open(cx, "osc-notify", |_| {});
+    h.wait_prompt();
+    let first = h.read(|v, _| v.ws.focused_pane().unwrap());
+    h.cx.update(|window, _| window.activate_window());
+    h.cx.run_until_parked();
+    // In view: a history entry with the pane, no OS notification.
+    h.run(
+        "printf '\\033]9;in-view\\007'; printf 'sent-%s\\n' 1",
+        "sent-1",
+    );
+    h.wait_for("the in-view entry", |v, _| {
+        v.notifications
+            .newest()
+            .iter()
+            .any(|e| e.message == "in-view" && e.context.pane == Some(first.raw()))
+    });
+    assert!(h.system.0.borrow().notifications.is_empty());
+
+    // Out of view: another pane asks while the first one has focus.
+    h.keys("cmd-d");
+    h.wait_prompt();
+    let second = h.read(|v, _| v.ws.focused_pane().unwrap());
+    h.type_text("sleep 1; printf '\\033]777;notify;Build;done\\007'");
+    h.keys("enter");
+    h.keys("cmd-alt-left");
+    assert_eq!(h.read(|v, _| v.ws.focused_pane()), Some(first));
+    h.wait_for("the out-of-view entry", |v, _| {
+        v.notifications
+            .newest()
+            .iter()
+            .any(|e| e.message == "Build: done" && e.context.pane == Some(second.raw()))
+    });
+    let (title, body, target) = h.system.0.borrow().notifications[0].clone();
+    assert_eq!((title.as_str(), body.as_str()), ("Build", "done"));
+    assert_eq!(target.pane, Some(second.raw()));
+    assert!(h.read(|v, _| v.ws.pane(second).unwrap().bell), "tab mark");
+    h.cx.update(|window, cx| {
+        h.view
+            .update(cx, |v, cx| v.on_notification_click(target, window, cx))
+    });
+    h.cx.run_until_parked();
+    assert_eq!(h.read(|v, _| v.ws.focused_pane()), Some(second));
+
+    // A flood keeps one a second (in the first pane, whose last request
+    // was long ago).
+    h.keys("cmd-alt-left");
+    h.run(
+        "printf '\\033]9;flood\\007\\033]9;flood\\007\\033]9;flood\\007'; printf 'sent-%s\\n' 2",
+        "sent-2",
+    );
+    assert_eq!(notice_count(&h, "flood"), 1);
+    h.keys("cmd-alt-right");
+
+    // An agent that reports through hooks is not notified twice.
+    let home = h.home.home.clone();
+    h.type_text("sleep 1; printf '\\033]9;from-agent\\007'; printf 'agent-%s\\n' done; sleep 1");
+    h.keys("enter");
+    h.hook(Some(second.raw()), &home, HookKind::SessionStart);
+    h.wait_for("the agent's output", |v, cx| {
+        v.focused_text(cx).contains("agent-done")
+    });
+    assert_eq!(notice_count(&h, "from-agent"), 0);
+}
+
+#[gpui::test]
+fn program_notifications_follow_the_notifications_setting(cx: &mut TestAppContext) {
+    let mut h = Harness::open(cx, "osc-notify-off", |home| {
+        std::fs::write(&home.config, "notifications = false\n").unwrap();
+    });
+    h.wait_prompt();
+    h.run(
+        "printf '\\033]9;quiet\\007'; printf 'sent-%s\\n' 3",
+        "sent-3",
+    );
+    assert_eq!(notice_count(&h, "quiet"), 0);
+    assert!(h.system.0.borrow().notifications.is_empty());
+}

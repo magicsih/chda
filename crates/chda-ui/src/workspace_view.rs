@@ -350,6 +350,9 @@ pub struct WorkspaceView {
     notification_focus: Option<gpui::WeakFocusHandle>,
     pub(crate) child_detail: Option<chda_core::agents::ChildActivity>,
     child_focus: Option<gpui::WeakFocusHandle>,
+    /// When each pane's programs last asked for desktop notifications, to
+    /// keep a flood out of the history and the OS notification center.
+    program_notices: HashMap<PaneId, std::collections::VecDeque<u64>>,
     /// The title last given to the OS window.
     window_title: String,
     /// A session save for new terminal activity is scheduled.
@@ -527,6 +530,7 @@ impl WorkspaceView {
             notifications_open: false,
             child_detail: None,
             child_focus: None,
+            program_notices: HashMap::new(),
             notification_focus: None,
             window_title: String::new(),
             activity_save_pending: false,
@@ -1728,6 +1732,27 @@ impl WorkspaceView {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        // One window receives every click; the pane may live in another.
+        if let Some(raw) = target.pane
+            && self.ws.pane_by_raw(raw).is_none()
+        {
+            let owner = self
+                .env
+                .windows
+                .borrow()
+                .entries
+                .iter()
+                .find(|e| e.view != self.self_weak && e.panes.keys().any(|p| p.raw() == raw))
+                .cloned();
+            if let Some(owner) = owner {
+                let _ = owner.window.update(cx, |_, window, cx| {
+                    let _ = owner
+                        .view
+                        .update(cx, |v, cx| v.on_notification_click(target, window, cx));
+                });
+                return;
+            }
+        }
         cx.activate(true);
         self.env.system.restore_windows();
         window.activate_window();
@@ -2847,6 +2872,9 @@ impl WorkspaceView {
                     info.bell = true;
                 }
                 self.env.system.beep();
+            }
+            TerminalEvent::Notification(request) => {
+                self.program_notification(pane, request.clone(), window, cx)
             }
             TerminalEvent::Focused => {
                 self.ws.focus_pane(pane);

@@ -8,7 +8,9 @@ Replace the transient sidebar message with a window-owned queue in
 `chda-core::notifications`. Operational events append at their occurrence;
 an ongoing branch update retains one stable entry as its progress changes.
 Retried provider events with the same provider/session/pane/time/state key
-do not create another unread arrival. No terminal content is collected.
+do not create another unread arrival. No terminal content is collected,
+with one exception: the text a program explicitly asks the terminal to show
+as a desktop notification (below).
 
 The title-bar bell precedes the installed-app picker and stays available
 without that picker or the sidebar. Entries show severity, an absolute date
@@ -36,6 +38,20 @@ The existing PTY preparation and commit protocol is unchanged.
 OS notifications, Dock attention, quota controls and resource status remain
 independent. Configuration polling records changed errors once and recovery
 as a separate event; it does not clear earlier history.
+
+## Program notifications (#250)
+
+A program can ask for a desktop notification with OSC 9 (`ESC ] 9 ; message`)
+or OSC 777 (`ESC ] 777 ; notify ; title ; body`); libghostty's parser keeps
+iTerm2's other OSC 9 commands, such as `9;4` progress, out of it. The request
+adds one history entry with the pane's directory, tab and pane, marks the tab
+like a bell and, while the pane is out of view, sends an OS notification whose
+click focuses that exact pane, also from another window. The text is the
+program's own message, shown as plain text: control characters become spaces,
+and titles and bodies are cut to 80 and 200 characters. Panes with a live
+agent are skipped because its hooks already notify. Each pane gets at most one
+request a second and ten a minute, and one feed keeps at most 16. The
+`notifications` setting turns these off with the agent notifications.
 
 ## Verification
 
