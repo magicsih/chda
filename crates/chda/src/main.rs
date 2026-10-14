@@ -42,7 +42,7 @@ fn main() {
                 .get(1)
                 .and_then(|s| s.parse().ok())
                 .ok_or_else(|| std::io::Error::other("missing adoption descriptor"))
-                .and_then(|fd| chda_ui::run_adopt(ghostty_config(), fd));
+                .and_then(chda_ui::run_adopt);
             if let Err(error) = result {
                 eprintln!("chda: {error}");
                 std::process::exit(1);
@@ -52,13 +52,6 @@ fn main() {
             eprintln!("unknown argument: {other}");
             std::process::exit(2);
         }
-        None => chda_ui::run(ghostty_config()),
+        None => chda_ui::run(),
     }
-}
-
-fn ghostty_config() -> chda_config::GhosttyConfig {
-    let theme = chda_config::ChdaConfig::default_path()
-        .and_then(|p| chda_config::ChdaConfig::load(&p).ok())
-        .and_then(|c| c.theme);
-    chda_config::load(&chda_config::Paths::default_for_user(), theme.as_deref())
 }

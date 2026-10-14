@@ -110,20 +110,17 @@ fn key_bindings() -> Vec<KeyBinding> {
 
 /// Start the application and open the main window with the user's Ghostty
 /// config.
-pub fn run(ghostty: chda_config::GhosttyConfig) {
-    run_inner(ghostty, None);
+pub fn run() {
+    run_inner(None);
 }
 
-pub fn run_adopt(ghostty: chda_config::GhosttyConfig, fd: i32) -> std::io::Result<()> {
+pub fn run_adopt(fd: i32) -> std::io::Result<()> {
     let inherited = upgrade::inherited(fd)?;
-    run_inner(ghostty, Some(inherited));
+    run_inner(Some(inherited));
     Ok(())
 }
 
-fn run_inner(
-    ghostty: chda_config::GhosttyConfig,
-    inherited: Option<(chda_core::handoff::Handoff, chda_term::handoff::Inherited)>,
-) {
+fn run_inner(inherited: Option<(chda_core::handoff::Handoff, chda_term::handoff::Inherited)>) {
     let env = std::rc::Rc::new(environment::Environment::for_user());
     let mut reply = None;
     let mut handoff_session = None;
@@ -206,12 +203,7 @@ fn run_inner(
         env.windows.borrow_mut().restoring = true;
         let mut opened = Vec::new();
         for saved in windows {
-            opened.push(open_workspace_window(
-                ghostty.clone(),
-                saved,
-                env.clone(),
-                cx,
-            ));
+            opened.push(open_workspace_window(saved, env.clone(), cx));
         }
         env.windows.borrow_mut().restoring = false;
         if let Some(window) = opened.get(active).or(opened.first()) {
@@ -291,7 +283,6 @@ fn run_inner(
 }
 
 pub(crate) fn open_workspace_window(
-    ghostty: chda_config::GhosttyConfig,
     saved: Option<chda_core::SavedWindow>,
     env: std::rc::Rc<environment::Environment>,
     cx: &mut App,
@@ -306,7 +297,7 @@ pub(crate) fn open_workspace_window(
             titlebar: Some(platform::titlebar("chda")),
             ..Default::default()
         },
-        |window, cx| cx.new(|cx| WorkspaceView::new(ghostty, saved, env, window, cx)),
+        |window, cx| cx.new(|cx| WorkspaceView::new(saved, env, window, cx)),
     )
     .expect("failed to open workspace window")
 }

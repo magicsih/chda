@@ -88,6 +88,8 @@ fn menus() -> Vec<Menu> {
             MenuItem::action("Reset Font Size", ResetFontSize),
             MenuItem::separator(),
             MenuItem::action("Select Theme...", SelectTheme),
+            MenuItem::action("Select Light Theme...", SelectLightTheme),
+            MenuItem::action("Select Dark Theme...", SelectDarkTheme),
         ]),
         Menu::new("Agents").items([
             MenuItem::action("Go to Waiting Agent", GoToWaitingAgent),

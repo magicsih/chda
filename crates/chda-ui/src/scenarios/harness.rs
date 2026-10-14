@@ -7,7 +7,7 @@ use std::rc::Rc;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
-use chda_config::{GhosttyConfig, Paths};
+use chda_config::Paths;
 use chda_core::SavedWindow;
 use chda_core::agents::{AgentAdapter, AgentId, HookEvent, HookKind, SessionId, adapters, ipc};
 use futures::FutureExt;
@@ -457,10 +457,9 @@ fn open_window(
                 })
             },
         });
-        let ghostty: GhosttyConfig = chda_config::load(&paths, None);
         let window = cx.update(|cx| {
             cx.open_window(WindowOptions::default(), |window, cx| {
-                cx.new(|cx| WorkspaceView::new(ghostty, saved, env, window, cx))
+                cx.new(|cx| WorkspaceView::new(saved, env, window, cx))
             })
             .unwrap()
         });

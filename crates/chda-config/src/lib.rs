@@ -374,11 +374,20 @@ pub fn parse(text: &str, base_dir: Option<&Path>, out: &mut GhosttyConfig) {
     }
 }
 
+/// The system appearance a `light:X,dark:Y` theme pair follows.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum Appearance {
+    #[default]
+    Light,
+    Dark,
+}
+
 /// Load the user's Ghostty config, resolving `theme` through `paths` and
-/// the bundled themes. `theme`, chda's own setting, replaces the config's.
+/// the bundled themes for `appearance`. `theme`, chda's own setting,
+/// replaces the config's.
 ///
 /// Theme colors come first; anything the user set explicitly wins.
-pub fn load(paths: &Paths, theme: Option<&str>) -> GhosttyConfig {
+pub fn load(paths: &Paths, theme: Option<&str>, appearance: Appearance) -> GhosttyConfig {
     let mut user = GhosttyConfig::default();
     for file in &paths.config_files {
         if let Ok(text) = fs::read_to_string(file) {
@@ -389,13 +398,17 @@ pub fn load(paths: &Paths, theme: Option<&str>) -> GhosttyConfig {
     if let Some(theme) = theme {
         user.theme = Some(theme.to_owned());
     }
-    resolve_theme(user, &paths.theme_dirs)
+    resolve_theme(user, &paths.theme_dirs, appearance)
 }
 
 /// Theme directories first, as in Ghostty, then the bundled themes, then
 /// `name` as a path.
-fn resolve_theme(user: GhosttyConfig, theme_dirs: &[PathBuf]) -> GhosttyConfig {
-    let Some(name) = user.theme.as_deref().map(theme_name) else {
+fn resolve_theme(
+    user: GhosttyConfig,
+    theme_dirs: &[PathBuf],
+    appearance: Appearance,
+) -> GhosttyConfig {
+    let Some(name) = user.theme.as_deref().map(|t| theme_name(t, appearance)) else {
         return user;
     };
     let read = |p: PathBuf| fs::read_to_string(&p).ok().map(|t| (Some(p), t));
@@ -416,19 +429,43 @@ fn resolve_theme(user: GhosttyConfig, theme_dirs: &[PathBuf]) -> GhosttyConfig {
     merged
 }
 
-/// `theme = light:X,dark:Y` picks per appearance; chda uses the dark one.
-fn theme_name(value: &str) -> &str {
-    let mut dark = None;
-    let mut single = Some(value);
-    for part in value.split(',') {
-        if let Some((kind, name)) = part.split_once(':') {
-            single = None;
-            if kind.trim() == "dark" {
-                dark = Some(name.trim());
-            }
-        }
+/// The theme `value` names for `appearance`: `light:X,dark:Y` picks one
+/// half, as in Ghostty, and a single name applies to both. A pair with only
+/// one half uses it for both.
+pub fn theme_name(value: &str, appearance: Appearance) -> &str {
+    let wanted = match appearance {
+        Appearance::Light => "light",
+        Appearance::Dark => "dark",
+    };
+    let mut halves = value
+        .split(',')
+        .filter_map(|part| part.split_once(':'))
+        .map(|(kind, name)| (kind.trim(), name.trim()))
+        .peekable();
+    if halves.peek().is_none() {
+        return value.trim();
     }
-    dark.or(single).unwrap_or(value).trim()
+    let halves: Vec<_> = halves.collect();
+    halves
+        .iter()
+        .find(|(kind, _)| *kind == wanted)
+        .or(halves.first())
+        .map_or(value.trim(), |(_, name)| name)
+}
+
+/// `base` with `name` as its theme for `appearance`, keeping the other
+/// appearance's theme (a single name or a pair half; `name` when unset).
+pub fn with_theme_for(base: Option<&str>, appearance: Appearance, name: &str) -> String {
+    let other = match appearance {
+        Appearance::Light => Appearance::Dark,
+        Appearance::Dark => Appearance::Light,
+    };
+    let kept = base.map_or(name, |base| theme_name(base, other));
+    let (light, dark) = match appearance {
+        Appearance::Light => (name, kept),
+        Appearance::Dark => (kept, name),
+    };
+    format!("light:{light},dark:{dark}")
 }
 
 #[cfg(test)]
@@ -508,6 +545,7 @@ mod tests {
             "background = #111111\nforeground = #222222\npalette = 0=#000000\n",
         )
         .unwrap();
+        fs::write(themes.join("Latte"), "background = #f0f0f0\n").unwrap();
         fs::write(dir.join("extra"), "font-size = 11\n").unwrap();
         fs::write(
             dir.join("config"),
@@ -519,7 +557,7 @@ mod tests {
             config_files: vec![dir.join("config")],
             theme_dirs: vec![themes.clone()],
         };
-        let c = load(&paths, None);
+        let c = load(&paths, None, Appearance::Dark);
         assert_eq!(c.background, Color::parse("#111111"));
         assert_eq!(c.foreground, Color::parse("#eeeeee"));
         assert_eq!(c.palette_colors(), vec![(0, Color::default())]);
@@ -530,12 +568,44 @@ mod tests {
         );
         assert!(c.problems.is_empty());
 
+        // In Light mode the pair's light half applies (#247).
+        let c = load(&paths, None, Appearance::Light);
+        assert_eq!(c.background, Color::parse("#f0f0f0"));
+        assert_eq!(c.foreground, Color::parse("#eeeeee"));
+
         // chda's theme replaces the config's; a bundled one has no file.
-        let c = load(&paths, Some("Catppuccin Mocha"));
+        let c = load(&paths, Some("Catppuccin Mocha"), Appearance::Light);
         assert_eq!(c.background, Color::parse("#1e1e2e"));
         assert_eq!(c.foreground, Color::parse("#eeeeee"));
         assert_eq!(c.sources, vec![dir.join("config"), dir.join("extra")]);
         fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn theme_pairs_follow_the_appearance_and_keep_the_other_half() {
+        use Appearance::{Dark, Light};
+        let pair = "light:Latte, dark:Mocha";
+        assert_eq!(theme_name(pair, Light), "Latte");
+        assert_eq!(theme_name(pair, Dark), "Mocha");
+        assert_eq!(theme_name("Catppuccin Mocha", Light), "Catppuccin Mocha");
+        assert_eq!(
+            theme_name("dark:Mocha", Light),
+            "Mocha",
+            "one half serves both"
+        );
+        assert_eq!(
+            with_theme_for(Some(pair), Light, "Day"),
+            "light:Day,dark:Mocha"
+        );
+        assert_eq!(
+            with_theme_for(Some(pair), Dark, "Night"),
+            "light:Latte,dark:Night"
+        );
+        assert_eq!(
+            with_theme_for(Some("Solo"), Dark, "Night"),
+            "light:Solo,dark:Night"
+        );
+        assert_eq!(with_theme_for(None, Light, "Day"), "light:Day,dark:Day");
     }
 
     #[test]
@@ -564,7 +634,7 @@ mod tests {
             Some(xdg.join("config").as_path())
         );
         fs::write(xdg.join("config.ghostty"), "font-size = 12\n").unwrap();
-        let c = load(&paths, None);
+        let c = load(&paths, None, Appearance::Light);
         assert_eq!(c.font_size, Some(12.0));
         assert_eq!(c.font_family.as_deref(), Some("A"));
         assert_eq!(
@@ -573,7 +643,7 @@ mod tests {
         );
         if cfg!(target_os = "macos") {
             fs::write(support.join("config"), "font-size = 14\n").unwrap();
-            assert_eq!(load(&paths, None).font_size, Some(14.0));
+            assert_eq!(load(&paths, None, Appearance::Light).font_size, Some(14.0));
             assert_eq!(
                 paths.preferred_config_file(),
                 Some(support.join("config").as_path())

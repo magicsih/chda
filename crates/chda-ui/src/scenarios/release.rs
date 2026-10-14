@@ -109,9 +109,8 @@ fn one_click_shares_progress_and_failed_handoff_restores_the_live_shell(cx: &mut
         "progress runs off the window"
     );
     let env = h.read(|v, _| v.env.clone());
-    let handle = h.cx.update(|_, cx| {
-        crate::open_workspace_window(chda_config::load(&env.ghostty, None), None, env.clone(), cx)
-    });
+    let handle =
+        h.cx.update(|_, cx| crate::open_workspace_window(None, env.clone(), cx));
     let mut second_cx = gpui::VisualTestContext::from_window(handle.into(), cx);
     let second = handle.root(&mut second_cx).unwrap();
     super::harness::wait_until(&mut second_cx, &second, "second shell", |v, cx| {

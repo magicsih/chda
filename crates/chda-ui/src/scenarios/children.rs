@@ -182,9 +182,8 @@ fn children_route_to_exact_parents_across_windows_and_focus_only_a_known_child_p
         v.ws.pane(original).unwrap().agent_session.is_some()
     });
     let env = h.read(|v, _| v.env.clone());
-    let handle = h.cx.update(|_, cx| {
-        crate::open_workspace_window(chda_config::load(&env.ghostty, None), None, env.clone(), cx)
-    });
+    let handle =
+        h.cx.update(|_, cx| crate::open_workspace_window(None, env.clone(), cx));
     let mut second_cx = gpui::VisualTestContext::from_window(handle.into(), cx);
     let second = handle.root(&mut second_cx).unwrap();
     wait_until(&mut second_cx, &second, "second shell", |v, cx| {

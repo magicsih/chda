@@ -7,7 +7,7 @@ use std::sync::mpsc;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
-use chda_config::{ChdaConfig, GhosttyConfig, Paths, PullStrategy, TabTitle};
+use chda_config::{ChdaConfig, Paths, PullStrategy, TabTitle};
 
 use crate::environment::Environment;
 use chda_core::agents::control::{Incoming, Reply, Request};
@@ -89,6 +89,8 @@ actions!(
         ResetFontSize,
         GoToWaitingAgent,
         SelectTheme,
+        SelectLightTheme,
+        SelectDarkTheme,
         OpenConfig,
         OpenGhosttyConfig,
         ReloadConfig,
@@ -363,6 +365,8 @@ pub struct WorkspaceView {
     /// Where the Ghostty config lives, and the files the last load read.
     ghostty_paths: Paths,
     ghostty_sources: Vec<PathBuf>,
+    /// The window's light or dark appearance, which picks a theme pair's half.
+    appearance: chda_config::Appearance,
     /// Watches the Ghostty config files and `config.toml`.
     config_watcher: Option<FileWatcher>,
     /// The last reload found a broken config; repeated polls do not add events.
@@ -388,14 +392,15 @@ pub struct WorkspaceView {
 
 impl WorkspaceView {
     pub fn new(
-        ghostty: GhosttyConfig,
         saved: Option<SavedWindow>,
         env: std::rc::Rc<Environment>,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Self {
-        let settings = Settings::from_ghostty(&ghostty);
         let config = env.load_config();
+        let appearance = appearance_of(window.appearance());
+        let ghostty = chda_config::load(&env.ghostty, config.theme.as_deref(), appearance);
+        let settings = Settings::from_ghostty(&ghostty);
         let bg = hsla(settings.colors.background.unwrap_or_default());
         let fg = hsla(settings.colors.foreground.unwrap_or_default());
         let agents = env
@@ -537,6 +542,7 @@ impl WorkspaceView {
             agent_request: false,
             ghostty_paths: env.ghostty.clone(),
             ghostty_sources: ghostty.sources,
+            appearance,
             config_watcher: None,
             config_problem: None,
             previewing_theme: false,
@@ -564,6 +570,10 @@ impl WorkspaceView {
         cx.observe_window_bounds(window, |this, window, _| {
             this.note_bounds(window);
             this.save_session();
+        })
+        .detach();
+        cx.observe_window_appearance(window, |this, window, cx| {
+            this.set_appearance(appearance_of(window.appearance()), window, cx);
         })
         .detach();
         cx.on_app_quit(|this, cx| {
@@ -811,7 +821,11 @@ impl WorkspaceView {
                 )),
             }
         }
-        let ghostty = chda_config::load(&self.ghostty_paths, self.config.theme.as_deref());
+        let ghostty = chda_config::load(
+            &self.ghostty_paths,
+            self.config.theme.as_deref(),
+            self.appearance,
+        );
         if ghostty.problems.is_empty() {
             let mut settings = Settings::from_ghostty(&ghostty);
             // Keep a size picked with cmd-= / cmd-- relative to the config.
@@ -840,6 +854,19 @@ impl WorkspaceView {
         }
         self.config_problem = problem;
         cx.notify();
+    }
+
+    /// Follow the system's light or dark appearance: a theme pair switches
+    /// to its other half, as a live config reload would.
+    pub(crate) fn set_appearance(
+        &mut self,
+        appearance: chda_config::Appearance,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if std::mem::replace(&mut self.appearance, appearance) != appearance {
+            self.reload_config(window, cx);
+        }
     }
 
     fn apply_settings(&mut self, settings: Settings, cx: &mut Context<Self>) {
@@ -5668,6 +5695,16 @@ impl WorkspaceView {
             ("Decrease font size", "cmd--", "font_smaller"),
             ("Reset font size", "cmd-0", "font_reset"),
             ("Select theme...", "preview with the arrow keys", "theme"),
+            (
+                "Select light theme...",
+                "used while macOS is in Light mode",
+                "light_theme",
+            ),
+            (
+                "Select dark theme...",
+                "used while macOS is in Dark mode",
+                "dark_theme",
+            ),
             ("Go to waiting agent", "cmd-shift-a", "waiting_agent"),
             (
                 "View last diagram",
@@ -5786,7 +5823,7 @@ impl WorkspaceView {
     /// Pick a theme from the bundled ones and the Ghostty theme directories,
     /// showing each as the selection moves.
     fn select_theme(&mut self, _: &SelectTheme, window: &mut Window, cx: &mut Context<Self>) {
-        let ghostty_theme = chda_config::load(&self.ghostty_paths, None).theme;
+        let ghostty_theme = chda_config::load(&self.ghostty_paths, None, self.appearance).theme;
         let mut items = vec![PaletteItem {
             label: "Follow Ghostty config".into(),
             detail: ghostty_theme.unwrap_or_else(|| "default colors".into()),
@@ -5804,6 +5841,63 @@ impl WorkspaceView {
         let current = PaletteCommand::SetTheme(self.config.theme.clone());
         let selected = items.iter().position(|i| i.command == current).unwrap_or(0);
         self.open_palette(items, selected, "Select a theme", window, cx);
+    }
+
+    fn select_light_theme(
+        &mut self,
+        _: &SelectLightTheme,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.select_theme_for(chda_config::Appearance::Light, window, cx);
+    }
+
+    fn select_dark_theme(
+        &mut self,
+        _: &SelectDarkTheme,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.select_theme_for(chda_config::Appearance::Dark, window, cx);
+    }
+
+    /// The theme `theme` settings start from: chda's own, else the Ghostty
+    /// config's.
+    fn theme_value(&self) -> Option<String> {
+        self.config
+            .theme
+            .clone()
+            .or_else(|| chda_config::load(&self.ghostty_paths, None, self.appearance).theme)
+    }
+
+    /// Pick the theme for one appearance, keeping the other appearance's;
+    /// the choice is saved as a `light:X,dark:Y` pair.
+    fn select_theme_for(
+        &mut self,
+        appearance: chda_config::Appearance,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let current = self
+            .theme_value()
+            .map(|value| chda_config::theme_name(&value, appearance).to_owned());
+        let items: Vec<_> = chda_config::theme_names(&self.ghostty_paths)
+            .into_iter()
+            .map(|name| PaletteItem {
+                label: name.clone(),
+                detail: String::new(),
+                command: PaletteCommand::SetThemeFor(appearance, name),
+            })
+            .collect();
+        let selected = items
+            .iter()
+            .position(|i| matches!(&i.command, PaletteCommand::SetThemeFor(_, n) if Some(n) == current.as_ref()))
+            .unwrap_or(0);
+        let prompt = match appearance {
+            chda_config::Appearance::Light => "Select the theme for Light mode",
+            chda_config::Appearance::Dark => "Select the theme for Dark mode",
+        };
+        self.open_palette(items, selected, prompt, window, cx);
     }
 
     /// Open `config.toml`, writing the current values first if it does not
@@ -5879,7 +5973,7 @@ impl WorkspaceView {
 
     /// Show `theme` (`None`: the Ghostty config's) without saving it.
     fn show_theme(&mut self, theme: Option<&str>, cx: &mut Context<Self>) {
-        let ghostty = chda_config::load(&self.ghostty_paths, theme);
+        let ghostty = chda_config::load(&self.ghostty_paths, theme, self.appearance);
         if !ghostty.problems.is_empty() {
             return;
         }
@@ -5917,6 +6011,11 @@ impl WorkspaceView {
                 PaletteEvent::Highlighted(PaletteCommand::SetTheme(theme)) => {
                     this.previewing_theme = true;
                     this.show_theme(theme.as_deref(), cx);
+                    return;
+                }
+                PaletteEvent::Highlighted(PaletteCommand::SetThemeFor(_, name)) => {
+                    this.previewing_theme = true;
+                    this.show_theme(Some(name), cx);
                     return;
                 }
                 PaletteEvent::Highlighted(_) => return,
@@ -5978,6 +6077,8 @@ impl WorkspaceView {
                 "font_reset" => self.reset_font_size(&ResetFontSize, window, cx),
                 "waiting_agent" => self.go_to_waiting_agent(&GoToWaitingAgent, window, cx),
                 "theme" => self.select_theme(&SelectTheme, window, cx),
+                "light_theme" => self.select_light_theme(&SelectLightTheme, window, cx),
+                "dark_theme" => self.select_dark_theme(&SelectDarkTheme, window, cx),
                 "view_diagram" => {
                     if let Some(pane) = self.ws.focused_pane()
                         && let Some((view, _)) = self.panes.get(&pane)
@@ -6021,6 +6122,15 @@ impl WorkspaceView {
                 self.previewing_theme = false;
                 self.show_theme(theme.as_deref(), cx);
                 self.config.theme = theme;
+                self.save_config();
+                self.restore_focus(window, cx);
+            }
+            PaletteCommand::SetThemeFor(appearance, name) => {
+                self.previewing_theme = false;
+                let base = self.theme_value();
+                let theme = chda_config::with_theme_for(base.as_deref(), appearance, &name);
+                self.show_theme(Some(&theme), cx);
+                self.config.theme = Some(theme);
                 self.save_config();
                 self.restore_focus(window, cx);
             }
@@ -6752,6 +6862,18 @@ fn markdown_files(dir: &Path) -> Vec<PathBuf> {
     files
 }
 
+/// The theme appearance for a window's system appearance.
+pub(crate) fn appearance_of(appearance: gpui::WindowAppearance) -> chda_config::Appearance {
+    match appearance {
+        gpui::WindowAppearance::Light | gpui::WindowAppearance::VibrantLight => {
+            chda_config::Appearance::Light
+        }
+        gpui::WindowAppearance::Dark | gpui::WindowAppearance::VibrantDark => {
+            chda_config::Appearance::Dark
+        }
+    }
+}
+
 pub fn blend(a: Hsla, b: Hsla, t: f32) -> Hsla {
     let (a, b) = (a.to_rgb(), b.to_rgb());
     gpui::Rgba {
@@ -6897,8 +7019,7 @@ impl Render for WorkspaceView {
             }))
             .on_action(cx.listener(Self::new_tab))
             .on_action(cx.listener(|this, _: &NewWindow, _, cx| {
-                let ghostty = chda_config::load(&this.env.ghostty, this.config.theme.as_deref());
-                crate::open_workspace_window(ghostty, None, this.env.clone(), cx);
+                crate::open_workspace_window(None, this.env.clone(), cx);
             }))
             .on_action(cx.listener(Self::close_surface))
             .on_action(cx.listener(Self::toggle_sidebar))
@@ -6913,6 +7034,8 @@ impl Render for WorkspaceView {
             .on_action(cx.listener(Self::reset_font_size))
             .on_action(cx.listener(Self::go_to_waiting_agent))
             .on_action(cx.listener(Self::select_theme))
+            .on_action(cx.listener(Self::select_light_theme))
+            .on_action(cx.listener(Self::select_dark_theme))
             .on_action(cx.listener(Self::open_config))
             .on_action(cx.listener(Self::open_ghostty_config))
             .on_action(cx.listener(Self::resume_session))

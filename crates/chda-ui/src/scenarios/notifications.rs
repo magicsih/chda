@@ -55,9 +55,8 @@ fn notifications_survive_hidden_sidebar_and_are_local_to_each_execution_window(
     h.cx.dispatch_action(ResumeSession);
     h.cx.run_until_parked();
     let env = h.read(|v, _| v.env.clone());
-    let handle = h.cx.update(|_, cx| {
-        crate::open_workspace_window(chda_config::load(&env.ghostty, None), None, env.clone(), cx)
-    });
+    let handle =
+        h.cx.update(|_, cx| crate::open_workspace_window(None, env.clone(), cx));
     let mut other_cx = gpui::VisualTestContext::from_window(handle.into(), cx);
     let other = handle.root(&mut other_cx).unwrap();
     wait_until(&mut other_cx, &other, "second shell", |v, cx| {

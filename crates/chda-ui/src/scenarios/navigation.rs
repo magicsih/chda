@@ -230,9 +230,8 @@ fn multiple_windows_share_navigation_routes_and_restore_each_layout(cx: &mut Tes
     });
     open(&mut h, &repo);
     let env = h.read(|v, _| v.env.clone());
-    let handle = h.cx.update(|_, cx| {
-        crate::open_workspace_window(chda_config::load(&env.ghostty, None), None, env.clone(), cx)
-    });
+    let handle =
+        h.cx.update(|_, cx| crate::open_workspace_window(None, env.clone(), cx));
     let mut second_cx = gpui::VisualTestContext::from_window(handle.into(), cx);
     let second = handle.root(&mut second_cx).unwrap();
     wait_until(

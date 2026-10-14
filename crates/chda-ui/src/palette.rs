@@ -28,6 +28,8 @@ pub enum PaletteCommand {
     CheckoutBranch(PathBuf, String),
     /// chda's theme; `None` follows the Ghostty config.
     SetTheme(Option<String>),
+    /// The theme for one appearance, keeping the other's.
+    SetThemeFor(chda_config::Appearance, String),
     /// Render a Markdown file and open it in the browser.
     PreviewMarkdown(PathBuf),
     /// Open the focused worktree in the app with this `FolderApp` id.
