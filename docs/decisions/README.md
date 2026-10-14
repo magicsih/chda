@@ -22,3 +22,4 @@ new record rather than editing an accepted one.
 | [0015](0015-provider-confirmed-child-activity.md) | Provider-confirmed child identity and lifecycle, exact-parent routing and bounded existing-daemon metadata queries |
 | [0016](0016-selection-scoped-sharing.md) | Selection-scoped, source-verified sharing previews with explicit plain-text editing |
 | [0019](0019-unified-sessions.md) | One Sessions list scrolled only by the user; PROJECT scrolls separately and reveals the focused worktree |
+| [0020](0020-session-addressed-prompt-delivery.md) | Proposed: deliver prompts to an exact Claude Code or Codex session through channels and the Codex queue, never by typing |
