@@ -987,7 +987,9 @@ impl SidebarView {
                         return;
                     }
                     this.select_row(target.clone(), Some((repo.clone(), branch.clone())), cx);
-                    if event.click_count() == 2 {
+                    // The rest of a double or triple click belongs to the
+                    // same open.
+                    if event.click_count() == 1 {
                         cx.emit(SidebarEvent::OpenStarred {
                             repo: repo.clone(),
                             branch: branch.clone(),
@@ -1284,7 +1286,9 @@ impl SidebarView {
                         return;
                     }
                     this.select_row(Some(path.clone()), None, cx);
-                    if event.click_count() == 2 {
+                    // The rest of a double or triple click belongs to the
+                    // same open.
+                    if event.click_count() == 1 {
                         cx.emit(SidebarEvent::OpenWorktree(path.clone()));
                     } else {
                         cx.emit(SidebarEvent::RefocusTerminal);

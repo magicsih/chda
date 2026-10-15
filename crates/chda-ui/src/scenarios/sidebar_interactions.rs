@@ -1,4 +1,4 @@
-//! Stable PROJECT rows, explicit activation and visible split numbers.
+//! Stable PROJECT rows, one-click activation and visible split numbers.
 use super::harness::{Harness, git};
 use chda_core::agents::HookKind;
 use gpui::{Modifiers, MouseButton, MouseDownEvent, MouseUpEvent, TestAppContext, px, size};
@@ -78,18 +78,17 @@ fn fixture(
 }
 
 #[gpui::test]
-fn project_click_selects_without_launching_and_double_click_opens_once(cx: &mut TestAppContext) {
-    let (mut h, _, a, z) = fixture(cx, "project-click", false);
+fn project_click_opens_once_and_reuses_the_pane(cx: &mut TestAppContext) {
+    let (mut h, _, a, _) = fixture(cx, "project-click", false);
     let pane = h.read(|v, _| v.ws.focused_pane());
     let tabs = h.read(|v, _| v.ws.tabs().len());
     click(&mut h, &row(&a), MouseButton::Left, 1);
+    h.wait_prompt();
+    let opened = h.read(|v, _| v.ws.focused_pane());
     h.read(|v, cx| {
-        assert_eq!(v.ws.tabs().len(), tabs, "single click opened a tab");
-        assert_eq!(
-            v.ws.focused_pane(),
-            pane,
-            "single click moved terminal focus"
-        );
+        assert_eq!(v.ws.tabs().len(), tabs + 1, "a click opens the branch");
+        assert_ne!(opened, pane, "a click moves terminal focus to it");
+        assert_eq!(v.ws.pane(opened.unwrap()).unwrap().cwd.as_ref(), Some(&a));
         assert_eq!(v.sidebar.read(cx).selected.as_ref(), Some(&a));
     });
     h.hook(None, &a, HookKind::PromptSubmitted);
@@ -108,25 +107,15 @@ fn project_click_selects_without_launching_and_double_click_opens_once(cx: &mut 
         Some(a.clone()),
         "background sync discarded selection"
     );
-    h.run(&format!("cd '{}'", z.display()), "test%");
-    h.wait_for("the original pane directory changed", |v, _| {
-        v.ws.pane(pane.unwrap()).unwrap().cwd.as_ref() == Some(&z)
-    });
-    assert_eq!(
-        h.read(|v, cx| v.sidebar.read(cx).selected.clone()),
-        Some(a.clone()),
-        "cwd output changed explicit row selection without a focus event"
-    );
+    // The second and third clicks of a double or triple click open nothing.
     click(&mut h, &row(&a), MouseButton::Left, 2);
-    h.wait_prompt();
-    assert_eq!(h.read(|v, _| v.ws.tabs().len()), tabs + 1);
-    let opened = h.read(|v, _| v.ws.focused_pane());
     click(&mut h, &row(&a), MouseButton::Left, 3);
     assert_eq!(
         h.read(|v, _| v.ws.tabs().len()),
         tabs + 1,
-        "third click duplicated open"
+        "a double or triple click duplicated the open"
     );
+    assert_eq!(h.read(|v, _| v.ws.focused_pane()), opened);
     let original_tab = h.read(|v, _| v.ws.tabs()[0].id);
     click(
         &mut h,
@@ -134,9 +123,8 @@ fn project_click_selects_without_launching_and_double_click_opens_once(cx: &mut 
         MouseButton::Left,
         1,
     );
-    click(&mut h, &row(&a), MouseButton::Left, 1);
     assert_eq!(h.read(|v, _| v.ws.focused_pane()), pane);
-    click(&mut h, &row(&a), MouseButton::Left, 2);
+    click(&mut h, &row(&a), MouseButton::Left, 1);
     assert_eq!(
         h.read(|v, _| v.ws.focused_pane()),
         opened,
@@ -146,21 +134,10 @@ fn project_click_selects_without_launching_and_double_click_opens_once(cx: &mut 
 }
 
 #[gpui::test]
-fn starred_click_selects_and_right_click_opens_only_the_captured_menu(cx: &mut TestAppContext) {
+fn starred_click_opens_and_right_click_opens_only_the_captured_menu(cx: &mut TestAppContext) {
     let (mut h, _, a, z) = fixture(cx, "starred-menu", false);
     let focused = h.read(|v, _| v.ws.focused_pane());
     let tabs = h.read(|v, _| v.ws.tabs().len());
-    click(&mut h, "starred-0", MouseButton::Left, 1);
-    assert_eq!(
-        h.read(|v, _| v.ws.tabs().len()),
-        tabs,
-        "single STARRED click opened a tab"
-    );
-    assert_eq!(h.read(|v, _| v.ws.focused_pane()), focused);
-    assert_eq!(
-        h.read(|v, cx| v.sidebar.read(cx).selected.clone()),
-        Some(a.clone())
-    );
     for target in ["starred-0".to_owned(), row(&a)] {
         click(&mut h, &target, MouseButton::Right, 1);
         assert_eq!(h.read(|v, _| v.ws.tabs().len()), tabs);
@@ -198,8 +175,9 @@ fn starred_click_selects_and_right_click_opens_only_the_captured_menu(cx: &mut T
     click(&mut h, &selector, MouseButton::Left, 1);
     h.wait_prompt();
     assert_eq!(h.read(|v, _| v.ws.tabs().len()), tabs + 1);
+    let opened = h.read(|v, _| v.ws.focused_pane());
     assert_eq!(
-        h.read(|v, _| v.ws.pane(v.ws.focused_pane().unwrap()).unwrap().cwd.clone()),
+        h.read(|v, _| v.ws.pane(opened.unwrap()).unwrap().cwd.clone()),
         Some(a.clone())
     );
     let original_tab = h.read(|v, _| v.ws.tabs()[0].id);
@@ -209,14 +187,19 @@ fn starred_click_selects_and_right_click_opens_only_the_captured_menu(cx: &mut T
         MouseButton::Left,
         1,
     );
-    click(&mut h, "starred-0", MouseButton::Left, 1);
     assert_eq!(h.read(|v, _| v.ws.focused_pane()), focused);
+    click(&mut h, "starred-0", MouseButton::Left, 1);
     click(&mut h, "starred-0", MouseButton::Left, 2);
     assert_eq!(
-        h.read(|v, _| v.ws.tabs().len()),
-        tabs + 1,
-        "double click reuses terminal"
+        h.read(|v, _| v.ws.focused_pane()),
+        opened,
+        "a click reuses the terminal"
     );
+    assert_eq!(
+        h.read(|v, cx| v.sidebar.read(cx).selected.clone()),
+        Some(a.clone())
+    );
+    assert_eq!(h.read(|v, _| v.ws.tabs().len()), tabs + 1);
     click(&mut h, "unstar-0", MouseButton::Left, 1);
     assert!(h.read(|v, cx| v.sidebar.read(cx).model.starred.is_empty()));
     assert_eq!(h.read(|v, _| v.ws.tabs().len()), tabs + 1);
@@ -252,19 +235,16 @@ fn background_hooks_keep_project_rows_under_the_pointer(cx: &mut TestAppContext)
 }
 
 #[gpui::test]
-fn agent_default_waits_for_double_click_and_context_terminal_still_opens_a_shell(
+fn agent_default_starts_from_a_click_and_context_terminal_still_opens_a_shell(
     cx: &mut TestAppContext,
 ) {
-    let (mut h, _, a, _) = fixture(cx, "double-agent", true);
+    let (mut h, _, a, _) = fixture(cx, "click-agent", true);
     let tabs = h.read(|v, _| v.ws.tabs().len());
     click(&mut h, &row(&a), MouseButton::Left, 1);
-    assert_eq!(h.read(|v, _| v.ws.tabs().len()), tabs);
     assert!(
-        h.cx.debug_bounds("launch-start").is_none(),
-        "single click opened launch sheet"
+        h.cx.debug_bounds("launch-start").is_some(),
+        "a click starts the default agent's launch"
     );
-    click(&mut h, &row(&a), MouseButton::Left, 2);
-    assert!(h.cx.debug_bounds("launch-start").is_some());
     assert_eq!(h.read(|v, _| v.ws.tabs().len()), tabs);
     h.keys("escape");
     click(&mut h, &row(&a), MouseButton::Right, 1);
@@ -298,7 +278,7 @@ fn split_numbers_fit_the_row_at_default_and_minimum_width(cx: &mut TestAppContex
     });
     h.cx.simulate_resize(size(px(640.0), px(600.0)));
     settle(&mut h);
-    click(&mut h, &row(&repo), MouseButton::Left, 2);
+    click(&mut h, &row(&repo), MouseButton::Left, 1);
     h.wait_prompt();
     let first = h.read(|v, _| v.ws.focused_pane().unwrap());
     h.run(

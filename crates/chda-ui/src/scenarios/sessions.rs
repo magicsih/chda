@@ -151,25 +151,6 @@ fn click(h: &mut Harness, selector: &str) {
     h.cx.run_until_parked();
 }
 
-fn open_branch(h: &mut Harness, selector: &str) {
-    click(h, selector);
-    let at = bounds(h, selector).unwrap().center();
-    h.cx.simulate_event(gpui::MouseDownEvent {
-        position: at,
-        button: gpui::MouseButton::Left,
-        modifiers: Modifiers::none(),
-        click_count: 2,
-        first_mouse: false,
-    });
-    h.cx.simulate_event(gpui::MouseUpEvent {
-        position: at,
-        button: gpui::MouseButton::Left,
-        modifiers: Modifiers::none(),
-        click_count: 2,
-    });
-    settle(h);
-}
-
 fn wheel(h: &mut Harness, selector: &str, dy: f32) {
     let at = bounds(h, selector)
         .unwrap_or_else(|| panic!("{selector} is drawn"))
@@ -799,12 +780,13 @@ fn project_navigation_does_not_scroll_sessions(cx: &mut TestAppContext) {
         assert_revealed(h, path, expected);
     };
 
-    // A visible worktree row: its double click opens a tab and moves nothing.
+    // A visible worktree row: its click opens a tab and moves nothing.
     scroll_project(h, px(-40.0));
     settle(h);
     let target = visible_worktree(h, &worktrees[..10]);
     let expected = project_scroll(h).offset().y;
-    open_branch(h, &worktree_row(&target));
+    click(h, &worktree_row(&target));
+    settle(h);
     h.wait_prompt();
     check(h, &target, expected, "a worktree click");
 
@@ -825,7 +807,8 @@ fn project_navigation_does_not_scroll_sessions(cx: &mut TestAppContext) {
     settle(h);
     let target = worktrees[12].clone();
     let expected = minimal_offset(h, &target);
-    open_branch(h, "starred-0");
+    click(h, "starred-0");
+    settle(h);
     h.wait_prompt();
     check(h, &target, expected, "STARRED");
 
