@@ -4,6 +4,28 @@ All notable changes to chda. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); entries are
 generated from conventional commit messages by release-plz.
 
+## [0.1.24](https://github.com/magicsih/chda/compare/v0.1.23...v0.1.24) - 2026-10-15
+
+### Added
+
+- *(theme)* follow the macOS light or dark appearance with a theme pair
+- *(terminal)* run user-defined commands for a worktree in a tab, split or floating terminal
+- *(terminal)* reorder tabs and move running panes between tabs and windows
+- *(mcp)* let agents list sessions, read output and wait for other agents
+- *(sidebar)* show child agents as one compact line of icons and counts
+- *(terminal)* show OSC 9 and OSC 777 desktop notifications from programs
+- *(sidebar)* expand or collapse every repository in PROJECT with one button
+
+### Fixed
+
+- *(terminal)* close a tab when its shell exits and stay on the branch
+- *(sidebar)* open a branch with a single click again
+- *(sidebar)* let hints come back after a menu and read the bulk hint at build time
+- *(sidebar)* keep fold hints, agent badges and child counts readable
+- *(session)* reopen a full-screen window at its last windowed size
+- *(status-bar)* show Claude usage from any session of the same sign-in
+- *(agents)* find agent CLIs when the login shell takes more than two seconds
+
 ## [0.1.23](https://github.com/magicsih/chda/compare/v0.1.22...v0.1.23) - 2026-10-13
 
 ### Fixed
