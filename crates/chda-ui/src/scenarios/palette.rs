@@ -131,7 +131,10 @@ fn a_theme_pair_follows_the_appearance_and_each_picker_keeps_the_other_half(
         g: 0x2a,
         b: 0x36,
     });
-    assert_eq!(background(&h), dracula, "preview");
+    // The palette filters and previews the highlighted entry asynchronously.
+    h.wait_for("the Dracula preview", move |v, _| {
+        v.settings.colors.background == dracula
+    });
     h.keys("enter");
     assert_eq!(
         h.read(|v, _| v.config.theme.clone()).as_deref(),
