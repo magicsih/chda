@@ -89,6 +89,31 @@ impl WorkspaceView {
             .panes
             .get(&pane)
             .is_some_and(|(view, _)| view.read(cx).focus_handle(cx).is_focused(window));
+        // A shell's exit, or a program chda started that succeeded, closes
+        // the pane as cmd-w does; a failed program keeps its exit status and
+        // output.
+        let program = self
+            .panes
+            .get(&pane)
+            .is_some_and(|(view, _)| view.read(cx).runs_program())
+            || self
+                .ws
+                .pane(pane)
+                .and_then(|p| p.agent_launch.as_ref())
+                .is_some_and(|c| c.managed);
+        let succeeded = status.is_some_and(|s| s.code == 0 && s.signal.is_none());
+        if !program || succeeded {
+            if self.remove_closed(CloseTarget::Pane(pane), cx) {
+                if had_focus {
+                    self.restore_focus(window, cx);
+                } else {
+                    self.sync_panes(cx);
+                }
+                self.sync_attention(cx);
+                cx.notify();
+            }
+            return;
+        }
         let agents = self.pane_agents(&[pane]);
         self.ws.end_agent(pane);
         self.resync_closed_agents(agents, cx);

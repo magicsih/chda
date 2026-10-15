@@ -354,6 +354,9 @@ pub struct WorkspaceView {
     renaming: Option<(TabId, Entity<TextInput>, Subscription)>,
     /// Repository whose tabs the tab bar shows (`None`: tabs outside repos).
     tab_group: Option<PathBuf>,
+    /// The worktree (else directory) whose last tab closed, while no tab is
+    /// shown: it stays selected and new tabs open there.
+    stay: Option<PathBuf>,
     /// The forge CLIs, once one of them is known to be installed.
     forges: Option<Arc<chda_core::Forges>>,
     /// Last time pull requests were fetched per repository.
@@ -537,6 +540,7 @@ impl WorkspaceView {
             palette: None,
             renaming: None,
             tab_group: None,
+            stay: None,
             forges: None,
             pr_fetched: HashMap::new(),
             base_fetched: HashMap::new(),
@@ -2728,10 +2732,17 @@ impl WorkspaceView {
         }
     }
 
-    /// Directory new panes start in: the focused pane's.
+    /// Directory new panes start in: the focused pane's, else the branch an
+    /// empty window stays on.
     fn inherited_cwd(&self) -> Option<PathBuf> {
         self.focused_cwd()
             .or_else(|| self.ws.active_tab()?.directory().map(Path::to_path_buf))
+            .or_else(|| self.stayed())
+    }
+
+    /// The branch an empty window stays on, while it shows no tab.
+    fn stayed(&self) -> Option<PathBuf> {
+        self.ws.active_tab().is_none().then(|| self.stay.clone())?
     }
 
     fn open_pane(
@@ -3520,7 +3531,8 @@ impl WorkspaceView {
         let focus = self.ws.active_tab().map(|t| (t.id, t.focused_pane()));
         let cwd = self
             .focused_cwd()
-            .or_else(|| self.ws.active_tab()?.directory().map(Path::to_path_buf));
+            .or_else(|| self.ws.active_tab()?.directory().map(Path::to_path_buf))
+            .or_else(|| self.stayed());
         self.sidebar.update(cx, |s, cx| {
             s.select_context(focus, cwd.as_deref(), navigation, cx)
         });
@@ -3706,6 +3718,11 @@ impl WorkspaceView {
         } else if let Some(tab) = self.ws.active_tab() {
             CloseTarget::Tab(tab.id)
         } else {
+            // A window without tabs closes; one showing no tab keeps its others.
+            if self.ws.is_empty() {
+                self.save_session();
+                window.remove_window();
+            }
             return;
         };
         self.request_close(target, window, cx);
@@ -3816,31 +3833,49 @@ impl WorkspaceView {
     }
 
     fn finish_close(&mut self, target: CloseTarget, window: &mut Window, cx: &mut Context<Self>) {
-        let agents = match target {
-            CloseTarget::Tab(id) => {
-                let Some(tab) = self.ws.tabs().iter().find(|tab| tab.id == id) else {
-                    return;
-                };
-                let panes = tab.panes();
-                let agents = self.pane_agents(&panes);
+        if self.remove_closed(target, cx) {
+            self.restore_focus(window, cx);
+            self.sync_attention(cx);
+        }
+    }
+
+    /// Remove a tab or pane. When that takes the shown tab away, show the
+    /// nearest tab of the same branch, else none: the window stays on the
+    /// branch, empty, and neither jumps to another branch nor closes.
+    fn remove_closed(&mut self, target: CloseTarget, cx: &mut Context<Self>) -> bool {
+        if let CloseTarget::Pane(pane) = target
+            && self.ws.pane(pane).is_none()
+        {
+            return false;
+        }
+        let Some(index) = self.ws.tabs().iter().position(|tab| match target {
+            CloseTarget::Tab(id) => tab.id == id,
+            CloseTarget::Pane(pane) => tab.panes().contains(&pane),
+        }) else {
+            return false;
+        };
+        let tab = &self.ws.tabs()[index];
+        let id = tab.id;
+        let shown = self.ws.active_tab().is_some_and(|t| t.id == id);
+        let place = self.tab_place(tab, cx);
+        let panes = match target {
+            CloseTarget::Tab(_) => tab.panes(),
+            CloseTarget::Pane(pane) => vec![pane],
+        };
+        let agents = self.pane_agents(&panes);
+        match target {
+            CloseTarget::Tab(_) => {
                 self.ws.close_tab(id);
                 self.graphs.remove(&id);
                 self.reviews.remove(&id);
-                for pane in panes {
-                    self.panes.remove(&pane);
-                }
-                agents
             }
             CloseTarget::Pane(pane) => {
-                if self.ws.pane(pane).is_none() {
-                    return;
-                }
-                let agents = self.pane_agents(&[pane]);
                 self.ws.close_pane(pane);
-                self.panes.remove(&pane);
-                agents
             }
-        };
+        }
+        for pane in panes {
+            self.panes.remove(&pane);
+        }
         self.resync_closed_agents(agents, cx);
         if self
             .renaming
@@ -3849,13 +3884,42 @@ impl WorkspaceView {
         {
             self.renaming = None;
         }
-        if self.ws.is_empty() {
-            self.save_session();
-            window.remove_window();
-            return;
+        if shown && !self.ws.tabs().iter().any(|t| t.id == id) {
+            let tabs = self.ws.tabs();
+            let at = index.min(tabs.len());
+            let next = tabs[at..]
+                .iter()
+                .chain(tabs[..at].iter().rev())
+                .find(|t| place.is_some() && self.tab_place(t, cx) == place)
+                .map(|t| t.id);
+            match next {
+                Some(next) => {
+                    self.ws.activate_tab_id(next);
+                    self.stay = None;
+                }
+                None => {
+                    self.ws.deactivate();
+                    self.stay = place;
+                }
+            }
         }
-        self.restore_focus(window, cx);
-        self.sync_attention(cx);
+        true
+    }
+
+    /// The worktree a tab works in, else its directory.
+    fn tab_place(&self, tab: &chda_core::Tab, cx: &App) -> Option<PathBuf> {
+        let dir = tab
+            .focused_pane()
+            .and_then(|pane| self.ws.pane(pane)?.cwd.clone())
+            .or_else(|| tab.directory().map(Path::to_path_buf))?;
+        Some(
+            self.sidebar
+                .read(cx)
+                .model
+                .worktree_for_path(&dir)
+                .map(|(_, w)| w.path.clone())
+                .unwrap_or(dir),
+        )
     }
 
     fn input_origin(&self) -> Option<CloseFocus> {
@@ -6383,11 +6447,8 @@ impl WorkspaceView {
         }
     }
 
-    fn render_tab_bar(&self, cx: &mut Context<Self>) -> Option<AnyElement> {
+    fn render_tab_bar(&self, cx: &mut Context<Self>) -> AnyElement {
         let tabs = self.ws.tabs_in(self.tab_group.as_deref());
-        if tabs.is_empty() {
-            return None;
-        }
         let bg = hsla(self.settings.colors.background.unwrap_or_default());
         let fg = hsla(self.settings.colors.foreground.unwrap_or_default());
         let bar_bg = blend(bg, fg, 0.06);
@@ -6395,10 +6456,10 @@ impl WorkspaceView {
         let bar = div()
             .flex()
             .flex_row()
-            .w_full()
+            .flex_1()
+            .min_w_0()
             .id("tab-bar")
             .overflow_x_scroll()
-            .flex_shrink_0()
             .bg(bar_bg)
             .text_sm()
             .text_color(fg)
@@ -6530,7 +6591,36 @@ impl WorkspaceView {
                     )
                     .child(close)
             }));
-        Some(bar.into_any_element())
+        // A new terminal in the shown branch, or the one an empty window
+        // stays on, like cmd-t.
+        let new_tab = div()
+            .id("tab-new")
+            .debug_selector(|| "tab-new".into())
+            .flex_shrink_0()
+            .flex()
+            .items_center()
+            .justify_center()
+            .w(px(28.0))
+            .text_color(fg.opacity(0.7))
+            .cursor_pointer()
+            .hover(|style| style.bg(fg.opacity(0.12)).text_color(fg))
+            .tooltip(crate::tooltip::text("New terminal tab (cmd-t)"))
+            .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
+            .on_click(cx.listener(|this, _, window, cx| {
+                cx.stop_propagation();
+                this.new_tab(&NewTab, window, cx);
+            }))
+            .child("+");
+        div()
+            .flex()
+            .flex_row()
+            .w_full()
+            .flex_shrink_0()
+            .bg(bar_bg)
+            .text_sm()
+            .child(bar)
+            .child(new_tab)
+            .into_any_element()
     }
 
     fn render_node(&self, node: &Node, divider: Hsla, cx: &mut Context<Self>) -> AnyElement {
@@ -7153,7 +7243,7 @@ impl Render for WorkspaceView {
             .h_full()
             .flex()
             .flex_col()
-            .children(self.render_tab_bar(cx))
+            .child(self.render_tab_bar(cx))
             .child(div().flex_1().min_h_0().w_full().child(content));
         let title_bar = self.render_title_bar(window, cx);
         div()

@@ -32,3 +32,16 @@ adopts it by its unchanged pane id, keeping scrollback, agent status, child
 activity and conversation identity. Because pane ids are unique per process,
 Sessions rows, notifications and agent routing follow the pane. A tab left
 without panes closes without asking; a window left without tabs closes.
+
+## Closing a tab keeps the branch (2026-10-15)
+
+Closing the shown tab, whether its shell exited, its close button was
+clicked or cmd-w was pressed, never moves the window to another branch.
+The nearest tab of the same worktree (else directory) is shown, looking
+after the closed tab first and then before it. When none is left, no tab is
+shown: the sidebar keeps that worktree selected, the tab bar keeps its
+repository's tabs, and + at the end of the tab bar or cmd-t opens a new
+terminal in that worktree. A window whose last tab closes stays open; cmd-w
+on a window without tabs closes it. Moving a window's last pane to another
+window still closes the emptied window.
+

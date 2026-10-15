@@ -148,16 +148,21 @@ const BLINK_INTERVAL: Duration = Duration::from_millis(600);
 pub(crate) struct TerminalPlan {
     options: SessionOptions,
     inherited: Option<chda_term::DetachedSession>,
+    program: bool,
 }
 
 pub(crate) struct PreparedTerminal {
     session: Session,
     events: mpsc::Receiver<Event>,
     wake_rx: UnboundedReceiver<()>,
+    program: bool,
 }
 
 pub struct TerminalView {
     final_output: Option<Result<String, String>>,
+    /// chda started a program here rather than the login shell; unknown,
+    /// so false, for a terminal adopted from an earlier chda process.
+    program: bool,
     session: Session,
     events: mpsc::Receiver<Event>,
     frame: Arc<Frame>,
@@ -229,6 +234,7 @@ impl TerminalView {
         cwd: Option<PathBuf>,
         command: Option<Vec<String>>,
     ) -> std::io::Result<TerminalPlan> {
+        let program = command.is_some();
         let mut options = SessionOptions {
             colors: settings.colors.clone(),
             scrollback: settings.scrollback,
@@ -303,13 +309,18 @@ impl TerminalView {
                 "Missing inherited terminal {pane_id}"
             )));
         }
-        Ok(TerminalPlan { options, inherited })
+        Ok(TerminalPlan {
+            options,
+            inherited,
+            program,
+        })
     }
 
     pub(crate) fn prepare(plan: TerminalPlan) -> std::io::Result<PreparedTerminal> {
         let TerminalPlan {
             mut options,
             inherited,
+            program,
         } = plan;
         let (events_tx, events) = mpsc::channel();
         let (wake_tx, wake_rx) = unbounded::<()>();
@@ -327,6 +338,7 @@ impl TerminalView {
             session,
             events,
             wake_rx,
+            program,
         })
     }
 
@@ -341,6 +353,7 @@ impl TerminalView {
             session,
             events,
             wake_rx,
+            program,
         } = prepared;
         let frame = session.frame();
 
@@ -366,6 +379,7 @@ impl TerminalView {
 
         Self {
             final_output: None,
+            program,
             session,
             events,
             frame,
@@ -392,6 +406,11 @@ impl TerminalView {
             link_cache: RefCell::new(None),
             dragged: Default::default(),
         }
+    }
+
+    /// The pane runs a program chda started, not the login shell.
+    pub(crate) fn runs_program(&self) -> bool {
+        self.program
     }
 
     pub(crate) fn detach(&self) -> mpsc::Receiver<std::io::Result<chda_term::DetachedSession>> {

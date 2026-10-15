@@ -807,6 +807,11 @@ impl Workspace {
         }
     }
 
+    /// Show no tab, as when the last tab of a branch closed.
+    pub fn deactivate(&mut self) {
+        self.active = None;
+    }
+
     /// Move to the next or previous tab, wrapping around.
     pub fn cycle_tab(&mut self, forward: bool) {
         let Some(i) = self.active_index() else {

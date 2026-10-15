@@ -169,3 +169,41 @@ open = "window"
         v.focused_text(cx).contains("fixed-ran")
     });
 }
+
+#[gpui::test]
+fn a_tab_command_closes_when_it_succeeds_and_stays_when_it_fails(cx: &mut TestAppContext) {
+    let mut h = Harness::open(cx, "commands-exit", |home| {
+        std::fs::write(
+            &home.config,
+            r#"
+[[commands]]
+name = "tab-succeeds"
+run = "printf 'tab-%s\n' ok"
+
+[[commands]]
+name = "tab-fails"
+run = "printf 'tab-%s\n' failing; exit 3"
+"#,
+        )
+        .unwrap();
+    });
+    h.wait_prompt();
+    let shell = h.read(|v, _| v.ws.focused_pane());
+    palette(&mut h, "Run tab-succeeds");
+    h.wait_for("the successful command's tab to close", move |v, _| {
+        v.ws.tabs().len() == 1 && v.ws.focused_pane() == shell
+    });
+    palette(&mut h, "Run tab-fails");
+    h.wait_for("the failed command's exit status", |v, _| {
+        v.ws.tabs().len() == 2
+            && v.ws.focused_pane().is_some_and(|pane| {
+                !v.panes.contains_key(&pane)
+                    && v.ws
+                        .pane(pane)
+                        .unwrap()
+                        .pane_run
+                        .as_ref()
+                        .is_some_and(|run| run.stopped() && run.label().contains("code 3"))
+            })
+    });
+}

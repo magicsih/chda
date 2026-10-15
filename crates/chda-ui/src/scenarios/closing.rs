@@ -238,15 +238,28 @@ fn immediate_tab_close_covers_shell_review_idle_and_graphs(cx: &mut TestAppConte
         h.view
             .update(cx, |view, cx| view.open_git_graph(repo.clone(), window, cx))
     });
-    click(&mut h, "tab-close-0", 1); // Graph is the sole tab in its repository group.
-    assert!(h.read(|view, _| view.graphs.is_empty() && view.panes.len() == 1));
+    // The graph is its repository's only tab, so closing it shows no tab
+    // rather than the terminal of another place.
+    click(&mut h, "tab-close-0", 1);
+    assert!(h.read(|view, _| view.graphs.is_empty()
+        && view.panes.len() == 1
+        && view.ws.active_tab().is_none()));
     h.cx.update(|window, cx| {
         h.view
             .update(cx, |view, cx| view.open_git_graph(repo, window, cx))
     });
     h.keys("cmd-w");
     assert!(h.read(|view, _| view.graphs.is_empty() && view.panes.len() == 1));
-    click(&mut h, "tab-close-0", 1);
+    let terminal = h.read(|view, _| view.ws.tabs()[0].id);
+    h.cx.update(|window, cx| {
+        h.view.update(cx, |view, cx| {
+            view.request_close(
+                crate::workspace_view::CloseTarget::Tab(terminal),
+                window,
+                cx,
+            )
+        })
+    });
     assert!(h.read(|view, _| view.ws.is_empty() && view.panes.is_empty()));
     assert!(!SavedWindow::path(&h.home.data).exists());
 }
@@ -475,17 +488,121 @@ fn stop_and_close_clears_the_worktree_working_status(cx: &mut TestAppContext) {
     working(&mut h, ending, "claude");
     assert_eq!(worktree_status(&mut h, &repo).0, AgentStatus::Working);
     Command::new("kill").arg(pid.to_string()).status().unwrap();
-    h.wait_for(
-        "the ended pane retained its process status",
-        move |view, _| {
-            view.ws
-                .pane(ending)
-                .is_some_and(|p| p.pane_run.as_ref().is_some_and(chda_core::PaneRun::stopped))
-        },
-    );
+    h.wait_for("the ended shell's pane to close", move |view, _| {
+        view.ws.pane(ending).is_none()
+    });
     let (status, update) = worktree_status(&mut h, &repo);
     assert_ne!(status, AgentStatus::Working);
     assert_eq!(update, "enabled");
-    assert_eq!(h.read(|view, _| view.ws.tabs().len()), 2);
+    assert_eq!(h.read(|view, _| view.ws.tabs().len()), 1);
     assert!(h.read(|view, _| !view.panes.contains_key(&ending)));
+}
+
+/// Click a PROJECT worktree row, which opens or focuses its terminal.
+fn open_worktree(h: &mut Harness, path: &std::path::Path) {
+    for _ in 0..3 {
+        h.cx.run_until_parked();
+        h.cx.update(|w, cx| w.simulate_next_frame(cx));
+    }
+    let selector: &'static str = Box::leak(format!("wt:{}", path.display()).into_boxed_str());
+    click(h, selector, 1);
+}
+
+#[gpui::test]
+fn exit_closes_the_tab_and_the_window_stays_on_its_branch(cx: &mut TestAppContext) {
+    let (mut a, mut z) = (std::path::PathBuf::new(), std::path::PathBuf::new());
+    let mut h = Harness::open(cx, "exit-stays", |home| {
+        let repo = home.repo("project");
+        a = home.home.join("feature-a");
+        z = home.home.join("feature-z");
+        for (branch, path) in [("feature/a", &a), ("feature/z", &z)] {
+            git(
+                &repo,
+                &[
+                    "worktree",
+                    "add",
+                    "-q",
+                    "-b",
+                    branch,
+                    path.to_str().unwrap(),
+                ],
+            );
+        }
+        let mut config = chda_config::ChdaConfig::default();
+        config.repos.push(repo.clone());
+        config.save(&home.config).unwrap();
+    });
+    h.wait_prompt();
+    h.wait_for("worktrees", |v, cx| {
+        v.sidebar.read(cx).model.repos[0].worktrees.len() == 3
+    });
+    let selected = |h: &Harness| h.read(|v, cx| v.sidebar.read(cx).selected.clone());
+    let active = |h: &Harness| h.read(|v, _| v.ws.active_tab().map(|t| t.id));
+    // Tabs: home, a, z, then a second a at the end.
+    open_worktree(&mut h, &a);
+    h.wait_prompt();
+    let first_a = active(&h);
+    open_worktree(&mut h, &z);
+    h.wait_prompt();
+    open_worktree(&mut h, &a);
+    assert_eq!(active(&h), first_a);
+    h.keys("cmd-t");
+    h.wait_prompt();
+    assert_eq!(h.read(|v, _| v.ws.tabs().len()), 4);
+
+    // exit shows the nearest tab of the same branch, not z beside it.
+    h.type_text("exit");
+    h.keys("enter");
+    h.wait_for("the second a tab to close", |v, _| v.ws.tabs().len() == 3);
+    assert_eq!(active(&h), first_a);
+    assert_eq!(selected(&h), Some(a.clone()));
+
+    // The branch's last tab: no tab shows; the window and branch stay.
+    h.type_text("exit");
+    h.keys("enter");
+    h.wait_for("the last a tab to close", |v, _| v.ws.tabs().len() == 2);
+    h.read(|v, _| {
+        assert!(
+            v.ws.active_tab().is_none(),
+            "another branch's tab took over"
+        );
+        assert!(v.ws.focused_pane().is_none());
+    });
+    assert_eq!(selected(&h), Some(a.clone()), "the sidebar moved away");
+    assert!(h.cx.debug_bounds("tab-new").is_some());
+
+    // + opens a terminal in that branch again.
+    click(&mut h, "tab-new", 1);
+    h.wait_prompt();
+    assert_eq!(h.read(|v, _| v.ws.tabs().len()), 3);
+    assert_eq!(
+        h.read(|v, _| v.ws.pane(v.ws.focused_pane().unwrap()).unwrap().cwd.clone()),
+        Some(a.clone())
+    );
+
+    // cmd-w follows the same rule; with other tabs left it closes nothing more.
+    h.keys("cmd-w");
+    assert!(h.read(|v, _| v.ws.active_tab().is_none() && v.ws.tabs().len() == 2));
+    h.keys("cmd-w");
+    assert_eq!(h.read(|v, _| v.ws.tabs().len()), 2);
+    assert_eq!(selected(&h), Some(a.clone()));
+
+    // Closing the window's last tab keeps the window; cmd-w then closes it.
+    let ids: Vec<_> = h.read(|v, _| v.ws.tabs().iter().map(|t| t.id).collect());
+    for id in ids {
+        h.cx.update(|window, cx| {
+            h.view.update(cx, |v, cx| {
+                v.request_close(crate::workspace_view::CloseTarget::Tab(id), window, cx)
+            })
+        });
+    }
+    h.cx.run_until_parked();
+    assert!(h.read(|v, _| v.ws.is_empty()));
+    assert!(
+        h.cx.debug_bounds("tab-new").is_some(),
+        "the empty window stays"
+    );
+    let windows = h.cx.windows().len();
+    h.keys("cmd-w");
+    assert_eq!(h.cx.windows().len(), windows - 1);
 }

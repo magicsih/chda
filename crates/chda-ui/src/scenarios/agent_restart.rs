@@ -204,7 +204,7 @@ fn no_session_identity_disables_restart_and_restore_does_not_create_a_conversati
         home.fake_claude();
         std::fs::write(
             &home.claude_bin,
-            "#!/bin/sh\nprintf 'unknown conversation\\n'\nexit 0\n",
+            "#!/bin/sh\nprintf 'unknown conversation\\n'\nexit 2\n",
         )
         .unwrap();
     });

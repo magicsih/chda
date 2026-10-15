@@ -145,13 +145,13 @@ fn idle_parent_with_a_busy_child_requires_cancel_by_default(cx: &mut TestAppCont
 }
 
 #[gpui::test]
-fn ordinary_process_exit_retains_background_layout_and_output(cx: &mut TestAppContext) {
-    let mut h = Harness::open(cx, "ordinary-exit", |_| {});
+fn a_shell_exit_closes_its_pane_even_after_an_error_and_keeps_focus(cx: &mut TestAppContext) {
+    let mut h = Harness::open(cx, "shell-exit", |_| {});
     h.wait_prompt();
     let pane = h.read(|v, _| v.ws.focused_pane().unwrap());
     let release = h.home.home.join("exit-release");
     h.type_text(&format!(
-        "while [ ! -f '{}' ]; do sleep 0.02; done; printf 'retained-exit-output\\n'; exit 7",
+        "while [ ! -f '{}' ]; do sleep 0.02; done; printf 'ended-output\\n'; exit 7",
         release.display()
     ));
     h.keys("enter");
@@ -159,29 +159,22 @@ fn ordinary_process_exit_retains_background_layout_and_output(cx: &mut TestAppCo
     h.wait_prompt();
     let focused = h.read(|v, _| v.ws.focused_pane());
     std::fs::write(&release, "").unwrap();
-    h.wait_for("ordinary top-level exit", |v, _| {
-        !v.panes.contains_key(&pane)
+    h.wait_for("the background shell's tab to close", move |v, _| {
+        v.ws.pane(pane).is_none()
     });
     h.read(|v, _| {
-        assert!(v.ws.pane(pane).is_some(), "ordinary exit removed its pane");
-        assert_eq!(v.ws.tabs().len(), 2);
+        assert!(!v.panes.contains_key(&pane));
+        assert_eq!(v.ws.tabs().len(), 1);
         assert_eq!(v.ws.focused_pane(), focused);
-        assert!(
-            v.ws.pane(pane)
-                .unwrap()
-                .pane_run
-                .as_ref()
-                .is_some_and(|r| r.stopped())
-        );
-        let file =
-            v.ws.pane(pane)
-                .unwrap()
-                .previous_run
-                .as_ref()
-                .expect("final output reference");
-        let text = std::fs::read_to_string(h.home.data.join("agent-output").join(file)).unwrap();
-        assert!(text.contains("retained-exit-output"), "{text}");
     });
+    assert!(
+        !h.home.data.join("agent-output").exists()
+            || std::fs::read_dir(h.home.data.join("agent-output"))
+                .unwrap()
+                .next()
+                .is_none(),
+        "a closed shell keeps no previous output"
+    );
 }
 
 #[gpui::test]
@@ -356,53 +349,6 @@ fn every_close_path_reads_latest_child_state_and_completed_children_do_not_block
 }
 
 #[gpui::test]
-fn last_shell_exit_survives_cold_restore_and_only_explicit_start_creates_a_shell(
-    cx: &mut TestAppContext,
-) {
-    let mut h = Harness::open(cx, "last-shell-exit", |_| {});
-    h.wait_prompt();
-    let pane = h.read(|v, _| v.ws.focused_pane().unwrap());
-    let pid = h.focused_terminal().read_with(&h.cx, |t, _| t.child_pid());
-    h.type_text("printf 'last-shell-output\\n'; exit 5");
-    h.keys("enter");
-    h.wait_for("last shell retained", |v, _| {
-        v.ws.pane(pane)
-            .is_some_and(|p| p.pane_run.as_ref().is_some_and(chda_core::PaneRun::stopped))
-    });
-    assert_eq!(h.read(|v, _| v.ws.tabs().len()), 1);
-    assert!(h.read(|v, _| v.panes.is_empty()));
-    let (cx2, view2) = h.reopen();
-    cx2.run_until_parked();
-    view2.read_with(&cx2, |v, _| {
-        assert_eq!(v.ws.tabs().len(), 1);
-        assert!(
-            v.panes.is_empty(),
-            "cold restore restarted the ended process"
-        );
-        assert!(
-            v.ws.pane(v.ws.focused_pane().unwrap())
-                .unwrap()
-                .pane_run
-                .as_ref()
-                .unwrap()
-                .label()
-                .contains("code 5")
-        );
-    });
-    h.type_text("must-not-reach-a-process");
-    assert!(h.read(|v, _| v.panes.is_empty()));
-    click(&mut h, "start-shell".into());
-    h.wait_prompt();
-    assert_eq!(h.read(|v, _| v.ws.focused_pane()), Some(pane));
-    assert_ne!(
-        h.focused_terminal().read_with(&h.cx, |t, _| t.child_pid()),
-        pid
-    );
-    assert!(h.read(|v, _| v.ws.pane(pane).unwrap().previous_run.is_some()));
-    h.run("printf 'new-shell-ready\\n'", "new-shell-ready");
-}
-
-#[gpui::test]
 fn managed_restart_uses_the_same_conversations_latest_confirmed_directory(cx: &mut TestAppContext) {
     let mut report_dir = std::path::PathBuf::new();
     let mut h = Harness::open(cx, "managed-cwd", |home| {
@@ -459,8 +405,19 @@ exit 6
 fn stopped_parent_with_retained_child_reports_closes_without_hidden_confirmation(
     cx: &mut TestAppContext,
 ) {
-    let mut h = Harness::open(cx, "stopped-child", |_| {});
+    let mut h = Harness::open(cx, "stopped-child", |home| {
+        home.fake_claude();
+        std::fs::write(
+            &home.claude_bin,
+            "#!/bin/sh\nwhile [ ! -f \"$HOME/release-cli\" ]; do sleep 0.02; done\nexit 3\n",
+        )
+        .unwrap();
+    });
     h.wait_prompt();
+    // A failed program keeps its pane; a shell's exit would close it.
+    h.cx.dispatch_action(crate::workspace_view::RunClaude);
+    h.confirm_agent_launch();
+    h.wait_for("the managed agent's tab", |v, _| v.ws.tabs().len() == 2);
     let pane = h.read(|v, _| v.ws.focused_pane().unwrap());
     h.hook_session(
         Some(pane.raw()),
@@ -488,8 +445,7 @@ fn stopped_parent_with_retained_child_reports_closes_without_hidden_confirmation
                 },
             });
     });
-    h.type_text("exit 0");
-    h.keys("enter");
+    std::fs::write(h.home.home.join("release-cli"), "").unwrap();
     h.wait_for("stopped parent", |v, _| {
         v.ws.pane(pane)
             .unwrap()
@@ -497,9 +453,7 @@ fn stopped_parent_with_retained_child_reports_closes_without_hidden_confirmation
             .as_ref()
             .is_some_and(chda_core::PaneRun::stopped)
     });
-    h.keys("cmd-t");
-    h.wait_prompt();
-    click(&mut h, "tab-close-0".into());
+    click(&mut h, "tab-close-1".into());
     assert!(
         h.read(|v, _| v.confirm.is_none()),
         "stopped parent asked to stop a hidden child"
