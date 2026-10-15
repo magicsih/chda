@@ -2,8 +2,8 @@
 
 use gpui::prelude::*;
 use gpui::{
-    AnyView, App, AppContext, Context, Global, IntoElement, Render, SharedString, Window, WindowId,
-    div,
+    AnyView, App, AppContext, Context, Global, IntoElement, Render, SharedString, WeakEntity,
+    Window, WindowId, div,
 };
 use std::collections::HashMap;
 
@@ -16,28 +16,54 @@ struct Gate {
 struct Gates(HashMap<WindowId, Gate>);
 impl Global for Gates {}
 
+/// The hints each window built, so an invalidation can redraw them: GPUI
+/// keeps showing a hint's last frame until its view is notified.
+#[derive(Default)]
+struct Shown(HashMap<WindowId, Vec<WeakEntity<TextTooltip>>>);
+impl Global for Shown {}
+
+/// Bumped by every invalidation. A hint builder remembers the value from the
+/// frame that drew its element; GPUI may call it after a click that already
+/// changed the element, and a stale builder then shows nothing.
+static BUILDERS: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+
 /// Invalidate active hints without replacing GPUI's pointer tracking.
 pub fn dismiss(window: &Window, cx: &mut App) {
-    let gate = cx
-        .default_global::<Gates>()
-        .0
-        .entry(window.window_handle().window_id())
-        .or_default();
+    BUILDERS.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+    let id = window.window_handle().window_id();
+    let gate = cx.default_global::<Gates>().0.entry(id).or_default();
     gate.epoch = gate.epoch.wrapping_add(1);
+    redraw(id, cx);
 }
 pub fn block(window: &Window, blocked: bool, cx: &mut App) {
-    let gate = cx
-        .default_global::<Gates>()
-        .0
-        .entry(window.window_handle().window_id())
-        .or_default();
+    let id = window.window_handle().window_id();
+    let gate = cx.default_global::<Gates>().0.entry(id).or_default();
     if gate.blocked != blocked {
         gate.blocked = blocked;
         gate.epoch = gate.epoch.wrapping_add(1);
+        BUILDERS.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        redraw(id, cx);
     }
 }
 pub fn forget(window: WindowId, cx: &mut App) {
     cx.default_global::<Gates>().0.remove(&window);
+    cx.default_global::<Shown>().0.remove(&window);
+}
+
+/// Redraw the window's live hints so invalidated ones disappear at once,
+/// also while the pointer stays on their element.
+fn redraw(window: WindowId, cx: &mut App) {
+    let hints = cx
+        .default_global::<Shown>()
+        .0
+        .get_mut(&window)
+        .map(std::mem::take)
+        .unwrap_or_default();
+    let live: Vec<_> = hints
+        .into_iter()
+        .filter(|hint| hint.update(cx, |_, cx| cx.notify()).is_ok())
+        .collect();
+    cx.default_global::<Shown>().0.insert(window, live);
 }
 
 struct TextTooltip {
@@ -82,14 +108,20 @@ impl Render for TextTooltip {
 /// A tooltip builder for `.tooltip(...)` showing `text`, one line per `\n`.
 pub fn text(text: impl Into<SharedString>) -> impl Fn(&mut Window, &mut App) -> AnyView + 'static {
     let text = text.into();
+    let born = BUILDERS.load(std::sync::atomic::Ordering::Relaxed);
     move |window, cx| {
         let id = window.window_handle().window_id();
-        let epoch = cx.default_global::<Gates>().0.entry(id).or_default().epoch;
-        cx.new(|_| TextTooltip {
+        let gate = cx.default_global::<Gates>().0.entry(id).or_default().epoch;
+        let current = BUILDERS.load(std::sync::atomic::Ordering::Relaxed) == born;
+        let epoch = if current { gate } else { gate.wrapping_sub(1) };
+        let hint = cx.new(|_| TextTooltip {
             text: text.clone(),
             window: id,
             epoch,
-        })
-        .into()
+        });
+        let shown = cx.default_global::<Shown>().0.entry(id).or_default();
+        shown.retain(|hint| hint.upgrade().is_some());
+        shown.push(hint.downgrade());
+        hint.into()
     }
 }

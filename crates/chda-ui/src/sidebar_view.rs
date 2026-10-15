@@ -165,8 +165,8 @@ const ICON_MISSING: &str = "\u{f0dcc}"; // nf-md-folder_alert
 const ICON_PANES: &str = "\u{f04e9}"; // nf-md-tab
 const ICON_DELETING: &str = "\u{f0a7a}"; // nf-md-trash_can_outline
 const ICON_BUSY: &str = "\u{eb19}"; // nf-cod-loading
-const ICON_COLLAPSE_ALL: &str = "\u{eac5}"; // nf-cod-collapse_all
-const ICON_EXPAND_ALL: &str = "\u{eb95}"; // nf-cod-expand_all
+const ICON_COLLAPSE_ALL: &str = "\u{f054e}"; // nf-md-unfold_less_horizontal
+const ICON_EXPAND_ALL: &str = "\u{f054f}"; // nf-md-unfold_more_horizontal
 
 /// A badge icon in the icon font.
 fn icon_text(icon: &'static str) -> gpui::Div {
@@ -431,17 +431,44 @@ impl ChildCounts {
     }
 }
 
+/// Below this Sessions width a child summary keeps one icon.
+const NARROW_SESSIONS: f32 = 240.0;
 const ICON_CHILD_WORKING: &str = "\u{f040a}"; // nf-md-play
 const ICON_CHILD_WAITING: &str = "\u{f03e4}"; // nf-md-pause
 const ICON_CHILD_UNKNOWN: &str = "\u{f0625}"; // nf-md-help_circle_outline
 const ICON_CHILDREN: &str = "\u{f04c1}"; // nf-md-source_fork
 
 impl SidebarView {
+    /// `color` deepened or lightened within its hue to stand out 3:1 on the
+    /// sidebar and on selected rows, as status icons do, in any theme.
+    fn readable(&self, color: Hsla) -> Hsla {
+        fit_color(
+            color,
+            &[self.bg, blend(self.bg, self.fg, SELECTED_ROW)],
+            3.0,
+        )
+    }
+
+    /// Sessions is too narrow for child counts beside the label, pane
+    /// number and age; measured from the last frame.
+    fn narrow_sessions(&self) -> bool {
+        let width = f32::from(self.sessions_scroll.bounds().size.width);
+        width > 0.0 && width < NARROW_SESSIONS
+    }
+
     /// One parent's children on its Sessions row: a count per state with an
-    /// icon, the waiting count in the waiting color. Hover names the agent
-    /// and counts; right-click lists every child.
+    /// icon, the waiting count in the waiting color. A narrow sidebar keeps
+    /// one icon for the most urgent state, so the label, pane number and age
+    /// keep their room. Hover names the agent and counts; right-click lists
+    /// every child.
     fn render_child_summary(&self, group: &ChildGroup, cx: &mut Context<Self>) -> AnyElement {
         let fg = self.fg;
+        let narrow = self.narrow_sessions();
+        let agent_color = self
+            .agents
+            .iter()
+            .find(|a| a.id == group.agent)
+            .map_or(fg.opacity(0.7), |a| self.readable(a.color));
         let pane = group.pane.raw();
         let counts = ChildCounts::of(&group.children);
         let name = self
@@ -480,16 +507,32 @@ impl SidebarView {
                     cx.emit(SidebarEvent::ChildMenu(children.clone(), e.position));
                 }),
             )
-            .when(counts.waiting > 0, |d| {
+            .when(narrow, |d| {
+                // It stands in for the agent's badge, in the agent's color
+                // unless a child waits.
+                let (icon, color) = if counts.waiting > 0 {
+                    (ICON_CHILD_WAITING, waiting)
+                } else if counts.working > 0 {
+                    (ICON_CHILD_WORKING, agent_color)
+                } else if counts.unknown > 0 {
+                    (ICON_CHILD_UNKNOWN, agent_color)
+                } else {
+                    (ICON_CHILDREN, agent_color)
+                };
+                d.flex_shrink_0().child(icon_text(icon).text_color(color))
+            })
+            .when(!narrow && counts.waiting > 0, |d| {
                 d.child(count(ICON_CHILD_WAITING, counts.waiting, waiting))
             })
-            .when(counts.show_working(), |d| {
+            .when(!narrow && counts.show_working(), |d| {
                 d.child(count(ICON_CHILD_WORKING, counts.working, fg.opacity(0.7)))
             })
-            .when(counts.unknown > 0, |d| {
+            .when(!narrow && counts.unknown > 0, |d| {
                 d.child(count(ICON_CHILD_UNKNOWN, counts.unknown, fg.opacity(0.7)))
             })
-            .child(count(ICON_CHILDREN, counts.total, fg.opacity(0.5)))
+            .when(!narrow, |d| {
+                d.child(count(ICON_CHILDREN, counts.total, fg.opacity(0.5)))
+            })
             .into_any_element()
     }
 
@@ -1560,7 +1603,7 @@ impl SidebarView {
         let picked = self.picked.contains(&pick);
         let label = self.agents.iter().find(|a| a.id == session.agent);
         let (short, name, color) = match label {
-            Some(l) => (l.short.clone(), l.name.clone(), l.color),
+            Some(l) => (l.short.clone(), l.name.clone(), self.readable(l.color)),
             None => (
                 session.agent.clone(),
                 session.agent.clone(),
@@ -1716,7 +1759,7 @@ impl SidebarView {
         // Agents show their short label in their color; the hover hint
         // names them.
         let (kind, kind_color) = match (row.kind, agent_label) {
-            (SessionKind::Agent, Some(a)) => (a.short.clone(), a.color),
+            (SessionKind::Agent, Some(a)) => (a.short.clone(), self.readable(a.color)),
             (SessionKind::Agent, None) => (
                 agent_name.clone().unwrap_or_else(|| "Agent".into()),
                 fg.opacity(0.5),
@@ -1818,22 +1861,26 @@ impl SidebarView {
                     .text_ellipsis()
                     .child(label),
             )
-            .child(
-                div()
-                    .debug_selector({
-                        let id = id.clone();
-                        move || format!("session-kind-{id}")
-                    })
-                    .text_xs()
-                    .flex_shrink_1()
-                    .min_w_0()
-                    .max_w(gpui::px(96.0))
-                    .overflow_hidden()
-                    .whitespace_nowrap()
-                    .text_ellipsis()
-                    .text_color(kind_color)
-                    .child(kind),
-            )
+            .when(!(self.narrow_sessions() && !children.is_empty()), |d| {
+                d.child(
+                    div()
+                        .debug_selector({
+                            let id = id.clone();
+                            move || format!("session-kind-{id}")
+                        })
+                        .text_xs()
+                        // An agent's two-letter badge never shrinks; words may.
+                        .when(agent_label.is_some(), |d| d.flex_shrink_0())
+                        .when(agent_label.is_none(), |d| d.flex_shrink_1())
+                        .min_w_0()
+                        .max_w(gpui::px(96.0))
+                        .overflow_hidden()
+                        .whitespace_nowrap()
+                        .text_ellipsis()
+                        .text_color(kind_color)
+                        .child(kind),
+                )
+            })
             // Child agents stay on the parent's row, clipped before the
             // label, number and age when the sidebar is narrow (#246).
             .children(
@@ -2442,6 +2489,31 @@ mod tests {
                             "{background:x}: {base:?} below {minimum}:1"
                         );
                     }
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn agent_badges_stand_out_three_to_one_in_light_and_dark_themes() {
+        let contrast = |a: Hsla, b: Hsla| ratio(luminance(a), luminance(b));
+        for (bg, fg) in [
+            (0xffffff, 0x1f2328),
+            (0xeff1f5, 0x4c4f69),
+            (0x0d1117, 0xe6edf3),
+            (0x1e1e2e, 0xcdd6f4),
+        ] {
+            let (bg, fg): (Hsla, Hsla) = (gpui::rgb(bg).into(), gpui::rgb(fg).into());
+            let sidebar = blend(bg, fg, 0.04);
+            let selected = blend(sidebar, fg, SELECTED_ROW);
+            for base in AGENT_COLORS {
+                let color = fit_color(gpui::rgb(base).into(), &[sidebar, selected], 3.0);
+                for surface in [sidebar, selected] {
+                    assert!(
+                        contrast(color, surface) >= 3.0 - 1e-3,
+                        "{base:06x} on {surface:?}: {}",
+                        contrast(color, surface)
+                    );
                 }
             }
         }
