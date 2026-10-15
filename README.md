@@ -122,7 +122,7 @@ document do not run. Mermaid blocks inside Markdown become diagrams too.
 </p>
 
 <p align="center">
-  <img src="docs/media/sessions.png" alt="The Sessions list in a light theme: a working Claude Code #1 pane and a waiting Codex #2 pane in the same split tab, with a plain terminal above PROJECT and the focused main branch highlighted" width="880">
+  <img src="docs/media/sessions.png" alt="The Sessions list in a light theme: a working Claude Code pane (CC) whose child agents show one waiting, one working and three in all on its row, beside a Codex pane (CX) waiting for input in the same split tab, above PROJECT with the main worktree highlighted" width="880">
 </p>
 <!-- END GENERATED FEATURES -->
 
@@ -281,7 +281,7 @@ args = ["--full-auto"]
 name = "lazygit"
 run = "lazygit"               # through your login shell, in the worktree
 open = "floating"             # tab (default) | split | floating
-key = "cmd-shift-g"           # optional; built-in shortcuts keep theirs
+key = "cmd-shift-l"           # optional; built-in shortcuts keep theirs
 ```
 
 A floating command opens over the window and closes when it succeeds; when it
