@@ -22,14 +22,8 @@ impl Global for Gates {}
 struct Shown(HashMap<WindowId, Vec<WeakEntity<TextTooltip>>>);
 impl Global for Shown {}
 
-/// Bumped by every invalidation. A hint builder remembers the value from the
-/// frame that drew its element; GPUI may call it after a click that already
-/// changed the element, and a stale builder then shows nothing.
-static BUILDERS: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
-
 /// Invalidate active hints without replacing GPUI's pointer tracking.
 pub fn dismiss(window: &Window, cx: &mut App) {
-    BUILDERS.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
     let id = window.window_handle().window_id();
     let gate = cx.default_global::<Gates>().0.entry(id).or_default();
     gate.epoch = gate.epoch.wrapping_add(1);
@@ -41,7 +35,6 @@ pub fn block(window: &Window, blocked: bool, cx: &mut App) {
     if gate.blocked != blocked {
         gate.blocked = blocked;
         gate.epoch = gate.epoch.wrapping_add(1);
-        BUILDERS.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
         redraw(id, cx);
     }
 }
@@ -108,12 +101,9 @@ impl Render for TextTooltip {
 /// A tooltip builder for `.tooltip(...)` showing `text`, one line per `\n`.
 pub fn text(text: impl Into<SharedString>) -> impl Fn(&mut Window, &mut App) -> AnyView + 'static {
     let text = text.into();
-    let born = BUILDERS.load(std::sync::atomic::Ordering::Relaxed);
     move |window, cx| {
         let id = window.window_handle().window_id();
-        let gate = cx.default_global::<Gates>().0.entry(id).or_default().epoch;
-        let current = BUILDERS.load(std::sync::atomic::Ordering::Relaxed) == born;
-        let epoch = if current { gate } else { gate.wrapping_sub(1) };
+        let epoch = cx.default_global::<Gates>().0.entry(id).or_default().epoch;
         let hint = cx.new(|_| TextTooltip {
             text: text.clone(),
             window: id,

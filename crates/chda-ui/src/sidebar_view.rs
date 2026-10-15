@@ -2073,11 +2073,24 @@ impl Render for SidebarView {
         // One bulk disclosure for every repository; with fewer than two
         // the repository's own header does the same.
         let collapse = self.any_repo_expanded();
+        let sidebar = cx.entity().downgrade();
         let bulk = (self.model.repos.len() >= 2).then(|| {
-            let (icon, tip) = if collapse {
-                (ICON_COLLAPSE_ALL, "Collapse all repositories")
+            let icon = if collapse {
+                ICON_COLLAPSE_ALL
             } else {
-                (ICON_EXPAND_ALL, "Expand all repositories")
+                ICON_EXPAND_ALL
+            };
+            // GPUI may build a hint from the frame before a click, so its
+            // text comes from the state at that moment.
+            let tip = move |window: &mut Window, cx: &mut gpui::App| {
+                let collapse = sidebar
+                    .upgrade()
+                    .is_some_and(|s| s.read(cx).any_repo_expanded());
+                crate::tooltip::text(if collapse {
+                    "Collapse all repositories"
+                } else {
+                    "Expand all repositories"
+                })(window, cx)
             };
             div()
                 .id("repos-bulk-toggle")
@@ -2086,7 +2099,7 @@ impl Render for SidebarView {
                 .rounded_sm()
                 .cursor_pointer()
                 .hover(|s| s.bg(fg.opacity(0.15)))
-                .tooltip(crate::tooltip::text(tip))
+                .tooltip(tip)
                 .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
                 .on_click(cx.listener(move |s, _, window, cx| {
                     cx.stop_propagation();

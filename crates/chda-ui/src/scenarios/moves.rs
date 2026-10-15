@@ -12,14 +12,23 @@ fn tab_center(h: &mut Harness, index: usize) -> gpui::Point<gpui::Pixels> {
 
 /// The shell's PID, printed in the focused pane.
 fn shell_pid(h: &mut Harness, tag: &str) -> String {
-    h.run(&format!("printf '{tag}-%s\\n' $$"), &format!("{tag}-"));
-    let text = h.read(|v, cx| v.focused_text(cx));
-    let line = text
-        .lines()
-        .rev()
-        .find(|l| l.starts_with(&format!("{tag}-")))
-        .unwrap();
-    line[tag.len() + 1..].trim().to_owned()
+    let prefix = format!("{tag}-");
+    let printed = move |text: &str| {
+        text.lines()
+            .rev()
+            .filter_map(|l| l.strip_prefix(prefix.as_str()))
+            .map(str::trim)
+            .find(|pid| !pid.is_empty() && pid.chars().all(|c| c.is_ascii_digit()))
+            .map(str::to_owned)
+    };
+    h.type_text(&format!("printf '{tag}-%s\\n' $$"));
+    h.keys("enter");
+    // The typed command contains the prefix too; wait for the printed line.
+    let ready = printed.clone();
+    h.wait_for("the shell's PID", move |v, cx| {
+        ready(&v.focused_text(cx)).is_some()
+    });
+    printed(&h.read(|v, cx| v.focused_text(cx))).unwrap()
 }
 
 #[gpui::test]
