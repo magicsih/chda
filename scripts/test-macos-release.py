@@ -264,18 +264,23 @@ class ExceptionEvidenceTests(unittest.TestCase):
 
 
 class V023PublicationApprovalTests(unittest.TestCase):
+    TAG = 'v0.1.23'
+    INSTRUCTION = 'PR 병합하고 공개해 빨리. 아무도 쓰는 사람도 없는데 뭘 자꾸 뜸을드려 빨리 빨리 좀 해 그냥'
+    # The next version must not reuse this approval.
+    NEXT = 'v0.1.24'
+
     def approval(self):
         value = json.loads(exception_record())
-        value.update(tag='v0.1.23', owner_instruction='PR 병합하고 공개해 빨리. 아무도 쓰는 사람도 없는데 뭘 자꾸 뜸을드려 빨리 빨리 좀 해 그냥')
+        value.update(tag=self.TAG, owner_instruction=self.INSTRUCTION)
         return json.dumps(value, sort_keys=True)
 
     def evidence(self, record, stage='before-build'):
         value = exception_evidence(record, stage)
-        value['candidate']['tag'] = 'v0.1.23'
+        value['candidate']['tag'] = self.TAG
         return value
 
-    def verify(self, data, record, tag='v0.1.23', **kwargs):
-        return release.validate_evidence(data, tag, SHA, TREE, CONFIG,
+    def verify(self, data, record, tag=None, **kwargs):
+        return release.validate_evidence(data, tag or self.TAG, SHA, TREE, CONFIG,
             data['stage'], now=NOW, exception_record=record, **kwargs)
 
     def test_new_owner_approval_preserves_incomplete_build_and_deploy(self):
@@ -300,15 +305,30 @@ class V023PublicationApprovalTests(unittest.TestCase):
             with self.subTest(mutate=mutate), self.assertRaises(ValueError):
                 self.verify(data, record)
         future_record = json.loads(record)
-        future_record['tag'] = 'v0.1.24'
+        future_record['tag'] = self.NEXT
         future_record = json.dumps(future_record, sort_keys=True)
         future = self.evidence(future_record)
-        future['candidate']['tag'] = 'v0.1.24'
+        future['candidate']['tag'] = self.NEXT
         with self.assertRaises(ValueError):
-            self.verify(future, future_record, tag='v0.1.24')
+            self.verify(future, future_record, tag=self.NEXT)
         with self.assertRaises(ValueError):
             self.verify(self.evidence(record, 'before-deploy'), record,
                         built_at=timestamp(1), artifact_sha256='d' * 64)
+
+
+class V024PublicationApprovalTests(V023PublicationApprovalTests):
+    TAG = 'v0.1.24'
+    INSTRUCTION = '공개 하자'
+    NEXT = 'v0.1.25'
+
+
+class ReleaseNotesTests(unittest.TestCase):
+    def test_only_the_earlier_exceptions_prefix_the_changelog(self):
+        for tag in ('v0.1.21', 'v0.1.22', 'v0.1.23'):
+            self.assertIn('https://github.com/magicsih/chda/blob/main/docs/releases/',
+                          release.exception_notes(tag))
+        for tag in ('v0.1.24', 'v0.1.25'):
+            self.assertEqual(release.exception_notes(tag), '')
 
 def reduced_exception_record():
     record = json.loads(exception_record())

@@ -44,6 +44,13 @@ EXCEPTION_PATHS = {
     'v0.1.21': EXCEPTION_PATH,
     'v0.1.22': 'docs/releases/v0.1.22-native-validation-exception.json',
     'v0.1.23': 'docs/releases/v0.1.23-publication-approval.json',
+    'v0.1.24': 'docs/releases/v0.1.24-publication-approval.json',
+}
+OWNER_INSTRUCTIONS = {
+    'v0.1.21': '이제 좀 공개해라 좀',
+    'v0.1.22': '예외 출시: 반복 검수 생략 (권장)',
+    'v0.1.23': 'PR 병합하고 공개해 빨리. 아무도 쓰는 사람도 없는데 뭘 자꾸 뜸을드려 빨리 빨리 좀 해 그냥',
+    'v0.1.24': '공개 하자',
 }
 POSTBUILD_EXCEPTION_PATH = 'docs/releases/v0.1.22-signed-update-exception.json'
 POSTBUILD_CHECKS = {
@@ -170,12 +177,9 @@ def validate_exception(data, record_text, tag, sha, tree, config, stage, now,
     if reduced:
         record_names += ('observed_failures',)
     fields(record, record_names)
-    instruction = ('PR 병합하고 공개해 빨리. 아무도 쓰는 사람도 없는데 뭘 자꾸 뜸을드려 빨리 빨리 좀 해 그냥'
-                   if tag == 'v0.1.23' else
-                   ('예외 출시: 반복 검수 생략 (권장)' if reduced else '이제 좀 공개해라 좀'))
     require(type(record['schema']) is int and record['schema'] == 1
             and record['owner'] == 'magicsih'
-            and record['owner_instruction'] == instruction
+            and record['owner_instruction'] == OWNER_INSTRUCTIONS[tag]
             and record['accepted_interpretation'] == 'publish-with-incomplete-native-validation',
             'Unsupported owner exception record')
     require((record['tag'], record['sha'], record['tree'], record['config_sha256'])
@@ -563,6 +567,34 @@ def native_archive(root, tag):
         require(architectures == {'arm64', 'x86_64'}, 'The release executable must be universal')
 
 
+def exception_notes(tag):
+    """Text the owner exceptions of v0.1.21-v0.1.23 put before the changelog.
+    Other releases publish the changelog section only."""
+    if tag == 'v0.1.23':
+        return ('추가 네이티브 검수는 사용자의 공개 지시에 따라 생략했습니다. '
+                '미완료 검수와 업데이트 완료 미확인은 통과로 표시하지 않았습니다. '
+                '기존 Developer ID 서명, 공증, 업데이트 서명과 동일 ZIP 검증은 유지합니다. '
+                '[공개 지시 기록](https://github.com/%s/blob/main/%s).\n\n'
+                % (REPO, EXCEPTION_PATHS[tag]))
+    if tag == 'v0.1.22':
+        return ('Native UI validation is incomplete in this release. The owner approved omitting '
+                'repeated native review rounds and the two full native E2E runs. '
+                'A completed Codex child can remain Unknown (CHILD-161); this observed failure '
+                'is retained, not marked passed. CI, Developer ID signing, notarization, '
+                'update signatures and actual signed-archive launch, session-preserving update, '
+                'GUI IPC and shell PID checks remain required. '
+                '[Recorded exception](https://github.com/%s/blob/main/%s).\n\n'
+                % (REPO, EXCEPTION_PATHS[tag]))
+    if tag == 'v0.1.21':
+        return ('Native UI validation is incomplete in this release. The owner requested publication '
+                'after the input-tool blocker was reported. CI, Developer ID signing, notarization '
+                'and update-signature verification remain required. '
+                '[Recorded exception](https://github.com/%s/blob/main/%s).\n\n'
+                'The Codex shared-server warning remains unresolved '
+                '([#173](https://github.com/%s/issues/173)).\n\n' % (REPO, EXCEPTION_PATH, REPO))
+    return ''
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('action', choices=('select', 'check-build', 'draft', 'publish', 'cask'))
@@ -602,28 +634,7 @@ def main():
         notes = command('bash', 'scripts/release-notes.sh', tag)
         require(bool(notes), 'The release-plz changelog section is empty')
         if before['schema'] == 2:
-            if tag == 'v0.1.23':
-                notes = ('추가 네이티브 검수는 사용자의 공개 지시에 따라 생략했습니다. '
-                         '미완료 검수와 업데이트 완료 미확인은 통과로 표시하지 않았습니다. '
-                         '기존 Developer ID 서명, 공증, 업데이트 서명과 동일 ZIP 검증은 유지합니다. '
-                         '[공개 지시 기록](https://github.com/%s/blob/main/%s).\n\n'
-                         % (REPO, EXCEPTION_PATHS[tag])) + notes
-            elif tag == 'v0.1.22':
-                notes = ('Native UI validation is incomplete in this release. The owner approved omitting '
-                         'repeated native review rounds and the two full native E2E runs. '
-                         'A completed Codex child can remain Unknown (CHILD-161); this observed failure '
-                         'is retained, not marked passed. CI, Developer ID signing, notarization, '
-                         'update signatures and actual signed-archive launch, session-preserving update, '
-                         'GUI IPC and shell PID checks remain required. '
-                         '[Recorded exception](https://github.com/%s/blob/main/%s).\n\n'
-                         % (REPO, EXCEPTION_PATHS[tag])) + notes
-            else:
-                notes = ('Native UI validation is incomplete in this release. The owner requested publication '
-                         'after the input-tool blocker was reported. CI, Developer ID signing, notarization '
-                         'and update-signature verification remain required. '
-                         '[Recorded exception](https://github.com/%s/blob/main/%s).\n\n'
-                         'The Codex shared-server warning remains unresolved '
-                         '([#173](https://github.com/%s/issues/173)).\n\n' % (REPO, EXCEPTION_PATH, REPO)) + notes
+            notes = exception_notes(tag) + notes
         with tempfile.TemporaryDirectory() as folder:
             notes_path = Path(folder) / 'notes.md'
             notes_path.write_text(notes + '\n', encoding='utf-8')
