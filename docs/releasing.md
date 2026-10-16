@@ -105,6 +105,15 @@ catalog area가 생기면 증거 검증 계약도 함께 갱신한다. `signed_a
 `signed-launch`, `session-preserving-update`, `gui-ipc`, `shell-pid-preservation` 전체다.
 검증기 입력을 맞추기 위한 가상 통과 JSON을 작성하지 않는다.
 
+`v1.0.25`부터는 위 32개에 ISSUE-241, ISSUE-242, ISSUE-243, ISSUE-244,
+ISSUE-246, ISSUE-247, ISSUE-248, ISSUE-249, ISSUE-250, ISSUE-251,
+ISSUE-257을 추가한 **43개 조건**을 세 회차와 두 별도 E2E에서 모두 요구한다.
+[10월 14일 승인 설계](design/2026-10-14-open-issues/design.md)의 창 크기 복원,
+저장소 일괄 접기, 느린 셸 PATH, Claude 사용량 범위, 하위 활동 요약, 테마 쌍,
+pane 이동, MCP 읽기·대기, 프로그램 알림, 사용자 명령과
+[Codex 시작 수정 #257](https://github.com/magicsih/chda/pull/257)을 각각 연결한다.
+이전 태그의 정확한 조건 목록과 기존 예외 범위는 유지한다.
+
 ## 실패와 재시도
 
 증거가 오래되면 새로운 E2E 뒤 해당 단계를 다시 요청한다. 공개 단계는 빌드를 실행하지

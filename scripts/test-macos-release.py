@@ -181,6 +181,43 @@ class V023CoverageTests(unittest.TestCase):
         self.assertEqual(release.cases_for('v0.2.0'), release.V023_CASES)
 
 
+class V1025CoverageTests(unittest.TestCase):
+    NEW_CASES = frozenset(f'ISSUE-{n}' for n in (
+        241, 242, 243, 244, 246, 247, 248, 249, 250, 251, 257))
+
+    def test_v1025_rejects_coverage_that_omits_recent_acceptance_conditions(self):
+        data = evidence()
+        data['candidate']['tag'] = 'v1.0.25'
+        for run in [*data['rounds'], data['run']]:
+            run['cases'] = sorted(release.V023_CASES)
+        with self.assertRaises(ValueError):
+            release.validate_evidence(data, 'v1.0.25', SHA, TREE, CONFIG,
+                                      'before-build', now=NOW)
+
+    def test_every_recent_case_is_required_in_each_round_and_both_final_runs(self):
+        expected = release.V023_CASES | self.NEW_CASES
+        for stage in ('before-build', 'before-deploy'):
+            data = evidence(stage)
+            data['candidate']['tag'] = 'v1.0.25'
+            for run in [*data['rounds'], data['run']]:
+                run['cases'] = sorted(expected)
+            kwargs = dict(built_at=timestamp(2), artifact_sha256='a' * 64) if stage == 'before-deploy' else {}
+            release.validate_evidence(data, 'v1.0.25', SHA, TREE, CONFIG, stage, now=NOW, **kwargs)
+            for n in range(4):
+                for case in self.NEW_CASES:
+                    incomplete = copy.deepcopy(data)
+                    target = incomplete['rounds'][n] if n < 3 else incomplete['run']
+                    target['cases'].remove(case)
+                    with self.subTest(stage=stage, run=n, case=case), self.assertRaises(ValueError):
+                        release.validate_evidence(incomplete, 'v1.0.25', SHA, TREE, CONFIG, stage, now=NOW, **kwargs)
+
+    def test_prior_contracts_remain_exact_and_later_versions_retain_recent_cases(self):
+        for tag in ('v0.1.23', 'v0.1.24', 'v0.2.0'):
+            self.assertEqual(release.cases_for(tag), release.V023_CASES)
+        for tag in ('v1.0.25', 'v1.0.26', 'v1.1.0', 'v2.0.0'):
+            self.assertEqual(release.cases_for(tag), release.V023_CASES | self.NEW_CASES)
+
+
 def exception_record(sha=SHA, tree=TREE):
     return json.dumps({
         'schema': 1, 'tag': 'v0.1.21', 'sha': sha, 'tree': tree,

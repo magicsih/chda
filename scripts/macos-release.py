@@ -24,11 +24,15 @@ CASES = frozenset(('PATH-164 NAV-149 PR-150 TREE-151 REMOVE-152 QUOTA-153 '
                    'CHILD-161 REVIEW-162 PREP-163 PICKER-181 SESSIONS-182').split())
 V023_CASES = CASES | frozenset(f'ISSUE-{n}' for n in (
     208, 209, 210, 211, 212, 216, 217, 219, 220, 224, 226, 227, 228, 229, 230, 231))
+V1025_CASES = V023_CASES | frozenset(f'ISSUE-{n}' for n in (
+    241, 242, 243, 244, 246, 247, 248, 249, 250, 251, 257))
 
 
 def cases_for(tag):
     # The candidate validator has already required a stable SemVer tag.
     version = tuple(int(part) for part in tag.removeprefix('v').split('.'))
+    if version >= (1, 0, 25):
+        return V1025_CASES
     return V023_CASES if version >= (0, 1, 23) else CASES
 
 
