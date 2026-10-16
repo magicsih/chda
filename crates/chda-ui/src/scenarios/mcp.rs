@@ -272,11 +272,27 @@ fn requests_drained_by_another_window_can_coordinate_without_reentering_it(
             .contains("first-output")
     );
 
-    h.type_text("cat");
+    h.type_text("printf 'first-helper-ready\\n'; cat");
     h.keys("enter");
-    second_cx.simulate_input("cat");
+    h.wait_for("first helper owns its terminal", |v, cx| {
+        !v.panes[&first_pane].0.read(cx).frame().at_prompt()
+            && v.pane_text(first_pane, cx)
+                .lines()
+                .any(|line| line.trim_end() == "first-helper-ready")
+    });
+    second_cx.simulate_input("printf 'second-helper-ready\\n'; cat");
     second_cx.simulate_keystrokes("enter");
-    h.cx.run_until_parked();
+    wait_until(
+        &mut second_cx,
+        &second,
+        "second helper owns its terminal",
+        |v, cx| {
+            !v.panes[&second_pane].0.read(cx).frame().at_prompt()
+                && v.pane_text(second_pane, cx)
+                    .lines()
+                    .any(|line| line.trim_end() == "second-helper-ready")
+        },
+    );
     for (receiver, active, pane, session) in
         [(0, 1, first_pane, "first"), (1, 0, second_pane, "second")]
     {
