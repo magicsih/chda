@@ -359,13 +359,47 @@ class V024PublicationApprovalTests(V023PublicationApprovalTests):
     NEXT = 'v0.1.25'
 
 
+class V1025PublicationApprovalTests(V023PublicationApprovalTests):
+    TAG = 'v1.0.25'
+    INSTRUCTION = 'rhdrogo.'
+    NEXT = 'v1.0.26'
+
+    def test_exact_candidate_bytes_and_fresh_readback_remain_required(self):
+        record = self.approval()
+        for stage in ('before-build', 'before-deploy'):
+            kwargs = dict(built_at=timestamp(1), artifact_sha256='a' * 64) if stage == 'before-deploy' else {}
+            for mutate in (
+                lambda d: d['candidate'].update(tree='9' * 40),
+                lambda d: d['candidate'].update(config_sha256='9' * 64),
+                lambda d: d.update(checked_at=timestamp(61)),
+                lambda d: d.update(checked_at=timestamp(-1)),
+            ):
+                data = self.evidence(record, stage)
+                mutate(data)
+                with self.subTest(stage=stage, mutate=mutate), self.assertRaises(ValueError):
+                    self.verify(data, record, **kwargs)
+            with self.subTest(stage=stage, changed_bytes=True), self.assertRaises(ValueError):
+                self.verify(self.evidence(record, stage), record + '\n', **kwargs)
+
+    def test_previous_publication_approval_cannot_authorize_v1025(self):
+        previous = V024PublicationApprovalTests().approval()
+        with self.assertRaises(ValueError):
+            self.verify(self.evidence(self.approval()), previous)
+
+
 class ReleaseNotesTests(unittest.TestCase):
-    def test_only_the_earlier_exceptions_prefix_the_changelog(self):
+    def test_historical_exception_notes_remain_unchanged(self):
         for tag in ('v0.1.21', 'v0.1.22', 'v0.1.23'):
             self.assertIn('https://github.com/magicsih/chda/blob/main/docs/releases/',
                           release.exception_notes(tag))
         for tag in ('v0.1.24', 'v0.1.25'):
             self.assertEqual(release.exception_notes(tag), '')
+
+    def test_v1025_discloses_its_own_incomplete_validation_only(self):
+        notes = release.exception_notes('v1.0.25')
+        self.assertIn('incomplete', notes)
+        self.assertIn('v1.0.25-publication-approval.md', notes)
+        self.assertEqual(release.exception_notes('v1.0.26'), '')
 
 def reduced_exception_record():
     record = json.loads(exception_record())
