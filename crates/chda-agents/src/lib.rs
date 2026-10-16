@@ -27,8 +27,8 @@ use std::process::Command;
 pub use children::{ChildActivity, ChildBoard, ChildEvent, ChildState, read_codex_children};
 pub use claude::ClaudeAdapter;
 pub use codex::{
-    CODEX_TITLE_CONFIG, CODEX_TITLE_ENV, CodexAdapter, CodexRunState,
-    notify_config as codex_notify_config, parse_codex_title,
+    CODEX_DAEMON_CONFIG, CODEX_DAEMON_ENV, CODEX_TITLE_CONFIG, CODEX_TITLE_ENV, CodexAdapter,
+    CodexRunState, notify_config as codex_notify_config, parse_codex_title,
 };
 pub use copilot::CopilotAdapter;
 pub use gemini::GeminiAdapter;

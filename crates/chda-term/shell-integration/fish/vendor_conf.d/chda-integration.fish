@@ -49,12 +49,12 @@ if status is-interactive; and not status test-feature mark-prompt 2>/dev/null
 end
 
 # This also runs on fish 4, whose own prompt marking needs no integration.
-if status is-interactive; and set -q CHDA_CODEX_TITLE_CONFIG; and not functions -q codex
+if status is-interactive; and set -q CHDA_CODEX_TITLE_CONFIG; and set -q CHDA_CODEX_DAEMON_CONFIG; and not functions -q codex
     function codex --wraps codex
         if set -q CHDA_CODEX_NOTIFY_CONFIG
-            command codex -c "$CHDA_CODEX_TITLE_CONFIG" -c "$CHDA_CODEX_NOTIFY_CONFIG" $argv
+            command codex -c "$CHDA_CODEX_TITLE_CONFIG" -c "$CHDA_CODEX_DAEMON_CONFIG" -c "$CHDA_CODEX_NOTIFY_CONFIG" $argv
         else
-            command codex -c "$CHDA_CODEX_TITLE_CONFIG" $argv
+            command codex -c "$CHDA_CODEX_TITLE_CONFIG" -c "$CHDA_CODEX_DAEMON_CONFIG" $argv
         end
     end
 end

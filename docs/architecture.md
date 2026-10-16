@@ -192,16 +192,22 @@ hooks per launch, never in the user's own config:
 | Agent | Hooks | Transcripts |
 |---|---|---|
 | Claude Code | `--settings` file | `~/.claude/projects/<dir>/*.jsonl` |
-| Codex | Runtime OSC titles and per-launch `-c notify=[...]` for directly typed and menu launches, preserving session IDs for restore and chaining the user's notify program | `~/.codex/sessions/**/*.jsonl` |
+| Codex | Runtime OSC titles and per-launch `-c notify=[...]` for directly typed and menu launches, preserving session IDs for restore and chaining the user's notify program; per-launch `features.daemon_auto_start=false` keeps them off the shared daemon | `~/.codex/sessions/**/*.jsonl` |
 | Gemini CLI | `GEMINI_CLI_SYSTEM_DEFAULTS_PATH`: the machine's system defaults plus chda's hooks | `~/.gemini/tmp/<project>/chats/*.jsonl` |
 | Copilot CLI | `--plugin-dir` with a plugin whose hooks pass the event name as an argument | `~/.copilot/session-state/<id>/events.jsonl` |
 | OpenCode | `OPENCODE_CONFIG_DIR` with a JavaScript plugin that maps bus events to hook kinds | none (SQLite) |
 
-Interactive zsh, bash and fish shells receive `CHDA_CODEX_TITLE_CONFIG`.
-Unless the user already defines a `codex` alias/function, their integration
-script adds a shell function that runs the real CLI with that one `-c`
-override and forwards all arguments and the exit status. Menu launches use
-the same title layout. `chda-agents::parse_codex_title` recognizes only that
+Interactive zsh, bash and fish shells receive `CHDA_CODEX_TITLE_CONFIG` and
+`CHDA_CODEX_DAEMON_CONFIG`. Unless the user already defines a `codex`
+alias/function, their integration script adds a shell function that runs the
+real CLI with those `-c` overrides, plus the notify override when present, and
+forwards all arguments and the exit status. Menu launches use the same
+overrides. Codex 0.156 and later run such launches embedded because their
+shared daemon cannot take per-launch overrides, and a notify hook the daemon
+ran would not carry the pane's `CHDA_PANE_ID`. Turning off
+`daemon_auto_start` per launch states that choice, so Codex does not warn
+about it at every start; older CLIs ignore the setting.
+`chda-agents::parse_codex_title` recognizes only the requested title
 layout; `WorkspaceView` converts the OSC title of the originating pane into
 the existing agent event path. Animated title updates do not repeat events.
 `Ready` at startup is idle; after a turn it means completion. Codex's `Waiting`

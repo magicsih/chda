@@ -153,7 +153,8 @@ fn directly_typed_codex_tracks_each_turn_and_exits(cx: &mut TestAppContext) {
             &script,
             r#"#!/bin/sh
 [ "$1" = '-c' ] && [ "$2" = "$CHDA_CODEX_TITLE_CONFIG" ] || exit 42
-shift 2
+[ "$3" = '-c' ] && [ "$4" = "$CHDA_CODEX_DAEMON_CONFIG" ] || exit 45
+shift 4
 [ "$1" = 'resume' ] && [ "$2" = 'argument with spaces' ] || exit 43
 control="$HOME/codex-step-$CHDA_PANE_ID"
 printf '\033]0;codex | Ready\007'

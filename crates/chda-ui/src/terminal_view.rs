@@ -256,6 +256,10 @@ impl TerminalView {
             chda_core::agents::CODEX_TITLE_ENV.into(),
             chda_core::agents::CODEX_TITLE_CONFIG.into(),
         ));
+        options.env.push((
+            chda_core::agents::CODEX_DAEMON_ENV.into(),
+            chda_core::agents::CODEX_DAEMON_CONFIG.into(),
+        ));
         if env.collect_telemetry {
             if let Ok(bin) = std::env::current_exe() {
                 options

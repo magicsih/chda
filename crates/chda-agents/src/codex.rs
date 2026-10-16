@@ -68,6 +68,13 @@ pub fn notify_config(hook_bin: &Path) -> String {
 pub const CODEX_TITLE_CONFIG: &str = "tui.terminal_title=[\"activity\",\"app-name\",\"run-state\"]";
 pub const CODEX_TITLE_ENV: &str = "CHDA_CODEX_TITLE_CONFIG";
 
+/// Codex 0.156+ runs launches with per-launch overrides without its shared
+/// background server, which cannot take them and would run `notify` outside
+/// the pane. Turning off the server's automatic start for these launches keeps
+/// that behavior without a startup warning; older CLIs ignore the setting.
+pub const CODEX_DAEMON_CONFIG: &str = "features.daemon_auto_start=false";
+pub const CODEX_DAEMON_ENV: &str = "CHDA_CODEX_DAEMON_CONFIG";
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum CodexRunState {
     Ready,
@@ -123,7 +130,9 @@ impl AgentAdapter for CodexAdapter {
         cmd.arg("-c")
             .arg(notify_config(hook_bin))
             .arg("-c")
-            .arg(CODEX_TITLE_CONFIG);
+            .arg(CODEX_TITLE_CONFIG)
+            .arg("-c")
+            .arg(CODEX_DAEMON_CONFIG);
         if let Some(id) = resume {
             cmd.arg("resume").arg(&id.0);
         }
@@ -531,7 +540,7 @@ mod tests {
     }
 
     #[test]
-    fn menu_and_resume_launches_include_status_titles() {
+    fn menu_and_resume_launches_include_status_titles_without_the_shared_server() {
         let cmd = CodexAdapter.launch_command(
             Path::new("/work"),
             Some(&SessionId("thread".into())),
@@ -541,7 +550,17 @@ mod tests {
             .get_args()
             .map(|s| s.to_string_lossy().into_owned())
             .collect();
-        assert_eq!(&args[2..], ["-c", CODEX_TITLE_CONFIG, "resume", "thread"]);
+        assert_eq!(
+            &args[2..],
+            [
+                "-c",
+                CODEX_TITLE_CONFIG,
+                "-c",
+                CODEX_DAEMON_CONFIG,
+                "resume",
+                "thread"
+            ]
+        );
     }
 
     #[test]
