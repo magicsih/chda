@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="docs/media/hero.png" alt="chda: a Sessions list with working, waiting and idle Claude Code and Codex panes and a plain terminal, PROJECT worktrees labeled by their notes with diff and pull request badges, and an agent's Mermaid architecture diagram with its View diagram button next to a Codex pane" width="880">
+  <img src="docs/media/hero.png" alt="chda 1.0.25 with an Atlas API demo workspace, sample Claude Code and Codex sessions, compact child activity, worktree notes and a live Git diff in split panes" width="880">
 </p>
 
 <h1 align="center">chda</h1>
@@ -39,18 +39,21 @@ brew install --cask chda
 ```
 
 Or download `chda-<version>-macos-universal.zip` from the
-[releases page](https://github.com/magicsih/chda/releases). The app is signed and
+[releases page](https://github.com/magicsih/chda/releases/latest). The app is signed and
 notarized.
 
 Requirements: macOS 14 or newer (Apple silicon or Intel), `git` on `PATH`. `gh` is optional
 and adds pull request badges. On a managed Mac where Homebrew cannot write to
 `/Applications`, add `--appdir=~/Applications`.
 
-## Sixty-second tour
+## A quick tour
 
 <p align="center">
-  <img src="docs/media/demo.gif" alt="Agents report working and waiting in the sidebar; an agent creates a worktree through chda mcp and prints an architecture diagram, which opens rendered in the browser; a Markdown design doc is previewed with its sequence diagram" width="880">
+  <img src="docs/media/demo.gif" alt="A native chda tour: sample agent status, an API test command in a floating terminal, Git history, moving a running pane and previewing a light theme" width="880">
 </p>
+
+Captured in chda 1.0.25 with a local demonstration repository and sample agent
+events. The recording contains no private projects or conversations.
 
 1. Press `cmd-shift-o` (or click "+ repo") and pick a git repository. It appears in
    the sidebar with its worktrees. A folder that is not a repository can be
@@ -71,7 +74,8 @@ and adds pull request badges. On a managed Mac where Homebrew cannot write to
 
    | Dot | Meaning |
    |---|---|
-   | grey | idle |
+   | grey | no live agent |
+   | yellow | live agent, idle and ready |
    | blue | working |
    | orange | waiting for your input (you also get a notification) |
    | green | finished; clears when you look at the tab |
@@ -80,6 +84,17 @@ and adds pull request badges. On a managed Mac where Homebrew cannot write to
    then right-click it and choose "Merge into main and clean up". chda merges,
    removes the worktree and deletes the branch, and refuses when there are
    uncommitted changes, unpushed commits or an open pull request.
+
+## Your tools, in the worktree
+
+Run your own commands from a worktree's menu, the command palette or a shortcut.
+Open them in a tab, a split or a floating terminal; the process runs in that
+worktree through your login shell. Move a running pane to another tab or window
+without losing its process or scrollback.
+
+<p align="center">
+  <img src="docs/media/commands.png" alt="A configured API tests command running in a floating terminal over the Atlas API demonstration workspace" width="880">
+</p>
 
 ## Diagrams and Markdown, rendered offline
 
@@ -91,11 +106,11 @@ browser: nothing is uploaded, remote content is blocked and scripts in the
 document do not run. Mermaid blocks inside Markdown become diagrams too.
 
 <p align="center">
-  <img src="docs/media/diagram.png" alt="An architecture flowchart with five subgraphs, from clients through the API gateway and acme-api to Postgres, OpenSearch, Redis and a background indexer, rendered from an agent's output" width="880">
+  <img src="docs/media/diagram.png" alt="A local Atlas API flowchart connecting the client, API, result cache, search index, delivery queue and webhook worker" width="880">
 </p>
 <p align="center">
-  <img src="docs/media/markdown.png" alt="A Markdown design doc previewed in the browser: title, status table, summary with a Note alert and a task list" width="434">
-  <img src="docs/media/markdown-flow.png" alt="The same doc's request flow: a Mermaid sequence diagram with a cache hit and miss branch" width="434">
+  <img src="docs/media/markdown.png" alt="An Atlas API Markdown document rendered by chda: a Note, a responsibility table and the beginning of a Mermaid request-flow diagram" width="434">
+  <img src="docs/media/markdown-flow.png" alt="The same document's Mermaid sequence diagram with cache-hit and cache-miss branches, a response and queued webhook delivery" width="434">
 </p>
 
 ## Features
@@ -122,7 +137,7 @@ document do not run. Mermaid blocks inside Markdown become diagrams too.
 </p>
 
 <p align="center">
-  <img src="docs/media/sessions.png" alt="The Sessions list in a light theme: a working Claude Code pane (CC) whose child agents show one waiting, one working and three in all on its row, beside a Codex pane (CX) waiting for input in the same split tab, above PROJECT with the main worktree highlighted" width="880">
+  <img src="docs/media/sessions.png" alt="The Atlas API demo in a light theme: sample Claude Code and Codex sessions in split panes, compact child counts on the parent row, and worktrees labeled by their task notes" width="880">
 </p>
 <!-- END GENERATED FEATURES -->
 
@@ -130,8 +145,9 @@ document do not run. Mermaid blocks inside Markdown become diagrams too.
 status changes never move them. An agent row stands for one agent pane, busy
 or idle; plain shells and saved conversations are not agents, and ordinary
 terminal tabs come last. The right edge shows time since the latest terminal
-activity (`1s`, `1m`, `1h`, `1d`; `—` when unknown). This measures output or
-screen updates, not whether an agent is thinking; hover the age of an idle
+activity (`1s`, `1m`, `1h`, `1d`; `—` when unknown). This measures terminal output
+and delivered input, not whether an agent is thinking; theme changes, resizing,
+selection, searching and scrolling do not reset it. Hover the age of an idle
 agent for how long it has been ready. Hover a status icon for its state in
 words. Click **Alias** / **Branch** in the Sessions header to switch between
 each branch note's first line and its branch name. Missing notes fall back to
@@ -335,7 +351,7 @@ under Agents.
 
 ## Status and roadmap
 
-v0.1.x runs on macOS, Apple silicon and Intel. Linux and Windows compile in CI and are
+chda runs on macOS, Apple silicon and Intel. Linux and Windows compile in CI and are
 the next milestone. See [docs/roadmap.md](docs/roadmap.md) and
 [CHANGELOG.md](CHANGELOG.md).
 
