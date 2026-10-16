@@ -154,6 +154,122 @@ fn a_restart_keeps_the_last_claude_reading_until_a_new_one(cx: &mut TestAppConte
 }
 
 #[gpui::test]
+fn claude_quota_routed_from_another_window_keeps_both_windows_running(cx: &mut TestAppContext) {
+    use chda_core::agents::control::Incoming;
+    use std::{cell::Cell, rc::Rc};
+
+    let mut h = Harness::open(cx, "claude-quota-windows", |_| {});
+    h.wait_prompt();
+    let first_pane = h.read(|v, _| v.ws.focused_pane().unwrap());
+    let env = h.read(|v, _| v.env.clone());
+    let handle =
+        h.cx.update(|_, cx| crate::open_workspace_window(None, env.clone(), cx));
+    let mut second_cx = gpui::VisualTestContext::from_window(handle.into(), cx);
+    let second = handle.root(&mut second_cx).unwrap();
+    wait_until(&mut second_cx, &second, "second shell", |v, cx| {
+        v.focused_prompt_ready(cx)
+    });
+    let second_pane = second.read_with(&second_cx, |v, _| v.ws.focused_pane().unwrap());
+    h.cx.run_until_parked();
+    let redraws = [Rc::new(Cell::new(0)), Rc::new(Cell::new(0))];
+    h.cx.update(|_, cx| {
+        for (view, count) in [(&h.view, redraws[0].clone()), (&second, redraws[1].clone())] {
+            cx.observe(view, move |_, _| count.set(count.get() + 1))
+                .detach();
+        }
+    });
+
+    // Either window can drain the shared queue. Wake only the other window
+    // to reproduce the nested route deterministically, without an IPC race.
+    let deliver = |report, receiver: usize| {
+        let wake = {
+            let mut registry = env.windows.borrow_mut();
+            registry.replay.push(Incoming::Quota(report));
+            registry.wake.clone()
+        };
+        wake.lock().unwrap()[receiver].unbounded_send(()).unwrap();
+    };
+    let at = crate::terminal_view::now_ms();
+    for (pane, session, used, receiver) in
+        [(second_pane, "second", 25, 0), (first_pane, "first", 47, 1)]
+    {
+        let mut report = claude_quota(
+            &json!({"session_id": session, "rate_limits": {"five_hour": {"used_percentage": used}}}),
+            Some(pane.raw()),
+            at + receiver as u64,
+        )
+        .unwrap();
+        report.config_dir = Some(h.home.home.join(".claude").to_string_lossy().into_owned());
+        let before = redraws.each_ref().map(|count| count.get());
+        deliver(report, receiver);
+        let expected = format!("{used}% · 5h");
+        h.wait_for("quota shared with the first window", |v, _| {
+            text(v, "claude") == expected
+        });
+        wait_until(
+            &mut second_cx,
+            &second,
+            "quota shared with the second window",
+            |v, _| text(v, "claude") == expected,
+        );
+        for (index, count) in redraws.iter().enumerate() {
+            assert!(
+                count.get() > before[index],
+                "window {index} must refresh its displayed quota"
+            );
+        }
+        assert_eq!(h.read(|v, _| v.ws.focused_pane()), Some(first_pane));
+        assert_eq!(
+            second.read_with(&second_cx, |v, _| v.ws.focused_pane()),
+            Some(second_pane)
+        );
+    }
+    assert_eq!(
+        h.read(|v, _| v
+            .ws
+            .pane(first_pane)
+            .unwrap()
+            .agent_session
+            .as_ref()
+            .unwrap()
+            .session
+            .clone()),
+        "first"
+    );
+    assert_eq!(
+        second.read_with(&second_cx, |v, _| v
+            .ws
+            .pane(second_pane)
+            .unwrap()
+            .agent_session
+            .as_ref()
+            .unwrap()
+            .session
+            .clone()),
+        "second"
+    );
+    h.type_text("printf 'first-still-running\\n'");
+    h.keys("enter");
+    h.wait_for("first shell still runs", |v, cx| {
+        v.focused_text(cx)
+            .lines()
+            .any(|line| line.trim_end() == "first-still-running")
+    });
+    second_cx.simulate_input("printf 'second-still-running\\n'");
+    second_cx.simulate_keystrokes("enter");
+    wait_until(
+        &mut second_cx,
+        &second,
+        "second shell still runs",
+        |v, cx| {
+            v.focused_text(cx)
+                .lines()
+                .any(|line| line.trim_end() == "second-still-running")
+        },
+    );
+}
+
+#[gpui::test]
 fn windows_share_one_codex_probe_and_it_survives_closing_the_first_window(cx: &mut TestAppContext) {
     let mut h = Harness::open(cx, "quota-windows", |home| {
         use std::os::unix::fs::PermissionsExt;

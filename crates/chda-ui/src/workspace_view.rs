@@ -1107,7 +1107,11 @@ impl WorkspaceView {
                     let entries = self.env.windows.borrow().entries.clone();
                     for entry in entries {
                         if entry.window != window.window_handle() {
-                            let _ = entry.view.update(cx, |_, cx| cx.notify());
+                            // Another window may be routing this report while
+                            // its workspace is still being updated.
+                            cx.defer(move |cx| {
+                                let _ = entry.view.update(cx, |_, cx| cx.notify());
+                            });
                         }
                     }
                 }
