@@ -238,6 +238,7 @@ fn idle_close_targets_only_its_pane_and_tab_close_still_confirms(cx: &mut TestAp
     // otherwise that late prompt can end the simulated session.
     h.wait_for("the PID command to finish", |v, cx| {
         prompt_shown.get()
+            && terminal.read(cx).frame().at_prompt()
             && v.pane_text(idle, cx)
                 .lines()
                 .any(|l| l.trim() == "pid-saved")
@@ -252,6 +253,18 @@ fn idle_close_targets_only_its_pane_and_tab_close_still_confirms(cx: &mut TestAp
     h.keys("cmd-d");
     h.wait_prompt();
     let working = pane(&h);
+    // A working agent owns the terminal. Keep a real process there before
+    // reporting its state, so a delayed shell prompt cannot end the fixture.
+    h.run(
+        "printf 'working-agent-ready\\n'; cat",
+        "working-agent-ready",
+    );
+    h.wait_for("the working process to own its terminal", |v, cx| {
+        !v.panes[&working].0.read(cx).frame().at_prompt()
+            && v.pane_text(working, cx)
+                .lines()
+                .any(|line| line.trim_end() == "working-agent-ready")
+    });
     emit(&mut h, idle, HookKind::SessionStart);
     emit(&mut h, working, HookKind::PromptSubmitted);
     h.wait_for("idle close row", |v, cx| {
