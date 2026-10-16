@@ -35,6 +35,7 @@ Three layers, all run by `cargo test --workspace` (CI: the macOS job).
 | Gemini CLI, Copilot CLI and OpenCode report status like Claude Code | `agents::gemini_copilot_and_opencode_report_like_claude_code` | #20 |
 | An agent creates a worktree, opens tabs and lists worktrees through `chda mcp` | `mcp::an_agent_creates_a_worktree_opens_tabs_and_lists_worktrees` | #22 |
 | An agent lists its repository's sessions, reads a shell's screen without the line being typed and another agent's latest transcript answer, is refused another repository's pane, and waits for a turn to complete, a timeout or a closing pane without moving focus | `mcp::an_agent_lists_reads_and_waits_for_other_sessions_of_its_repository`, `chda-agents` `mcp::tests::*`, `control::tests::*`, `sharing::tests::recent_answers_keep_the_newest_of_the_exact_conversation` | #249 |
+| MCP requests drained by another window list both windows, read the original window's shell, wait on its agent, preserve focus and observe hooks before subsequent requests in either direction | `mcp::requests_drained_by_another_window_can_coordinate_without_reentering_it` | |
 | S3 Resuming: a worktree lists its agent sessions | `worktrees::worktree_lists_its_agent_sessions` | #41 |
 | S3 Resuming several sessions side by side, newest message first | `worktrees::picked_sessions_resume_in_one_tab` | #30 |
 | S4 Finishing: merge into main and clean up | `worktrees::merge_into_main_and_clean_up` | |

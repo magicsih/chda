@@ -1052,7 +1052,20 @@ impl WorkspaceView {
                     })
                     .cloned()
             };
-            if let Some(target) = target
+            if matches!(item, Incoming::Request(..)) {
+                let (target_window, target_view) = target
+                    .map(|entry| (entry.window, entry.view))
+                    .unwrap_or((window.window_handle(), self.self_weak.clone()));
+                // A request can inspect or update every workspace. Release the
+                // draining view first; hooks above remain synchronous for the
+                // session-preserving update's journal barrier and snapshot.
+                cx.defer(move |cx| {
+                    let _ = target_window.update(cx, |_, window, cx| {
+                        let _ =
+                            target_view.update(cx, |view, cx| view.receive_hook(item, window, cx));
+                    });
+                });
+            } else if let Some(target) = target
                 && target.window != window.window_handle()
             {
                 let _ = target.window.update(cx, |_, window, cx| {
