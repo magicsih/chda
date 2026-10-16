@@ -4,7 +4,7 @@ All notable changes to chda. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); entries are
 generated from conventional commit messages by release-plz.
 
-## [0.1.25](https://github.com/magicsih/chda/compare/v0.1.24...v0.1.25) - 2026-10-16
+## [1.0.25](https://github.com/magicsih/chda/compare/v0.1.24...v1.0.25) - 2026-10-16
 
 ### Fixed
 
