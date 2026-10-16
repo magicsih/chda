@@ -4,6 +4,13 @@ All notable changes to chda. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); entries are
 generated from conventional commit messages by release-plz.
 
+## [0.1.25](https://github.com/magicsih/chda/compare/v0.1.24...v0.1.25) - 2026-10-16
+
+### Fixed
+
+- *(agents)* keep usage updates and coordination working across windows
+- *(agents)* start Codex in chda without the shared background server warning ([#257](https://github.com/magicsih/chda/pull/257))
+
 ## [0.1.24](https://github.com/magicsih/chda/compare/v0.1.23...v0.1.24) - 2026-10-15
 
 ### Added
