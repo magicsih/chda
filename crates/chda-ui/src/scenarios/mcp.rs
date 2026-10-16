@@ -172,6 +172,175 @@ fn answered(h: &mut Harness, slot: &Arc<Mutex<Option<Reply>>>) -> Reply {
     slot.lock().unwrap().take().unwrap()
 }
 
+#[gpui::test]
+fn requests_drained_by_another_window_can_coordinate_without_reentering_it(
+    cx: &mut TestAppContext,
+) {
+    use super::harness::wait_until;
+    use chda_core::agents::{HookEvent, HookKind, control::Incoming};
+
+    let mut repo = Default::default();
+    let mut h = Harness::open(cx, "mcp-window-routing", |home| {
+        repo = home.repo("app");
+        std::fs::write(&home.config, format!("repos = [\"{}\"]\n", repo.display())).unwrap();
+    });
+    h.wait_prompt();
+    h.run(
+        &format!("cd '{}'; printf 'first-output\\n'", repo.display()),
+        "first-output",
+    );
+    let first_pane = h.read(|v, _| v.ws.focused_pane().unwrap());
+    let env = h.read(|v, _| v.env.clone());
+    let handle =
+        h.cx.update(|_, cx| crate::open_workspace_window(None, env.clone(), cx));
+    let mut second_cx = gpui::VisualTestContext::from_window(handle.into(), cx);
+    let second = handle.root(&mut second_cx).unwrap();
+    wait_until(&mut second_cx, &second, "second shell", |v, cx| {
+        v.focused_prompt_ready(cx)
+    });
+    second_cx.simulate_input(&format!(
+        "cd '{}'; printf 'second-output\\n'",
+        repo.display()
+    ));
+    second_cx.simulate_keystrokes("enter");
+    wait_until(&mut second_cx, &second, "second repository", |v, cx| {
+        v.focused_prompt_ready(cx)
+            && v.ws
+                .focused_pane()
+                .and_then(|p| v.ws.pane(p))
+                .is_some_and(|p| p.repo.as_ref() == Some(&repo))
+    });
+    h.wait_for("first repository", |v, _| {
+        v.ws.pane(first_pane).unwrap().repo.as_ref() == Some(&repo)
+    });
+    let second_pane = second.read_with(&second_cx, |v, _| v.ws.focused_pane().unwrap());
+    h.cx.run_until_parked();
+
+    let queue_request = |request| {
+        let (tx, rx) = std::sync::mpsc::channel();
+        env.windows
+            .borrow_mut()
+            .replay
+            .push(Incoming::Request(request, tx));
+        rx
+    };
+    let wake = |receiver: usize, active: usize| {
+        let mut registry = env.windows.borrow_mut();
+        registry.active = Some(registry.entries[active].window.window_id());
+        registry.wake.lock().unwrap()[receiver]
+            .unbounded_send(())
+            .unwrap();
+    };
+    let receive = |h: &mut Harness, rx: std::sync::mpsc::Receiver<Reply>| {
+        let reply = std::cell::RefCell::new(None);
+        // Pump the app until the request answers, without a socket wake race.
+        super::harness::wait_until(&mut h.cx, &h.view, "routed MCP reply", |_, _| {
+            if reply.borrow().is_none() {
+                *reply.borrow_mut() = rx.try_recv().ok();
+            }
+            reply.borrow().is_some()
+        });
+        reply.into_inner().unwrap()
+    };
+
+    // The active window must read the shell owned by the window draining
+    // the queue. Holding that original WorkspaceView would panic.
+    let listed = queue_request(Request::ListSessions { cwd: repo.clone() });
+    let output = queue_request(Request::ReadOutput {
+        cwd: repo.clone(),
+        pane: first_pane.raw(),
+        lines: None,
+    });
+    wake(0, 1);
+    let listed = receive(&mut h, listed);
+    assert!(listed.ok, "{}", listed.message);
+    for pane in [first_pane, second_pane] {
+        assert!(
+            listed.data["sessions"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .any(|row| row["pane"] == pane.raw())
+        );
+    }
+    let output = receive(&mut h, output);
+    assert!(output.ok, "{}", output.message);
+    assert!(
+        output.data["text"]
+            .as_str()
+            .unwrap()
+            .contains("first-output")
+    );
+
+    h.type_text("printf 'first-helper-ready\\n'; cat");
+    h.keys("enter");
+    h.wait_for("first helper owns its terminal", |v, cx| {
+        !v.panes[&first_pane].0.read(cx).frame().at_prompt()
+            && v.pane_text(first_pane, cx)
+                .lines()
+                .any(|line| line.trim_end() == "first-helper-ready")
+    });
+    second_cx.simulate_input("printf 'second-helper-ready\\n'; cat");
+    second_cx.simulate_keystrokes("enter");
+    wait_until(
+        &mut second_cx,
+        &second,
+        "second helper owns its terminal",
+        |v, cx| {
+            !v.panes[&second_pane].0.read(cx).frame().at_prompt()
+                && v.pane_text(second_pane, cx)
+                    .lines()
+                    .any(|line| line.trim_end() == "second-helper-ready")
+        },
+    );
+    for (receiver, active, pane, session) in
+        [(0, 1, first_pane, "first"), (1, 0, second_pane, "second")]
+    {
+        for kind in [HookKind::SessionStart, HookKind::PromptSubmitted] {
+            env.windows
+                .borrow_mut()
+                .replay
+                .push(Incoming::Event(HookEvent {
+                    child: None,
+                    agent: "claude".into(),
+                    session_id: session.into(),
+                    cwd: repo.clone(),
+                    kind,
+                    timestamp: crate::terminal_view::now_ms(),
+                    pane: Some(pane.raw()),
+                }));
+        }
+        let listed = queue_request(Request::ListSessions { cwd: repo.clone() });
+        let waiting = queue_request(Request::WaitForStatus {
+            cwd: repo.clone(),
+            pane: pane.raw(),
+            states: vec!["working".into()],
+            timeout_ms: Some(1_000),
+        });
+        wake(receiver, active);
+        let listed = receive(&mut h, listed);
+        let row = listed.data["sessions"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|row| row["pane"] == pane.raw())
+            .unwrap();
+        assert_eq!(
+            row["status"], "working",
+            "hooks must finish before later requests"
+        );
+        let waiting = receive(&mut h, waiting);
+        assert!(waiting.ok, "{}", waiting.message);
+        assert_eq!(waiting.data["state"], "working");
+        assert_eq!(waiting.data["timed_out"], false);
+    }
+    assert_eq!(h.read(|v, _| v.ws.focused_pane()), Some(first_pane));
+    assert_eq!(
+        second.read_with(&second_cx, |v, _| v.ws.focused_pane()),
+        Some(second_pane)
+    );
+}
+
 /// A coordinating agent lists the sessions of its repository, reads a
 /// pane's output and waits for another agent to finish (#249).
 #[gpui::test]
