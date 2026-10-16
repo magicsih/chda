@@ -397,6 +397,10 @@ mod tests {
                         "tui.terminal_title=[\"activity\",\"app-name\",\"run-state\"]".into(),
                     ),
                     (
+                        "CHDA_CODEX_DAEMON_CONFIG".into(),
+                        "features.daemon_auto_start=false".into(),
+                    ),
+                    (
                         "CHDA_ZSH_ZDOTDIR".into(),
                         home.to_string_lossy().into_owned(),
                     ),
@@ -418,6 +422,7 @@ mod tests {
                         "<tui.terminal_title=[\"activity\",\"app-name\",\"run-state\"]>",
                         1,
                     );
+                    t.wait_for("<features.daemon_auto_start=false>", 1);
                     t.wait_for("<argument with spaces>", 1);
                     t.wait_for("exit-code:7", 1);
                 }

@@ -39,13 +39,13 @@ pub use restore::*;
 pub mod agents {
     pub use chda_agents::hook::{codex_notify_event, data_dir};
     pub use chda_agents::{
-        AgentAdapter, AgentId, AgentLaunchContext, AgentSession, CODEX_TITLE_CONFIG,
-        CODEX_TITLE_ENV, ChildActivity, ChildBoard, ChildEvent, ChildState, CodexRunState,
-        HookEvent, HookInstallReport, HookKind, LaunchHistory, LimitUsage, ModelUsage, PANE_ENV,
-        PermissionPolicy, SessionCache, SessionId, SharePreview, Usage, adapters,
-        codex_notify_config, command_argv, compact_tokens, ipc, parse_codex_title,
-        permission_arguments, read_codex_children, recent_answers, sharing_preview,
-        validate_resume_options,
+        AgentAdapter, AgentId, AgentLaunchContext, AgentSession, CODEX_DAEMON_CONFIG,
+        CODEX_DAEMON_ENV, CODEX_TITLE_CONFIG, CODEX_TITLE_ENV, ChildActivity, ChildBoard,
+        ChildEvent, ChildState, CodexRunState, HookEvent, HookInstallReport, HookKind,
+        LaunchHistory, LimitUsage, ModelUsage, PANE_ENV, PermissionPolicy, SessionCache, SessionId,
+        SharePreview, Usage, adapters, codex_notify_config, command_argv, compact_tokens, ipc,
+        parse_codex_title, permission_arguments, read_codex_children, recent_answers,
+        sharing_preview, validate_resume_options,
     };
     pub use chda_agents::{control, quota, statusline, which};
 }

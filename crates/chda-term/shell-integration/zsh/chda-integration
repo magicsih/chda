@@ -42,12 +42,12 @@ add-zsh-hook preexec _chda_preexec
 
 # Attach status reporting to a directly typed Codex command in chda only.
 # Respect functions and aliases the user already defined in their dotfiles.
-if [[ -n "${CHDA_CODEX_TITLE_CONFIG-}" ]] && (( ! $+functions[codex] && ! $+aliases[codex] )); then
+if [[ -n "${CHDA_CODEX_TITLE_CONFIG-}" && -n "${CHDA_CODEX_DAEMON_CONFIG-}" ]] && (( ! $+functions[codex] && ! $+aliases[codex] )); then
     function codex {
         if [[ -n "${CHDA_CODEX_NOTIFY_CONFIG-}" ]]; then
-            'command' codex -c "$CHDA_CODEX_TITLE_CONFIG" -c "$CHDA_CODEX_NOTIFY_CONFIG" "$@"
+            'command' codex -c "$CHDA_CODEX_TITLE_CONFIG" -c "$CHDA_CODEX_DAEMON_CONFIG" -c "$CHDA_CODEX_NOTIFY_CONFIG" "$@"
         else
-            'command' codex -c "$CHDA_CODEX_TITLE_CONFIG" "$@"
+            'command' codex -c "$CHDA_CODEX_TITLE_CONFIG" -c "$CHDA_CODEX_DAEMON_CONFIG" "$@"
         fi
     }
 fi
