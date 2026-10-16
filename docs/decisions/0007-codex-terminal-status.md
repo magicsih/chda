@@ -51,6 +51,28 @@ unresumable conversation ID.
 - A repeated title state restores the pane's status when it fell behind, and
   closing a pane asks while its Codex title reports work or a wait for input.
 
+## Amendment (2026-10-16): launches stay off Codex's shared daemon
+
+Codex 0.156 added a shared local app-server daemon and, while the stable
+`daemon_auto_start` feature is on, tries to attach each interactive launch to
+it. The daemon cannot take per-launch `-c` overrides, so chda's launches
+already ran embedded, but Codex warned "Running without the shared background
+server" at every start
+([`tui/src/startup_orchestration.rs`](https://github.com/openai/codex/blob/rust-v0.162.1/codex-rs/tui/src/startup_orchestration.rs#L601-L611)).
+
+- chda's Codex launches stay embedded. The title and notify overrides are per
+  launch, and a notify the daemon ran would not carry the pane's
+  `CHDA_PANE_ID`.
+- Menu launches and the shell function also pass
+  `features.daemon_auto_start=false`, which Codex accepts as a client-side
+  override
+  ([`tui/src/daemon_startup.rs`](https://github.com/openai/codex/blob/rust-v0.162.1/codex-rs/tui/src/daemon_startup.rs#L131-L144))
+  and which removes the warning. Codex 0.155 ignores the setting.
+- `--no-daemon` was rejected: Codex 0.155 does not start with it, and Codex
+  refuses it with `codex agents` or `--remote`
+  ([`cli/src/main.rs`](https://github.com/openai/codex/blob/rust-v0.162.1/codex-rs/cli/src/main.rs#L2409-L2418)).
+  `codex agents` starts the daemon itself regardless of the feature.
+
 ## Evidence and boundaries
 
 The public [configuration reference](https://developers.openai.com/codex/config-reference/)
