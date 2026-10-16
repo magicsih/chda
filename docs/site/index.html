@@ -102,7 +102,7 @@
    "name": "Can I launch Homebrew-installed agents from the Dock?",
    "acceptedAnswer": {
     "@type": "Answer",
-    "text": "Yes. chda reads PATH from your login shell's startup files and uses it to find and run agents, including Homebrew and version-manager installations. Restart chda after changing your shell's PATH. If startup files cannot report PATH within two seconds, chda keeps the inherited PATH."
+    "text": "Yes. chda reads PATH from your login shell's startup files and uses it to find and run agents, including Homebrew and version-manager installations. Restart chda after changing your shell's PATH. If startup files take longer than two seconds, chda keeps reading in the background for up to 20 seconds and retries after 30 seconds, two minutes and then every ten minutes. Until then it uses the inherited PATH; agents and usage appear once the shell PATH arrives."
    }
   }
  ]
@@ -158,7 +158,8 @@
       <code id="cmd">brew tap magicsih/tap &amp;&amp; brew trust magicsih/tap &amp;&amp; brew install --cask chda</code>
       <button type="button" onclick="navigator.clipboard.writeText(document.getElementById('cmd').textContent).then(()=>{this.textContent='Copied'})">Copy</button>
     </div>
-    <div class="hero"><img src="demo.gif" alt="Agents report working and waiting in the sidebar; an agent creates a worktree through chda mcp and prints an architecture diagram, which opens rendered in the browser; a Markdown design doc is previewed with its sequence diagram" width="1200" height="750"></div>
+    <div class="hero"><img src="demo.gif" alt="A native chda tour: sample agent status, an API test command in a floating terminal, Git history, moving a running pane and previewing a light theme" width="1200" height="750"></div>
+    <p class="lead">Captured in chda 1.0.25 with a local demo repository and sample agent events.</p>
   </header>
 
   <section>
@@ -166,7 +167,7 @@
     <!-- BEGIN GENERATED FEATURES -->
     <div class="cols">
       <div class="col"><h3>Ghostty inside</h3><p>True color, Unicode, IME, search, reliable scrollback resizing, your Ghostty font and colors, and readable prompt text across theme changes. Follow links and space-containing paths across wrapped rows, show Kitty graphics, and preview Mermaid diagrams and Markdown offline. Review and edit selected agent text before copying it for sharing.</p></div>
-      <div class="col"><h3>Keep your place, close safely</h3><p>Restore windows, layouts and supported agent conversations. Keep previous working context and close one pane or a whole tab safely.</p></div>
+      <div class="col"><h3>Keep your place, close safely</h3><p>Reorder tabs and move a running pane between tabs or windows without losing its process or scrollback. Restore layouts and supported conversations after restarting. Close a pane or a whole tab with checks for active agents.</p></div>
       <div class="col"><h3>Update without stopping your work</h3><p>Click Update in the signed macOS app. Running shells and agents reconnect with their text, scrollback and window layouts. Installation failure reopens the retained app with your sessions; inline-image terminals ask you to close them first.</p></div>
       <div class="col"><h3>The task in the title</h3><p>See the repository and focused branch task together. Hover for the full context or open the worktree in your favorite editor.</p></div>
       <div class="col"><h3>Keep operational messages in view</h3><p>Open the title-bar bell icon for timestamped messages, unread arrivals and exact agent-pane links. Closing the list returns typing focus without deleting history.</p></div>
@@ -174,34 +175,36 @@
       <div class="col"><h3>One worktree per task</h3><p>Create from any branch, label it with a note, read its diff, update from upstream, then merge and clean up with checks for unsaved or unpushed work. Opt in to selected local-file copies and ordered setup commands before opening a new worktree.</p></div>
       <div class="col"><h3>Read the Git tree</h3><p>Choose View Git tree from the repository menu for commit connections, subjects, short hashes and branch, tag and HEAD labels. Browse in a read-only tab, refresh and restore it after restarting.</p></div>
       <div class="col"><h3>Review changes with private notes</h3><p>Choose Review diff from a worktree menu. Select old or new lines, add private notes and preview a batch for an exact live agent conversation. Copy and focus its pane, then paste when ready.</p></div>
-      <div class="col"><h3>Agents you can see</h3><p>Track Claude Code, Codex, Gemini CLI, Copilot CLI and OpenCode. Notifications open the right pane; past conversations resume together or side by side. Choose per-launch permissions for Claude Code and Codex; retain captured options when reopening a conversation. Keep a failed agent’s output and restart its exact known conversation in the same pane. Expand confirmed child activity under its parent; inspect state without jumping to a different conversation.</p></div>
+      <div class="col"><h3>Agents you can see</h3><p>Track Claude Code, Codex, Gemini CLI, Copilot CLI and OpenCode. Choose permissions per launch, resume exact supported conversations and retain failed output. See child activity as compact counts on the parent row; right-click for details. Codex starts in its pane without the shared background server warning.</p></div>
       <div class="col"><h3>Quota and local session resources</h3><p>See Claude Code and Codex quota, clear loading and retry states, reset countdowns, and selected-pane CPU, memory and listeners. Open bottom-left details with labeled bars for each reported quota window.</p></div>
-      <div class="col"><h3>Every action in one place</h3><p>Press <code>cmd-shift-p</code> to find worktrees, launch agents, resume sessions and run actions. Agents can create worktrees and open tabs through <code>chda mcp</code>, and follow the other agents of their repository: list them, read their latest answers and wait for them to finish.</p></div>
+      <div class="col"><h3>Every action in one place</h3><p>Press <code>cmd-shift-p</code> to find worktrees, launch or resume agents and run your own commands in a tab, split or floating terminal. Agents can use <code>chda mcp</code> to create worktrees, open tabs, read session output and wait for other agents.</p></div>
       <div class="col"><h3>Your terminal, your settings</h3><p>Reuse your Ghostty font, colors and padding, with a light and dark theme pair that follows macOS. Edit chda&#x27;s TOML settings without restarting. Homebrew and version-manager agents are found through your login shell&#x27;s PATH.</p></div>
     </div>
     <h3 class="gallery-title">Git history and live sessions</h3>
     <div class="shots">
       <a href="git-graph.jpg"><img src="git-graph.jpg" loading="lazy" decoding="async" alt="A read-only Git tree tab with commit connections, branch labels, subjects and short hashes" width="1920" height="990"><span>View full-size Git tree screenshot</span></a>
-      <a href="sessions.png"><img src="sessions.png" loading="lazy" decoding="async" alt="The Sessions list in a light theme: a working Claude Code pane (CC) whose child agents show one waiting, one working and three in all on its row, beside a Codex pane (CX) waiting for input in the same split tab, above PROJECT with the main worktree highlighted" width="1200" height="800"><span>View full-size Sessions screenshot</span></a>
+      <a href="sessions.png"><img src="sessions.png" loading="lazy" decoding="async" alt="The Atlas API demo in a light theme: sample Claude Code and Codex sessions in split panes, compact child counts on the parent row, and worktrees labeled by their task notes" width="1200" height="705"><span>View full-size Sessions screenshot</span></a>
     </div>
 <!-- END GENERATED FEATURES -->
   </section>
 
   <section>
-    <h2>What it looks like</h2>
+    <h2>Your tools, in the worktree</h2>
+    <p class="lead">Run your own commands in a tab, split or floating terminal. Move running panes between tabs and windows while keeping their processes and scrollback.</p>
+    <img class="wide" src="commands.png" loading="lazy" decoding="async" alt="The API tests command running in a floating terminal over the Atlas API demonstration workspace" width="1200" height="705">
     <div class="shots">
-      <img src="sidebar.png" loading="lazy" decoding="async" alt="The sidebar: a Sessions list with agent status above PROJECT worktrees labeled by their notes, with diff and pull request badges and open-tab icons" width="800" height="600">
-      <img src="palette.png" loading="lazy" decoding="async" alt="The command palette listing worktrees, agent launches and sessions" width="800" height="600">
+      <img src="sidebar.png" loading="lazy" decoding="async" alt="A close-up of the demo Sessions list with compact child activity and PROJECT worktrees, task notes and diff badges" width="400" height="520">
+      <img src="palette.png" loading="lazy" decoding="async" alt="The command palette showing actions that move a running pane to another tab or window while keeping its process" width="640" height="370">
     </div>
   </section>
 
   <section>
     <h2>Diagrams and Markdown, rendered offline</h2>
     <p class="lead">Mermaid in an agent's answer opens as a diagram, and Markdown files open formatted, as local pages in your browser. Nothing is uploaded; scripts in the document do not run.</p>
-    <img class="wide" src="diagram.png" loading="lazy" decoding="async" alt="An architecture flowchart with five subgraphs, from clients through the API gateway and acme-api to Postgres, OpenSearch, Redis and a background indexer, rendered from an agent's output" width="1600" height="460">
+    <a href="diagram.png"><img class="wide" src="diagram.png" loading="lazy" decoding="async" alt="A local Atlas API flowchart connecting the client, API, result cache, search index, delivery queue and webhook worker" width="1200" height="440"></a>
     <div class="shots">
-      <img src="markdown.png" loading="lazy" decoding="async" alt="A Markdown design doc previewed in the browser: title, status table, summary with a Note alert and a task list" width="1200" height="847">
-      <img src="markdown-flow.png" loading="lazy" decoding="async" alt="The same doc's request flow: a Mermaid sequence diagram with a cache hit and miss branch" width="1200" height="847">
+      <a href="markdown.png"><img src="markdown.png" loading="lazy" decoding="async" alt="An Atlas API Markdown document rendered by chda: a Note, a responsibility table and the beginning of a Mermaid request-flow diagram" width="1200" height="847"></a>
+      <a href="markdown-flow.png"><img src="markdown-flow.png" loading="lazy" decoding="async" alt="The same document's Mermaid sequence diagram with cache-hit and cache-miss branches, a response and queued webhook delivery" width="1200" height="847"></a>
     </div>
   </section>
 
@@ -229,7 +232,7 @@ brew install --cask chda</pre>
       <dt>Can I just type codex in a terminal?</dt>
       <dd>Yes. In chda's zsh, bash and fish terminals, typing codex tracks working, waiting for input and finished turns with shell integration enabled. Existing aliases and functions are kept. If your own wrapper bypasses the helper, use Run Codex from the worktree menu. See the README for Codex terminal-title requirements.</dd>
       <dt>Can I launch Homebrew-installed agents from the Dock?</dt>
-      <dd>Yes. chda reads PATH from your login shell's startup files and uses it to find and run agents, including Homebrew and version-manager installations. Restart chda after changing your shell's PATH. If startup files cannot report PATH within two seconds, chda keeps the inherited PATH.</dd>
+      <dd>Yes. chda reads PATH from your login shell's startup files and uses it to find and run agents, including Homebrew and version-manager installations. Restart chda after changing your shell's PATH. If startup files take longer than two seconds, chda keeps reading in the background for up to 20 seconds and retries after 30 seconds, two minutes and then every ten minutes. Until then it uses the inherited PATH; agents and usage appear once the shell PATH arrives.</dd>
       <dt>Linux or Windows?</dt>
       <dd>They build in CI and are the next milestone. Today it is macOS only, on Apple silicon or Intel.</dd>
     </dl>
