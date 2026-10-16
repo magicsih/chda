@@ -30,6 +30,12 @@ schema 2를 적용한다. 추가 native 검수와 서명 ZIP의 GUI 검수는 �
 보존한다. 기존 서명·공증·universal·ZIP·업데이트 서명과 동일 draft 공개는 유지한다.
 과거 예외를 재사용하거나 미래 버전에 적용하는 skip 옵션은 없다.
 
+v1.0.25는 부분 검수와 화면 조작 차단을 전달한 뒤 사용자가 공개를 재지시했다.
+[이번 버전의 승인 기록](releases/v1.0.25-publication-approval.md)에 정확한 후보와
+미완료 범위를 보존하며 `native_result: blocked`를 유지한다. 정상 43조건·13영역의
+통과를 뜻하지 않는다. 기존 서명·공증·universal·ZIP·업데이트 서명·동일 draft 공개
+검사는 유지하며 다른 후보나 다음 버전에 적용할 수 없다.
+
 ## 버전 정책
 
 `v0.1.24` 다음 릴리스부터 `v1.0.25`로 전환한다. 마지막 자리 `25`는 기존
@@ -120,6 +126,22 @@ PREP-163, PICKER-181, SESSIONS-182 전체다. v0.1.23 이후에는 승인 설계
 catalog area가 생기면 증거 검증 계약도 함께 갱신한다. `signed_artifact.checks`는
 `signed-launch`, `session-preserving-update`, `gui-ipc`, `shell-pid-preservation` 전체다.
 검증기 입력을 맞추기 위한 가상 통과 JSON을 작성하지 않는다.
+
+`v1.0.25`부터는 위 32개에 ISSUE-241, ISSUE-242, ISSUE-243, ISSUE-244,
+ISSUE-246, ISSUE-247, ISSUE-248, ISSUE-249, ISSUE-250, ISSUE-251,
+ISSUE-257을 추가한 **43개 조건**을 세 회차와 두 별도 E2E에서 모두 요구한다.
+[10월 14일 승인 설계](design/2026-10-14-open-issues/design.md)의 창 크기 복원,
+저장소 일괄 접기, 느린 셸 PATH, Claude 사용량 범위, 하위 활동 요약, 테마 쌍,
+pane 이동, MCP 읽기·대기, 프로그램 알림, 사용자 명령과
+[Codex 시작 수정 #257](https://github.com/magicsih/chda/pull/257)을 각각 연결한다.
+이전 태그의 정확한 조건 목록과 기존 예외 범위는 유지한다.
+
+ISSUE-231의 `v1.0.25` 이후 기대 결과는 사용자가 승인한
+[10월 15일 종료 동작 개정](decisions/0014-managed-process-restart.md#2026-10-15-개정-종료하면-pane을-닫는다)을 적용한다.
+셸은 종료 코드와 무관하게 닫고, 관리 프로그램은 성공하면 닫으며 실패했을 때만
+종료 정보·이전 출력·지원되는 정확한 재시작을 유지한다. 기존 Stopped pane의 복원과
+살아 있는 셸로 돌아온 에이전트의 동작은 계속 확인한다. 과거 0.1.23의 인수조건 문서는
+그대로 보존하되 이후 승인으로 대체된 성공 종료 동작을 회귀 실패로 판정하지 않는다.
 
 ## 실패와 재시도
 

@@ -24,11 +24,15 @@ CASES = frozenset(('PATH-164 NAV-149 PR-150 TREE-151 REMOVE-152 QUOTA-153 '
                    'CHILD-161 REVIEW-162 PREP-163 PICKER-181 SESSIONS-182').split())
 V023_CASES = CASES | frozenset(f'ISSUE-{n}' for n in (
     208, 209, 210, 211, 212, 216, 217, 219, 220, 224, 226, 227, 228, 229, 230, 231))
+V1025_CASES = V023_CASES | frozenset(f'ISSUE-{n}' for n in (
+    241, 242, 243, 244, 246, 247, 248, 249, 250, 251, 257))
 
 
 def cases_for(tag):
     # The candidate validator has already required a stable SemVer tag.
     version = tuple(int(part) for part in tag.removeprefix('v').split('.'))
+    if version >= (1, 0, 25):
+        return V1025_CASES
     return V023_CASES if version >= (0, 1, 23) else CASES
 
 
@@ -45,12 +49,14 @@ EXCEPTION_PATHS = {
     'v0.1.22': 'docs/releases/v0.1.22-native-validation-exception.json',
     'v0.1.23': 'docs/releases/v0.1.23-publication-approval.json',
     'v0.1.24': 'docs/releases/v0.1.24-publication-approval.json',
+    'v1.0.25': 'docs/releases/v1.0.25-publication-approval.json',
 }
 OWNER_INSTRUCTIONS = {
     'v0.1.21': '이제 좀 공개해라 좀',
     'v0.1.22': '예외 출시: 반복 검수 생략 (권장)',
     'v0.1.23': 'PR 병합하고 공개해 빨리. 아무도 쓰는 사람도 없는데 뭘 자꾸 뜸을드려 빨리 빨리 좀 해 그냥',
     'v0.1.24': '공개 하자',
+    'v1.0.25': 'rhdrogo.',
 }
 POSTBUILD_EXCEPTION_PATH = 'docs/releases/v0.1.22-signed-update-exception.json'
 POSTBUILD_CHECKS = {
@@ -568,8 +574,14 @@ def native_archive(root, tag):
 
 
 def exception_notes(tag):
-    """Text the owner exceptions of v0.1.21-v0.1.23 put before the changelog.
-    Other releases publish the changelog section only."""
+    """Per-version validation notices for explicitly approved releases."""
+    if tag == 'v1.0.25':
+        return ('Native UI validation is incomplete. The owner authorized publication with '
+                'the remaining native review rounds, both full native E2E runs and exact '
+                'signed-ZIP GUI checks unverified. Developer ID signing, notarization, '
+                'universal architectures, checksums and update signatures remain required. '
+                '[Validation status](https://github.com/%s/blob/main/docs/releases/'
+                'v1.0.25-publication-approval.md).\n\n' % REPO)
     if tag == 'v0.1.23':
         return ('추가 네이티브 검수는 사용자의 공개 지시에 따라 생략했습니다. '
                 '미완료 검수와 업데이트 완료 미확인은 통과로 표시하지 않았습니다. '
