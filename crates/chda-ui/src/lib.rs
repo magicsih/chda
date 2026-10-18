@@ -40,7 +40,7 @@ use workspace_view::*;
 /// Ghostty-style shortcuts, translated by the desktop platform adapter.
 fn key_bindings() -> Vec<KeyBinding> {
     let t = Some("Terminal");
-    vec![
+    let mut bindings = vec![
         KeyBinding::new(platform::shortcut("cmd-c"), Copy, t),
         KeyBinding::new(platform::shortcut("cmd-v"), Paste, t),
         KeyBinding::new(platform::shortcut("cmd-up"), JumpToPrevPrompt, t),
@@ -92,8 +92,6 @@ fn key_bindings() -> Vec<KeyBinding> {
         KeyBinding::new(platform::shortcut("cmd-,"), OpenConfig, None),
         KeyBinding::new(platform::shortcut("cmd-shift-,"), ReloadConfig, None),
         KeyBinding::new(platform::shortcut("cmd-m"), Minimize, None),
-        KeyBinding::new(platform::shortcut("cmd-h"), menus::Hide, None),
-        KeyBinding::new(platform::shortcut("cmd-alt-h"), menus::HideOthers, None),
         KeyBinding::new(platform::shortcut("cmd-v"), Paste, Some("TextInput")),
         KeyBinding::new(platform::shortcut("cmd-c"), Copy, Some("TextInput")),
         KeyBinding::new(
@@ -131,7 +129,9 @@ fn key_bindings() -> Vec<KeyBinding> {
             ToggleFindRegex,
             Some("SearchBar > TextInput"),
         ),
-    ]
+    ];
+    bindings.extend(platform::hide_key_bindings());
+    bindings
 }
 
 /// Start the application and open the main window with the user's Ghostty
@@ -147,6 +147,7 @@ pub fn run_adopt(fd: i32) -> std::io::Result<()> {
 }
 
 fn run_inner(inherited: Option<(chda_core::handoff::Handoff, chda_term::handoff::Inherited)>) {
+    platform::init_graphics_diagnostics();
     let env = std::rc::Rc::new(environment::Environment::for_user());
     let mut reply = None;
     let mut handoff_session = None;

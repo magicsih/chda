@@ -998,15 +998,16 @@ dependencies = [
  "gpui",
  "gpui_platform",
  "image",
+ "log",
  "objc2 0.6.4",
  "objc2-app-kit 0.3.2",
  "objc2-foundation 0.3.2",
  "objc2-user-notifications",
  "pulldown-cmark",
  "serde_json",
+ "skrifa 0.40.0",
  "sysinfo",
  "time",
- "ttf-parser",
 ]
 
 [[package]]
