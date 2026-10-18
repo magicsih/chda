@@ -5942,9 +5942,7 @@ impl WorkspaceView {
 
     pub(crate) fn palette_items(&self, cx: &App) -> Vec<PaletteItem> {
         let mut items: Vec<PaletteItem> = [
-            ("New window", "cmd-shift-n", "new_window"),
             ("New tab", "cmd-t", "new_tab"),
-            ("New worktree...", "cmd-n", "new_worktree"),
             ("Close pane", "cmd-w", "close"),
             ("Split right", "cmd-d", "split_right"),
             ("Split down", "cmd-shift-d", "split_down"),
@@ -5966,19 +5964,6 @@ impl WorkspaceView {
             ("Increase font size", "cmd-=", "font_bigger"),
             ("Decrease font size", "cmd--", "font_smaller"),
             ("Reset font size", "cmd-0", "font_reset"),
-            ("Copy", "cmd-c", "copy"),
-            ("Paste", "cmd-v", "paste"),
-            ("Find...", "cmd-f", "find"),
-            ("Settings...", "cmd-,", "config"),
-            ("Open Ghostty Config", "", "ghostty_config"),
-            ("Reload Config", "cmd-shift-,", "reload_config"),
-            ("Minimize window", "cmd-m", "minimize"),
-            ("Maximize or restore window", "", "maximize"),
-            ("About chda", "", "about"),
-            ("Open repository", "", "repository"),
-            ("Report an issue", "", "report_issue"),
-            ("Release notes and downloads", "", "release_notes"),
-            ("Quit chda", "cmd-q", "quit"),
             ("Select theme...", "preview with the arrow keys", "theme"),
             (
                 "Select light theme...",
@@ -6004,6 +5989,33 @@ impl WorkspaceView {
             command: PaletteCommand::Action(action),
         })
         .collect();
+        if platform::has_application_menu() {
+            items.extend(
+                [
+                    ("New window", "cmd-shift-n", "new_window"),
+                    ("New worktree...", "cmd-n", "new_worktree"),
+                    ("Copy", "cmd-c", "copy"),
+                    ("Paste", "cmd-v", "paste"),
+                    ("Find...", "cmd-f", "find"),
+                    ("Settings...", "cmd-,", "config"),
+                    ("Open Ghostty Config", "", "ghostty_config"),
+                    ("Reload Config", "cmd-shift-,", "reload_config"),
+                    ("Minimize window", "cmd-m", "minimize"),
+                    ("Maximize or restore window", "", "maximize"),
+                    ("About chda", "", "about"),
+                    ("Open repository", "", "repository"),
+                    ("Report an issue", "", "report_issue"),
+                    ("Release notes and downloads", "", "release_notes"),
+                    ("Quit chda", "cmd-q", "quit"),
+                ]
+                .into_iter()
+                .map(|(label, detail, action)| PaletteItem {
+                    label: label.into(),
+                    detail: platform::shortcut(detail).into(),
+                    command: PaletteCommand::Action(action),
+                }),
+            );
+        }
         for command in self.config.valid_commands().0 {
             items.push(PaletteItem {
                 label: format!("Run {}", command.name.trim()),
