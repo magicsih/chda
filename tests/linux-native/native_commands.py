@@ -101,6 +101,21 @@ def _commands(journey, label, width, height, keyboard=False):
         journey.driver.click(x, y)
     opened = journey.driver.screenshot(label + "-commands-open")
     _ocr(opened, ["New tab ctrl-shift-t"])
+    if width == 640:
+        # Rename tab is the eleventh standard action, beyond this narrow
+        # viewport. Actual key input must scroll it into view and keep it
+        # visible when the open palette grows and shrinks.
+        for _ in range(10):
+            journey.driver.key("Down")
+        scrolled = journey.driver.screenshot(label + "-commands-scrolled")
+        _ocr(scrolled, ["Rename tab"])
+        journey.setup_geometry(960, 640, label + "-palette-grown")
+        _ocr(journey.driver.screenshot(label + "-selection-after-grow"), ["Rename tab"])
+        journey.setup_geometry(width, height, label + "-palette-shrunk")
+        _ocr(journey.driver.screenshot(label + "-selection-after-shrink"), ["Rename tab"])
+        for _ in range(10):
+            journey.driver.key("Up")
+        _ocr(journey.driver.screenshot(label + "-commands-returned-top"), ["New tab"])
     # Typing must reach the palette's actual focused input.
     journey.driver.text("About chda")
     filtered = journey.driver.screenshot(label + "-about-filtered")
