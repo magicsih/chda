@@ -18,7 +18,7 @@ pub(crate) fn controls(
         {
             return None;
         }
-        let button = |id, label| {
+        let button = |id: &'static str, label: &'static str| {
             div()
                 .id(id)
                 .debug_selector(move || id.into())
