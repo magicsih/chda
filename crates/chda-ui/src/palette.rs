@@ -1,10 +1,11 @@
 //! Command palette: fuzzy-filtered actions, worktrees, sessions and themes.
 
-use std::path::PathBuf;
+use std::{ops::Range, path::PathBuf};
 
 use gpui::{
-    AnyElement, App, Context, Entity, EventEmitter, FocusHandle, Focusable, Hsla, Render,
-    Subscription, Window, div, prelude::*, px,
+    AnyElement, App, Context, Entity, EventEmitter, FocusHandle, Focusable, Hsla,
+    ListSizingBehavior, Pixels, Render, ScrollStrategy, Size, Subscription,
+    UniformListScrollHandle, Window, div, prelude::*, px, uniform_list,
 };
 
 use crate::text_input::{TextInput, TextInputEvent};
@@ -55,16 +56,16 @@ pub enum PaletteEvent {
     Dismissed,
 }
 
-/// Rows shown at once; the list scrolls to keep the selection in view.
-const VISIBLE_ROWS: usize = 12;
+const ROW_HEIGHT: f32 = 32.0;
+const MAX_VISIBLE_ROWS: usize = 12;
 
 pub struct Palette {
     items: Vec<PaletteItem>,
     input: Entity<TextInput>,
     _sub: Subscription,
     selected: usize,
-    /// First match shown.
-    offset: usize,
+    scroll: UniformListScrollHandle,
+    viewport: Size<Pixels>,
     /// Text the matches were last filtered by.
     query: String,
     fg: Hsla,
@@ -122,12 +123,15 @@ impl Palette {
         let handle = input.read(cx).focus_handle(cx);
         window.focus(&handle, cx);
         let selected = selected.min(items.len().saturating_sub(1));
+        let scroll = UniformListScrollHandle::new();
+        scroll.scroll_to_item(selected, ScrollStrategy::Center);
         Self {
             items,
             input,
             _sub: sub,
             selected,
-            offset: selected.saturating_sub(VISIBLE_ROWS / 2),
+            scroll,
+            viewport: window.viewport_size(),
             query: String::new(),
             fg,
             bg,
@@ -149,11 +153,7 @@ impl Palette {
     /// Select the `index`th match, scroll it into view and announce it.
     fn select(&mut self, index: usize, cx: &mut Context<Self>) {
         self.selected = index;
-        if index < self.offset {
-            self.offset = index;
-        } else if index >= self.offset + VISIBLE_ROWS {
-            self.offset = index + 1 - VISIBLE_ROWS;
-        }
+        self.scroll.scroll_to_item(index, ScrollStrategy::Nearest);
         if let Some((_, item)) = self.matches().get(index) {
             let command = item.command.clone();
             cx.emit(PaletteEvent::Highlighted(command));
@@ -181,35 +181,29 @@ impl Palette {
     pub fn input_focus(&self, cx: &App) -> FocusHandle {
         self.input.read(cx).focus_handle(cx)
     }
-}
-
-impl Focusable for Palette {
-    fn focus_handle(&self, cx: &App) -> FocusHandle {
-        self.input_focus(cx)
-    }
-}
-
-impl Render for Palette {
-    fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+    fn rows(&self, range: Range<usize>, cx: &Context<Self>) -> Vec<AnyElement> {
         let fg = self.fg;
-        let rows: Vec<AnyElement> = self
-            .matches()
+        self.matches()
             .into_iter()
             .enumerate()
-            .skip(self.offset)
-            .take(VISIBLE_ROWS)
+            .skip(range.start)
+            .take(range.len())
             .map(|(i, (_, item))| {
                 let selected = i == self.selected;
                 div()
                     .id(("palette-item", i))
                     .flex()
                     .flex_row()
+                    .h(px(ROW_HEIGHT))
+                    .items_center()
                     .gap_2()
                     .px_2()
-                    .py_1()
                     .rounded_sm()
                     .cursor_pointer()
-                    .when(selected, |d| d.bg(fg.opacity(0.15)))
+                    .when(selected, |d| {
+                        d.bg(fg.opacity(0.15))
+                            .debug_selector(|| "palette-selected".into())
+                    })
                     .hover(|s| s.bg(fg.opacity(0.1)))
                     .on_click(cx.listener(move |this, _, _, cx| {
                         this.selected = i;
@@ -228,9 +222,32 @@ impl Render for Palette {
                     )
                     .into_any_element()
             })
-            .collect();
+            .collect()
+    }
+}
+
+impl Focusable for Palette {
+    fn focus_handle(&self, cx: &App) -> FocusHandle {
+        self.input_focus(cx)
+    }
+}
+
+impl Render for Palette {
+    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        if self.viewport != window.viewport_size() {
+            self.viewport = window.viewport_size();
+            self.scroll
+                .scroll_to_item(self.selected, ScrollStrategy::Nearest);
+        }
+        let fg = self.fg;
         div()
+            .id("command-palette")
+            .debug_selector(|| "command-palette".into())
             .w(px(560.0))
+            .max_w_full()
+            .max_h_full()
+            .min_h_0()
+            .overflow_hidden()
             .p_2()
             .rounded_md()
             .bg(self.bg)
@@ -238,6 +255,7 @@ impl Render for Palette {
             .border_color(fg.opacity(0.2))
             .shadow_lg()
             .text_sm()
+            .line_height(px(20.0))
             .text_color(fg)
             .flex()
             .flex_col()
@@ -251,8 +269,19 @@ impl Render for Palette {
                 }
                 cx.stop_propagation();
             }))
-            .child(self.input.clone())
-            .children(rows)
+            .child(div().flex_shrink_0().child(self.input.clone()))
+            .child(
+                uniform_list(
+                    "palette-rows",
+                    self.matches().len(),
+                    cx.processor(|this, range, _, cx| this.rows(range, cx)),
+                )
+                .with_sizing_behavior(ListSizingBehavior::Infer)
+                .w_full()
+                .min_h_0()
+                .max_h(px(ROW_HEIGHT * MAX_VISIBLE_ROWS as f32))
+                .track_scroll(&self.scroll),
+            )
     }
 }
 

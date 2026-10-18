@@ -405,10 +405,15 @@ fn an_agent_lists_reads_and_waits_for_other_sessions_of_its_repository(cx: &mut 
         "in-lib",
     );
     let elsewhere = h.read(|v, _| v.ws.focused_pane().unwrap());
+    let expected = [
+        (helper, repo.clone()),
+        (shell, repo.clone()),
+        (elsewhere, other.clone()),
+    ];
     h.wait_for("panes in their repositories", move |v, _| {
-        [helper, shell, elsewhere]
+        expected
             .iter()
-            .all(|p| v.ws.pane(*p).is_some_and(|i| i.repo.is_some()))
+            .all(|(p, repo)| v.ws.pane(*p).is_some_and(|i| i.repo.as_ref() == Some(repo)))
     });
     let focused = h.read(|v, _| v.ws.focused_pane());
 

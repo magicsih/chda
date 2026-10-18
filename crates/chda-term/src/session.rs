@@ -952,9 +952,11 @@ mod tests {
         let mut p = Probe::spawn(&[
             "/bin/sh",
             "-c",
-            "stty -echo; echo activity-ready; read x; echo response:$x; read y",
+            r"stty -echo; echo activity-ready; printf '\033]0;activity-ready\007'; read x; echo response:$x; printf '\033]0;activity-response\007'; read y",
         ]);
         p.wait_for_text("activity-ready");
+        // Title events follow the output frame, so no startup Frame is pending.
+        p.wait_for(|e| matches!(e, Event::TitleChanged(title) if title == "activity-ready"));
         while let Ok(event) = p.events.try_recv() {
             p.seen.push(event);
         }
@@ -965,6 +967,7 @@ mod tests {
         );
         p.seen.clear();
         p.session.set_colors(ColorConfig {
+            foreground: Some(crate::frame::Rgb { r: 9, g: 9, b: 9 }),
             background: Some(crate::frame::Rgb { r: 1, g: 2, b: 3 }),
             ..Default::default()
         });
@@ -972,11 +975,18 @@ mod tests {
             p.wait_for(|e| matches!(e, Event::Frame { .. })),
             Event::Frame { has_output: false }
         );
+        assert_eq!(
+            p.session.frame().background,
+            crate::frame::Rgb { r: 1, g: 2, b: 3 }
+        );
+        p.seen.clear();
         p.session.resize(Size { cols: 50, rows: 8 }, 0, 0);
         assert_eq!(
             p.wait_for(|e| matches!(e, Event::Frame { .. })),
             Event::Frame { has_output: false }
         );
+        assert_eq!(p.session.frame().size, Size { cols: 50, rows: 8 });
+        p.seen.clear();
         p.session.scroll_to_bottom();
         assert_eq!(
             p.wait_for(|e| matches!(e, Event::Frame { .. })),
@@ -995,6 +1005,7 @@ mod tests {
         assert_eq!(p.wait_for(|e| matches!(e, Event::Input)), Event::Input);
         p.session.write(b"\n".to_vec());
         p.wait_for_text("response:user-input");
+        p.wait_for(|e| matches!(e, Event::TitleChanged(title) if title == "activity-response"));
         while let Ok(event) = p.events.try_recv() {
             p.seen.push(event);
         }

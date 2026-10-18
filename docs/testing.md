@@ -12,6 +12,12 @@ the scenarios use real shells in temporary homes. Windows currently builds in CI
 
 ## Rules
 
+Linux package checks use the actual x86_64 AppImage and portable payload with
+native X11 and Wayland windows, temporary HOME/XDG paths and software Vulkan.
+They are separate from GPUI's headless scenarios. See
+[`tests/linux-native/README.md`](../tests/linux-native/README.md) for the desktop
+journey, exact-candidate three-round plan and independent visual/IME gates.
+
 - A bug fix comes with a test that fails without the fix: a logic test when
   the bug is in a crate's logic, a scenario when it is in how the window
   behaves.
@@ -291,6 +297,8 @@ require the final macOS candidate check.
 `chda-agents::sharing::tests` covers real CLI/VT partial code and nested-list captures, Unicode and partial line boundaries, duplicate/overlapping source ranges, malformed or incomplete exact transcripts and unconfirmed versions. Only uniquely selected source ranges are copied; hidden fences and other answer text are excluded. `scenarios::sharing` retains actual PTY selection, preview scope, ordinary Copy, clipboard-before-confirm, edited text, cancellation and update/navigation regressions. Headless scenarios do not replace the final native macOS and unsent composer verification.
 
 `scripts/test-macos-release.py` requires all 16 ISSUE conditions in each of three review rounds and both separate E2Es starting with v0.1.23, while preserving historical v0.1.21/v0.1.22 exact coverage and rejecting their exceptions for v0.1.23. These are synthetic validator tests and never release evidence.
+
+Linux package acceptance records supported startup separately from known incompatible graphics environments. The Ubuntu 20.04 run uses glibc 2.31 with official Mesa 21.2, but actual application startup failed because the Vulkan adapter limits were below the graphics engine's request. The glibc 2.31 environment with QA-only Mesa 23.3.6 and LLVM 12 passed configuration limits but rendered a black body for 40 seconds. Its replacement uses QA-only Mesa 25.2.8 and signed Focal LLVM 20.1.8 packages. Both actual x86_64 package formats passed rendered prompt, native input and rendered output in that replacement environment; the earlier black-window failure remains failed evidence. Final release-candidate review is separate. A mapped window and successful PTY input do not establish rendered startup. Debian 11 stock Mesa 20 failed to expose a compatible Vulkan/EGL X11 surface; its negative check must retain `productStartupStatus: failed` and `supportedEnvironment: false`. Neither failed environment satisfies a positive startup requirement. The Linux guide preserves these limits and the independently confirmed unpatched IBus 1.5.32 XIM server crash.
 
 `chda-agents::ipc::executable::appimage::tests` reproduces an AppImage helper path
 lost when its temporary runtime directory disappears. A private executable

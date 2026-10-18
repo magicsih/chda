@@ -20,7 +20,7 @@
     },
     {
       "area": "Title bar",
-      "details": "The focused pane's repository and branch-note alias appear as repo - task; the branch is the fallback. Custom tab names remain on tabs without hiding the repository context. Hover for the repository, full note, branch and worktree path. Open the focused worktree in a chosen installed editor or Finder. Linux discovers installed folder-capable desktop applications and available icons, and opens the selected folder through gio; the default file manager uses xdg-open. Linux has a Commands button and draws minimize, maximize and close controls plus resize edges when the compositor does not provide window decorations.",
+      "details": "The focused pane's repository and branch-note alias appear as repo - task; the branch is the fallback. Custom tab names remain on tabs without hiding the repository context. Hover for the repository, full note, branch and worktree path. Open the focused worktree in a chosen installed editor or Finder. Linux discovers installed folder-capable desktop applications and available icons, and opens the selected folder through gio; the default file manager uses xdg-open. Linux has a Commands button and draws minimize, maximize and close controls plus resize edges when the compositor does not provide window decorations. Linux client window controls preserve the visible window size when minimizing and restoring.",
       "title": "The task in the title",
       "summary": "See the repository and focused branch task together. Hover for the full context or open the worktree in your favorite editor."
     },
@@ -68,7 +68,7 @@
     },
     {
       "area": "Palette",
-      "details": "`cmd-shift-p`: every action, worktree, agent launch and session in one fuzzy list On Linux, Settings, Ghostty config, window actions, terminal copy/paste/search, About, help links and Quit are also available from the palette. Linux opens it with Ctrl+Shift+P or the Commands button. The Linux About dialog shows the version, full description, license and repository link at default and narrow window sizes.",
+      "details": "`cmd-shift-p`: every action, worktree, agent launch and session in one fuzzy list On Linux, Settings, Ghostty config, window actions, terminal copy/paste/search, About, help links and Quit are also available from the palette. Linux opens it with Ctrl+Shift+P or the Commands button. The Linux About dialog shows the version, full description, license and repository link at default and narrow window sizes. The list fits small windows, scrolls to the selected action during keyboard navigation and keeps it visible after resizing. An open palette keeps keyboard input when its window reactivates after resizing.",
       "title": "Every action in one place",
       "summary": "Press `cmd-shift-p` to find worktrees, launch or resume agents and run your own commands in a tab, split or floating terminal. Agents can use `chda mcp` to create worktrees, open tabs, read session output and wait for other agents."
     },
@@ -77,6 +77,12 @@
       "details": "Reads your Ghostty font, colors and padding; chda's own settings in one TOML file; edits apply without a restart; executable discovery uses the login-shell PATH, with a validated ~/.local/bin/claude fallback for native Claude Code installations. Live configuration reload keeps the current sidebar width while its border is being dragged; other settings still apply, and file-based width changes apply again after release. Define your own `[[commands]]`, such as lazygit, a test watcher or a dev server, and run them for the focused worktree from the palette, a worktree's menu or a shortcut, in a new tab, a split or a floating terminal; each closes when the command succeeds and keeps a failure's exit status; broken entries and clashing shortcuts are reported once while the rest load. A theme pair, `theme = light:X,dark:Y` in the Ghostty config or chda's `theme`, follows macOS Light and Dark mode in every window without a restart, including Auto at sunset; View > Select Light Theme and Select Dark Theme each preview and save one half while keeping the other. Reading configuration or repository state on Linux does not trigger repeated reloads or sidebar refreshes.",
       "title": "Your terminal, your settings",
       "summary": "Reuse your Ghostty font, colors and padding, with a light and dark theme pair that follows macOS. Edit chda's TOML settings without restarting. Homebrew and version-manager agents are found through your login shell's PATH."
+    },
+    {
+      "area": "Linux desktop",
+      "title": "Linux, with familiar terminal controls",
+      "summary": "Use X11 or Wayland with an AppImage or portable package. Copy and paste with Ctrl+Shift+C/V, keep Ctrl+C for the shell, and open actions from the Commands button.",
+      "details": "Linux x86_64 packages share the same payload, target glibc 2.31 or newer, and use the host graphics driver. X11 and Wayland window controls, XDG folder applications, pane-targeted desktop notifications, foreground process directories and process resource inspection integrate with the terminal. Updates open the matching stable Linux release for a manual download; configuration and saved sessions remain outside the package. See docs/linux.md for installation and verified environment limits."
     }
   ],
   "screenshots": [

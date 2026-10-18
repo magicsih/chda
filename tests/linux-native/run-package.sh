@@ -8,6 +8,13 @@ fi
 mkdir -p /work/packages /work/payload /evidence
 cp /packages/* /work/packages/
 (cd /work/packages && sha256sum --check SHA256SUMS)
+python3 - <<'PY'
+import json, os
+from pathlib import Path
+metadata = json.loads(Path('/work/packages/linux-build.json').read_text())
+assert metadata['sha'] == os.environ['CANDIDATE_SHA'], 'Package and requested candidate differ'
+assert metadata['architecture'] == 'x86_64'
+PY
 set -- /work/packages/*-linux-x86_64.tar.gz
 [ "$#" = 1 ] && [ -f "$1" ]
 archive=$1
@@ -44,6 +51,7 @@ run_session() {
 runuser -u chda-test -- python3 /driver/native_session.py \
     --launcher "$launcher" --artifact "$artifact" --candidate-sha "$CANDIDATE_SHA" \
     --backend "${DISPLAY_BACKEND:-x11}" --round "${REVIEW_ROUND:-1}" \
+    --compositor "${COMPOSITOR:-mutter}" --stage "${NATIVE_STAGE:-startup}" \
     --evidence /evidence/session
 
 }
