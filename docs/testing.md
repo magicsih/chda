@@ -304,6 +304,7 @@ launcher retains the original package only when APPDIR contains this exact
 packaged chda executable and its desktop marker; portable executables ignore
 another application's inherited AppImage environment. Each helper uses its own
 temporary extraction directory, preserves stdin and exits with its child status.
+Its extract-and-run mode also works without the GUI's AppImage environment or FUSE.
 Direct termination forwards to the helper process group before cleanup. Private
 metadata stays non-executable. Native package acceptance separately executes frozen
 pre-restart hook commands after removing the stopped runtime's isolated temp

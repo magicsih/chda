@@ -477,7 +477,15 @@ fn stop_and_close_clears_the_worktree_working_status(cx: &mut TestAppContext) {
     // An agent pane whose process ends without a session end.
     h.keys("cmd-t");
     let ending = cd(&mut h, &repo);
-    let pid = shell_pid(&mut h, "ending");
+    // Reading the PTY child avoids an extra shell command and its prompt
+    // racing the following out-of-band hook. exec keeps this process ID.
+    let pid = h.read(|view, cx| {
+        view.panes[&ending]
+            .0
+            .read(cx)
+            .child_pid()
+            .expect("the ending pane has a shell process")
+    });
     run_agent(&mut h, "ending", "exec sleep 600");
     h.hook_session(
         Some(ending.raw()),
