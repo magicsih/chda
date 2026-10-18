@@ -13,6 +13,27 @@ const DEFAULT_BACKGROUND: Rgb = Rgb {
 };
 
 #[gpui::test]
+fn restoring_window_focus_keeps_an_open_palette_as_the_keyboard_target(cx: &mut TestAppContext) {
+    let mut h = Harness::open(cx, "palette-focus", |_| {});
+    h.wait_prompt();
+    h.keys("cmd-shift-p");
+    h.type_text("Split right");
+    // The native activation observer uses this same focus-restoration path.
+    // Wayland resizing can reactivate a window while its palette is still open.
+    h.cx.update(|window, cx| {
+        h.view.update(cx, |view, cx| view.focus(window, cx));
+    });
+    h.keys("enter");
+    h.read(|view, _| {
+        assert!(
+            view.palette.is_none(),
+            "Enter must choose the open palette action"
+        );
+        assert_eq!(view.ws.active_tab().unwrap().panes().len(), 2);
+    });
+}
+
+#[gpui::test]
 fn a_narrow_palette_keeps_its_panel_and_keyboard_selection_inside_the_window(
     cx: &mut TestAppContext,
 ) {

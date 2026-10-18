@@ -3670,6 +3670,10 @@ impl WorkspaceView {
             .is_some_and(|confirm| matches!(confirm.action, MenuAction::StopAndClose { .. }))
         {
             window.focus(&self.focus_handle, cx);
+        } else if let Some((palette, _)) = &self.palette {
+            // Compositors may reactivate the window after a resize. Keep an
+            // open palette's input instead of sending its keys to the shell.
+            window.focus(&palette.read(cx).input_focus(cx), cx);
         } else if let Some(pane) = self.ws.focused_pane()
             && let Some((view, _)) = self.panes.get(&pane)
         {
