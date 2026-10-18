@@ -255,6 +255,7 @@ pub struct NotificationTarget {
     pub worktree: PathBuf,
 }
 
+#[cfg(any(target_os = "macos", test))]
 impl NotificationTarget {
     /// Encode as a notification identifier: `chda/<nonce>/<pane or ->/<path>`.
     /// The nonce keeps identifiers unique so notifications do not replace

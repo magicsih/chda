@@ -1,0 +1,50 @@
+{
+  "version": "1.0",
+  "status": "approved",
+  "design": "design.md",
+  "baseline": "8f6f82224ecb7cbb1b2623737d8e17c04335d4c2",
+  "level": "L3",
+  "environment": "dev",
+  "executor": "confirmed CI for workspace regression; independent native UI verification for new controls",
+  "targetArchitecture": "x86_64",
+  "distributionFamilies": ["Ubuntu LTS", "Debian", "Fedora", "Arch"],
+  "distributionVersions": "Pin supported image versions and digests before implementation runs",
+  "displaySystems": ["Wayland", "X11"],
+  "compatibilityTarget": "glibc >= 2.31, verified from the finished payload and runtime execution",
+  "artifactFormats": ["AppImage", "portable archive"],
+  "dataIsolation": "Temporary HOME, XDG paths, repositories and test-only agent fixtures",
+  "checks": [
+    "cargo fmt --all --check",
+    "cargo clippy --workspace --all-targets -- -D warnings on Linux and macOS",
+    "cargo test --workspace on Linux and macOS",
+    "Windows build regression",
+    "GLIBC and GLIBCXX symbol floors and bundled dependency audit",
+    "Same-candidate packaged startup and shell workflow on each distro family",
+    "Native Linux window execution and rendered input checks under X11 and Wayland",
+    "Three independent planned UI rounds if new client-side window controls are drawn",
+    "python3 scripts/test-product-docs.py",
+    "python3 scripts/sync-product-docs.py --check"
+  ],
+  "acceptance": [
+    "Terminal, clipboard, Unicode, IME, selection, links and shell interruption work",
+    "Window controls work with and without compositor-provided decorations",
+    "Folder dialogs, worktree creation, pane-specific agent status and restart work",
+    "Foreground cwd works without shell OSC 7 reports",
+    "Packaged agent hooks and MCP work after relaunch",
+    "Notification clicks target the exact pane; absent services do not block input",
+    "Config and data remain outside both package formats",
+    "Both artifacts run without relying on build-machine paths"
+  ],
+  "evidenceRules": [
+    "Record candidate SHA, artifact digest, distro version, display backend and rendering device",
+    "Distinguish GPUI scenarios, native software rendering and physical GPU execution",
+    "Do not mark missing native, IME or GPU coverage as passing",
+    "Do not close parent issue 14 or Windows portions of shared issues based on Linux work"
+  ],
+  "delivery": "Reviewed Ready PRs, verified Linux artifacts and public release",
+  "release": {
+    "requested": true,
+    "markets": ["GitHub Releases Linux x86_64"],
+    "until": "public"
+  }
+}
