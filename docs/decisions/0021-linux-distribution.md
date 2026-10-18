@@ -24,7 +24,8 @@ sessions separately from the ABI audit.
 
 AppImage agent commands use a private launcher in the user's chda data directory,
 referencing the original image rather than its temporary mount. Every helper
-extracts into a separate temporary directory so overlapping hooks, MCP and the
+uses extract-and-run in a separate temporary directory, including outside the
+GUI environment and without FUSE, so overlapping hooks, MCP and the
 running GUI cannot delete each other's runtime. The launcher requires util-linux
 `setsid`, preserves protocol stdin, forwards direct termination to its child
 process group and removes its own temporary directory on normal exit or trapped
