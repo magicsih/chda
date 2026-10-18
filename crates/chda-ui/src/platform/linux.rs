@@ -27,6 +27,15 @@ fn available(program: &str) -> bool {
 }
 
 fn can_open_folders(entry: &DesktopEntry) -> bool {
+    let desktops = std::env::var("XDG_CURRENT_DESKTOP")
+        .unwrap_or_default()
+        .split(':')
+        .map(str::to_owned)
+        .collect::<Vec<_>>();
+    can_open_folders_on(entry, &desktops)
+}
+
+fn can_open_folders_on(entry: &DesktopEntry, desktops: &[String]) -> bool {
     const EDITORS: &[&str] = &[
         "code",
         "code-oss",
@@ -39,11 +48,33 @@ fn can_open_folders(entry: &DesktopEntry) -> bool {
         "jetbrains-idea-ce",
         "jetbrains-pycharm",
     ];
+    let only = entry.only_show_in();
+    let excluded = entry.not_show_in();
+    let visible = desktops
+        .iter()
+        .filter(|desktop| !desktop.is_empty())
+        .find_map(|desktop| {
+            if only
+                .as_ref()
+                .is_some_and(|names| names.contains(&desktop.as_str()))
+            {
+                Some(true)
+            } else if excluded
+                .as_ref()
+                .is_some_and(|names| names.contains(&desktop.as_str()))
+            {
+                Some(false)
+            } else {
+                None
+            }
+        })
+        .unwrap_or(only.is_none());
     entry.type_() == Some("Application")
         && !entry.hidden()
         && !entry.no_display()
         && !entry.terminal()
-        && entry.exec().is_some()
+        && (entry.exec().is_some() || entry.dbus_activatable())
+        && visible
         && entry.desktop_entry("TryExec").is_none_or(available)
         && (entry
             .mime_type()
@@ -199,5 +230,33 @@ mod tests {
         )
         .unwrap();
         assert!(!can_open_folders(&unrelated));
+    }
+
+    #[test]
+    fn desktop_visibility_and_dbus_only_applications_follow_the_specification() {
+        let gnome = vec!["GNOME".to_owned()];
+        let kde = vec!["KDE".to_owned()];
+        let restricted = entry("OnlyShowIn=KDE;\n");
+        assert!(!can_open_folders_on(&restricted, &gnome));
+        assert!(!can_open_folders_on(&restricted, &[]));
+        assert!(can_open_folders_on(&restricted, &kde));
+        let excluded = entry("NotShowIn=GNOME;\n");
+        assert!(!can_open_folders_on(&excluded, &gnome));
+        assert!(can_open_folders_on(&excluded, &kde));
+        let activated = DesktopEntry::from_str(
+            Path::new("/fixture/org.example.Files.desktop"),
+            "[Desktop Entry]\nType=Application\nName=Files\nDBusActivatable=true\nMimeType=inode/directory;\n",
+            None::<&[&str]>,
+        ).unwrap();
+        assert!(can_open_folders_on(&activated, &gnome));
+        let ordered = entry("OnlyShowIn=KDE;\nNotShowIn=GNOME;\n");
+        assert!(can_open_folders_on(
+            &ordered,
+            &["KDE".into(), "GNOME".into()]
+        ));
+        assert!(!can_open_folders_on(
+            &ordered,
+            &["GNOME".into(), "KDE".into()]
+        ));
     }
 }

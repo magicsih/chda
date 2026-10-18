@@ -718,7 +718,7 @@ impl TerminalView {
         }
         let ks = &event.keystroke;
         // Command shortcuts belong to the app, never to the shell.
-        if ks.modifiers.platform {
+        if crate::platform::consumes_terminal_key(ks) {
             return;
         }
         // Plain characters arrive through the input handler (IME path) when
@@ -1166,7 +1166,7 @@ impl TerminalView {
         mods: GpuiModifiers,
         cx: &mut Context<Self>,
     ) {
-        self.cmd_held = mods.platform;
+        self.cmd_held = crate::platform::link_modifier(mods);
         self.hover_cell = self.geometry.and_then(|g| {
             let x = f32::from(position.x - g.origin.x) / f32::from(g.cell_width);
             let y = f32::from(position.y - g.origin.y) / f32::from(g.line_height);
@@ -1182,8 +1182,8 @@ impl TerminalView {
         _: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        if self.cmd_held != event.modifiers.platform {
-            self.cmd_held = event.modifiers.platform;
+        if self.cmd_held != crate::platform::link_modifier(event.modifiers) {
+            self.cmd_held = crate::platform::link_modifier(event.modifiers);
             self.update_link(cx);
         }
     }
@@ -1196,7 +1196,9 @@ impl TerminalView {
         self.track_hover(event.position, event.modifiers, cx);
         let wants_menu = match event.button {
             MouseButton::Right => !self.frame.mouse_tracking || event.modifiers.shift,
-            MouseButton::Left => event.modifiers.platform && event.modifiers.shift,
+            MouseButton::Left => {
+                crate::platform::link_modifier(event.modifiers) && event.modifiers.shift
+            }
             _ => false,
         };
         if wants_menu && self.frame.cells.iter().any(|c| c.selected) {
@@ -1222,7 +1224,7 @@ impl TerminalView {
             return;
         }
         if event.button == MouseButton::Left
-            && event.modifiers.platform
+            && crate::platform::link_modifier(event.modifiers)
             && let Some((x, y)) = self.hover_cell
             && let Some(link) = self.action_link_at(x, y)
         {
@@ -1236,7 +1238,7 @@ impl TerminalView {
         }
         // cmd-click on a Mermaid block shows the diagram.
         if event.button == MouseButton::Left
-            && event.modifiers.platform
+            && crate::platform::link_modifier(event.modifiers)
             && let Some((_, y)) = self.hover_cell
             && let Some(d) = self
                 .frame

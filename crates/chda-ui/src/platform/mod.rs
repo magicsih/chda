@@ -7,6 +7,13 @@ use futures::FutureExt;
 use futures::channel::oneshot;
 use futures::future::LocalBoxFuture;
 
+mod keymap;
+mod window;
+#[cfg(test)]
+pub(crate) use keymap::link_modifiers;
+pub(crate) use keymap::{consumes_terminal_key, link_modifier, shortcut, shortcut_hint};
+pub(crate) use window::{controls as window_controls, frame as window_frame, has_application_menu};
+
 #[cfg(target_os = "linux")]
 mod linux;
 #[cfg(target_os = "macos")]

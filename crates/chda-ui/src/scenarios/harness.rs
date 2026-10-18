@@ -482,7 +482,12 @@ impl Harness {
 
     /// Type key bindings, e.g. `"cmd-t"` or `"cmd-shift-a"`.
     pub fn keys(&mut self, keys: &str) {
-        self.cx.simulate_keystrokes(keys);
+        let keys = keys
+            .split_whitespace()
+            .map(crate::platform::shortcut)
+            .collect::<Vec<_>>()
+            .join(" ");
+        self.cx.simulate_keystrokes(&keys);
         self.cx.run_until_parked();
     }
 
