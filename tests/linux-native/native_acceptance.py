@@ -11,7 +11,7 @@ import uuid
 from pathlib import Path
 
 from native_driver import run
-from native_visual import phrase_center, sentinel_bounds
+from native_visual import phrase_center, sentinel_bounds, wait_for_rendered
 from native_journey import wait
 
 
@@ -194,15 +194,17 @@ if result.returncode:raise SystemExit(result.returncode)
         try:
             query=run(["xdg-mime","query","default","x-scheme-handler/http"]).strip()
             if query!="chda-validation-uri.desktop":raise AssertionError("Private native URI handler not selected")
-            self.driver.command("printf '\\033[2J\\033[H\\033]8;;"+url+"\\033\\\\CHDALINKSENTINEL\\033]8;;\\033\\\\\\n'")
-            image=self.driver.screenshot("link-before-control-click")
+            output=self.driver.marker("link-terminal-output.txt", "printf '\\033[2J\\033[H\\033]8;;"+url+"\\033\\\\CHDA%sSENTINEL\\033]8;;\\033\\\\\\n' LINK")
+            if "CHDALINKSENTINEL" not in output or url not in output:
+                raise AssertionError("Actual shell did not emit the link fixture")
+            image=wait_for_rendered(self.driver,"CHDALINKSENTINEL","link-before-control-click")
             coordinates=sentinel_bounds(image,"CHDALINKSENTINEL")
             x=(coordinates[0]+coordinates[2])//2;y=coordinates[1]
             if self.driver.input_backend!="x11":
                 raise RuntimeError("Link modifier helper currently requires actual XTest input; native Wayland via Mutter parent is supported")
             run(["xdotool","keydown","ctrl"])
             try:
-                run(["xdotool","mousemove","--sync",str(x),str(y)])
+                self.driver.move_pointer(x, y)
                 self.driver.screenshot("link-control-hover")
                 self.driver.click(x,y)
             finally:run(["xdotool","keyup","ctrl"])

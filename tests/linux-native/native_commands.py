@@ -47,7 +47,7 @@ def _commands(journey, label, width, height):
                           visualInspection="pending actual hover/open PNG review")
     if journey.driver.input_backend != "x11":
         raise RuntimeError("Commands hover helper requires XTest or native Mutter parent input")
-    run(["xdotool", "mousemove", "--sync", str(x), str(y)])
+    journey.driver.move_pointer(x, y)
     time.sleep(.9)
     hover = journey.driver.screenshot(label + "-commands-hover")
     _ocr(hover, ["Commands", "Ctrl", "Shift", "P"])

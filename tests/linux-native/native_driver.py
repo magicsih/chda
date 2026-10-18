@@ -167,14 +167,54 @@ class Driver:
             return env
         return None
 
+    def move_pointer(self, x, y):
+        """Send real XTest motion to the isolated X server, including Mutter's seat."""
+        if self.input_backend != "x11":
+            raise RuntimeError("XTest pointer movement requires the isolated X11 input backend")
+        import ctypes
+        x, y = round(x), round(y)
+        x11 = ctypes.CDLL("libX11.so.6")
+        xtst = ctypes.CDLL("libXtst.so.6")
+        display_type = ctypes.c_void_p
+        int_pointer = ctypes.POINTER(ctypes.c_int)
+        x11.XOpenDisplay.argtypes = [ctypes.c_char_p]
+        x11.XOpenDisplay.restype = display_type
+        x11.XDefaultScreen.argtypes = [display_type]
+        x11.XDefaultScreen.restype = ctypes.c_int
+        x11.XSync.argtypes = [display_type, ctypes.c_int]
+        x11.XSync.restype = ctypes.c_int
+        x11.XCloseDisplay.argtypes = [display_type]
+        x11.XCloseDisplay.restype = ctypes.c_int
+        xtst.XTestQueryExtension.argtypes = [display_type, int_pointer, int_pointer,
+                                           int_pointer, int_pointer]
+        xtst.XTestQueryExtension.restype = ctypes.c_int
+        xtst.XTestFakeMotionEvent.argtypes = [display_type, ctypes.c_int, ctypes.c_int,
+                                            ctypes.c_int, ctypes.c_ulong]
+        xtst.XTestFakeMotionEvent.restype = ctypes.c_int
+        display = x11.XOpenDisplay(os.environ["DISPLAY"].encode())
+        if not display:
+            raise RuntimeError("Could not open the isolated X11 display for pointer input")
+        try:
+            event, error, major, minor = (ctypes.c_int() for _ in range(4))
+            if not xtst.XTestQueryExtension(display, ctypes.byref(event), ctypes.byref(error),
+                                           ctypes.byref(major), ctypes.byref(minor)):
+                raise RuntimeError("The isolated X11 server does not provide XTest")
+            if not xtst.XTestFakeMotionEvent(display, x11.XDefaultScreen(display), x, y, 0):
+                raise RuntimeError("XTest rejected the isolated pointer movement")
+            x11.XSync(display, False)
+        finally:
+            if x11.XCloseDisplay(display) != 0:
+                raise RuntimeError("Could not close the isolated pointer display")
+        self.record("actual-pointer-move", at=[x, y], transport="XTestFakeMotionEvent + XSync")
+
     def drag(self, x1, y1, x2, y2):
         if self.input_backend == "x11":
-            run(["xdotool", "mousemove", "--sync", str(x1), str(y1)])
+            self.move_pointer(x1, y1)
             time.sleep(.15)
             run(["xdotool", "mousedown", "1"])
             time.sleep(.1)
             for index in range(1, 21):
-                run(["xdotool", "mousemove", "--sync", str(round(x1 + (x2-x1)*index/20)), str(round(y1 + (y2-y1)*index/20))])
+                self.move_pointer(x1 + (x2-x1)*index/20, y1 + (y2-y1)*index/20)
                 time.sleep(.02)
             time.sleep(.1)
             run(["xdotool", "mouseup", "1"])
@@ -186,7 +226,7 @@ class Driver:
 
     def click(self, x, y):
         if self.input_backend == "x11":
-            run(["xdotool", "mousemove", "--sync", str(x), str(y)])
+            self.move_pointer(x, y)
             time.sleep(.15)
             run(["xdotool", "click", "1"])
         else:
