@@ -50,6 +50,7 @@ mod appimage {
     fn script(image: &Path) -> Vec<u8> {
         let mut text = br#"#!/bin/sh
 set -eu
+umask 077
 unset TARGET_APPIMAGE
 command -v setsid >/dev/null || { echo 'chda: agent helpers require util-linux (setsid)' >&2; exit 1; }
 chda_helper_tmp=$(mktemp -d "${TMPDIR:-/tmp}/chda-helper.XXXXXXXX")
@@ -61,7 +62,7 @@ chda_helper_stop() {
     exit "$1"
 }
 exec 3<&0
-TMPDIR="$chda_helper_tmp" setsid -- '"#.to_vec();
+APPIMAGE_EXTRACT_AND_RUN=1 TMPDIR="$chda_helper_tmp" setsid -- '"#.to_vec();
         for &byte in image.as_os_str().as_bytes() {
             if byte == b'\'' {
                 text.extend_from_slice(b"'\\''");
@@ -139,7 +140,11 @@ if wait "$chda_helper_pid"; then exit 0; else exit "$?"; fi
             let image = root.join("chda package ' 世界.AppImage");
             std::fs::create_dir_all(executable.parent().unwrap()).unwrap();
             std::fs::write(&executable, b"fixture").unwrap();
-            std::fs::write(&image, b"#!/bin/sh\nprintf '%s\\n' \"$TMPDIR\"\ncat\n").unwrap();
+            std::fs::write(
+                &image,
+                b"#!/bin/sh\nset -eu\n[ \"${APPIMAGE_EXTRACT_AND_RUN-}\" = 1 ] || exit 42\nmkdir \"$TMPDIR/nested\"\nprintf fixture > \"$TMPDIR/nested/marker\"\nprintf '%s\\n' \"$TMPDIR\"\ncat\n",
+            )
+            .unwrap();
             std::fs::set_permissions(&image, std::fs::Permissions::from_mode(0o700)).unwrap();
             std::fs::write(directory.join("com.magicsih.chda.desktop"), b"fixture").unwrap();
             let executable = executable.canonicalize().unwrap();
@@ -155,7 +160,10 @@ if wait "$chda_helper_pid"; then exit 0; else exit "$?"; fi
             std::fs::remove_dir_all(&directory).unwrap();
             #[cfg(target_os = "linux")]
             let run = || {
-                let mut child = Command::new(&helper)
+                let mut child = Command::new("/bin/sh")
+                    .args(["-c", "umask 0177; exec \"$@\"", "chda-helper-umask"])
+                    .arg(&helper)
+                    .env_remove("APPIMAGE_EXTRACT_AND_RUN")
                     .stdin(Stdio::piped())
                     .stdout(Stdio::piped())
                     .spawn()
