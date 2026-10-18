@@ -77,12 +77,21 @@ def stage(binary, output, version, sha, collect_sources):
     executable = bindir / "chda"
     shutil.copy2(binary, executable)
     dependencies = dependency_paths(run("ldd", str(binary)))
+    # wayland-backend loads its system client with dlopen, so ldd on the
+    # executable alone cannot discover it or its transitive dependencies.
+    cache = run("ldconfig", "-p")
+    wayland = re.search(r"^\s*libwayland-client\.so\.0\s+\([^)]*\)\s+=>\s+(/\S+)", cache, re.MULTILINE)
+    if not wayland:
+        raise ValueError("Missing Wayland client runtime")
+    client = pathlib.Path(wayland.group(1))
+    dependencies["libwayland-client.so.0"] = client
+    dependencies.update(dependency_paths(run("ldd", str(client))))
     libraries = []
     sources = set()
     for name, path in sorted(dependencies.items()):
         target = libdir / name
         shutil.copy2(path.resolve(), target)
-        owner = run("dpkg-query", "-S", str(path)).split(": ", 1)[0].strip()
+        owner = run("dpkg-query", "-S", str(path.resolve())).split(": ", 1)[0].strip()
         package = owner.split(":", 1)[0]
         copyright_file = pathlib.Path("/usr/share/doc") / package / "copyright"
         if not copyright_file.exists():

@@ -6,4 +6,4 @@ Exec=chda
 Icon=chda
 Terminal=false
 Categories=System;TerminalEmulator;Development;
-StartupWMClass=chda
+StartupWMClass=com.magicsih.chda
