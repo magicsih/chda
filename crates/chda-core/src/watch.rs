@@ -24,7 +24,9 @@ impl RepoWatcher {
     pub fn new(changed: impl Fn(PathBuf) + Send + 'static) -> notify::Result<Self> {
         let (tx, rx) = mpsc::channel::<PathBuf>();
         let watcher = notify::recommended_watcher(move |event: notify::Result<notify::Event>| {
-            if let Ok(event) = event {
+            if let Ok(event) = event
+                && !matches!(event.kind, notify::EventKind::Access(_))
+            {
                 for path in event.paths {
                     let _ = tx.send(path);
                 }
@@ -78,7 +80,9 @@ impl FileWatcher {
     pub fn new(changed: impl Fn() + Send + 'static) -> notify::Result<Self> {
         let (tx, rx) = mpsc::channel::<PathBuf>();
         let watcher = notify::recommended_watcher(move |event: notify::Result<notify::Event>| {
-            if let Ok(event) = event {
+            if let Ok(event) = event
+                && !matches!(event.kind, notify::EventKind::Access(_))
+            {
                 for path in event.paths {
                     let _ = tx.send(path);
                 }
@@ -196,6 +200,52 @@ fn debounce_loop(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn reading_config_does_not_trigger_a_reload() {
+        let root =
+            std::env::temp_dir().join(format!("chda-watch-read-config-{}", std::process::id()));
+        std::fs::create_dir_all(&root).unwrap();
+        let file = root.join("config");
+        std::fs::write(&file, "value").unwrap();
+        let (tx, rx) = mpsc::channel();
+        let mut watcher = FileWatcher::new(move || {
+            let _ = tx.send(());
+        })
+        .unwrap();
+        watcher.set_files([file.clone()]);
+        std::thread::sleep(Duration::from_millis(100));
+        assert_eq!(std::fs::read_to_string(file).unwrap(), "value");
+        assert!(
+            rx.recv_timeout(Duration::from_millis(800)).is_err(),
+            "reading unchanged config triggered reload"
+        );
+        drop(watcher);
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn reading_git_refs_does_not_trigger_a_refresh() {
+        let root =
+            std::env::temp_dir().join(format!("chda-watch-read-refs-{}", std::process::id()));
+        std::fs::create_dir_all(root.join(".git/refs/heads")).unwrap();
+        let head = root.join(".git/HEAD");
+        std::fs::write(&head, "ref: refs/heads/main").unwrap();
+        let (tx, rx) = mpsc::channel();
+        let mut watcher = RepoWatcher::new(move |repo| {
+            let _ = tx.send(repo);
+        })
+        .unwrap();
+        watcher.watch(&root).unwrap();
+        std::thread::sleep(Duration::from_millis(100));
+        std::fs::read_to_string(head).unwrap();
+        assert!(
+            rx.recv_timeout(Duration::from_millis(900)).is_err(),
+            "reading unchanged HEAD triggered refresh"
+        );
+        drop(watcher);
+        std::fs::remove_dir_all(root).unwrap();
+    }
 
     #[test]
     fn file_changes_are_reported_once_per_burst() {

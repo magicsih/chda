@@ -520,6 +520,12 @@ mod tests {
         let Some(fish) = fish() else {
             return;
         };
+        let has_native_marks = std::process::Command::new(&fish)
+            .args(["-c", "status test-feature mark-prompt"])
+            .output()
+            .unwrap()
+            .status
+            .success();
         // Native: fish 4 writes the marks itself (ST-terminated) and the
         // script must stay out of the way. Fallback: with fish's own marks
         // off, as in fish 3, the script writes them (BEL-terminated).
@@ -574,7 +580,7 @@ mod tests {
             for needle in own {
                 assert_eq!(
                     out.contains(needle),
-                    !native,
+                    !(native && has_native_marks),
                     "native={native} {needle:?} in {out:?}"
                 );
             }

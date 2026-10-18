@@ -130,6 +130,10 @@ jobs:
       - run: cargo clippy --workspace --all-targets -- -D warnings
       - name: Linux shell scenario
         run: cargo test -p chda-ui scenarios::input::shells_get_the_locale -- --nocapture
+      - name: Linux file-watch and sidebar regression
+        run: |
+          cargo test -p chda-core watch::tests -- --nocapture
+          timeout 180s cargo test -p chda-ui scenarios::reorder -- --nocapture
       - run: cargo test --workspace --no-fail-fast -- --nocapture
       - run: cargo build --workspace --release
 
