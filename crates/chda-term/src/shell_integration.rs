@@ -196,6 +196,9 @@ pub(crate) mod test_shells {
         let dir = std::env::temp_dir().join(format!("chda-{tag}-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&dir);
         std::fs::create_dir_all(&dir).unwrap();
+        // Test only the fixture's startup files, independent of system-wide
+        // completion setup and the developer/runner's installed plugins.
+        std::fs::write(dir.join(".zshenv"), "unsetopt GLOBAL_RCS\n").unwrap();
         std::fs::canonicalize(&dir).unwrap()
     }
 
@@ -280,8 +283,10 @@ mod tests {
         fn spawn(command: &[String], home: &Path, launch: &ShellLaunch) -> Self {
             let command: Vec<&str> = command.iter().map(String::as_str).collect();
             let home_str = home.to_string_lossy();
+            let config = home.join(".config").to_string_lossy().into_owned();
             let mut env: Vec<(&str, &str)> = vec![
                 ("HOME", &home_str),
+                ("XDG_CONFIG_HOME", &config),
                 ("TERM", "xterm-256color"),
                 ("BASH_SILENCE_DEPRECATION_WARNING", "1"),
             ];
@@ -511,10 +516,41 @@ mod tests {
     }
 
     #[test]
+    fn bash_integration_preserves_spaces_and_unicode_in_directory_titles() {
+        for bash in bashes() {
+            let home = temp_home("bash-directory-title");
+            let directory = "folder with spaces 世界 [x]";
+            fs::create_dir(home.join(directory)).unwrap();
+            fs::write(home.join(".bash_profile"), "PS1='chda$ '\n").unwrap();
+            let launch = launch_for(ShellIntegration::Detect, &bash, &home).unwrap();
+            let mut command = vec![bash.to_string_lossy().into_owned()];
+            command.extend(launch.args.iter().cloned());
+            let mut t = Transcript::spawn(&command, &home, &launch);
+            t.wait_for("chda$ ", 1);
+            t.send(&format!("cd \"$HOME/{directory}\"\n"));
+            t.wait_for("chda$ ", 2);
+            let out = t.finish();
+            assert!(
+                out.contains(&format!("\x1b]2;~/{directory}\x07")),
+                "{}: directory title was split: {out:?}",
+                bash.display()
+            );
+            assert!(!out.contains("not a valid identifier"), "{out:?}");
+            fs::remove_dir_all(home).unwrap();
+        }
+    }
+
+    #[test]
     fn fish_integration_writes_marks_and_keeps_user_config() {
         let Some(fish) = fish() else {
             return;
         };
+        let has_native_marks = std::process::Command::new(&fish)
+            .args(["-c", "status test-feature mark-prompt"])
+            .output()
+            .unwrap()
+            .status
+            .success();
         // Native: fish 4 writes the marks itself (ST-terminated) and the
         // script must stay out of the way. Fallback: with fish's own marks
         // off, as in fish 3, the script writes them (BEL-terminated).
@@ -569,7 +605,7 @@ mod tests {
             for needle in own {
                 assert_eq!(
                     out.contains(needle),
-                    !native,
+                    !(native && has_native_marks),
                     "native={native} {needle:?} in {out:?}"
                 );
             }

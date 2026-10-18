@@ -2,6 +2,16 @@ name: Linux packages
 
 on:
   pull_request:
+    paths:
+      - 'Cargo.*'
+      - 'rust-toolchain.toml'
+      - 'crates/**'
+      - 'packaging/**'
+      - 'scripts/**'
+      - 'tests/**'
+      - 'assets/**'
+      - 'LICENSE*'
+      - '.github/workflows/linux.yml'
   push:
     branches: [main]
   workflow_dispatch:
@@ -172,7 +182,7 @@ jobs:
           retention-days: 3
 
   desktop:
-    name: Linux desktop workflow (${{ matrix.backend }})
+    name: Linux desktop workflow (${{ matrix.session }})
     needs: package
     runs-on: ubuntu-24.04
     timeout-minutes: 20
@@ -180,14 +190,25 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - backend: x11
+          - session: x11
+            backend: x11
             format: archive
-          - backend: wayland
+            stage: full
+            compositor: mutter
+          - session: wayland
+            backend: wayland
             format: appimage
+            stage: full
+            compositor: mutter
+          - session: wayland-ime
+            backend: wayland
+            format: appimage
+            stage: ime-wayland
+            compositor: labwc
     env:
       NATIVE_IMAGE: debian:trixie-slim@sha256:918311b7b6c4c6f68b232ba516584925f6c78ad82b6fd534b98979df6438e483
-      NATIVE_STAGE: full
-      COMPOSITOR: mutter
+      NATIVE_STAGE: ${{ matrix.stage }}
+      COMPOSITOR: ${{ matrix.compositor }}
       DISPLAY_BACKEND: ${{ matrix.backend }}
       PACKAGE_FORMAT: ${{ matrix.format }}
     steps:
@@ -209,7 +230,7 @@ jobs:
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         if: always()
         with:
-          name: linux-desktop-${{ matrix.backend }}
+          name: linux-desktop-${{ matrix.session }}
           path: |
             native-evidence
             !native-evidence/session/cache/**

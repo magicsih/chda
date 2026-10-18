@@ -7,7 +7,10 @@ Status: accepted within the approved Linux desktop design, 2026-10-18.
 Build the first Linux x86_64 executable on pinned Ubuntu 20.04, with glibc 2.31.
 Audit imported GLIBC, GLIBCXX and CXXABI symbols in the finished executable and
 every bundled library. Preserve the host's glibc, C++ runtime and graphics
-loader/drivers. Bundle the remaining linked libraries with relative RUNPATHs.
+loader/drivers and their Wayland/XCB client libraries. A host Mesa EGL driver
+can require newer client symbols than the compatibility builder provides;
+loading an older bundled client first breaks that driver. Bundle the remaining
+linked libraries with relative RUNPATHs.
 Do not export `LD_LIBRARY_PATH` into terminal shells or launched editors.
 Include dependency copyright files and publish the unmodified distribution
 source archives beside the binaries.

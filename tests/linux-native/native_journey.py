@@ -199,13 +199,17 @@ class Journey:
         if abs(restored["width"]-geometry["width"]) > 8:
             raise AssertionError("Actual maximize/restore button did not restore size")
         self.control("minimize", restored)
-        minimized = self.driver.screenshot("window-minimized")
-        try:
-            background_bounds(minimized)
-        except AssertionError:
-            pass
-        else:
-            raise AssertionError("Actual minimize button left the candidate background visible")
+        minimized = False
+        for attempt in range(8):
+            image = self.driver.screenshot("window-minimized-" + str(attempt))
+            try:
+                background_bounds(image)
+            except AssertionError:
+                minimized = True
+                break
+            time.sleep(.3)
+        if not minimized:
+            raise AssertionError("Actual minimize button left the candidate background visible after animation settled")
         self.restore_minimized()
         self.observe("window-unminimized")
         self.driver.marker("after-unminimize.txt", "printf UNMINIMIZE_OK")
@@ -445,6 +449,9 @@ class Journey:
             self.step("foreground child cwd without OSC7 and recovery after CtrlC", self.acceptance.cwd_checks)
             self.step("actual worktree creation sheet, branch and terminal", self.acceptance.worktree_checks)
             self.step("native terminal Ctrl+click URI dispatch", self.acceptance.link_checks)
+            from native_commands import exercise as commands_about
+            self.step("actual Commands button and About prompt at default/narrow sizes",
+                      lambda: commands_about(self))
             self.step("default and narrow window, actual buttons, title move, eight resize areas", self.window_checks)
             self.step("real folder chooser cancel, select and retry", self.folder_checks)
             self.step("actual installed hook command and pane-specific MCP status",

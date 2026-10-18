@@ -186,6 +186,10 @@ mod tests {
         commit(&origin, "a");
         git(&root, &["clone", "-q", "origin", "clone"]);
         let clone = root.join("clone");
+        // Rebase and merge run through the real update command, without the
+        // helper's -c options. Do not depend on the runner's global identity.
+        git(&clone, &["config", "user.name", "Test User"]);
+        git(&clone, &["config", "user.email", "test@example.invalid"]);
         (root, origin, clone)
     }
 

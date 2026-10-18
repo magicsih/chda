@@ -5,12 +5,25 @@
   "dataIsolation": "Fresh HOME, XDG paths, repository and session bus for each backend and round",
   "sessionsPerRound": [
     "X11 Openbox server decorations, portable archive",
-    "Native Wayland Mutter client decorations, AppImage extract-and-run"
+    "Native Wayland Mutter client decorations, AppImage extract-and-run",
+    "Native Wayland labwc with Fcitx5 Hangul preedit and commit, same AppImage"
   ],
   "rounds": [
-    {"round": 1, "focus": "Default layout and primary behavior", "status": "not-run"},
-    {"round": 2, "focus": "Narrow layout and pointer targets", "status": "not-run"},
-    {"round": 3, "focus": "Multiple windows, restart and absent services", "status": "not-run"}
+    {
+      "round": 1,
+      "focus": "Default layout and primary behavior",
+      "status": "not-run"
+    },
+    {
+      "round": 2,
+      "focus": "Narrow layout and pointer targets",
+      "status": "not-run"
+    },
+    {
+      "round": 3,
+      "focus": "Multiple windows, restart and absent services",
+      "status": "not-run"
+    }
   ],
   "requiredEachSession": [
     "Actual candidate metadata, package digest and renderer readback",
@@ -23,7 +36,8 @@
     "Two pane notification delivery and ActionInvoked exact-pane readback",
     "Notification click after the newest window closes",
     "Absent notification service keeps terminal input responsive",
-    "Restart preserves isolated configuration and sessions"
+    "Restart preserves isolated configuration and sessions",
+    "Actual Commands button and About prompt at default and narrow sizes, exact repository URI dispatch"
   ],
   "additionalReleaseAcceptance": [
     "Native Unicode and IME preedit/commit, recorded separately",

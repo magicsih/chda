@@ -13,22 +13,62 @@ from PIL import Image, ImageChops, ImageDraw
 BACKGROUND = (32, 36, 41)
 
 
+def largest_region(mask):
+    """Run-length connected components avoid isolated same-color text pixels."""
+    width,height=mask.size
+    data=mask.tobytes();parents=[];runs=[];previous=[]
+    def find(index):
+        while parents[index]!=index:
+            parents[index]=parents[parents[index]];index=parents[index]
+        return index
+    for y in range(height):
+        current=[];cursor=0
+        for match in re.finditer(b"\xff+",data[y*width:(y+1)*width]):
+            left,right=match.span();index=len(parents);parents.append(index)
+            runs.append((index,left,right,y));current.append((left,right,index))
+            while cursor<len(previous) and previous[cursor][1]<=left:cursor+=1
+            candidate=cursor
+            while candidate<len(previous) and previous[candidate][0]<right:
+                parent=find(previous[candidate][2]);own=find(index)
+                if parent!=own:parents[parent]=own
+                candidate+=1
+        previous=current
+    regions={}
+    for index,left,right,y in runs:
+        root=find(index)
+        if root not in regions:regions[root]=[0,left,y,right,y+1]
+        region=regions[root];region[0]+=right-left
+        region[1]=min(region[1],left);region[2]=min(region[2],y)
+        region[3]=max(region[3],right);region[4]=max(region[4],y+1)
+    if not regions:return None,0
+    region=max(regions.values(),key=lambda item:item[0])
+    return tuple(region[1:]),region[0]
+
+
 def background_bounds(path, color=BACKGROUND):
     image = Image.open(path).convert("RGB")
-    channels = ImageChops.difference(image, Image.new("RGB", image.size, color)).split()
+    # Mutter's color management transformed configured #202429 to #1c2226
+    # in the real ARM fixture. Derive the actual dominant nearby solid color
+    # from this PNG before masking; do not assume byte-identical composition.
+    nearby=[(count,actual) for count,actual in image.getcolors(image.width*image.height)
+            if max(abs(actual[index]-color[index]) for index in range(3))<=8]
+    if not nearby or max(nearby)[0]<20000:
+        raise AssertionError("No large candidate background near configured color in actual PNG")
+    _,observed=max(nearby)
+    channels = ImageChops.difference(image, Image.new("RGB", image.size, observed)).split()
     # GPUI's RGB/HSL conversion may round a channel by one integer.
     mask = channels[0].point(lambda value: 255 if value <= 1 else 0)
     for channel in channels[1:]:
         mask = ImageChops.multiply(mask, channel.point(lambda value: 255 if value <= 1 else 0))
-    bounds = mask.getbbox()
-    count = mask.histogram()[255]
+    bounds,count = largest_region(mask)
     if bounds is None or count < 20000:
         raise AssertionError("No large candidate background found in actual PNG")
     left, top, right, bottom = bounds
     if right - left < 200 or bottom - top < 150:
         raise AssertionError("Candidate background is too small for window geometry")
     return {"x": left, "y": top, "width": right-left, "height": bottom-top,
-            "source": "current PNG configured background pixels", "matchedPixels": count}
+            "source": "current PNG largest connected solid background near configured RGB", "matchedPixels": count,
+            "configuredRgb":color,"observedRgb":observed}
 
 
 def ocr_words(path):

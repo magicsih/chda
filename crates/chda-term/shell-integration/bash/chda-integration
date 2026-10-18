@@ -45,7 +45,7 @@ if [[ $- == *i* && -z "${_chda_installed-}" ]]; then
             _chda_in_command=0
         fi
         builtin printf '\033]7;file://%s%s\007' "$HOSTNAME" "$PWD"
-        builtin local title=$PWD
+        builtin local title="$PWD"
         if [[ -n $HOME && ($title == "$HOME" || $title == "$HOME"/*) ]]; then
             title=${title#"$HOME"}
             title="~$title"
