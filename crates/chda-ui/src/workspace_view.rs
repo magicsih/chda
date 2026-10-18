@@ -6518,6 +6518,8 @@ impl WorkspaceView {
                     .items_start()
                     .justify_center()
                     .pt_12()
+                    .px_4()
+                    .pb_4()
                     .occlude()
                     .child(palette.clone()),
             )

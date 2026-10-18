@@ -614,6 +614,8 @@ class PromotionTests(unittest.TestCase):
         self.original_command = release.command
         self.tag = 'v0.1.21'
         self.git('init', '-b', 'main')
+        # Disposable repositories need no detached maintenance during cleanup.
+        self.git('config', 'maintenance.auto', 'false')
         self.git('config', 'user.name', 'Fixture')
         self.git('config', 'user.email', 'fixture@example.invalid')
         (self.repo / 'Cargo.toml').write_text('[workspace.package]\nversion = "0.1.21"\n')

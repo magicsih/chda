@@ -10,7 +10,7 @@ from pathlib import Path
 
 from native_driver import run
 from native_journey import wait
-from native_visual import bright_text_ocr, ocr_words, phrase_matches, prompt_region
+from native_visual import bright_text_ocr, ocr_words, phrase_matches, prompt_region, tooltip_region
 
 
 REPOSITORY = "https://github.com/magicsih/chda"
@@ -45,7 +45,11 @@ def _ocr(path, expected):
 
 def _about(path, version):
     region = prompt_region(path)
-    expected = ["chda " + version, DESCRIPTION, "MIT license", REPOSITORY]
+    if re.search(r"\bchda\s+" + re.escape(version) + r"(?=\s|$)", region["text"]) is None:
+        raise AssertionError("Actual prompt version does not match the packaged version: " + region["text"])
+    if re.findall(r"https?://\S+", region["text"]) != [REPOSITORY]:
+        raise AssertionError("Actual prompt repository URI differs: " + region["text"])
+    expected = [DESCRIPTION, "MIT license"]
     normalized = _plain(region["text"])
     for value in expected:
         if _plain(value) not in normalized:
@@ -63,7 +67,7 @@ def _about(path, version):
     return region
 
 
-def _commands(journey, label, width, height):
+def _commands(journey, label, width, height, keyboard=False):
     geometry = journey.setup_geometry(width, height, label + "-geometry")
     frame = geometry["frame"]
     if journey.window_mode == "CSD":
@@ -82,8 +86,19 @@ def _commands(journey, label, width, height):
     journey.driver.move_pointer(x, y)
     time.sleep(.9)
     hover = journey.driver.screenshot(label + "-commands-hover")
-    _ocr(hover, ["Commands", "ctrl-shift-p"])
-    journey.driver.click(x, y)
+    try:
+        _ocr(hover, ["Commands", "ctrl-shift-p"])
+    except AssertionError:
+        # Single-line segmentation avoids reading the tooltip as part of the
+        # terminal behind it. Keep both original failed OCR and region evidence.
+        tooltip = tooltip_region(hover, [x, y])
+        if (re.search(r"\bCommands\b", tooltip["text"]) is None
+                or re.search(r"\bctrl-shift-p\b", tooltip["text"]) is None):
+            raise AssertionError("Actual Commands tooltip differs: " + tooltip["text"])
+    if keyboard:
+        journey.driver.key("ctrl+shift+p")
+    else:
+        journey.driver.click(x, y)
     opened = journey.driver.screenshot(label + "-commands-open")
     _ocr(opened, ["New tab ctrl-shift-t"])
     # Typing must reach the palette's actual focused input.
@@ -156,7 +171,7 @@ def exercise(journey):
         result["dialogs"].append({"size": [width, height], "screenshot": str(about), "prompt": region})
     output, mimeapps, previous = _register_https(journey)
     try:
-        about = _commands(journey, "commands-open-repository", 960, 640)
+        about = _commands(journey, "commands-open-repository", 960, 640, keyboard=True)
         region = _about(about, version)
         journey.driver.click(*region["controls"]["Open repository"]["at"])
         wait(output.exists, "About native HTTPS handler exact repository URI")
