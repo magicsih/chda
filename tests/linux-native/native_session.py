@@ -219,7 +219,6 @@ def main():
             wait_until(lambda: bool(command(["wlrctl", "toplevel", "list"], check=False).stdout.strip()), "actual candidate Wayland window")
         if app.poll() is not None:
             raise RuntimeError("Candidate exited before input")
-        steps.append({"step": "actual launcher and native window", "status": "passed", "window": window})
         subprocess.run(["vulkaninfo", "--summary"], env=env, stdout=(root / "vulkan.txt").open("w"), stderr=subprocess.STDOUT, check=False)
         # Driver subprocesses must receive only this explicitly isolated session.
         options = SimpleNamespace(backend=args.backend, compositor=args.compositor, window=window,
@@ -244,12 +243,18 @@ def main():
                 # Wait for the actual rendered shell before sending any input,
                 # including when diagnostic tracing slows process startup.
                 from native_visual import ocr_words
+                readiness_attempt = 0
                 def rendered_prompt():
-                    image = driver.screenshot("startup-readiness")
+                    nonlocal readiness_attempt
+                    readiness_attempt += 1
+                    image = driver.screenshot(f"startup-readiness-{readiness_attempt:02d}")
                     return any("CHDA_VALIDATION" in word["text"] for word in ocr_words(image))
                 wait_until(rendered_prompt, "actual candidate rendered shell prompt", timeout=40)
             else:
                 time.sleep(1)
+            steps.append({"step": "actual launcher and native window", "status": "passed",
+                          "inputWindow": window,
+                          "windowEvidence": "rendered candidate shell prompt" if args.backend == "wayland" and args.compositor == "mutter" else "observed candidate window"})
             driver.screenshot("01-startup")
             marker = driver.marker("startup-input.txt", "printf CHDA_STARTUP_INPUT_OK")
             if marker != "CHDA_STARTUP_INPUT_OK":
