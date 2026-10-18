@@ -97,7 +97,19 @@ while True:
         )
         .unwrap();
         let bin = root.join("codex");
-        std::fs::write(&bin,format!("#!/bin/sh\n[ \"$*\" = 'app-server proxy' ] || exit 42\necho $$ > \"$HOME/helper-pid\"\nexec python3 -u {} {port}\n",crate::shell_quote(&proxy))).unwrap();
+        let script = format!(
+            "#!/bin/sh\n[ \"$*\" = 'app-server proxy' ] || exit 42\necho $$ > \"$HOME/helper-pid\"\nexec python3 -u {} {port}\n",
+            crate::shell_quote(&proxy)
+        );
+        // A concurrent test fork must not inherit a writable descriptor to
+        // this executable. Keep its writer in a child (rust-lang/rust#114554).
+        let written = std::process::Command::new("sh")
+            .args(["-c", "printf '%s' \"$2\" > \"$1\"", "chda-test-write"])
+            .arg(&bin)
+            .arg(script)
+            .status()
+            .unwrap();
+        assert!(written.success());
         std::fs::set_permissions(&bin, std::fs::Permissions::from_mode(0o700)).unwrap();
         Self {
             root,
