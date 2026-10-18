@@ -37,6 +37,13 @@ jobs:
             python3 patchelf binutils libwayland-dev libxkbcommon-x11-dev \
             libx11-xcb-dev libfontconfig1-dev libvulkan1 libasound2-dev
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Install pinned Python for safe archive extraction
+        run: |
+          curl --fail --location --retry 3 -o "$RUNNER_TEMP/python.tar.gz" \
+            https://github.com/astral-sh/python-build-standalone/releases/download/20261013/cpython-3.13.16%2B20261013-x86_64-unknown-linux-gnu-install_only.tar.gz
+          echo "e588e50db882fa6a89f926d9a9ad64e445183af0eda5bda226a2c151b17db8a6  $RUNNER_TEMP/python.tar.gz" | sha256sum --check
+          tar -C "$RUNNER_TEMP" -xzf "$RUNNER_TEMP/python.tar.gz"
+          echo "$RUNNER_TEMP/python/bin" >> "$GITHUB_PATH"
       - uses: dtolnay/rust-toolchain@master
         with:
           toolchain: 1.98.1

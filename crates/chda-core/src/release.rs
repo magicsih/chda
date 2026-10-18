@@ -87,6 +87,43 @@ pub fn parse_latest(json: &str) -> Option<Release> {
     })
 }
 
+/// The newest stable published release containing this exact platform asset.
+/// GitHub's global latest release may belong to another operating system.
+pub fn parse_latest_with_asset(json: &str, platform: &str) -> Option<Release> {
+    let releases: Vec<serde_json::Value> = serde_json::from_str(json).ok()?;
+    releases
+        .iter()
+        .filter(|value| value.get("draft").and_then(|v| v.as_bool()) == Some(false))
+        .filter(|value| value.get("prerelease").and_then(|v| v.as_bool()) == Some(false))
+        .filter_map(|value| {
+            let tag = value.get("tag_name")?.as_str()?;
+            let version = tag.strip_prefix('v')?;
+            if !is_newer(version, "0.0.0") {
+                return None;
+            }
+            let expected = format!("chda-{version}-{platform}");
+            if !value
+                .get("assets")?
+                .as_array()?
+                .iter()
+                .any(|asset| asset.get("name").and_then(|v| v.as_str()) == Some(expected.as_str()))
+            {
+                return None;
+            }
+            Some(Release {
+                version: version.to_owned(),
+                url: value.get("html_url")?.as_str()?.to_owned(),
+            })
+        })
+        .reduce(|latest, candidate| {
+            if is_newer(&candidate.version, &latest.version) {
+                candidate
+            } else {
+                latest
+            }
+        })
+}
+
 /// Whether version `a` is newer than `b`, comparing `major.minor.patch`
 /// numerically. Anything else (a pre-release suffix, a typo) is not newer.
 pub fn is_newer(a: &str, b: &str) -> bool {
@@ -125,6 +162,37 @@ mod tests {
         assert_eq!(parse_latest(json), Some(release("0.2.0")));
         assert_eq!(parse_latest(r#"{"message":"Not Found"}"#), None);
         assert_eq!(parse_latest("<html>"), None);
+    }
+
+    #[test]
+    fn release_discovery_requires_a_published_matching_platform_asset() {
+        let entry = |version: &str, platform: &str, draft: bool, prerelease: bool| {
+            serde_json::json!({
+                "tag_name": format!("v{version}"), "html_url": format!("https://example.test/v{version}"),
+                "draft": draft, "prerelease": prerelease,
+                "assets": [{"name": format!("chda-{version}-{platform}")}]
+            })
+        };
+        let suffix = "linux-x86_64.AppImage";
+        let data = serde_json::json!([
+            entry("9.0.0", "macos.zip", false, false),
+            entry("2.0.0", suffix, true, false),
+            entry("1.2.0-rc.1", suffix, false, true),
+            entry("1.1.9", suffix, false, false),
+            entry("1.1.10", suffix, false, false)
+        ]);
+        assert_eq!(
+            parse_latest_with_asset(&data.to_string(), suffix)
+                .unwrap()
+                .version,
+            "1.1.10"
+        );
+        assert!(parse_latest_with_asset("[]", suffix).is_none());
+        assert!(
+            parse_latest_with_asset(&entry("1.1.0", suffix, false, false).to_string(), suffix)
+                .is_none()
+        );
+        assert!(parse_latest_with_asset("<html>", suffix).is_none());
     }
 
     #[test]

@@ -34,12 +34,16 @@ pub struct Recorded {
     pub folder_picks: VecDeque<FolderPick>,
     /// The prompt of each folder picker the window opened.
     pub folder_prompts: Vec<String>,
+    pub manual_updates: bool,
 }
 
 #[derive(Default)]
 pub struct RecordingSystem(pub RefCell<Recorded>);
 
 impl System for RecordingSystem {
+    fn can_install_updates(&self) -> bool {
+        !self.0.borrow().manual_updates
+    }
     fn notify(&self, title: &str, body: &str, target: &NotificationTarget, _: &App) {
         self.0
             .borrow_mut()
@@ -453,7 +457,10 @@ fn open_window(
                         .open(file.with_extension("requests"))
                         .unwrap();
                     writeln!(log, "request").unwrap();
-                    std::fs::read_to_string(&file).ok()
+                    std::fs::read_to_string(&file)
+                        .ok()
+                        .as_deref()
+                        .and_then(chda_core::release::parse_latest)
                 })
             },
         });

@@ -10,6 +10,10 @@ impl WorkspaceView {
         let Some(release) = self.release_notice.clone() else {
             return;
         };
+        if !self.env.system.can_install_updates() {
+            cx.open_url(&release.url);
+            return;
+        }
         let target = {
             let mut registry = self.env.windows.borrow_mut();
             if registry.update.progress.busy() {

@@ -8,6 +8,7 @@ use futures::channel::oneshot;
 use futures::future::LocalBoxFuture;
 
 mod keymap;
+pub(crate) mod release;
 mod window;
 #[cfg(test)]
 pub(crate) use keymap::link_modifiers;

@@ -16,7 +16,7 @@ use chda_core::agents::{
     parse_codex_title,
 };
 use chda_core::notifications::Severity;
-use chda_core::release::{Release, ReleaseCheck, parse_latest};
+use chda_core::release::{Release, ReleaseCheck};
 mod agent_launch;
 mod agent_restart;
 mod children;
@@ -2131,9 +2131,7 @@ impl WorkspaceView {
                     cx.background_executor().timer(RELEASE_CHECK).await;
                     continue;
                 };
-                let latest = cx
-                    .background_spawn(async move { fetch().as_deref().and_then(parse_latest) })
-                    .await;
+                let latest = cx.background_spawn(async move { fetch() }).await;
                 if let Some(latest) = latest {
                     let mut check = ReleaseCheck::load(&file);
                     check.record(now_ms(), latest);
@@ -3288,6 +3286,8 @@ impl WorkspaceView {
             let progress = self.env.windows.borrow().update.progress.clone();
             let label = if progress.busy() {
                 progress.label()
+            } else if !self.env.system.can_install_updates() {
+                format!("Download {}", release.version)
             } else {
                 format!("Update to {}", release.version)
             };
@@ -3296,7 +3296,11 @@ impl WorkspaceView {
                     .h(px(22.0)).px_2().flex().items_center().rounded_md()
                     .bg(fg.opacity(0.1)).text_color(fg).cursor_pointer()
                     .hover(|s| s.bg(fg.opacity(0.18))).on_mouse_down(MouseButton::Left, stop)
-                    .tooltip(crate::tooltip::text("Download, verify and install the update. Running sessions reconnect when the window reopens."))
+                    .tooltip(crate::tooltip::text(if self.env.system.can_install_updates() {
+                        "Download, verify and install the update. Running sessions reconnect when the window reopens."
+                    } else {
+                        "Open release downloads. Verify the checksum, then close chda before replacing its package."
+                    }))
                     .on_click(cx.listener(|this, _, window, cx| this.start_update(window, cx)))
                     .child(optical(label)),
             ).child(

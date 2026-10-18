@@ -60,7 +60,7 @@ def run(*args, **kwargs):
 
 def digest(path):
     with path.open("rb") as stream:
-        return hashlib.file_digest(stream, "sha256").hexdigest() if hasattr(hashlib, "file_digest") else hashlib.sha256(stream.read()).hexdigest()
+        return hashlib.file_digest(stream, "sha256").hexdigest()
 
 
 def stage(binary, output, version, sha, collect_sources):
