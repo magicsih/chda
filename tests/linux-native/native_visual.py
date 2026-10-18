@@ -78,6 +78,16 @@ def ocr_words(path):
     return list(csv.DictReader(io.StringIO(response.stdout), delimiter="\t", quoting=csv.QUOTE_NONE))
 
 
+def bright_text_ocr(path, threshold):
+    """Preserve original pixels and coordinates while isolating light UI text."""
+    contrast_path = Path(path).with_suffix(f".bright-text{threshold}.png")
+    image = ImageOps.grayscale(Image.open(path))
+    image.point(lambda value: 0 if value >= threshold else 255).save(contrast_path)
+    words = ocr_words(contrast_path)
+    contrast_path.with_suffix(".ocr.json").write_text(json.dumps(words, indent=2) + "\n")
+    return words, contrast_path
+
+
 def wait_for_rendered(driver, target, prefix, timeout=40):
     """Keep each real capture and wait for normalized text in rendered pixels."""
     deadline = time.monotonic() + timeout
@@ -142,11 +152,7 @@ def phrase_center(path, phrase):
     # Tesseract's automatic threshold. Preserve geometry and actual glyphs,
     # raise their contrast, then require exact words and useful confidence.
     if not matches:
-        contrast_path = Path(path).with_suffix(".bright-text160.png")
-        image = ImageOps.grayscale(Image.open(path))
-        image.point(lambda value: 0 if value >= 160 else 255).save(contrast_path)
-        words = ocr_words(contrast_path)
-        contrast_path.with_suffix(".ocr.json").write_text(json.dumps(words, indent=2)+"\n")
+        words, _ = bright_text_ocr(path, 160)
         matches = phrase_matches(words, phrase, minimum_confidence=70)
         processing = "same-size grayscale brightness >=160 black, lower brightness white"
     if len(matches) != 1:
@@ -160,3 +166,62 @@ def phrase_center(path, phrase):
         "processing":processing, "words":match["words"], "source":str(path),
     },indent=2)+"\n")
     return match["at"]
+
+
+def prompt_region(path):
+    """Read one actual light prompt from this PNG; preserve global coordinates."""
+    import hashlib
+
+    source = Path(path)
+    source_hash = hashlib.sha256(source.read_bytes()).hexdigest()
+    image = Image.open(source).convert("RGB")
+    # The Linux GPUI fallback prompt is a connected white panel. Do not reuse
+    # a previous capture's location, window geometry, or expected text to find it.
+    channels = image.split()
+    mask = channels[0].point(lambda value: 255 if value >= 245 else 0)
+    for channel in channels[1:]:
+        mask = ImageChops.multiply(mask, channel.point(lambda value: 255 if value >= 245 else 0))
+    bounds, count = largest_region(mask)
+
+    def plausible(box, pixels):
+        if box is None:
+            return False
+        left, top, right, bottom = box
+        width, height = right-left, bottom-top
+        area = width*height
+        return (width >= 160 and height >= 80 and pixels >= 6000
+                and pixels >= area*.45 and area < image.width*image.height*.65)
+
+    if not plausible(bounds, count):
+        raise AssertionError("No single plausible light prompt found in actual PNG")
+    # A second large light panel makes location ambiguous; do not pick one just
+    # because it happens to contain an expected word.
+    remainder = mask.copy()
+    ImageDraw.Draw(remainder).rectangle(
+        (bounds[0], bounds[1], bounds[2]-1, bounds[3]-1), fill=0)
+    second_bounds, second_count = largest_region(remainder)
+    if plausible(second_bounds, second_count):
+        raise AssertionError("Multiple plausible light prompts found in actual PNG")
+    region_path = source.with_suffix(".prompt-region.png")
+    image.crop(bounds).save(region_path)
+    response = subprocess.run(
+        ["tesseract", str(region_path), "stdout", "--psm", "12", "tsv"],
+        check=True, text=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+    local_words = list(csv.DictReader(io.StringIO(response.stdout), delimiter="\t", quoting=csv.QUOTE_NONE))
+    words = []
+    for word in local_words:
+        current = dict(word)
+        current["left"] = str(int(word["left"]) + bounds[0])
+        current["top"] = str(int(word["top"]) + bounds[1])
+        words.append(current)
+    text = " ".join(word["text"] for word in words if word["text"].strip())
+    if hashlib.sha256(source.read_bytes()).hexdigest() != source_hash:
+        raise AssertionError("Original prompt PNG changed during analysis")
+    result = {"source": str(source), "sourceSha256": source_hash,
+              "analysisPng": str(region_path), "bounds": list(bounds),
+              "matchedPixels": count, "text": text, "words": words,
+              "coordinateSpace": "original PNG; bounds are left,top,right,bottom",
+              "detection": "unique plausible connected RGB channels >=245 panel",
+              "processing": "exact unscaled crop, Tesseract PSM12 TSV; no contrast or text replacement"}
+    source.with_suffix(".prompt-region.json").write_text(json.dumps(result, indent=2)+"\n")
+    return result
