@@ -323,8 +323,18 @@ class Journey:
         self.driver.marker("after-picker-reopen.txt", "printf PICKER_REOPEN_OK")
         self.driver.key("ctrl+shift+w")
         self.selected_repo = selected
+        # Closing a branch's final tab intentionally leaves that branch empty.
+        # Explicitly prepare a terminal for the subsequent hook/notification
+        # checks instead of assuming an unrelated branch is selected for us.
+        self.mcp("open_tab", {"path": str(self.repo)}, suffix="after-picker-main-terminal")
+        from native_visual import wait_for_rendered
+        wait_for_rendered(self.driver, "CHDAVALIDATION", "after-picker-main-readiness")
+        resumed = self.driver.marker("after-picker-main-cwd.txt", "pwd -P").strip()
+        if Path(resumed) != self.repo.resolve():
+            raise AssertionError("Next scenario terminal cwd differs from the prepared main repository")
         return {"selected": str(selected), "config": str(config), "cancelAndRetry": "passed",
-                "terminal": "actual terminal cwd after candidate MCP open_tab fixture"}
+                "terminal": "actual terminal cwd after candidate MCP open_tab fixture",
+                "nextScenarioTerminalCwd": resumed}
 
     def delivered(self):
         if not self.notification_log.exists():

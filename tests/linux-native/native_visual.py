@@ -225,3 +225,67 @@ def prompt_region(path):
               "processing": "exact unscaled crop, Tesseract PSM12 TSV; no contrast or text replacement"}
     source.with_suffix(".prompt-region.json").write_text(json.dumps(result, indent=2)+"\n")
     return result
+
+
+def tooltip_region(path, pointer):
+    """OCR one single-line tooltip connected to this capture's hover point."""
+    import hashlib
+
+    source = Path(path)
+    source_hash = hashlib.sha256(source.read_bytes()).hexdigest()
+    image = Image.open(source).convert("RGB")
+    px, py = pointer
+    if not (0 <= px < image.width and 0 <= py < image.height):
+        raise AssertionError("Tooltip hover point is outside the actual PNG")
+    # Shared product tooltip.rs draws opaque #1e1e2e with a one-pixel border.
+    # Select geometry from current pixels before reading any expected words.
+    configured = (30, 30, 46)
+    channels = ImageChops.difference(image, Image.new("RGB", image.size, configured)).split()
+    mask = channels[0].point(lambda value: 255 if value <= 1 else 0)
+    for channel in channels[1:]:
+        mask = ImageChops.multiply(mask, channel.point(lambda value: 255 if value <= 1 else 0))
+    remaining = mask.copy()
+    candidates = []
+    for _ in range(16):
+        box, count = largest_region(remaining)
+        if box is None or count < 150:
+            break
+        left, top, right, bottom = box
+        ImageDraw.Draw(remaining).rectangle((left, top, right-1, bottom-1), fill=0)
+        width, height = right-left, bottom-top
+        dx = max(left-px, px-right, 0)
+        dy = max(top-py, py-bottom, 0)
+        if (60 <= width <= 640 and 14 <= height <= 80 and count >= 500
+                and count >= width*height*.25 and max(dx, dy) <= 64):
+            candidates.append((box, count))
+    if len(candidates) != 1:
+        raise AssertionError("Expected one nearby single-line tooltip panel, found " + str(len(candidates)))
+    box, count = candidates[0]
+    # Include the border declared by tooltip.rs; do not add text-specific pads.
+    bounds = (max(0, box[0]-1), max(0, box[1]-1),
+              min(image.width, box[2]+1), min(image.height, box[3]+1))
+    region_path = source.with_suffix(".tooltip-region.png")
+    image.crop(bounds).save(region_path)
+    response = subprocess.run(
+        ["tesseract", str(region_path), "stdout", "--psm", "7", "tsv"],
+        check=True, text=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+    local_words = list(csv.DictReader(io.StringIO(response.stdout), delimiter="\t", quoting=csv.QUOTE_NONE))
+    words = []
+    for word in local_words:
+        current = dict(word)
+        current["left"] = str(int(word["left"]) + bounds[0])
+        current["top"] = str(int(word["top"]) + bounds[1])
+        words.append(current)
+    text = " ".join(word["text"] for word in words if word["text"].strip())
+    if hashlib.sha256(source.read_bytes()).hexdigest() != source_hash:
+        raise AssertionError("Original tooltip PNG changed during analysis")
+    result = {"source": str(source), "sourceSha256": source_hash,
+              "analysisPng": str(region_path), "bounds": list(bounds),
+              "backgroundBounds": list(box), "matchedPixels": count,
+              "hoverPoint": list(pointer), "configuredBackgroundRgb": configured,
+              "text": text, "words": words,
+              "coordinateSpace": "original PNG; bounds are left,top,right,bottom",
+              "detection": "unique source-color connected panel near actual hover point",
+              "processing": "exact unscaled crop with declared one-pixel border, Tesseract PSM7 TSV"}
+    source.with_suffix(".tooltip-region.json").write_text(json.dumps(result, indent=2)+"\n")
+    return result
