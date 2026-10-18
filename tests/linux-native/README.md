@@ -15,3 +15,13 @@ session, and the same candidate is used across distributions and both formats.
 `notification_server.py` is a test D-Bus provider. No real account or agent
 conversation is used. Software Vulkan checks do not establish physical-GPU or
 desktop-specific IME coverage.
+
+The glibc 2.31 compatibility image retains Ubuntu 20.04 userspace and builds
+Mesa 23.3.6 as a test-host Vulkan driver. Its official source checksum and
+Python build dependencies are pinned. The driver is selected through
+`VK_ICD_FILENAMES`, has its own ABI audit and manifest, and is never copied to
+the application payload. This checks an old libc with a compatible driver; it
+does not establish support for every driver shipped with that distribution.
+Separate negative sessions retain actual application startup failures on stock
+Debian 11 Mesa 20 and stock Ubuntu 20.04 Mesa 21. A successful negative check
+always records product startup as failed.

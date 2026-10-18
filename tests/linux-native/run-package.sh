@@ -1,5 +1,10 @@
 #!/bin/sh
 set -eu
+if [ -f /opt/chda-qa-mesa/manifest.json ]; then
+    set -- /opt/chda-qa-mesa/share/vulkan/icd.d/lvp_icd*.json
+    [ "$#" = 1 ] && [ -f "$1" ]
+    export VK_ICD_FILENAMES="$1"
+fi
 mkdir -p /work/packages /work/payload /evidence
 cp /packages/* /work/packages/
 (cd /work/packages && sha256sum --check SHA256SUMS)
@@ -30,6 +35,8 @@ print(json.dumps({
     'libc': subprocess.check_output(['ldd', '--version'], stderr=subprocess.STDOUT).decode(),
     'format': os.environ['PACKAGE_FORMAT'], 'rendering': 'CPU Vulkan in a disposable container',
     'mountMode': 'extract-and-run for AppImage; no FUSE device supplied',
+    'testHostDriver': json.loads(Path('/opt/chda-qa-mesa/manifest.json').read_text())
+        if Path('/opt/chda-qa-mesa/manifest.json').exists() else 'distribution packages',
 }, indent=2))
 PY
 chown -R chda-test:chda-test /work /evidence
@@ -40,7 +47,7 @@ runuser -u chda-test -- python3 /driver/native_session.py \
     --evidence /evidence/session
 
 }
-if [ "${EXPECT_GPU_UNAVAILABLE:-0}" = 1 ]; then
+if [ "${EXPECT_GPU_UNAVAILABLE:-0}" != 0 ]; then
     set +e
     run_session
     driver_exit=$?
@@ -54,12 +61,19 @@ log = (root / 'candidate.log').read_text()
 assert int(os.environ['DRIVER_EXIT']) != 0
 assert result['startupStatus'] == 'failed'
 assert 'No GPU adapter found that can configure the display surface' in log
-assert log.count('no compatible surface formats') >= 2
+if os.environ['EXPECT_GPU_UNAVAILABLE'] == 'mesa20':
+    assert log.count('no compatible surface formats') >= 2
+    reason = 'Stock Mesa20 software Vulkan and EGL expose no compatible X11 surface formats'
+elif os.environ['EXPECT_GPU_UNAVAILABLE'] == 'mesa21':
+    assert "Limit 'max_color_attachments' value 4 is better than allowed 2" in log
+    reason = 'Stock Mesa21 software Vulkan adapter limits are below the graphics engine request'
+else:
+    raise AssertionError('Unknown negative graphics fixture')
 assert 'GLIBC_' not in log and 'symbol lookup error' not in log
 Path('/evidence/expected-graphics-failure.json').write_text(json.dumps({
     'negativeCheckStatus': 'passed', 'productStartupStatus': 'failed',
     'supportedEnvironment': False,
-    'reason': 'Stock Mesa20 software Vulkan and EGL expose no compatible X11 surface formats',
+    'reason': reason,
     'candidateSha': result['candidateSha'], 'artifactSha256': result['artifactSha256'],
 }, indent=2) + '\n')
 PYNEGATIVE
