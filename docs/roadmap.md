@@ -9,7 +9,8 @@ Milestones are cut at "usable" boundaries. Dates are not promised.
 | M2 | Tabs, splits, zsh shell integration, working-directory tracking | done |
 | M3 | Worktree sidebar, git badges, Claude Code and Codex status, sessions | done |
 | M4 | Merge-and-clean, pull request badges, command palette, signed macOS release, Homebrew | done (v0.1.x) |
-| M5 | Linux (Wayland/X11) and Windows (ConPTY) as first-class platforms | next |
+| M5 | Linux x86_64 (Wayland/X11), AppImage and portable archive | release verification in progress; see [Linux](linux.md) |
+| M6 | Windows (ConPTY), Linux ARM64 and physical-GPU coverage | next |
 
 Done since v0.1.3: scrollback search, clickable links, font size shortcuts,
 live config reload, session restore, bash and fish integration, per-pane agent

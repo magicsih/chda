@@ -1,4 +1,32 @@
-# macOS 릴리스 운영
+# 릴리스 운영
+
+## Linux 릴리스
+
+Linux x86_64 배포는 [ADR 0021](decisions/0021-linux-distribution.md)을 따른다.
+workspace 버전과 stable 태그는 아래 macOS 절차와 마찬가지로 release-plz가 만든다.
+태그 생성만으로 공개하지 않는다.
+
+1. `Linux packages`의 main 후보 실행에서 AppImage와 portable archive를 만든다.
+   Ubuntu 20.04 빌더의 glibc 2.31 ABI 검사, 두 형식의 동일 payload 검사,
+   Ubuntu, Debian, Fedora, Arch 기동과 X11, Wayland 개발 검증을 모두 통과해야 한다.
+2. `Linux native review`에 정확한 후보 SHA와 위 실행 번호를 전달한다.
+   기존 산출물을 다운로드해 세 번의 독립 화면 검수에 사용하며 다시 빌드하지 않는다.
+   Openbox X11, Mutter Wayland의 창 제어와 labwc Fcitx5 입력기 조합을 구분해서
+   기록한다. 자동 실행 성공과 독립 화면 검수 완료는 따로 확인한다.
+3. 최종 태그가 검수한 SHA를 가리키는지 확인하고 같은 산출물, dependency sources,
+   `linux-build.json`, `SHA256SUMS`를 draft GitHub Release에 올린다.
+   모든 SHA-256과 파일 목록을 다시 확인한 뒤 Linux 전용 stable 릴리스를
+   `make_latest=false`로 공개한다. 기존 공개 파일을 덮어쓰지 않는다.
+4. 공개 URL에서 독립 다운로드해 SHA-256을 확인하고 같은 패키지의 실제 실행을
+   확인한다. Linux 설치 링크가 해당 공개 릴리스로 연결되는지 확인한다.
+   macOS latest 릴리스, Sparkle appcast와 Homebrew cask가 유지되는지도 확인한다.
+
+사용자 데이터는 패키지 밖의 XDG 경로에 남는다. Linux 업데이트는 해당 릴리스의
+수동 다운로드이며 macOS installer를 실행하지 않는다. 렌더링 장치와 실제 확인한
+배포판, 표시 서버, 입력기를 [Linux 설치 안내](linux.md)에 기록한다.
+소프트웨어 렌더링 검수는 물리 GPU 검수를 뜻하지 않는다.
+
+## macOS 릴리스 운영
 
 release-plz PR이 workspace 버전과 CHANGELOG를 갱신하고, 병합 후 태그를 만든다.
 버전과 CHANGELOG를 직접 수정하지 않는다. 태그 push는 후보만 등록하며 빌드나
