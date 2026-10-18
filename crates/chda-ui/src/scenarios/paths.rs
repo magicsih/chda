@@ -426,7 +426,10 @@ fn wrapped_path_actions_use_the_full_target_instead_of_an_existing_prefix(
             )
         });
         right_click(&mut h, at);
-        choose(&mut h, "Reveal in Finder");
+        choose(
+            &mut h,
+            &format!("Reveal in {}", crate::platform::file_manager_name()),
+        );
         assert_eq!(h.system.0.borrow().revealed.last(), Some(&full));
     }
 }
