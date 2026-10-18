@@ -59,7 +59,10 @@ fn about_from_the_palette_returns_typing_to_the_terminal(cx: &mut TestAppContext
     h.type_text("printf '\\nABOUT_FOCUS_OK\\n'");
     h.keys("enter");
     h.wait_for("typing after closing About", |view, cx| {
-        let frame = view.panes[&view.ws.focused_pane().unwrap()].0.read(cx).frame();
+        let frame = view.panes[&view.ws.focused_pane().unwrap()]
+            .0
+            .read(cx)
+            .frame();
         (0..frame.size.rows).any(|row| frame.row_text(row).trim() == "ABOUT_FOCUS_OK")
     });
 }
