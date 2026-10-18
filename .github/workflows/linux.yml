@@ -1,0 +1,216 @@
+name: Linux packages
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: linux-packages-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  CARGO_TERM_COLOR: always
+  CARGO_INCREMENTAL: 0
+  ZIG_VERSION: 0.16.0
+
+jobs:
+  build:
+    name: Linux compatibility build
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    container:
+      image: ubuntu:20.04@sha256:c664f8f86ed5a386b0a340d981b8f81714e21a8b9c73f658c4bea56aa179d54a
+    steps:
+      - name: Install build dependencies
+        env:
+          DEBIAN_FRONTEND: noninteractive
+        run: |
+          sed -i '/^# deb-src /s/^# //' /etc/apt/sources.list
+          apt-get update
+          apt-get install -y --no-install-recommends \
+            ca-certificates curl git build-essential clang cmake pkg-config \
+            python3 patchelf binutils libwayland-dev libxkbcommon-x11-dev \
+            libx11-xcb-dev libfontconfig1-dev libvulkan1 libasound2-dev
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Install pinned Python for safe archive extraction
+        run: |
+          curl --fail --location --retry 3 -o "$RUNNER_TEMP/python.tar.gz" \
+            https://github.com/astral-sh/python-build-standalone/releases/download/20261013/cpython-3.13.16%2B20261013-x86_64-unknown-linux-gnu-install_only.tar.gz
+          echo "e588e50db882fa6a89f926d9a9ad64e445183af0eda5bda226a2c151b17db8a6  $RUNNER_TEMP/python.tar.gz" | sha256sum --check
+          tar -C "$RUNNER_TEMP" -xzf "$RUNNER_TEMP/python.tar.gz"
+          echo "$RUNNER_TEMP/python/bin" >> "$GITHUB_PATH"
+      - uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: 1.98.1
+      - uses: mlugg/setup-zig@v2
+        with:
+          version: ${{ env.ZIG_VERSION }}
+      - uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: linux-glibc-2.31
+          cache-on-failure: true
+      - run: python3 scripts/test-linux-package.py
+      - run: python3 scripts/prepare-ghostty.py
+      - run: cargo build --locked --release -p chda
+      - name: Stage the payload and audit its ABI
+        run: |
+          version=$(cargo metadata --no-deps --format-version 1 | python3 -c 'import json,sys; print(next(p["version"] for p in json.load(sys.stdin)["packages"] if p["name"] == "chda"))')
+          python3 scripts/package-linux.py --binary target/release/chda \
+            --output "$RUNNER_TEMP/linux-stage" --version "$version" --sha "$GITHUB_SHA" --collect-sources
+          tar -C "$RUNNER_TEMP/linux-stage" -czf "$RUNNER_TEMP/linux-stage.tar.gz" .
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: linux-stage
+          path: ${{ runner.temp }}/linux-stage.tar.gz
+          retention-days: 3
+
+  package:
+    name: Linux AppImage and archive
+    needs: build
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: linux-stage
+          path: ${{ runner.temp }}/linux-stage
+      - name: Fetch pinned AppImage tools
+        working-directory: ${{ runner.temp }}
+        run: |
+          curl --fail --location --retry 3 -o appimagetool.AppImage \
+            https://github.com/AppImage/appimagetool/releases/download/1.9.1/appimagetool-x86_64.AppImage
+          curl --fail --location --retry 3 -o runtime-x86_64 \
+            https://github.com/AppImage/type2-runtime/releases/download/20251108/runtime-x86_64
+          echo 'ed4ce84f0d9caff66f50bcca6ff6f35aae54ce8135408b3fa33abfc3cb384eb0  appimagetool.AppImage' | sha256sum --check
+          echo '2fca8b443c92510f1483a883f60061ad09b46b978b2631c807cd873a47ec260d  runtime-x86_64' | sha256sum --check
+          chmod +x appimagetool.AppImage
+          ./appimagetool.AppImage --appimage-extract > /dev/null
+      - name: Package the identical payload in both formats
+        env:
+          ARCH: x86_64
+        run: |
+          mkdir -p dist
+          tar -C "$RUNNER_TEMP/linux-stage" -xzf "$RUNNER_TEMP/linux-stage/linux-stage.tar.gz"
+          stage="$RUNNER_TEMP/linux-stage"
+          version=$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["version"])' "$stage/build.json")
+          epoch=$(git show -s --format=%ct HEAD)
+          base="chda-$version-linux-x86_64"
+          export SOURCE_DATE_EPOCH="$epoch"
+          "$RUNNER_TEMP/squashfs-root/AppRun" --runtime-file "$RUNNER_TEMP/runtime-x86_64" \
+            "$stage/chda.AppDir" "dist/$base.AppImage"
+          tar --sort=name --mtime="@$epoch" --owner=0 --group=0 --numeric-owner \
+            --transform "s,^chda.AppDir,$base," -C "$stage" -czf "dist/$base.tar.gz" chda.AppDir
+          tar --sort=name --mtime="@$epoch" --owner=0 --group=0 --numeric-owner \
+            -C "$stage" -czf "dist/chda-$version-linux-dependency-sources.tar.gz" dependency-sources
+          cp "$stage/build.json" dist/linux-build.json
+          (cd dist && sha256sum ./*.AppImage ./*.tar.gz linux-build.json > SHA256SUMS)
+          tar -xOf "dist/$base.tar.gz" "$base/payload.sha256" > "$RUNNER_TEMP/archive-payload.sha256"
+          mkdir "$RUNNER_TEMP/verify-payload"
+          cd "$RUNNER_TEMP/verify-payload"
+          "$GITHUB_WORKSPACE/dist/$base.AppImage" --appimage-extract > /dev/null
+          cmp "$RUNNER_TEMP/archive-payload.sha256" squashfs-root/payload.sha256
+          (cd squashfs-root && sha256sum --check payload.sha256)
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: linux-packages
+          path: dist/*
+          retention-days: 3
+
+  startup:
+    name: Linux startup (${{ matrix.distro }}, ${{ matrix.format }})
+    needs: package
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        format: [appimage, archive]
+        distro: [ubuntu-20.04, ubuntu-24.04, debian-13, fedora-44, arch]
+        include:
+          - distro: ubuntu-20.04
+            image: ubuntu:20.04@sha256:c664f8f86ed5a386b0a340d981b8f81714e21a8b9c73f658c4bea56aa179d54a
+            compatibility_driver: '1'
+          - distro: ubuntu-24.04
+            image: ubuntu:24.04@sha256:a2d43bffc46670d7108bb3c0468c67c5557c4c92e83e1e34cbff1322ad1b94dc
+          - distro: debian-13
+            image: debian:trixie-slim@sha256:918311b7b6c4c6f68b232ba516584925f6c78ad82b6fd534b98979df6438e483
+          - distro: fedora-44
+            image: fedora:44@sha256:be9d65e2344d805cc11114319c685ecaa96b6d9b4350a0a6460cdb931babbd19
+          - distro: arch
+            image: archlinux:base@sha256:363129b67b2bc6c5a634f8fb4961a7e2eba213a2ec075d159127b1260290a722
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: linux-packages
+          path: packages
+      - name: Build the isolated runtime
+        env:
+          NATIVE_IMAGE: ${{ matrix.image }}
+          COMPATIBILITY_DRIVER: ${{ matrix.compatibility_driver || '0' }}
+        run: docker build --build-arg "BASE_IMAGE=$NATIVE_IMAGE" --build-arg "COMPATIBILITY_DRIVER=$COMPATIBILITY_DRIVER" -t chda-native tests/linux-native
+      - name: Run the actual package with native X11 input
+        env:
+          NATIVE_IMAGE: ${{ matrix.image }}
+          PACKAGE_FORMAT: ${{ matrix.format }}
+        run: |
+          mkdir native-evidence
+          docker run --rm --network none \
+            -v "$GITHUB_WORKSPACE/packages:/packages:ro" \
+            -v "$GITHUB_WORKSPACE/native-evidence:/evidence" \
+            -e NATIVE_IMAGE -e PACKAGE_FORMAT -e RUNNER_ARCH -e "CANDIDATE_SHA=$GITHUB_SHA" \
+            chda-native
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        if: always()
+        with:
+          name: linux-startup-${{ matrix.distro }}-${{ matrix.format }}
+          path: native-evidence
+          retention-days: 3
+
+  unsupported_graphics:
+    name: Known unsupported graphics (${{ matrix.driver }}, ${{ matrix.format }})
+    needs: package
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        format: [appimage, archive]
+        driver: [mesa20, mesa21]
+        include:
+          - driver: mesa20
+            image: debian:bullseye-slim@sha256:70509c95d1857a3704c0a5d92ee2e0adac95f612a9386889d70760bfd7c1ebba
+          - driver: mesa21
+            image: ubuntu:20.04@sha256:c664f8f86ed5a386b0a340d981b8f81714e21a8b9c73f658c4bea56aa179d54a
+    env:
+      NATIVE_IMAGE: ${{ matrix.image }}
+      PACKAGE_FORMAT: ${{ matrix.format }}
+      EXPECT_GPU_UNAVAILABLE: ${{ matrix.driver }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: linux-packages
+          path: packages
+      - name: Build the documented incompatible graphics environment
+        run: docker build --build-arg "BASE_IMAGE=$NATIVE_IMAGE" -t chda-native tests/linux-native
+      - name: Verify the explicit graphics failure without claiming startup support
+        run: |
+          mkdir native-evidence
+          docker run --rm --network none \
+            -v "$GITHUB_WORKSPACE/packages:/packages:ro" \
+            -v "$GITHUB_WORKSPACE/native-evidence:/evidence" \
+            -e NATIVE_IMAGE -e PACKAGE_FORMAT -e RUNNER_ARCH -e "CANDIDATE_SHA=$GITHUB_SHA" \
+            -e EXPECT_GPU_UNAVAILABLE chda-native
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        if: always()
+        with:
+          name: linux-unsupported-${{ matrix.driver }}-${{ matrix.format }}
+          path: native-evidence
+          retention-days: 3

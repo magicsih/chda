@@ -1,0 +1,9 @@
+[Desktop Entry]
+Type=Application
+Name=chda
+Comment=Terminal with git worktrees and coding agent status
+Exec=chda
+Icon=chda
+Terminal=false
+Categories=System;TerminalEmulator;Development;
+StartupWMClass=com.magicsih.chda

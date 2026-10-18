@@ -441,6 +441,13 @@ fn bare_paths_share_complete_hover_click_and_menu_targets_across_soft_wraps(
     let mut h = Harness::open(cx, "bare-paths", |_| {});
     h.wait_prompt();
     let term = h.focused_terminal();
+    h.wait_for("the terminal frame to match its laid-out grid", {
+        let term = term.clone();
+        move |_, cx| {
+            let t = term.read(cx);
+            t.geometry.is_some_and(|g| t.frame().size == g.size)
+        }
+    });
     let cols = h.read(|_, cx| term.read(cx).frame().size.cols as usize);
     std::fs::write(h.home.home.join("Notes"), "short prefix").unwrap();
     for (directory, name, escaped, line, column) in [

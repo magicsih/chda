@@ -9,6 +9,35 @@ const LATEST: &str =
     r#"{"tag_name":"v99.0.0","html_url":"https://github.com/magicsih/chda/releases/tag/v99.0.0"}"#;
 
 #[gpui::test]
+fn manual_updates_open_downloads_without_stopping_the_shell(cx: &mut TestAppContext) {
+    let mut h = Harness::open(cx, "manual-update", |home| {
+        std::fs::write(&home.latest_release, LATEST).unwrap();
+    });
+    h.system.0.borrow_mut().manual_updates = true;
+    h.wait_prompt();
+    h.wait_for("the download notice", |view, _| {
+        view.release_notice.is_some()
+    });
+    let pane = h.read(|view, _| view.ws.focused_pane().unwrap());
+    h.cx.run_until_parked();
+    let button = h.cx.debug_bounds("update-notice").unwrap();
+    h.cx.simulate_click(button.center(), gpui::Modifiers::none());
+    h.cx.run_until_parked();
+    assert_eq!(
+        h.cx.opened_url().as_deref(),
+        Some("https://github.com/magicsih/chda/releases/tag/v99.0.0")
+    );
+    assert!(h.read(|view, _| view.env.windows.borrow().update.job.is_none()));
+    assert_eq!(h.read(|view, _| view.ws.focused_pane()), Some(pane));
+    h.type_text("printf '\\nMANUAL_UPDATE_SHELL_OK\\n'");
+    h.keys("enter");
+    h.wait_for("the unchanged shell to accept input", |view, cx| {
+        let frame = view.panes[&pane].0.read(cx).frame();
+        (0..frame.size.rows).any(|row| frame.row_text(row).trim() == "MANUAL_UPDATE_SHELL_OK")
+    });
+}
+
+#[gpui::test]
 fn a_newer_release_shows_a_notice_until_dismissed(cx: &mut TestAppContext) {
     let mut h = Harness::open(cx, "release", |home| {
         std::fs::write(&home.latest_release, LATEST).unwrap();

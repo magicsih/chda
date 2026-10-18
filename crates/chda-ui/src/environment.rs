@@ -18,6 +18,7 @@ use crate::platform::{self, FolderApp, FolderPick, NotificationTarget};
 
 /// Side effects outside the window.
 pub trait System {
+    fn can_install_updates(&self) -> bool;
     fn notify(&self, title: &str, body: &str, target: &NotificationTarget, cx: &gpui::App);
     /// Show `count` on the Dock icon; zero clears it.
     fn set_badge(&self, count: usize);
@@ -44,6 +45,9 @@ pub trait System {
 pub struct NativeSystem;
 
 impl System for NativeSystem {
+    fn can_install_updates(&self) -> bool {
+        platform::release::can_install()
+    }
     fn notify(&self, title: &str, body: &str, target: &NotificationTarget, cx: &gpui::App) {
         platform::notify(title, body, target, cx);
     }
@@ -110,9 +114,9 @@ pub struct Environment {
     /// The forge CLIs (`gh`, `glab`, `tea`) to ask for pull request state.
     pub forge_clis: ForgeClis,
     pub system: Rc<dyn System>,
-    /// Asks GitHub for the latest release: the API's JSON, or `None` when
+    /// Asks GitHub for the latest platform release, or `None` when
     /// it cannot be reached. Runs off the main thread.
-    pub latest_release: Arc<dyn Fn() -> Option<String> + Send + Sync>,
+    pub latest_release: Arc<dyn Fn() -> Option<chda_core::release::Release> + Send + Sync>,
 }
 
 /// Reads the login shell's PATH within a deadline. Runs off the main thread.
@@ -333,7 +337,7 @@ impl Environment {
 
 /// One `curl` request to the GitHub API, with curl's own user agent; no
 /// other data goes with it.
-fn fetch_latest_release() -> Option<String> {
+fn fetch_latest_release() -> Option<chda_core::release::Release> {
     let out = std::process::Command::new("curl")
         .args([
             "--fail",
@@ -343,7 +347,7 @@ fn fetch_latest_release() -> Option<String> {
             "20",
             "--header",
             "Accept: application/vnd.github+json",
-            chda_core::release::LATEST_RELEASE_URL,
+            platform::release::endpoint(),
         ])
         .stdin(std::process::Stdio::null())
         .stderr(std::process::Stdio::null())
@@ -351,6 +355,11 @@ fn fetch_latest_release() -> Option<String> {
         .ok()?;
     out.status
         .success()
-        .then(|| String::from_utf8(out.stdout).ok())
+        .then(|| {
+            String::from_utf8(out.stdout)
+                .ok()
+                .as_deref()
+                .and_then(platform::release::parse)
+        })
         .flatten()
 }
