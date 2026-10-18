@@ -230,7 +230,9 @@ class Driver:
     def copy_selection(self):
         from native_visual import sentinel_bounds
         sentinel = "CHDACOPYSENTINEL"
-        self.command("printf '\\033[2J\\033[H" + sentinel + "\\n'")
+        # Keep the target text inside the terminal, away from the sidebar's
+        # resize hit area at the first column.
+        self.command("printf '\\033[2J\\033[H    " + sentinel + "\\n'")
         time.sleep(.5)
         image = self.screenshot("copy-before-selection")
         coordinates = sentinel_bounds(image, sentinel)

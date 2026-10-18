@@ -12,13 +12,20 @@ pub(crate) mod release;
 mod window;
 #[cfg(test)]
 pub(crate) use keymap::link_modifiers;
-pub(crate) use keymap::{consumes_terminal_key, link_modifier, shortcut, shortcut_hint};
+pub(crate) use keymap::{
+    consumes_terminal_key, hide_key_bindings, link_modifier, shortcut, shortcut_hint,
+};
 pub(crate) use window::{controls as window_controls, frame as window_frame, has_application_menu};
 
 #[cfg(target_os = "linux")]
 mod linux;
 #[cfg(target_os = "macos")]
 mod macos;
+
+pub(crate) fn init_graphics_diagnostics() {
+    #[cfg(target_os = "linux")]
+    linux::init_graphics_diagnostics();
+}
 
 /// The outcome of [`pick_folders`].
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -342,7 +349,7 @@ pub fn show_about(cx: &mut gpui::App) {
             );
             cx.spawn(async move |cx| {
                 if answer.await == Ok(1) {
-                    let _ = cx.update(|cx| cx.open_url(env!("CARGO_PKG_REPOSITORY")));
+                    cx.update(|cx| cx.open_url(env!("CARGO_PKG_REPOSITORY")));
                 }
             }).detach();
         });

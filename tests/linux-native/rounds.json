@@ -4,7 +4,7 @@
   "reviewer": "Independent native verification agent",
   "dataIsolation": "Fresh HOME, XDG paths, repository and session bus for each backend and round",
   "sessionsPerRound": [
-    "X11 Openbox server decorations, portable archive",
+    "Ubuntu 24.04 X11 Openbox with distribution IBus, server decorations, portable archive",
     "Native Wayland Mutter client decorations, AppImage extract-and-run",
     "Native Wayland labwc with Fcitx5 Hangul preedit and commit, same AppImage"
   ],

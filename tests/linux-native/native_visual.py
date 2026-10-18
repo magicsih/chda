@@ -87,9 +87,9 @@ def sentinel_bounds(path, sentinel):
     left, top, width, height = (int(word[key]) for key in ["left", "top", "width", "height"])
     if width <= 20 or height <= 5:
         raise AssertionError("Rendered sentinel OCR bounds are implausible")
-    # Begin just before its first ink pixel, end just after its last ink pixel.
+    # Begin inside the first glyph's cell, end after the final glyph.
     # Exact clipboard readback is the acceptance check, not OCR confidence.
-    coordinates = [left-1, top+height//2, left+width+2, top+height//2]
+    coordinates = [left+1, top+height//2, left+width+2, top+height//2]
     image = Image.open(path).convert("RGB")
     ImageDraw.Draw(image).rectangle((left, top, left+width, top+height), outline="red", width=1)
     image.save(Path(path).with_suffix(".annotated.png"))

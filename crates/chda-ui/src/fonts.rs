@@ -47,18 +47,19 @@ pub fn fallbacks() -> FontFallbacks {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use skrifa::{FontRef, MetadataProvider, string::StringId};
 
     #[test]
     fn bundled_icons_are_loadable_by_the_platform_text_system() {
-        let face = ttf_parser::Face::parse(SYMBOLS_FONT, 0).unwrap();
+        let face = FontRef::new(SYMBOLS_FONT).unwrap();
         // GPUI rejects a family without this glyph before shaping any icons.
-        assert!(face.glyph_index('m').is_some());
+        assert!(face.charmap().map('m').is_some());
         for icon in ['\u{f10aa}', '\u{f054e}', '\u{f054f}', '\u{f062d}'] {
-            assert!(face.glyph_index(icon).is_some(), "missing icon {icon}");
+            assert!(face.charmap().map(icon).is_some(), "missing icon {icon}");
         }
-        assert!(face.names().into_iter().any(|name| {
-            name.name_id == ttf_parser::name_id::FAMILY
-                && name.to_string().as_deref() == Some(SYMBOLS_FAMILY)
-        }));
+        assert!(
+            face.localized_strings(StringId::FAMILY_NAME)
+                .any(|name| name.to_string() == SYMBOLS_FAMILY)
+        );
     }
 }

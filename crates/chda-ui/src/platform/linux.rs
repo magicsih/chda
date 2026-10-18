@@ -10,6 +10,32 @@ use freedesktop_desktop_entry::{DesktopEntry, Iter};
 
 use super::FolderApp;
 
+/// Keep graphics adapter selection and failure reasons available on stderr.
+/// Restrict the logger to graphics so terminal and input logs stay private.
+pub(super) fn init_graphics_diagnostics() {
+    struct GraphicsLogger;
+    impl log::Log for GraphicsLogger {
+        fn enabled(&self, metadata: &log::Metadata<'_>) -> bool {
+            metadata.level() <= log::Level::Info
+                && ["gpui_wgpu", "wgpu_hal", "wgpu_core"]
+                    .iter()
+                    .any(|target| metadata.target().starts_with(*target))
+        }
+
+        fn log(&self, record: &log::Record<'_>) {
+            if self.enabled(record.metadata()) {
+                eprintln!("chda graphics: {}", record.args());
+            }
+        }
+
+        fn flush(&self) {}
+    }
+    static LOGGER: GraphicsLogger = GraphicsLogger;
+    if log::set_logger(&LOGGER).is_ok() {
+        log::set_max_level(log::LevelFilter::Info);
+    }
+}
+
 fn available(program: &str) -> bool {
     use std::os::unix::fs::PermissionsExt;
     let executable = |path: &Path| {
