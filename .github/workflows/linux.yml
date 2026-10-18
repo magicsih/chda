@@ -141,8 +141,10 @@ jobs:
       fail-fast: false
       matrix:
         format: [appimage, archive]
-        distro: [ubuntu-24.04, debian-11, debian-13, fedora-44, arch]
+        distro: [ubuntu-20.04, ubuntu-24.04, debian-11, debian-13, fedora-44, arch]
         include:
+          - distro: ubuntu-20.04
+            image: ubuntu:20.04@sha256:c664f8f86ed5a386b0a340d981b8f81714e21a8b9c73f658c4bea56aa179d54a
           - distro: ubuntu-24.04
             image: ubuntu:24.04@sha256:a2d43bffc46670d7108bb3c0468c67c5557c4c92e83e1e34cbff1322ad1b94dc
           - distro: debian-11
