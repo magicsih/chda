@@ -14,7 +14,8 @@ if command -v apt-get >/dev/null; then
     if [ "$1" = 1 ]; then
         apt-get install -y --no-install-recommends \
             labwc sway wtype wlrctl grim wl-clipboard wayland-utils \
-            build-essential pkg-config libwayland-dev \
+            build-essential pkg-config libwayland-dev wlr-randr mutter xauth \
+            tesseract-ocr xdg-utils libglib2.0-bin \
             xdg-desktop-portal xdg-desktop-portal-gtk adwaita-icon-theme
     fi
 elif command -v dnf >/dev/null; then
