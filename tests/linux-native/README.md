@@ -38,3 +38,13 @@ replace missing IME/visual evidence with a successful automation exit code.
 The additional `ime-wayland` session uses labwc, Fcitx5 Hangul, and native Wayland text-input-v3. It records actual preedit key composition and exact committed text. Xwayland is used only for the input engine discovery; the application has no DISPLAY. This supplements Mutter CSD coverage and does not imply GNOME Shell IME coverage. Commands and About checks exercise actual pointer targets at default and narrow sizes, then an isolated HTTPS URI handler. Independent PNG inspection is still required.
 
 X11 full acceptance uses stock Ubuntu 24.04 IBus. Debian 13 IBus 1.5.32 was also executed and failed when the external ibus-x11 bridge crashed after a few keys; this is retained as failed evidence. The matching upstream heap-corruption fix is ibus/ibus fd18bda (issue 2789). An affected unpatched XIM server is not a supported IME environment. Native Wayland Fcitx5 composition remains a separate session.
+
+The glibc 2.31 compatibility image retains Ubuntu 20.04 userspace and builds
+Mesa 23.3.6 as a test-host Vulkan driver. Its official source checksum and
+Python build dependencies are pinned. The driver is selected through
+`VK_ICD_FILENAMES`, has its own ABI audit and manifest, and is never copied to
+the application payload. This checks an old libc with a compatible driver; it
+does not establish support for every driver shipped with that distribution.
+Separate negative sessions retain actual application startup failures on stock
+Debian 11 Mesa 20 and stock Ubuntu 20.04 Mesa 21. A successful negative check
+always records product startup as failed.
