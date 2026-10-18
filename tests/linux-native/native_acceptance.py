@@ -100,14 +100,31 @@ class Acceptance:
         script=self.root/("installed-hook-"+phase+".py")
         settings=self.root/"data/chda/hooks/claude-settings.json"
         if not settings.is_file():raise AssertionError("Actual app did not install Claude hook settings")
+        installed = json.loads(settings.read_text())["hooks"]
+        commands = {event: installed[event][0]["hooks"][0]["command"] for event in
+                    ["SessionStart", "UserPromptSubmit", "PermissionRequest", "SessionEnd"]}
+        if phase == "before-restart":
+            self.frozen_hook_commands = commands
+            (self.root / "frozen-hook-commands.json").write_text(json.dumps(commands, indent=2)+"\n")
+            appdir = self.driver.marker("original-appdir.txt", 'printf "APPDIR=%s\\n" "${APPDIR-}"').strip()
+            if not appdir.startswith("APPDIR="):
+                raise AssertionError("Unexpected AppImage environment marker")
+            self.original_appdir = appdir[len("APPDIR="):]
+            if self.original_appdir:
+                Path(self.original_appdir).resolve().relative_to(self.journey.context["runtimeTmpdirs"][-1].resolve())
+        else:
+            if commands != self.frozen_hook_commands:
+                raise AssertionError("Installed helper commands changed across cold package restart")
+            commands = self.frozen_hook_commands
+            if self.original_appdir and Path(self.original_appdir).exists():
+                raise AssertionError("Old AppImage runtime path still exists during durable helper validation")
         # This script runs INSIDE the real terminal, so the hook inherits the
         # actual CHDA_PANE_ID and cwd. Never substitute the launcher for its
         # installed hook command, including after AppImage relaunch.
         script.write_text("""import json,os,shlex,subprocess,sys
 from pathlib import Path
 event=sys.argv[1]
-settings=Path(SETTINGS)
-command=json.loads(settings.read_text())['hooks'][event][0]['hooks'][0]['command']
+command=FROZEN_COMMANDS[event]
 program=Path(shlex.split(command)[0])
 if not program.is_file() or not os.access(program,os.X_OK):
     raise RuntimeError('Installed hook executable is unavailable: '+str(program))
@@ -115,7 +132,7 @@ payload={'hook_event_name':event,'session_id':'native-hook-'+PHASE+'-'+os.enviro
 result=subprocess.run(['/bin/sh','-c',command],input=json.dumps(payload),text=True,stdout=subprocess.PIPE,stderr=subprocess.PIPE,timeout=15)
 Path(OUTPUT_PREFIX+event+'.json').write_text(json.dumps({'event':event,'phase':PHASE,'pane':os.environ['CHDA_PANE_ID'],'cwd':os.getcwd(),'command':command,'returncode':result.returncode,'stdout':result.stdout,'stderr':result.stderr},indent=2)+'\\n')
 if result.returncode:raise SystemExit(result.returncode)
-""".replace("SETTINGS",repr(str(settings))).replace("PHASE",repr(phase)).replace("OUTPUT_PREFIX",repr(str(self.root/("hooks-"+phase+"-")))))
+""".replace("FROZEN_COMMANDS",repr(commands)).replace("PHASE",repr(phase)).replace("OUTPUT_PREFIX",repr(str(self.root/("hooks-"+phase+"-")))))
         compile(script.read_text(),str(script),"exec")
         evidence=[]
         for event,expected in [("SessionStart",None),("UserPromptSubmit","working"),

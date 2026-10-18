@@ -29,6 +29,17 @@ MCP status input is an explicit fixture through the packaged CLI, not a paid
 provider conversation. Screenshots and state changes still require independent
 inspection; automation never sets a full-round pass.
 
+Startup waits for the candidate's rendered shell prompt before typing and checks
+the rendered command afterward. A mapped window and a writable PTY alone cannot
+pass. Readiness captures use unique filenames, preserving every attempt.
+
+The restart journey freezes the installed hook commands, stops the app, removes
+only that launch's owned temporary runtime directory, then starts with a new
+TMPDIR. It runs the same saved commands, concurrent helper CLI and MCP requests,
+streaming MCP before stdin EOF, and direct helper-PID termination. Helpers must
+leave the GUI responsive, stop descendants and clean their own extraction paths.
+These protocol inputs are fixtures, not a real provider session.
+
 After the final main build succeeds, dispatch `Linux native review` with that
 run id and its exact SHA. It downloads the existing artifacts for all three
 rounds, validates their provenance and executes the pre-recorded
