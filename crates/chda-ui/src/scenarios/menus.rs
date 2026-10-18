@@ -50,9 +50,19 @@ fn about_from_the_palette_returns_typing_to_the_terminal(cx: &mut TestAppContext
     let mut h = Harness::open(cx, "about-focus", |_| {});
     h.wait_prompt();
     h.cx.update(|window, _| window.activate_window());
+    h.cx.run_until_parked();
+    h.cx.update(|_, cx| assert!(cx.active_window().is_some(), "About needs an active window"));
     h.keys("cmd-shift-p");
+    assert!(
+        h.read(|view, _| view.palette.is_some()),
+        "the palette must open"
+    );
     h.type_text("About chda");
     h.keys("enter");
+    assert!(
+        h.read(|view, _| view.palette.is_none()),
+        "About must leave the palette"
+    );
     assert!(h.cx.has_pending_prompt());
     h.cx.simulate_prompt_answer("Close");
     h.cx.run_until_parked();
