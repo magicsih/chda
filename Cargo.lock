@@ -1006,6 +1006,7 @@ dependencies = [
  "serde_json",
  "sysinfo",
  "time",
+ "ttf-parser",
 ]
 
 [[package]]
