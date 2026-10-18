@@ -245,6 +245,10 @@ class Driver:
             raise AssertionError("Actual selection/clipboard differs: " + repr(copied))
         self.record("actual-selection-copy-passed", sentinel=sentinel, coordinates=coordinates)
         self.key("Escape")
+        # Readline binds ESC followed by the next command's first `p` to
+        # Meta-p history search. Start the next fixture at a clean prompt.
+        # The exact selection/clipboard assertion above remains mandatory.
+        self.key("ctrl+c")
 
 
 def main():

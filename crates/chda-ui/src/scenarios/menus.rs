@@ -43,6 +43,41 @@ fn desktop_commands_keep_new_tab_first_and_expose_platform_menu_actions(cx: &mut
 }
 
 #[gpui::test]
+fn about_from_the_palette_returns_typing_to_the_terminal(cx: &mut TestAppContext) {
+    if !crate::platform::has_application_menu() {
+        return;
+    }
+    let mut h = Harness::open(cx, "about-focus", |_| {});
+    h.wait_prompt();
+    h.cx.update(|window, _| window.activate_window());
+    h.cx.run_until_parked();
+    h.cx.update(|_, cx| assert!(cx.active_window().is_some(), "About needs an active window"));
+    h.keys("cmd-shift-p");
+    assert!(
+        h.read(|view, _| view.palette.is_some()),
+        "the palette must open"
+    );
+    h.type_text("About chda");
+    h.keys("enter");
+    assert!(
+        h.read(|view, _| view.palette.is_none()),
+        "About must leave the palette"
+    );
+    assert!(h.cx.has_pending_prompt());
+    h.cx.simulate_prompt_answer("Close");
+    h.cx.run_until_parked();
+    h.type_text("printf '\\nABOUT_FOCUS_OK\\n'");
+    h.keys("enter");
+    h.wait_for("typing after closing About", |view, cx| {
+        let frame = view.panes[&view.ws.focused_pane().unwrap()]
+            .0
+            .read(cx)
+            .frame();
+        (0..frame.size.rows).any(|row| frame.row_text(row).trim() == "ABOUT_FOCUS_OK")
+    });
+}
+
+#[gpui::test]
 fn settings_writes_a_missing_config_file(cx: &mut TestAppContext) {
     let mut h = Harness::open(cx, "settings", |_| {});
     h.wait_prompt();

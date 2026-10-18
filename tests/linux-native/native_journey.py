@@ -418,6 +418,8 @@ class Journey:
             raise AssertionError("No terminal state exists before restart")
         self.driver.key("ctrl+shift+q")
         wait(lambda: self.context["app"].poll() is not None, "actual Quit exits package", timeout=20)
+        retired = self.context["retire_runtime"]()
+        (self.root / "retired-runtime.json").write_text(json.dumps(retired, indent=2)+"\n")
         self.context["launch_again"]()
         time.sleep(1)
         if self.args.backend == "x11":
@@ -431,8 +433,12 @@ class Journey:
         self.driver.screenshot("restart-restored")
         hooks = self.step("installed hook command and fresh MCP after relaunch",
                           lambda: self.acceptance.hooks_checks("after-restart"))
+        from native_helpers import exercise as helper_checks
+        helpers = self.step("installed helper parallel CLI, streaming MCP and direct termination",
+                            lambda: helper_checks(self))
         return {"beforeSessionCount":len(before),"afterSessionCount":len(after),
-                "selectedRepositoryPreserved":str(self.selected_repo), "hooksAfterRestart": hooks}
+                "selectedRepositoryPreserved":str(self.selected_repo), "hooksAfterRestart": hooks,
+                "helpersAfterRestart": helpers}
 
     def execute(self):
         from native_acceptance import Acceptance
@@ -444,6 +450,7 @@ class Journey:
             if self.args.backend == "x11":
                 from native_ime import exercise
                 self.step("native IBus XIM preedit and commit", lambda: exercise(self.driver))
+                self.report["imeCompositionStatus"] = "native IBus commit passed; independent preedit PNG review pending"
             self.step("terminal Ctrl+C, CtrlShiftT/W/V", self.driver.terminal_checks)
             self.step("actual selection and CtrlShiftC exact clipboard", self.driver.copy_selection)
             self.step("foreground child cwd without OSC7 and recovery after CtrlC", self.acceptance.cwd_checks)

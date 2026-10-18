@@ -12,6 +12,18 @@ pub fn protect_file(_file: &std::fs::File) -> std::io::Result<()> {
 
 /// Atomically replace app-owned metadata; temporary files are private on Unix.
 pub fn write_private_atomic(path: &std::path::Path, bytes: &[u8]) -> std::io::Result<()> {
+    write_private_mode(path, bytes, 0o600)
+}
+
+#[cfg(any(target_os = "linux", all(test, unix)))]
+pub(super) fn write_private_executable_atomic(
+    path: &std::path::Path,
+    bytes: &[u8],
+) -> std::io::Result<()> {
+    write_private_mode(path, bytes, 0o700)
+}
+
+fn write_private_mode(path: &std::path::Path, bytes: &[u8], mode: u32) -> std::io::Result<()> {
     use std::io::Write;
     let parent = path
         .parent()
@@ -23,8 +35,10 @@ pub fn write_private_atomic(path: &std::path::Path, bytes: &[u8]) -> std::io::Re
     #[cfg(unix)]
     {
         use std::os::unix::fs::OpenOptionsExt;
-        options.mode(0o600);
+        options.mode(mode);
     }
+    #[cfg(not(unix))]
+    let _ = mode;
     let mut prepared = None;
     for _ in 0..128 {
         let id = NEXT.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
@@ -45,6 +59,11 @@ pub fn write_private_atomic(path: &std::path::Path, bytes: &[u8]) -> std::io::Re
         )
     })?;
     let result = (|| {
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            file.set_permissions(std::fs::Permissions::from_mode(mode))?;
+        }
         file.write_all(bytes)?;
         file.sync_all()?;
         drop(file);

@@ -45,7 +45,8 @@ on your PATH can point at the persistent `AppRun` path for `chda mcp` and CLI
 commands. Desktop metadata and an icon are included; desktop integration is
 optional and must reference the installed, persistent path.
 
-`git` must be on PATH. Install the coding agents you use and sign in through
+`git` must be on PATH. AppImage agent helpers also require util-linux `setsid`,
+which is supplied by the supported distributions. Install the coding agents you use and sign in through
 their own CLIs. A session D-Bus service provides notifications and folder
 portals; missing services leave terminal input available and report the failed
 operation. Some font characters need a font installed on the host. The
@@ -98,7 +99,11 @@ and child processes have exited.
 Configuration remains in `$XDG_CONFIG_HOME/chda/config.toml` (normally
 `~/.config/chda/config.toml`); saved sessions and hooks remain under
 `$XDG_DATA_HOME/chda` (normally `~/.local/share/chda`). Ghostty config is read
-from `$XDG_CONFIG_HOME/ghostty`. Package replacement does not remove these files.
+from `$XDG_CONFIG_HOME/ghostty`. Package replacement does not remove these files. AppImage hooks and MCP use
+private launchers under `$XDG_DATA_HOME/chda/helpers` that reference the original
+image. Keep that image at its installed path while using its saved agent commands.
+Each helper uses its own temporary extraction directory so concurrent requests
+do not remove the running application's files.
 
 ## Verification matrix
 

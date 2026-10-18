@@ -9,6 +9,7 @@ import signal
 import shlex
 import shutil
 import subprocess
+import tempfile
 import time
 from pathlib import Path
 from types import SimpleNamespace
@@ -76,6 +77,8 @@ def main():
         env.pop(name, None)
     children = []
     handles = []
+    runtime_temporary_root = Path(tempfile.mkdtemp(prefix="chda-native-runtime-"))
+    launch_temporary_paths = []
     steps = []
     result = {"scope": "ARM/tool preparation only" if args.preparation_probe else "product candidate startup only",
               "candidateSha": args.candidate_sha, "artifactSha256": digest,
@@ -109,7 +112,7 @@ def main():
         steps.append({"step": "new HOME/XDG/repository/bus", "status": "passed"})
         parent_window = None
         if args.backend == "x11" or args.compositor == "mutter":
-            xserver = start(["Xvfb", "-displayfd", "1", "-screen", "0", "1440x1000x24", "-nolisten", "tcp"], "xvfb", stdout=subprocess.PIPE)
+            xserver = start(["Xvfb", "-displayfd", "1", "-screen", "0", "1440x1000x24", "-nolisten", "tcp", "-noreset"], "xvfb", stdout=subprocess.PIPE)
             number = xserver.stdout.readline().strip()
             env["DISPLAY"] = ":" + number
             wait_until(lambda: command(["xdpyinfo"], check=False).returncode == 0, "Xvfb")
@@ -194,7 +197,21 @@ def main():
         app_env = dict(env)
         if args.backend == "wayland":
             app_env.pop("DISPLAY", None)
-        app = start([str(launcher)], "candidate", cwd=repo, process_env=app_env)
+        trace = os.environ.get("CHDA_NATIVE_TRACE") == "1"
+        if trace and args.backend == "wayland":
+            app_env["WAYLAND_DEBUG"] = "client"
+        def launch_candidate(name):
+            temporary = runtime_temporary_root / name
+            temporary.mkdir(mode=0o700)
+            launch_temporary_paths.append(temporary)
+            candidate_env = dict(app_env, TMPDIR=str(temporary))
+            invocation = [str(launcher)]
+            if trace:
+                invocation = ["strace", "-f", "-s", "128", "-e",
+                              "trace=read,write,readv,writev,ioctl,recvmsg,sendmsg",
+                              "-o", str(root / (name + "-io.trace"))] + invocation
+            return start(invocation, name, cwd=repo, process_env=candidate_env)
+        app = launch_candidate("candidate")
         window = parent_window
         if args.backend == "x11":
             windows = []
@@ -209,8 +226,12 @@ def main():
             wait_until(lambda: bool(command(["wlrctl", "toplevel", "list"], check=False).stdout.strip()), "actual candidate Wayland window")
         if app.poll() is not None:
             raise RuntimeError("Candidate exited before input")
-        steps.append({"step": "actual launcher and native window", "status": "passed", "window": window})
-        subprocess.run(["vulkaninfo", "--summary"], env=env, stdout=(root / "vulkan.txt").open("w"), stderr=subprocess.STDOUT, check=False)
+        graphics = subprocess.run(["vulkaninfo", "--summary"], env=env, text=True,
+                                  stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
+        if graphics.returncode:
+            graphics = subprocess.run(["vulkaninfo"], env=env, text=True,
+                                      stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
+        (root / "vulkan.txt").write_text(graphics.stdout)
         # Driver subprocesses must receive only this explicitly isolated session.
         options = SimpleNamespace(backend=args.backend, compositor=args.compositor, window=window,
                                   input_backend="x11" if args.backend == "x11" or args.compositor == "mutter" else "wayland",
@@ -229,11 +250,37 @@ def main():
             os.environ.clear()
             os.environ.update(env)
             driver = Driver(options)
-            time.sleep(1)
+            if not args.preparation_probe:
+                # A native window and shell input can precede the first GPU
+                # frame. Wait for the actual rendered prompt on every distro.
+                from native_visual import ocr_words
+                readiness_attempt = 0
+                def rendered_prompt():
+                    nonlocal readiness_attempt
+                    readiness_attempt += 1
+                    image = driver.screenshot(f"startup-readiness-{readiness_attempt:02d}")
+                    letters = "".join(char for word in ocr_words(image) for char in word["text"] if char.isalpha()).upper()
+                    return "CHDAVALIDATION" in letters
+                wait_until(rendered_prompt, "actual candidate rendered shell prompt", timeout=40)
+            else:
+                time.sleep(1)
+            steps.append({"step": "actual launcher and native window", "status": "passed",
+                          "inputWindow": window,
+                          "windowEvidence": "rendered candidate shell prompt" if not args.preparation_probe else "observed tool window"})
             driver.screenshot("01-startup")
-            marker = driver.marker("startup-input.txt", "printf CHDA_STARTUP_INPUT_OK")
+            # The typed command must not contain the contiguous OCR target.
+            marker = driver.marker("startup-input.txt", "printf 'CHDA_%s_INPUT_%s' STARTUP OK")
             if marker != "CHDA_STARTUP_INPUT_OK":
                 raise AssertionError("Unexpected startup marker content")
+            if not args.preparation_probe:
+                output_attempt = 0
+                def rendered_output():
+                    nonlocal output_attempt
+                    output_attempt += 1
+                    image = driver.screenshot(f"startup-output-{output_attempt:02d}")
+                    letters = "".join(char for word in ocr_words(image) for char in word["text"] if char.isalpha()).upper()
+                    return "CHDASTARTUPINPUTOK" in letters
+                wait_until(rendered_output, "actual rendered startup input output", timeout=10)
             driver.screenshot("02-after-input")
             result["startupStatus"] = "passed"
             result["automationStatus"] = "passed"
@@ -249,10 +296,21 @@ def main():
                 driver.copy_selection()
             if args.stage in ["windows", "full"]:
                 from native_journey import Journey
-                context = {"app": app, "provider": provider_process}
+                context = {"app": app, "provider": provider_process,
+                           "runtimeTmpdirs": launch_temporary_paths}
                 def launch_again():
-                    context["app"] = start([str(launcher)], "candidate-restarted", cwd=repo, process_env=app_env)
+                    context["app"] = launch_candidate("candidate-restarted")
+                def retire_runtime():
+                    # Only this already-stopped launch's private temp directory.
+                    # Do not let an extract-and-run cache hide a stale helper path.
+                    previous = launch_temporary_paths[-1]
+                    if previous.exists():
+                        shutil.rmtree(previous)
+                    assert not previous.exists()
+                    return {"path": str(previous), "existsAfterCleanup": previous.exists(),
+                            "scope": "owned isolated stopped runtime directory"}
                 context["launch_again"] = launch_again
+                context["retire_runtime"] = retire_runtime
                 journey = Journey(driver, args, root, repo, context)
                 if args.stage == "full":
                     report = journey.execute()
@@ -286,6 +344,7 @@ def main():
                     pass
         for handle in handles:
             handle.close()
+        shutil.rmtree(runtime_temporary_root)
 
 
 if __name__ == "__main__":

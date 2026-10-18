@@ -141,14 +141,13 @@ jobs:
       fail-fast: false
       matrix:
         format: [appimage, archive]
-        distro: [ubuntu-20.04, ubuntu-24.04, debian-11, debian-13, fedora-44, arch]
+        distro: [ubuntu-20.04, ubuntu-24.04, debian-13, fedora-44, arch]
         include:
           - distro: ubuntu-20.04
             image: ubuntu:20.04@sha256:c664f8f86ed5a386b0a340d981b8f81714e21a8b9c73f658c4bea56aa179d54a
+            compatibility_driver: '1'
           - distro: ubuntu-24.04
             image: ubuntu:24.04@sha256:a2d43bffc46670d7108bb3c0468c67c5557c4c92e83e1e34cbff1322ad1b94dc
-          - distro: debian-11
-            image: debian:bullseye-slim@sha256:70509c95d1857a3704c0a5d92ee2e0adac95f612a9386889d70760bfd7c1ebba
           - distro: debian-13
             image: debian:trixie-slim@sha256:918311b7b6c4c6f68b232ba516584925f6c78ad82b6fd534b98979df6438e483
           - distro: fedora-44
@@ -164,7 +163,8 @@ jobs:
       - name: Build the isolated runtime
         env:
           NATIVE_IMAGE: ${{ matrix.image }}
-        run: docker build --build-arg "BASE_IMAGE=$NATIVE_IMAGE" -t chda-native tests/linux-native
+          COMPATIBILITY_DRIVER: ${{ matrix.compatibility_driver || '0' }}
+        run: docker build --build-arg "BASE_IMAGE=$NATIVE_IMAGE" --build-arg "COMPATIBILITY_DRIVER=$COMPATIBILITY_DRIVER" -t chda-native tests/linux-native
       - name: Run the actual package with native X11 input
         env:
           NATIVE_IMAGE: ${{ matrix.image }}
@@ -213,6 +213,7 @@ jobs:
     env:
       NATIVE_IMAGE: ${{ matrix.image }}
       NATIVE_STAGE: ${{ matrix.stage }}
+      CHDA_NATIVE_TRACE: '1'
       COMPOSITOR: ${{ matrix.compositor }}
       DISPLAY_BACKEND: ${{ matrix.backend }}
       PACKAGE_FORMAT: ${{ matrix.format }}
@@ -231,7 +232,7 @@ jobs:
             -v "$GITHUB_WORKSPACE/packages:/packages:ro" \
             -v "$GITHUB_WORKSPACE/native-evidence:/evidence" \
             -e NATIVE_IMAGE -e PACKAGE_FORMAT -e RUNNER_ARCH -e "CANDIDATE_SHA=$GITHUB_SHA" \
-            -e NATIVE_STAGE -e COMPOSITOR -e DISPLAY_BACKEND chda-native
+            -e NATIVE_STAGE -e COMPOSITOR -e DISPLAY_BACKEND -e CHDA_NATIVE_TRACE chda-native
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         if: always()
         with:
@@ -239,4 +240,46 @@ jobs:
           path: |
             native-evidence
             !native-evidence/session/cache/**
+          retention-days: 3
+
+  unsupported_graphics:
+    name: Known unsupported graphics (${{ matrix.driver }}, ${{ matrix.format }})
+    needs: package
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        format: [appimage, archive]
+        driver: [mesa20, mesa21]
+        include:
+          - driver: mesa20
+            image: debian:bullseye-slim@sha256:70509c95d1857a3704c0a5d92ee2e0adac95f612a9386889d70760bfd7c1ebba
+          - driver: mesa21
+            image: ubuntu:20.04@sha256:c664f8f86ed5a386b0a340d981b8f81714e21a8b9c73f658c4bea56aa179d54a
+    env:
+      NATIVE_IMAGE: ${{ matrix.image }}
+      PACKAGE_FORMAT: ${{ matrix.format }}
+      EXPECT_GPU_UNAVAILABLE: ${{ matrix.driver }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: linux-packages
+          path: packages
+      - name: Build the documented incompatible graphics environment
+        run: docker build --build-arg "BASE_IMAGE=$NATIVE_IMAGE" -t chda-native tests/linux-native
+      - name: Verify the explicit graphics failure without claiming startup support
+        run: |
+          mkdir native-evidence
+          docker run --rm --network none \
+            -v "$GITHUB_WORKSPACE/packages:/packages:ro" \
+            -v "$GITHUB_WORKSPACE/native-evidence:/evidence" \
+            -e NATIVE_IMAGE -e PACKAGE_FORMAT -e RUNNER_ARCH -e "CANDIDATE_SHA=$GITHUB_SHA" \
+            -e EXPECT_GPU_UNAVAILABLE chda-native
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        if: always()
+        with:
+          name: linux-unsupported-${{ matrix.driver }}-${{ matrix.format }}
+          path: native-evidence
           retention-days: 3

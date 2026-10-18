@@ -298,4 +298,15 @@ require the final macOS candidate check.
 
 `scripts/test-macos-release.py` requires all 16 ISSUE conditions in each of three review rounds and both separate E2Es starting with v0.1.23, while preserving historical v0.1.21/v0.1.22 exact coverage and rejecting their exceptions for v0.1.23. These are synthetic validator tests and never release evidence.
 
-Linux package acceptance records supported startup separately from known incompatible graphics environments. The Ubuntu 20.04 run uses glibc 2.31 with official Mesa 21.2, but actual application startup failed because the Vulkan adapter limits were below the graphics engine's request. Compatibility-floor runtime acceptance is still pending. Debian 11 stock Mesa 20 failed to expose a compatible Vulkan/EGL X11 surface; its negative check must retain `productStartupStatus: failed` and `supportedEnvironment: false`. Neither failed environment satisfies a positive startup requirement. The Linux guide preserves these limits and the independently confirmed unpatched IBus 1.5.32 XIM server crash.
+Linux package acceptance records supported startup separately from known incompatible graphics environments. The Ubuntu 20.04 run uses glibc 2.31 with official Mesa 21.2, but actual application startup failed because the Vulkan adapter limits were below the graphics engine's request. The separate glibc 2.31 environment uses QA-only Mesa 23.3.6; compatibility-floor rendered runtime acceptance is still pending. A mapped window and successful PTY input do not establish rendered startup. Debian 11 stock Mesa 20 failed to expose a compatible Vulkan/EGL X11 surface; its negative check must retain `productStartupStatus: failed` and `supportedEnvironment: false`. Neither failed environment satisfies a positive startup requirement. The Linux guide preserves these limits and the independently confirmed unpatched IBus 1.5.32 XIM server crash.
+
+`chda-agents::ipc::executable::appimage::tests` reproduces an AppImage helper path
+lost when its temporary runtime directory disappears. A private executable
+launcher retains the original package only when APPDIR contains this exact
+packaged chda executable and its desktop marker; portable executables ignore
+another application's inherited AppImage environment. Each helper uses its own
+temporary extraction directory, preserves stdin and exits with its child status.
+Direct termination forwards to the helper process group before cleanup. Private
+metadata stays non-executable. Native package acceptance separately executes frozen
+pre-restart hook commands after removing the stopped runtime's isolated temp
+directory and relaunching under a different TMPDIR.
