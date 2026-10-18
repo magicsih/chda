@@ -61,12 +61,12 @@ jobs:
         run: |
           version=$(cargo metadata --no-deps --format-version 1 | python3 -c 'import json,sys; print(next(p["version"] for p in json.load(sys.stdin)["packages"] if p["name"] == "chda"))')
           python3 scripts/package-linux.py --binary target/release/chda \
-            --output target/linux-stage --version "$version" --sha "$GITHUB_SHA" --collect-sources
-          tar -C target/linux-stage -czf target/linux-stage.tar.gz .
+            --output "$RUNNER_TEMP/linux-stage" --version "$version" --sha "$GITHUB_SHA" --collect-sources
+          tar -C "$RUNNER_TEMP/linux-stage" -czf "$RUNNER_TEMP/linux-stage.tar.gz" .
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: linux-stage
-          path: target/linux-stage.tar.gz
+          path: ${{ runner.temp }}/linux-stage.tar.gz
           retention-days: 3
 
   package:
