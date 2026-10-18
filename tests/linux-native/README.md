@@ -59,11 +59,14 @@ The additional `ime-wayland` session uses labwc, Fcitx5 Hangul, and native Wayla
 X11 full acceptance uses stock Ubuntu 24.04 IBus. Debian 13 IBus 1.5.32 was also executed and failed when the external ibus-x11 bridge crashed after a few keys; this is retained as failed evidence. The matching upstream heap-corruption fix is ibus/ibus fd18bda (issue 2789). An affected unpatched XIM server is not a supported IME environment. Native Wayland Fcitx5 composition remains a separate session.
 
 The glibc 2.31 compatibility image retains Ubuntu 20.04 userspace and builds
-Mesa 23.3.6 as a test-host Vulkan driver. Its official source checksum and
-Python build dependencies are pinned. The driver is selected through
+Mesa 25.2.8 with LLVM 20.1.8 as a test-host Vulkan driver. Its official source
+checksums, signed Focal LLVM packages and Python build dependencies are pinned.
+The driver is selected through
 `VK_ICD_FILENAMES`, has its own ABI audit and manifest, and is never copied to
 the application payload. This checks an old libc with a compatible driver; it
 does not establish support for every driver shipped with that distribution.
+The earlier Mesa 23.3.6 and LLVM 12 host passed the configuration limits but
+rendered a black application body for 40 seconds; it remains failed evidence.
 Separate negative sessions retain actual application startup failures on stock
 Debian 11 Mesa 20 and stock Ubuntu 20.04 Mesa 21. A successful negative check
 always records product startup as failed.
