@@ -4,6 +4,55 @@ All notable changes to chda. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); entries are
 generated from conventional commit messages by release-plz.
 
+## [1.1.0](https://github.com/magicsih/chda/compare/v1.0.25...v1.1.0) - 2026-10-18
+
+### Added
+
+- *(linux)* offer platform-specific manual update downloads
+- *(linux)* add desktop shortcuts and client window controls
+- *(linux)* track directories and integrate desktop services
+
+### Fixed
+
+- *(linux)* keep AppImage agent helpers usable after restart
+- *(linux)* preserve the visible window size after restoring
+- *(palette)* keep command input after window reactivation
+- *(palette)* keep commands and keyboard selection inside small windows
+- *(linux)* show the full About description in narrow dialogs
+- *(linux)* isolate AppImage helper input and process lifetimes
+- *(linux)* open About after window updates and restore terminal focus
+- *(linux)* match graphics logging targets by string value
+- *(linux)* report graphics adapter initialization failures
+- *(linux)* leave unsupported hide shortcuts available to terminals
+- *(linux)* compile notification routing and preserve Bash directory titles
+- *(linux)* keep file reads from repeating configuration and sidebar refreshes
+- *(fonts)* render bundled icons on Linux without system fonts
+- *(palette)* preserve command order while adding the Linux menu
+- *(linux)* identify application windows to the desktop
+- *(linux)* respect compositor window control capabilities
+- *(linux)* specify window control label types
+- *(linux)* keep helper runtime directories private and usable
+- *(linux)* run saved AppImage helpers without the GUI environment
+
+### Changed
+
+- *(linux)* satisfy platform Clippy checks
+
+### Other
+
+- Merge branch 'feat/linux-packaging' into test/linux-native-validation
+- Merge branch 'feat/linux-platform' into feat/linux-packaging
+- Merge branch 'feat/linux-platform' into feat/linux-packaging
+- Merge branch 'feat/linux-platform' into feat/linux-packaging
+- Merge branch 'feat/linux-platform' into feat/linux-packaging
+- Merge branch 'feat/linux-platform' into feat/linux-packaging
+- Merge branch 'feat/linux-platform' into feat/linux-packaging
+- Merge branch 'feat/linux-platform' into feat/linux-packaging
+- Merge branch 'feat/linux-platform' into feat/linux-packaging
+- Merge branch 'feat/linux-platform' into feat/linux-packaging
+- Merge branch 'feat/linux-platform' into feat/linux-packaging
+- Merge branch 'feat/linux-platform' into feat/linux-packaging
+
 ## [1.0.25](https://github.com/magicsih/chda/compare/v0.1.24...v1.0.25) - 2026-10-16
 
 ### Fixed
