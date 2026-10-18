@@ -291,3 +291,11 @@ require the final macOS candidate check.
 `chda-agents::sharing::tests` covers real CLI/VT partial code and nested-list captures, Unicode and partial line boundaries, duplicate/overlapping source ranges, malformed or incomplete exact transcripts and unconfirmed versions. Only uniquely selected source ranges are copied; hidden fences and other answer text are excluded. `scenarios::sharing` retains actual PTY selection, preview scope, ordinary Copy, clipboard-before-confirm, edited text, cancellation and update/navigation regressions. Headless scenarios do not replace the final native macOS and unsent composer verification.
 
 `scripts/test-macos-release.py` requires all 16 ISSUE conditions in each of three review rounds and both separate E2Es starting with v0.1.23, while preserving historical v0.1.21/v0.1.22 exact coverage and rejecting their exceptions for v0.1.23. These are synthetic validator tests and never release evidence.
+
+`chda-agents::ipc::executable::tests` reproduces an AppImage helper path lost when
+its temporary runtime directory disappears. The resolver retains the original
+package only when APPDIR contains this exact packaged chda executable and its
+desktop marker; portable executables ignore another application's inherited
+AppImage environment. Native package acceptance separately executes frozen
+pre-restart hook commands after removing the stopped runtime's isolated temp
+directory and relaunching under a different TMPDIR.
