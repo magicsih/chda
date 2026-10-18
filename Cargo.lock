@@ -1004,9 +1004,9 @@ dependencies = [
  "objc2-user-notifications",
  "pulldown-cmark",
  "serde_json",
+ "skrifa 0.40.0",
  "sysinfo",
  "time",
- "ttf-parser",
 ]
 
 [[package]]
