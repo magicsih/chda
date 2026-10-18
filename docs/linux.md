@@ -109,7 +109,33 @@ do not remove the running application's files.
 
 ## Verification matrix
 
-Pending final candidate execution. Record distro versions, architecture,
-artifact digests, display backend and rendering device. Software-rendered CI
-does not establish physical-GPU or every desktop's IME behavior. ARM64,
-Alpine/musl, NixOS and Windows packages are outside the first delivery.
+Development startup checks on 18 October 2026 verified the rendered shell
+prompt, native typed input and rendered command output for both the AppImage
+in extract-and-run mode and the portable archive in these x86_64 environments:
+
+| Runtime userland | glibc | Vulkan software driver |
+| --- | --- | --- |
+| Ubuntu 24.04.5 LTS | 2.39 | Mesa 25.2.8, LLVM 20.1.2 |
+| Debian 13 (trixie) | 2.41 | Mesa 25.0.7, LLVM 19.1.7 |
+| Fedora 44 | 2.43 | Mesa 26.2.4, LLVM 22.1.8 |
+| Arch Linux | 2.44 | Mesa 26.2.5, LLVM 23.1.3 |
+| Ubuntu 20.04.6 LTS with a QA driver | 2.31 | Mesa 25.2.8, LLVM 20.1.8 |
+
+All rows use llvmpipe under X11, Xvfb and Openbox. The Ubuntu 20.04 row retains
+its libc and adds a separate compatible test-host graphics driver; it does
+not establish support for that distribution's stock Mesa driver. No QA driver
+is bundled in the downloads.
+
+The full desktop journeys separately exercise Ubuntu 24.04 X11 with IBus and
+Debian 13 native Wayland with Mutter client window controls. The additional
+labwc and Fcitx5 Hangul session verifies native preedit and commit. These are
+isolated software-rendered sessions, not coverage of physical GPUs, every
+desktop or every input method. Startup checks do not establish a complete
+desktop journey on every distribution or FUSE-mounted AppImage operation.
+
+Final release review uses the exact main commit and existing package digests
+for all three independent rounds, without rebuilding between rounds. The
+release's `linux-build.json` and `SHA256SUMS` identify its source and downloads;
+the [native review workflow](../.github/workflows/linux-native-review.yml)
+records the separate execution evidence. ARM64, Alpine/musl, NixOS and Windows
+packages are outside the first delivery.
