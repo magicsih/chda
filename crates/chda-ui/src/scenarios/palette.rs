@@ -12,6 +12,36 @@ const DEFAULT_BACKGROUND: Rgb = Rgb {
     b: 0x34,
 };
 
+#[gpui::test]
+fn a_narrow_palette_keeps_its_panel_and_keyboard_selection_inside_the_window(
+    cx: &mut TestAppContext,
+) {
+    let mut h = Harness::open(cx, "narrow-palette", |_| {});
+    h.wait_prompt();
+    h.cx.simulate_resize(gpui::size(gpui::px(640.0), gpui::px(420.0)));
+    h.keys("cmd-shift-p");
+    let panel = h.cx.debug_bounds("command-palette").unwrap();
+    assert!(panel.origin.x >= gpui::px(0.0));
+    assert!(panel.right() <= gpui::px(640.0));
+    assert!(panel.bottom() <= gpui::px(420.0), "{panel:?}");
+    // Up wraps to the final action, which must be reachable in the same viewport.
+    h.keys("up");
+    let selected = h.cx.debug_bounds("palette-selected").unwrap();
+    assert!(selected.origin.y >= panel.origin.y, "{selected:?}");
+    assert!(selected.bottom() <= panel.bottom(), "{selected:?}");
+    h.cx.simulate_resize(gpui::size(gpui::px(960.0), gpui::px(640.0)));
+    h.keys("down up");
+    h.cx.simulate_resize(gpui::size(gpui::px(640.0), gpui::px(420.0)));
+    h.cx.run_until_parked();
+    let panel = h.cx.debug_bounds("command-palette").unwrap();
+    let selected = h.cx.debug_bounds("palette-selected").unwrap();
+    assert!(panel.bottom() <= gpui::px(420.0), "{panel:?}");
+    assert!(selected.origin.y >= panel.origin.y, "{selected:?}");
+    assert!(selected.bottom() <= panel.bottom(), "{selected:?}");
+    h.keys("escape");
+    h.run("printf 'palette-%s\\n' restored", "palette-restored");
+}
+
 fn background(h: &Harness) -> Option<Rgb> {
     h.read(|v, _| v.settings.colors.background)
 }
