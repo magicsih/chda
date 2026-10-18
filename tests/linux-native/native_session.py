@@ -239,7 +239,17 @@ def main():
             os.environ.clear()
             os.environ.update(env)
             driver = Driver(options)
-            time.sleep(1)
+            if args.backend == "wayland" and args.compositor == "mutter":
+                # The nested X11 window is the compositor, not the candidate.
+                # Wait for the actual rendered shell before sending any input,
+                # including when diagnostic tracing slows process startup.
+                from native_visual import ocr_words
+                def rendered_prompt():
+                    image = driver.screenshot("startup-readiness")
+                    return any("CHDA_VALIDATION" in word["text"] for word in ocr_words(image))
+                wait_until(rendered_prompt, "actual candidate rendered shell prompt", timeout=40)
+            else:
+                time.sleep(1)
             driver.screenshot("01-startup")
             marker = driver.marker("startup-input.txt", "printf CHDA_STARTUP_INPUT_OK")
             if marker != "CHDA_STARTUP_INPUT_OK":
