@@ -7,7 +7,7 @@ import re
 import subprocess
 from pathlib import Path
 
-from PIL import Image, ImageChops, ImageDraw
+from PIL import Image, ImageChops, ImageDraw, ImageOps
 
 
 BACKGROUND = (32, 36, 41)
@@ -74,7 +74,7 @@ def background_bounds(path, color=BACKGROUND):
 def ocr_words(path):
     response = subprocess.run(["tesseract", str(path), "stdout", "--psm", "11", "tsv"],
                               check=True, text=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
-    return list(csv.DictReader(io.StringIO(response.stdout), delimiter="\t"))
+    return list(csv.DictReader(io.StringIO(response.stdout), delimiter="\t", quoting=csv.QUOTE_NONE))
 
 
 def sentinel_bounds(path, sentinel):
@@ -99,21 +99,50 @@ def sentinel_bounds(path, sentinel):
     return coordinates
 
 
-def phrase_center(path, phrase):
-    words = ocr_words(path)
+def phrase_matches(words, phrase, minimum_confidence=None):
     wanted = phrase.lower().split()
     matches = []
     for index in range(len(words)-len(wanted)+1):
         group = words[index:index+len(wanted)]
-        if [re.sub(r"^\W+|\W+$", "", word["text"].strip().lower()) for word in group] == wanted:
-            if len({(word["block_num"],word["par_num"],word["line_num"]) for word in group}) != 1:
-                continue
-            left = min(int(word["left"]) for word in group)
-            top = min(int(word["top"]) for word in group)
-            right = max(int(word["left"])+int(word["width"]) for word in group)
-            bottom = max(int(word["top"])+int(word["height"]) for word in group)
-            matches.append([(left+right)//2,(top+bottom)//2])
+        if [re.sub(r"^\W+|\W+$", "", word["text"].strip().lower()) for word in group] != wanted:
+            continue
+        if len({(word["block_num"],word["par_num"],word["line_num"]) for word in group}) != 1:
+            continue
+        if minimum_confidence is not None and any(float(word["conf"]) < minimum_confidence for word in group):
+            continue
+        left = min(int(word["left"]) for word in group)
+        top = min(int(word["top"]) for word in group)
+        right = max(int(word["left"])+int(word["width"]) for word in group)
+        bottom = max(int(word["top"])+int(word["height"]) for word in group)
+        matches.append({"at": [(left+right)//2,(top+bottom)//2],
+                        "bounds": [left,top,right,bottom], "words": group})
+    return matches
+
+
+def phrase_center(path, phrase):
+    words = ocr_words(path)
+    Path(path).with_suffix(".control-ocr-raw.json").write_text(json.dumps(words, indent=2)+"\n")
+    matches = phrase_matches(words, phrase)
+    processing = "original PNG"
+    # A mixed dark terminal and lighter modal can hide the modal from
+    # Tesseract's automatic threshold. Preserve geometry and actual glyphs,
+    # raise their contrast, then require exact words and useful confidence.
+    if not matches:
+        contrast_path = Path(path).with_suffix(".bright-text160.png")
+        image = ImageOps.grayscale(Image.open(path))
+        image.point(lambda value: 0 if value >= 160 else 255).save(contrast_path)
+        words = ocr_words(contrast_path)
+        contrast_path.with_suffix(".ocr.json").write_text(json.dumps(words, indent=2)+"\n")
+        matches = phrase_matches(words, phrase, minimum_confidence=70)
+        processing = "same-size grayscale brightness >=160 black, lower brightness white"
     if len(matches) != 1:
         raise AssertionError("Expected one rendered control phrase "+repr(phrase)+", found "+str(len(matches)))
-    Path(path).with_suffix(".control-coordinate.json").write_text(json.dumps({"phrase":phrase,"at":matches[0]},indent=2)+"\n")
-    return matches[0]
+    match = matches[0]
+    image = Image.open(path)
+    if not (0 <= match["at"][0] < image.width and 0 <= match["at"][1] < image.height):
+        raise AssertionError("Rendered control coordinate lies outside original PNG")
+    Path(path).with_suffix(".control-coordinate.json").write_text(json.dumps({
+        "phrase":phrase, "at":match["at"], "bounds":match["bounds"],
+        "processing":processing, "words":match["words"], "source":str(path),
+    },indent=2)+"\n")
+    return match["at"]
