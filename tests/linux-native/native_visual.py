@@ -46,14 +46,14 @@ def largest_region(mask):
     return tuple(region[1:]),region[0]
 
 
-def background_bounds(path, color=BACKGROUND):
+def background_bounds(path, color=BACKGROUND, minimum_pixels=20000):
     image = Image.open(path).convert("RGB")
     # Mutter's color management transformed configured #202429 to #1c2226
     # in the real ARM fixture. Derive the actual dominant nearby solid color
     # from this PNG before masking; do not assume byte-identical composition.
     nearby=[(count,actual) for count,actual in image.getcolors(image.width*image.height)
             if max(abs(actual[index]-color[index]) for index in range(3))<=8]
-    if not nearby or max(nearby)[0]<20000:
+    if not nearby or max(nearby)[0]<minimum_pixels:
         raise AssertionError("No large candidate background near configured color in actual PNG")
     _,observed=max(nearby)
     channels = ImageChops.difference(image, Image.new("RGB", image.size, observed)).split()
@@ -62,14 +62,14 @@ def background_bounds(path, color=BACKGROUND):
     for channel in channels[1:]:
         mask = ImageChops.multiply(mask, channel.point(lambda value: 255 if value <= 1 else 0))
     bounds,count = largest_region(mask)
-    if bounds is None or count < 20000:
+    if bounds is None or count < minimum_pixels:
         raise AssertionError("No large candidate background found in actual PNG")
     left, top, right, bottom = bounds
     if right - left < 200 or bottom - top < 150:
         raise AssertionError("Candidate background is too small for window geometry")
     return {"x": left, "y": top, "width": right-left, "height": bottom-top,
             "source": "current PNG largest connected solid background near configured RGB", "matchedPixels": count,
-            "configuredRgb":color,"observedRgb":observed}
+            "configuredRgb":color,"observedRgb":observed,"minimumPixels":minimum_pixels}
 
 
 def ocr_words(path):
