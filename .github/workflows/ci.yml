@@ -105,7 +105,7 @@ jobs:
       - run: cargo build --workspace --release
 
   linux:
-    name: Linux build
+    name: Linux test
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
@@ -114,15 +114,18 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends \
             libwayland-dev libxkbcommon-x11-dev libx11-xcb-dev \
-            libfontconfig-dev libvulkan1 libasound2-dev
+            libfontconfig-dev libvulkan1 libasound2-dev zsh fish git
       - uses: dtolnay/rust-toolchain@master
         with:
           toolchain: 1.98.1
+          components: clippy
       - uses: mlugg/setup-zig@v2
         with:
           version: ${{ env.ZIG_VERSION }}
       - uses: Swatinem/rust-cache@v2
       - run: python3 scripts/prepare-ghostty.py
+      - run: cargo clippy --workspace --all-targets -- -D warnings
+      - run: cargo test --workspace
       - run: cargo build --workspace --release
 
   windows:
