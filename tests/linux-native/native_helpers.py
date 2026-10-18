@@ -103,8 +103,7 @@ def exercise(journey):
             streamed = json.loads(line.split(b"\n", 1)[0])
         finally:
             selector.close()
-        if streamed.get("id") != request["id"] or "error" in streamed or streamed.get("result", {}).get("isError"):
-            raise AssertionError("Streaming helper MCP returned an error")
+        mcp_fixture.validate_reply(streamed, request)
         remember_descendants()
         child.terminate()  # Deliberately signal the launcher PID, not its group.
         status = child.wait(timeout=10)
