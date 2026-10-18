@@ -21,6 +21,10 @@ def exercise(journey):
     temporary = root / "temporary"
     temporary.mkdir(mode=0o700)
     env = dict(os.environ, TMPDIR=str(temporary))
+    # Saved external MCP commands must work without the GUI launch environment
+    # or a FUSE device. The installed AppImage helper chooses its own run mode.
+    for name in ("APPIMAGE_EXTRACT_AND_RUN", "APPIMAGE", "APPDIR", "TARGET_APPIMAGE"):
+        env.pop(name, None)
 
     def version():
         child = subprocess.run([helper, "--version"], cwd=journey.repo, env=env,
