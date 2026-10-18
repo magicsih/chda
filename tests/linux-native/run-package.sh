@@ -40,8 +40,37 @@ print(json.dumps({
 }, indent=2))
 PY
 chown -R chda-test:chda-test /work /evidence
-exec runuser -u chda-test -- python3 /driver/native_session.py \
+run_session() {
+runuser -u chda-test -- python3 /driver/native_session.py \
     --launcher "$launcher" --artifact "$artifact" --candidate-sha "$CANDIDATE_SHA" \
     --backend "${DISPLAY_BACKEND:-x11}" --round "${REVIEW_ROUND:-1}" \
     --compositor "${COMPOSITOR:-mutter}" --stage "${NATIVE_STAGE:-startup}" \
     --evidence /evidence/session
+
+}
+if [ "${EXPECT_GPU_UNAVAILABLE:-0}" = 1 ]; then
+    set +e
+    run_session
+    driver_exit=$?
+    set -e
+    DRIVER_EXIT="$driver_exit" python3 - <<'PYNEGATIVE'
+import json, os
+from pathlib import Path
+root = Path('/evidence/session')
+result = json.loads((root / 'session-result.json').read_text())
+log = (root / 'candidate.log').read_text()
+assert int(os.environ['DRIVER_EXIT']) != 0
+assert result['startupStatus'] == 'failed'
+assert 'No GPU adapter found that can configure the display surface' in log
+assert log.count('no compatible surface formats') >= 2
+assert 'GLIBC_' not in log and 'symbol lookup error' not in log
+Path('/evidence/expected-graphics-failure.json').write_text(json.dumps({
+    'negativeCheckStatus': 'passed', 'productStartupStatus': 'failed',
+    'supportedEnvironment': False,
+    'reason': 'Stock Mesa20 software Vulkan and EGL expose no compatible X11 surface formats',
+    'candidateSha': result['candidateSha'], 'artifactSha256': result['artifactSha256'],
+}, indent=2) + '\n')
+PYNEGATIVE
+else
+    run_session
+fi
