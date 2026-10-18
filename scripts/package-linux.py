@@ -108,6 +108,8 @@ def stage(binary, output, version, sha, collect_sources):
         abi[str(elf.relative_to(app))] = audit_symbols(run("readelf", "--dyn-syms", "--wide", str(elf)))
     root = pathlib.Path(__file__).resolve().parent.parent
     shutil.copy2(root / "LICENSE", notices / "LICENSE")
+    for license_name in ["JetBrainsMono-OFL.txt", "SymbolsNerdFont-LICENSE.txt"]:
+        shutil.copy2(root / "crates/chda-ui/assets/fonts" / license_name, notices / license_name)
     shutil.copy2(root / "packaging/linux/com.magicsih.chda.desktop", app)
     shutil.copy2(root / "docs/site/icon.png", app / "chda.png")
     (app / ".DirIcon").symlink_to("chda.png")
