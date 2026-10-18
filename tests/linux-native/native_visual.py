@@ -72,8 +72,8 @@ def background_bounds(path, color=BACKGROUND, minimum_pixels=20000):
             "configuredRgb":color,"observedRgb":observed,"minimumPixels":minimum_pixels}
 
 
-def ocr_words(path):
-    response = subprocess.run(["tesseract", str(path), "stdout", "--psm", "11", "tsv"],
+def ocr_words(path, psm=11):
+    response = subprocess.run(["tesseract", str(path), "stdout", "--psm", str(psm), "tsv"],
                               check=True, text=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
     return list(csv.DictReader(io.StringIO(response.stdout), delimiter="\t", quoting=csv.QUOTE_NONE))
 
@@ -152,9 +152,16 @@ def phrase_center(path, phrase):
     # Tesseract's automatic threshold. Preserve geometry and actual glyphs,
     # raise their contrast, then require exact words and useful confidence.
     if not matches:
-        words, _ = bright_text_ocr(path, 160)
+        words, contrast_path = bright_text_ocr(path, 160)
         matches = phrase_matches(words, phrase, minimum_confidence=70)
         processing = "same-size grayscale brightness >=160 black, lower brightness white"
+        if not matches:
+            # Sparse-text segmentation can omit an active GTK action button.
+            # Read the same pixels as one block, retaining the failed attempts.
+            words = ocr_words(contrast_path, psm=6)
+            contrast_path.with_suffix(".psm6.ocr.json").write_text(json.dumps(words, indent=2)+"\n")
+            matches = phrase_matches(words, phrase, minimum_confidence=70)
+            processing += "; single-block PSM6 segmentation"
     if len(matches) != 1:
         raise AssertionError("Expected one rendered control phrase "+repr(phrase)+", found "+str(len(matches)))
     match = matches[0]

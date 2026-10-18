@@ -245,7 +245,9 @@ class Journey:
         if not minimized:
             raise AssertionError("Actual minimize button left the candidate background visible after animation settled")
         self.restore_minimized()
-        self.observe("window-unminimized")
+        unminimized = self.observe("window-unminimized")
+        if any(abs(unminimized[axis]-restored[axis]) > 8 for axis in ("width", "height")):
+            raise AssertionError("Actual minimize/restore changed the window size")
         self.driver.marker("after-unminimize.txt", "printf UNMINIMIZE_OK")
         geometry = self.observe("window-before-move")
         frame = geometry["frame"]
