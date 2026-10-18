@@ -25,20 +25,6 @@
       "status": "not-run"
     }
   ],
-  "requiredEachSession": [
-    "Actual candidate metadata, package digest and renderer readback",
-    "960x640 and 640x420 rendered inspection",
-    "Ctrl+C interruption with surviving terminal input",
-    "Ctrl+Shift+C exact selection clipboard readback",
-    "Ctrl+Shift+V pasted command and Ctrl+Shift+T/W pane identity",
-    "Actual minimize, restore, maximize, title drag, eight resize areas and close",
-    "Real folder dialog cancellation, Unicode/spaces selection and retry",
-    "Two pane notification delivery and ActionInvoked exact-pane readback",
-    "Notification click after the newest window closes",
-    "Absent notification service keeps terminal input responsive",
-    "Restart preserves isolated configuration and sessions",
-    "Actual Commands button and About prompt at default and narrow sizes, exact repository URI dispatch"
-  ],
   "additionalReleaseAcceptance": [
     "Native Unicode and IME preedit/commit, recorded separately",
     "Native Ctrl+click link activation",
@@ -57,5 +43,24 @@
     "ARM tool probes do not establish x86_64 product execution",
     "Software rendering does not establish physical-GPU coverage",
     "Unicode paste does not establish IME composition"
+  ],
+  "requiredEachDesktopSession": [
+    "Actual candidate metadata, package digest and renderer readback",
+    "960x640 and 640x420 rendered inspection",
+    "Ctrl+C interruption with surviving terminal input",
+    "Ctrl+Shift+C exact selection clipboard readback",
+    "Ctrl+Shift+V pasted command and Ctrl+Shift+T/W pane identity",
+    "Actual minimize, restore, maximize, title drag, eight resize areas and close",
+    "Real folder dialog cancellation, Unicode/spaces selection and retry",
+    "Two pane notification delivery and ActionInvoked exact-pane readback",
+    "Notification click after the newest window closes",
+    "Absent notification service keeps terminal input responsive",
+    "Restart preserves isolated configuration and sessions",
+    "Actual Commands button and About prompt at default and narrow sizes, exact repository URI dispatch"
+  ],
+  "imeSupplementAcceptance": [
+    "Same candidate AppImage digest in native Wayland labwc/Fcitx5 session in every round",
+    "Actual Hangul preedit before commit and exact UTF-8 committed readback",
+    "Independent PNG inspection; does not replace the two full desktop sessions"
   ]
 }
