@@ -125,7 +125,7 @@ jobs:
       - uses: Swatinem/rust-cache@v2
       - run: python3 scripts/prepare-ghostty.py
       - run: cargo clippy --workspace --all-targets -- -D warnings
-      - run: cargo test --workspace
+      - run: cargo test --workspace --no-fail-fast
       - run: cargo build --workspace --release
 
   windows:
