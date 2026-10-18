@@ -1,6 +1,8 @@
 # Testing
 
-Three layers, all run by `cargo test --workspace` (CI: the macOS job).
+Three layers, all run by `cargo test --workspace` (CI: the macOS and Linux jobs).
+Linux installs git, zsh and fish in addition to the GPUI development libraries;
+the scenarios use real shells in temporary homes. Windows currently builds in CI.
 
 | Layer | Where | What it covers |
 |---|---|---|
