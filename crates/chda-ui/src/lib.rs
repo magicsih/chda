@@ -320,6 +320,7 @@ pub(crate) fn open_workspace_window(
     cx.open_window(
         WindowOptions {
             window_bounds: Some(WindowBounds::Windowed(bounds)),
+            app_id: Some("com.magicsih.chda".into()),
             titlebar: Some(platform::titlebar("chda")),
             ..Default::default()
         },
