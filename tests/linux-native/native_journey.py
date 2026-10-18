@@ -23,6 +23,35 @@ def wait(check, description, timeout=15):
     raise AssertionError("Timed out: " + description)
 
 
+def session_locations(rows):
+    """MCP worktree is the actual row cwd; repository is its display name."""
+    locations = [{key: row[key] for key in ("repository", "worktree", "branch")} for row in rows]
+    # Sorting retains duplicates: opening two shells in one cwd must survive.
+    return sorted(locations, key=lambda row: json.dumps(row, sort_keys=True))
+
+
+def saved_pane_locations(saved):
+    """Compare saved pane cwd/repo, excluding new ids and runtime agent state."""
+    locations = []
+
+    def visit(node):
+        if node["kind"] == "pane":
+            locations.append({key: node.get(key) for key in ("cwd", "repo")})
+        elif node["kind"] == "split":
+            visit(node["first"])
+            visit(node["second"])
+        else:
+            raise AssertionError("Unknown saved terminal node: " + str(node))
+
+    for window in saved["windows"]:
+        for tab in window["tabs"]:
+            if "root" in tab:
+                visit(tab["root"])
+    if not locations:
+        raise AssertionError("Saved session has no terminal panes")
+    return sorted(locations, key=lambda row: json.dumps(row, sort_keys=True))
+
+
 class Journey:
     def __init__(self, driver, args, root, repo, context):
         self.driver, self.args, self.root, self.repo = driver, args, root, repo
@@ -192,11 +221,11 @@ class Journey:
         geometry = self.setup_geometry(960,640,"window-controls-baseline")
         self.control("maximize", geometry)
         maximized = self.observe("window-maximized")
-        if maximized["width"] <= geometry["width"]+100:
-            raise AssertionError("Actual maximize button did not increase window width")
+        if any(maximized[axis] <= geometry[axis]+100 for axis in ("width", "height")):
+            raise AssertionError("Actual maximize button did not increase window width and height")
         self.control("maximize", maximized)
         restored = self.observe("window-restored")
-        if abs(restored["width"]-geometry["width"]) > 8:
+        if any(abs(restored[axis]-geometry[axis]) > 8 for axis in ("width", "height")):
             raise AssertionError("Actual maximize/restore button did not restore size")
         self.control("minimize", restored)
         minimized = False
@@ -219,8 +248,8 @@ class Journey:
         self.driver.drag(frame["x"]+frame["width"]//2, title_y,
                          frame["x"]+frame["width"]//2+45, title_y+35)
         moved = self.observe("window-after-move")
-        if abs(moved["x"]-geometry["x"]) < 20 or abs(moved["y"]-geometry["y"]) < 15:
-            raise AssertionError("Actual title bar drag did not move the candidate")
+        if moved["x"]-geometry["x"] < 20 or moved["y"]-geometry["y"] < 15:
+            raise AssertionError("Actual title bar drag did not move the candidate right and down")
         for edge in ["top", "bottom", "left", "right", "top-left", "top-right", "bottom-left", "bottom-right"]:
             before = self.observe("resize-"+edge+"-before")
             box = before["frame"]
@@ -231,10 +260,22 @@ class Journey:
             dy = 22 if "top" in edge else -22 if "bottom" in edge else 0
             self.driver.drag(x, y, x+dx, y+dy)
             after = self.observe("resize-"+edge+"-after")
-            if dx and abs(after["width"]-before["width"]) < 12:
-                raise AssertionError("Actual "+edge+" width resize failed")
-            if dy and abs(after["height"]-before["height"]) < 12:
-                raise AssertionError("Actual "+edge+" height resize failed")
+            if dx and before["width"]-after["width"] < 12:
+                raise AssertionError("Actual "+edge+" inward drag did not reduce width")
+            if dy and before["height"]-after["height"] < 12:
+                raise AssertionError("Actual "+edge+" inward drag did not reduce height")
+            for leading, trailing, coordinate, size in [("left", "right", "x", "width"),
+                                                        ("top", "bottom", "y", "height")]:
+                old_start = before["frame"][coordinate]
+                new_start = after["frame"][coordinate]
+                old_end = old_start+before["frame"][size]
+                new_end = new_start+after["frame"][size]
+                if leading in edge:
+                    if new_start-old_start < 12 or abs(new_end-old_end) > 8:
+                        raise AssertionError("Actual "+edge+" resize did not move its leading edge inward with the opposite edge anchored")
+                elif trailing in edge:
+                    if old_end-new_end < 12 or abs(new_start-old_start) > 8:
+                        raise AssertionError("Actual "+edge+" resize did not move its trailing edge inward with the opposite edge anchored")
             self.driver.record("actual-window-edge-resize-passed", edge=edge, before=before, after=after)
         self.setup_geometry(960,640,"window-after-resize")
         return {"decoration": self.window_mode, "resizeEdges": 8,
@@ -416,6 +457,9 @@ class Journey:
         before = self.sessions("restart-before")
         if not before:
             raise AssertionError("No terminal state exists before restart")
+        saved_path = self.root / "data/chda/session.json"
+        saved_before = json.loads(saved_path.read_text())
+        (self.root / "restart-saved-before.json").write_text(json.dumps(saved_before, indent=2)+"\n")
         self.driver.key("ctrl+shift+q")
         wait(lambda: self.context["app"].poll() is not None, "actual Quit exits package", timeout=20)
         retired = self.context["retire_runtime"]()
@@ -427,8 +471,20 @@ class Journey:
         from native_visual import wait_for_rendered
         wait_for_rendered(self.driver, "CHDAVALIDATION", "restart-readiness")
         after = self.sessions("restart-after")
+        saved_after = json.loads(saved_path.read_text())
+        (self.root / "restart-saved-after.json").write_text(json.dumps(saved_after, indent=2)+"\n")
+        locations = {"mcpBefore": session_locations(before), "mcpAfter": session_locations(after),
+                     "savedBefore": saved_pane_locations(saved_before),
+                     "savedAfter": saved_pane_locations(saved_after),
+                     "mcpWorktreeMeaning": "actual session row cwd; repository is its display name",
+                     "excluded": "pane ids, timestamps, statuses, active tab/window and runtime agent fields"}
+        (self.root / "restart-location-signatures.json").write_text(json.dumps(locations, indent=2)+"\n")
         if len(after) != len(before):
             raise AssertionError("Restart changed restored session count")
+        if locations["mcpBefore"] != locations["mcpAfter"]:
+            raise AssertionError("Restart changed restored repository, worktree cwd or branch multiset")
+        if locations["savedBefore"] != locations["savedAfter"]:
+            raise AssertionError("Restart changed saved pane cwd or repository path multiset")
         if str(self.selected_repo) not in (self.root / "config/chda/config.toml").read_text():
             raise AssertionError("Selected repository lost across restart")
         self.driver.marker("restart-shell-usable.txt", "printf RESTART_OK")
@@ -439,6 +495,7 @@ class Journey:
         helpers = self.step("installed helper parallel CLI, streaming MCP and direct termination",
                             lambda: helper_checks(self))
         return {"beforeSessionCount":len(before),"afterSessionCount":len(after),
+                "locationSignatures": locations,
                 "selectedRepositoryPreserved":str(self.selected_repo), "hooksAfterRestart": hooks,
                 "helpersAfterRestart": helpers}
 

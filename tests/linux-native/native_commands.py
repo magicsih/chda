@@ -45,7 +45,11 @@ def _ocr(path, expected):
 
 def _about(path, version):
     region = prompt_region(path)
-    expected = ["chda " + version, DESCRIPTION, "MIT license", REPOSITORY]
+    if re.search(r"\bchda\s+" + re.escape(version) + r"(?=\s|$)", region["text"]) is None:
+        raise AssertionError("Actual prompt version does not match the packaged version: " + region["text"])
+    if re.findall(r"https?://\S+", region["text"]) != [REPOSITORY]:
+        raise AssertionError("Actual prompt repository URI differs: " + region["text"])
+    expected = [DESCRIPTION, "MIT license"]
     normalized = _plain(region["text"])
     for value in expected:
         if _plain(value) not in normalized:
