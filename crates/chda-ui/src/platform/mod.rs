@@ -346,7 +346,8 @@ pub fn show_about(cx: &mut gpui::App) {
                 let answer = window.prompt(
                     gpui::PromptLevel::Info,
                     &format!("chda {}", env!("CARGO_PKG_VERSION")),
-                    Some("Terminal with a git worktree sidebar and a live status board for coding agents.\nMIT license.\nhttps://github.com/magicsih/chda"),
+                    // GPUI's 288px fallback prompt does not wrap detail text.
+                    Some("Terminal with a git worktree\nsidebar and a live status board\nfor coding agents.\nMIT license.\nhttps://github.com/magicsih/chda"),
                     &["Close", "Open repository"],
                     cx,
                 );
