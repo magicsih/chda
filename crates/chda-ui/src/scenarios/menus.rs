@@ -6,6 +6,43 @@ use super::harness::Harness;
 use crate::workspace_view::{MenuAction, OpenConfig, ResumeSession, RunClaude};
 
 #[gpui::test]
+fn desktop_commands_keep_new_tab_first_and_expose_platform_menu_actions(cx: &mut TestAppContext) {
+    let mut h = Harness::open(cx, "desktop-menu", |_| {});
+    h.wait_prompt();
+    let has_menu = crate::platform::has_application_menu();
+    h.read(|view, cx| {
+        let items = view.palette_items(cx);
+        assert_eq!(items.first().unwrap().label.as_str(), "New tab");
+        for label in [
+            "About chda",
+            "Settings...",
+            "Quit chda",
+            "Release notes and downloads",
+        ] {
+            assert_eq!(
+                items.iter().any(|item| item.label.as_str() == label),
+                has_menu,
+                "{label}"
+            );
+        }
+    });
+    h.cx.run_until_parked();
+    let button = h.cx.debug_bounds("application-menu");
+    assert_eq!(button.is_some(), has_menu);
+    if let Some(button) = button {
+        h.cx.simulate_click(button.center(), gpui::Modifiers::none());
+        h.cx.run_until_parked();
+        assert!(h.read(|view, _| view.palette.is_some()));
+        h.type_text("Settings...");
+        h.keys("enter");
+        assert_eq!(
+            h.system.0.borrow().opened_files,
+            vec![h.home.config.clone()]
+        );
+    }
+}
+
+#[gpui::test]
 fn settings_writes_a_missing_config_file(cx: &mut TestAppContext) {
     let mut h = Harness::open(cx, "settings", |_| {});
     h.wait_prompt();
