@@ -253,15 +253,8 @@ def main():
             if not args.preparation_probe:
                 # A native window and shell input can precede the first GPU
                 # frame. Wait for the actual rendered prompt on every distro.
-                from native_visual import ocr_words
-                readiness_attempt = 0
-                def rendered_prompt():
-                    nonlocal readiness_attempt
-                    readiness_attempt += 1
-                    image = driver.screenshot(f"startup-readiness-{readiness_attempt:02d}")
-                    letters = "".join(char for word in ocr_words(image) for char in word["text"] if char.isalpha()).upper()
-                    return "CHDAVALIDATION" in letters
-                wait_until(rendered_prompt, "actual candidate rendered shell prompt", timeout=40)
+                from native_visual import wait_for_rendered
+                wait_for_rendered(driver, "CHDAVALIDATION", "startup-readiness")
             else:
                 time.sleep(1)
             steps.append({"step": "actual launcher and native window", "status": "passed",
@@ -273,14 +266,7 @@ def main():
             if marker != "CHDA_STARTUP_INPUT_OK":
                 raise AssertionError("Unexpected startup marker content")
             if not args.preparation_probe:
-                output_attempt = 0
-                def rendered_output():
-                    nonlocal output_attempt
-                    output_attempt += 1
-                    image = driver.screenshot(f"startup-output-{output_attempt:02d}")
-                    letters = "".join(char for word in ocr_words(image) for char in word["text"] if char.isalpha()).upper()
-                    return "CHDASTARTUPINPUTOK" in letters
-                wait_until(rendered_output, "actual rendered startup input output", timeout=10)
+                wait_for_rendered(driver, "CHDASTARTUPINPUTOK", "startup-output", timeout=10)
             driver.screenshot("02-after-input")
             result["startupStatus"] = "passed"
             result["automationStatus"] = "passed"

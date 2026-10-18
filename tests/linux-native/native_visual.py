@@ -5,6 +5,7 @@ import io
 import json
 import re
 import subprocess
+import time
 from pathlib import Path
 
 from PIL import Image, ImageChops, ImageDraw, ImageOps
@@ -75,6 +76,19 @@ def ocr_words(path):
     response = subprocess.run(["tesseract", str(path), "stdout", "--psm", "11", "tsv"],
                               check=True, text=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
     return list(csv.DictReader(io.StringIO(response.stdout), delimiter="\t", quoting=csv.QUOTE_NONE))
+
+
+def wait_for_rendered(driver, target, prefix, timeout=40):
+    """Keep each real capture and wait for normalized text in rendered pixels."""
+    deadline = time.monotonic() + timeout
+    attempt = 0
+    while time.monotonic() < deadline:
+        attempt += 1
+        image = driver.screenshot(f"{prefix}-{attempt:02d}")
+        letters = "".join(char for word in ocr_words(image) for char in word["text"] if char.isalpha()).upper()
+        if target in letters:
+            return image
+    raise AssertionError("Timed out waiting for rendered text: " + target)
 
 
 def sentinel_bounds(path, sentinel):
