@@ -10,10 +10,11 @@ from pathlib import Path
 
 from native_driver import run
 from native_journey import wait
-from native_visual import ocr_words, phrase_center
+from native_visual import bright_text_ocr, ocr_words, phrase_matches, prompt_region
 
 
 REPOSITORY = "https://github.com/magicsih/chda"
+DESCRIPTION = "Terminal with a git worktree sidebar and a live status board for coding agents."
 
 
 def _plain(text):
@@ -25,10 +26,41 @@ def _ocr(path, expected):
     Path(path).with_suffix(".ocr.json").write_text(json.dumps(words, indent=2) + "\n")
     text = " ".join(word["text"] for word in words if word["text"].strip())
     normalized = _plain(text)
+    processing = "original PNG"
+    if any(_plain(value) not in normalized for value in expected):
+        # Keep dim shortcut text as well as the brighter command labels.
+        words, contrast_path = bright_text_ocr(path, 120)
+        text = " ".join(word["text"] for word in words if word["text"].strip())
+        normalized = _plain(text)
+        processing = str(contrast_path)
+    Path(path).with_suffix(".text-check.json").write_text(json.dumps({
+        "source": str(path), "processing": processing, "expected": expected,
+        "observed": text, "passed": all(_plain(value) in normalized for value in expected),
+    }, indent=2) + "\n")
     for value in expected:
         if _plain(value) not in normalized:
             raise AssertionError("Actual rendered text missing " + repr(value) + ": " + text)
     return text
+
+
+def _about(path, version):
+    region = prompt_region(path)
+    expected = ["chda " + version, DESCRIPTION, "MIT license", REPOSITORY]
+    normalized = _plain(region["text"])
+    for value in expected:
+        if _plain(value) not in normalized:
+            raise AssertionError("Actual prompt text missing " + repr(value) + ": " + region["text"])
+    region["controls"] = {}
+    for label in ["Close", "Open repository"]:
+        matches = phrase_matches(region["words"], label, minimum_confidence=70)
+        if len(matches) != 1:
+            raise AssertionError("Expected one actual prompt control " + repr(label))
+        at = matches[0]["at"]
+        left, top, right, bottom = region["bounds"]
+        if not (left <= at[0] < right and top <= at[1] < bottom):
+            raise AssertionError("Prompt control is outside the detected panel")
+        region["controls"][label] = matches[0]
+    return region
 
 
 def _commands(journey, label, width, height):
@@ -50,10 +82,10 @@ def _commands(journey, label, width, height):
     journey.driver.move_pointer(x, y)
     time.sleep(.9)
     hover = journey.driver.screenshot(label + "-commands-hover")
-    _ocr(hover, ["Commands", "Ctrl", "Shift", "P"])
+    _ocr(hover, ["Commands", "ctrl-shift-p"])
     journey.driver.click(x, y)
     opened = journey.driver.screenshot(label + "-commands-open")
-    _ocr(opened, ["New tab", "Ctrl", "Shift", "T"])
+    _ocr(opened, ["New tab ctrl-shift-t"])
     # Typing must reach the palette's actual focused input.
     journey.driver.text("About chda")
     filtered = journey.driver.screenshot(label + "-about-filtered")
@@ -117,16 +149,16 @@ def exercise(journey):
               "visualReview": "pending independent default/narrow Commands and About PNG inspection"}
     for width, height, label in [(960, 640, "commands-default"), (640, 420, "commands-narrow")]:
         about = _commands(journey, label, width, height)
-        text = _ocr(about, ["chda " + version, "MIT license", REPOSITORY])
-        journey.driver.click(*phrase_center(about, "Close"))
+        region = _about(about, version)
+        journey.driver.click(*region["controls"]["Close"]["at"])
         journey.driver.marker(label + "-after-close.txt", "printf ABOUT_CLOSE_OK")
         journey.driver.screenshot(label + "-after-close")
-        result["dialogs"].append({"size": [width, height], "screenshot": str(about), "ocr": text})
+        result["dialogs"].append({"size": [width, height], "screenshot": str(about), "prompt": region})
     output, mimeapps, previous = _register_https(journey)
     try:
         about = _commands(journey, "commands-open-repository", 960, 640)
-        _ocr(about, ["chda " + version, "MIT license", REPOSITORY])
-        journey.driver.click(*phrase_center(about, "Open repository"))
+        region = _about(about, version)
+        journey.driver.click(*region["controls"]["Open repository"]["at"])
         wait(output.exists, "About native HTTPS handler exact repository URI")
         actual = json.loads(output.read_text())
         if actual.get("uri") != REPOSITORY or actual.get("externalNetwork") is not False:
