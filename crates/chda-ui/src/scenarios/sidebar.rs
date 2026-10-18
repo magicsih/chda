@@ -939,12 +939,13 @@ fn header_buttons_show_their_own_tooltips(cx: &mut TestAppContext) {
         v.sidebar.read(cx).model.repos.len() == 1
     });
     h.cx.run_until_parked();
+    let add_repo_tip = crate::platform::shortcut_hint("Add a repository (cmd-shift-o)");
     for (toggle, toggle_tip, button, button_tip) in [
         (
             "project-section-toggle",
             "Collapse PROJECT",
             "add-repo",
-            "Add a repository (cmd-shift-o)",
+            add_repo_tip.as_str(),
         ),
         (
             "sessions-section-toggle",
