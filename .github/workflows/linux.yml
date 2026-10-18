@@ -211,6 +211,7 @@ jobs:
     env:
       NATIVE_IMAGE: ${{ matrix.image }}
       NATIVE_STAGE: ${{ matrix.stage }}
+      CHDA_NATIVE_TRACE: '1'
       COMPOSITOR: ${{ matrix.compositor }}
       DISPLAY_BACKEND: ${{ matrix.backend }}
       PACKAGE_FORMAT: ${{ matrix.format }}
@@ -229,7 +230,7 @@ jobs:
             -v "$GITHUB_WORKSPACE/packages:/packages:ro" \
             -v "$GITHUB_WORKSPACE/native-evidence:/evidence" \
             -e NATIVE_IMAGE -e PACKAGE_FORMAT -e RUNNER_ARCH -e "CANDIDATE_SHA=$GITHUB_SHA" \
-            -e NATIVE_STAGE -e COMPOSITOR -e DISPLAY_BACKEND chda-native
+            -e NATIVE_STAGE -e COMPOSITOR -e DISPLAY_BACKEND -e CHDA_NATIVE_TRACE chda-native
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         if: always()
         with:

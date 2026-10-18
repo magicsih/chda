@@ -194,7 +194,17 @@ def main():
         app_env = dict(env)
         if args.backend == "wayland":
             app_env.pop("DISPLAY", None)
-        app = start([str(launcher)], "candidate", cwd=repo, process_env=app_env)
+        trace = os.environ.get("CHDA_NATIVE_TRACE") == "1"
+        if trace and args.backend == "wayland":
+            app_env["WAYLAND_DEBUG"] = "client"
+        def launch_candidate(name):
+            invocation = [str(launcher)]
+            if trace:
+                invocation = ["strace", "-f", "-s", "128", "-e",
+                              "trace=read,write,readv,writev,ioctl,recvmsg,sendmsg",
+                              "-o", str(root / (name + "-io.trace"))] + invocation
+            return start(invocation, name, cwd=repo, process_env=app_env)
+        app = launch_candidate("candidate")
         window = parent_window
         if args.backend == "x11":
             windows = []
@@ -251,7 +261,7 @@ def main():
                 from native_journey import Journey
                 context = {"app": app, "provider": provider_process}
                 def launch_again():
-                    context["app"] = start([str(launcher)], "candidate-restarted", cwd=repo, process_env=app_env)
+                    context["app"] = launch_candidate("candidate-restarted")
                 context["launch_again"] = launch_again
                 journey = Journey(driver, args, root, repo, context)
                 if args.stage == "full":
