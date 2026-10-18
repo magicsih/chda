@@ -682,16 +682,23 @@ impl WorkspaceView {
         this
     }
 
-    fn hook_bin() -> PathBuf {
-        ipc::helper_executable().unwrap_or_else(|_| PathBuf::from("chda"))
+    fn hook_bin() -> std::io::Result<PathBuf> {
+        ipc::helper_executable()
     }
 
-    fn install_hooks(&self) {
+    fn install_hooks(&mut self) {
         let Some(data_dir) = self.env.data_dir.as_deref() else {
             return;
         };
+        let bin = match Self::hook_bin() {
+            Ok(bin) => bin,
+            Err(error) => {
+                self.notify_error(format!("Agent integration unavailable: {error}"));
+                return;
+            }
+        };
         for adapter in self.adapters.iter() {
-            let _ = adapter.install_hooks(data_dir, &Self::hook_bin());
+            let _ = adapter.install_hooks(data_dir, &bin);
         }
     }
 
@@ -4850,7 +4857,8 @@ impl WorkspaceView {
         executable: &Path,
     ) -> Option<Vec<String>> {
         let adapter = self.adapters.iter().find(|a| a.id() == agent)?;
-        let original = adapter.launch_command(cwd, resume, &Self::hook_bin());
+        let hook_bin = Self::hook_bin().ok()?;
+        let original = adapter.launch_command(cwd, resume, &hook_bin);
         let mut args: Vec<std::ffi::OsString> = original.get_args().map(Into::into).collect();
         if agent == AgentId::Claude
             && let Some(dir) = &self.env.data_dir
@@ -4858,7 +4866,7 @@ impl WorkspaceView {
                 &self.env.home(),
                 cwd,
                 dir,
-                &Self::hook_bin(),
+                &hook_bin,
             )
         {
             if let Some(index) = args.iter().position(|arg| arg == "--settings") {
