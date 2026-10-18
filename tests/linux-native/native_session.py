@@ -58,11 +58,11 @@ def main():
     runtime.chmod(0o700)
     (root / "config/chda/config.toml").write_text(
         "repos = [" + json.dumps(str(repo), ensure_ascii=False) + "]\n"
-        "notifications = true\nrestore-session = true\n")
+        'notifications = true\nrestore-session = true\ndefault-action = "terminal"\n')
     (home / ".bashrc").write_text("PS1='CHDA_VALIDATION> '\n")
     (home / ".bash_profile").write_text('. "$HOME/.bashrc"\n')
     (root / "config/ghostty/config").write_text(
-        "font-family = DejaVu Sans Mono\nfont-size = 16\nbackground = #202429\nforeground = #f0f0f0\n")
+        "font-family = DejaVu Sans Mono\nfont-size = 16\nbackground = #202429\nforeground = #f0f0f0\nshell-integration = none\n")
     env = dict(os.environ)
     env.update(HOME=str(home), XDG_CONFIG_HOME=str(root / "config"),
                XDG_DATA_HOME=str(root / "data"), XDG_CACHE_HOME=str(root / "cache"),
@@ -70,7 +70,7 @@ def main():
                SHELL="/bin/bash", LANG="C.UTF-8", CHDA_NATIVE_ISOLATED="1",
                CHDA_CANDIDATE_SHA=args.candidate_sha, CHDA_ARTIFACT_SHA256=digest,
                APPIMAGE_EXTRACT_AND_RUN="1")
-    for name in ["DISPLAY", "WAYLAND_DISPLAY", "SWAYSOCK", "DBUS_SESSION_BUS_ADDRESS"]:
+    for name in ["DISPLAY", "WAYLAND_DISPLAY", "SWAYSOCK", "DBUS_SESSION_BUS_ADDRESS", "PROMPT_COMMAND", "BASH_ENV", "ENV"]:
         env.pop(name, None)
     children = []
     handles = []
@@ -166,6 +166,9 @@ def main():
             result.update(inputBackend="x11-parent", captureBackend="x11-parent", applicationBackend="native-wayland",
                           decorationProtocol="absent", compositor="Mutter nested")
         steps.append({"step": "isolated compositor", "status": "passed"})
+        if args.stage == "full" and args.backend == "x11":
+            from native_ime import prepare_x11
+            prepare_x11(start, env, root)
         provider = Path(__file__).with_name("notification_server.py")
         provider_process = start(["python3", str(provider), "--log", str(root / "notifications.jsonl")], "notification-provider")
         wait_until(lambda: (root / "notifications.jsonl").exists(), "notification provider")

@@ -425,18 +425,30 @@ class Journey:
             raise AssertionError("Selected repository lost across restart")
         self.driver.marker("restart-shell-usable.txt", "printf RESTART_OK")
         self.driver.screenshot("restart-restored")
+        hooks = self.step("installed hook command and fresh MCP after relaunch",
+                          lambda: self.acceptance.hooks_checks("after-restart"))
         return {"beforeSessionCount":len(before),"afterSessionCount":len(after),
-                "selectedRepositoryPreserved":str(self.selected_repo)}
+                "selectedRepositoryPreserved":str(self.selected_repo), "hooksAfterRestart": hooks}
 
     def execute(self):
+        from native_acceptance import Acceptance
+        self.acceptance = Acceptance(self)
         try:
             self.step("repository terminal fixture through actual packaged MCP", lambda:
                       self.mcp("open_tab", {"path":str(self.repo)}, suffix="initial-repo-terminal"))
             time.sleep(.5)
+            if self.args.backend == "x11":
+                from native_ime import exercise
+                self.step("native IBus XIM preedit and commit", lambda: exercise(self.driver))
             self.step("terminal Ctrl+C, CtrlShiftT/W/V", self.driver.terminal_checks)
             self.step("actual selection and CtrlShiftC exact clipboard", self.driver.copy_selection)
+            self.step("foreground child cwd without OSC7 and recovery after CtrlC", self.acceptance.cwd_checks)
+            self.step("actual worktree creation sheet, branch and terminal", self.acceptance.worktree_checks)
+            self.step("native terminal Ctrl+click URI dispatch", self.acceptance.link_checks)
             self.step("default and narrow window, actual buttons, title move, eight resize areas", self.window_checks)
             self.step("real folder chooser cancel, select and retry", self.folder_checks)
+            self.step("actual installed hook command and pane-specific MCP status",
+                      lambda: self.acceptance.hooks_checks("before-restart"))
             self.step("notification exact pane, newest window close, absent service", self.notification_checks)
             self.step("normal quit, same HOME restart and restored state", self.restart)
             self.report.update(automationStatus="passed", fullRoundStatus="pending-IME-and-independent-visual-review")

@@ -15,7 +15,7 @@ if command -v apt-get >/dev/null; then
         apt-get install -y --no-install-recommends \
             labwc sway wtype wlrctl grim wl-clipboard wayland-utils \
             build-essential pkg-config libwayland-dev wlr-randr mutter xauth \
-            tesseract-ocr xdg-utils libglib2.0-bin \
+            tesseract-ocr xdg-utils libglib2.0-bin ibus ibus-hangul \
             xdg-desktop-portal xdg-desktop-portal-gtk adwaita-icon-theme
     fi
 elif command -v dnf >/dev/null; then
