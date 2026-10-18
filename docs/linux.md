@@ -68,7 +68,7 @@ Stock Ubuntu 20.04 Mesa 21.2 software rendering also failed. Its Vulkan device
 reported fewer color attachments than the graphics engine requests. A successful
 Vulkan sample on that driver does not establish application compatibility.
 Compatibility-floor runtime verification remains pending. Its test environment
-retains glibc 2.31 and builds a separate Mesa 23.3.6 Vulkan driver; that driver
+retains glibc 2.31 and builds a separate Mesa 25.2.8 Vulkan driver with LLVM 20.1.8; that driver
 is not part of either download.
 
 ## Shortcuts
