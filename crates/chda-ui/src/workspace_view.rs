@@ -6403,7 +6403,10 @@ impl WorkspaceView {
                 "reload_config" => self.reload_config(window, cx),
                 "minimize" => window.minimize_window(),
                 "maximize" => window.zoom_window(),
-                "about" => platform::show_about(cx),
+                "about" => {
+                    self.restore_focus(window, cx);
+                    platform::show_about(cx);
+                }
                 "repository" => cx.dispatch_action(&crate::menus::OpenRepository),
                 "report_issue" => cx.dispatch_action(&crate::menus::ReportIssue),
                 "release_notes" => cx.dispatch_action(&crate::menus::ReleaseNotes),

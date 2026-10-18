@@ -339,19 +339,23 @@ pub fn show_about(cx: &mut gpui::App) {
     macos::show_about();
     #[cfg(target_os = "linux")]
     if let Some(window) = cx.active_window() {
-        let _ = window.update(cx, |_, window, cx| {
-            let answer = window.prompt(
-                gpui::PromptLevel::Info,
-                &format!("chda {}", env!("CARGO_PKG_VERSION")),
-                Some("Terminal with a git worktree sidebar and a live status board for coding agents.\nMIT license.\nhttps://github.com/magicsih/chda"),
-                &["Close", "Open repository"],
-                cx,
-            );
-            cx.spawn(async move |cx| {
-                if answer.await == Ok(1) {
-                    cx.update(|cx| cx.open_url(env!("CARGO_PKG_REPOSITORY")));
-                }
-            }).detach();
+        // Actions can run while this window is already borrowed by GPUI.
+        // Keep its exact handle and open the prompt after that update ends.
+        cx.defer(move |cx| {
+            let _ = window.update(cx, |_, window, cx| {
+                let answer = window.prompt(
+                    gpui::PromptLevel::Info,
+                    &format!("chda {}", env!("CARGO_PKG_VERSION")),
+                    Some("Terminal with a git worktree sidebar and a live status board for coding agents.\nMIT license.\nhttps://github.com/magicsih/chda"),
+                    &["Close", "Open repository"],
+                    cx,
+                );
+                cx.spawn(async move |cx| {
+                    if answer.await == Ok(1) {
+                        cx.update(|cx| cx.open_url(env!("CARGO_PKG_REPOSITORY")));
+                    }
+                }).detach();
+            });
         });
     }
     #[cfg(not(target_os = "linux"))]
