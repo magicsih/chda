@@ -9,7 +9,7 @@ if command -v apt-get >/dev/null; then
     apt-get update
     apt-get install -y --no-install-recommends \
         ca-certificates bash git python3 python3-dbus python3-gi python3-pil \
-        dbus-x11 mesa-vulkan-drivers vulkan-tools \
+        dbus-x11 mesa-vulkan-drivers vulkan-tools libegl1 libgles2 libgl1-mesa-dri \
         xvfb x11-utils xdotool openbox scrot xclip fonts-dejavu-core fonts-noto-cjk
     if [ "$1" = 1 ]; then
         apt-get install -y --no-install-recommends \

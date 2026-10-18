@@ -1186,7 +1186,7 @@ mod tests {
     }
 
     /// Start `shell` the way chda does, with the integration loaded, `home`
-    /// as HOME and /private/tmp as the working directory. `args` go before
+    /// as HOME and the canonical temporary directory as cwd. `args` go before
     /// the integration's own arguments.
     fn integrated_shell(shell: &std::path::Path, args: &[&str], home: &std::path::Path) -> Probe {
         let launch = crate::launch_for(crate::ShellIntegration::Detect, shell, home).unwrap();
@@ -1195,23 +1195,31 @@ mod tests {
         command.extend(launch.args);
         let mut env = SessionOptions::default().env;
         env.push(("HOME".into(), home.to_string_lossy().into_owned()));
+        env.push((
+            "XDG_CONFIG_HOME".into(),
+            home.join(".config").to_string_lossy().into_owned(),
+        ));
         env.push(("BASH_SILENCE_DEPRECATION_WARNING".into(), "1".into()));
         env.extend(launch.env);
         Probe::spawn_with(SessionOptions {
             command: Some(command),
-            cwd: Some(std::path::PathBuf::from("/private/tmp")),
+            cwd: Some(std::env::temp_dir().canonicalize().unwrap()),
             env,
             ..Default::default()
         })
     }
 
-    /// The shell reported /private/tmp, and the row showing `prompt` is
+    /// The shell reported its working directory, and the row showing `prompt` is
     /// marked as a prompt.
     fn assert_integrated(p: &mut Probe, prompt: &str) {
         let ev = p.wait_for(|e| matches!(e, Event::PwdChanged(_)));
         assert_eq!(
             ev,
-            Event::PwdChanged(format!("file://{}/private/tmp", hostname()))
+            Event::PwdChanged(format!(
+                "file://{}{}",
+                hostname(),
+                std::env::temp_dir().canonicalize().unwrap().display()
+            ))
         );
         let frame = p.wait_for_text(prompt);
         let row = (0..frame.size.rows)
@@ -1248,7 +1256,16 @@ mod tests {
             let mut p = integrated_shell(&bash, &[], &home);
             assert_integrated(&mut p, "chda$");
             let ev = p.wait_for(|e| matches!(e, Event::TitleChanged(_)));
-            assert_eq!(ev, Event::TitleChanged("/private/tmp".into()));
+            assert_eq!(
+                ev,
+                Event::TitleChanged(
+                    std::env::temp_dir()
+                        .canonicalize()
+                        .unwrap()
+                        .to_string_lossy()
+                        .into_owned()
+                )
+            );
             p.session.text("exit\n".into());
             p.wait_for(|e| matches!(e, Event::Exited(_)));
             std::fs::remove_dir_all(&home).unwrap();
