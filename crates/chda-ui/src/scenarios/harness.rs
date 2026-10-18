@@ -276,6 +276,8 @@ impl Home {
         let repo = self.home.join("src").join(name);
         std::fs::create_dir_all(&repo).unwrap();
         git(&repo, &["init", "-q", "-b", "main"]);
+        git(&repo, &["config", "user.name", "Test User"]);
+        git(&repo, &["config", "user.email", "test@example.invalid"]);
         git(&repo, &["commit", "-q", "--allow-empty", "-m", "init"]);
         repo
     }
