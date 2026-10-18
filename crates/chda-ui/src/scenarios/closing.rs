@@ -386,11 +386,14 @@ fn stop_and_close_clears_the_worktree_working_status(cx: &mut TestAppContext) {
     });
     let cd = |h: &mut Harness, repo: &std::path::Path| {
         h.wait_prompt();
-        h.run(
-            &format!("cd {}", chda_term::shell_quote(&repo.to_string_lossy())),
-            "test%",
-        );
         let pane = focused(h);
+        // A redundant cd would leave another prompt racing the agent's hook.
+        if !h.read(|view, _| view.ws.pane(pane).and_then(|p| p.cwd.as_deref()) == Some(repo)) {
+            h.run(
+                &format!("cd {}", chda_term::shell_quote(&repo.to_string_lossy())),
+                "test%",
+            );
+        }
         let repo = repo.to_path_buf();
         h.wait_for("the pane in the branch", move |view, _| {
             view.ws.pane(pane).and_then(|p| p.cwd.as_ref()) == Some(&repo)

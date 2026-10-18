@@ -82,7 +82,9 @@ pub(crate) fn frame(
             && !window.is_fullscreen()
             && !window.is_maximized();
         let inset = if resize { px(5.0) } else { px(0.0) };
-        window.set_client_inset(inset);
+        // The resize border is visible, so it belongs in the window geometry.
+        // Client insets exclude invisible shadows from that geometry.
+        window.set_client_inset(px(0.0));
         if !resize {
             return content;
         }

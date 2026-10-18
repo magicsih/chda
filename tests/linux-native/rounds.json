@@ -1,0 +1,61 @@
+{
+  "status": "planned",
+  "candidate": "Exact main SHA and existing package digests supplied by Linux native review; rebuilding between rounds is prohibited",
+  "reviewer": "Independent native verification agent",
+  "dataIsolation": "Fresh HOME, XDG paths, repository and session bus for each backend and round",
+  "sessionsPerRound": [
+    "Ubuntu 24.04 X11 Openbox with distribution IBus, server decorations, portable archive",
+    "Native Wayland Mutter client decorations, AppImage extract-and-run",
+    "Native Wayland labwc with Fcitx5 Hangul preedit and commit, same AppImage"
+  ],
+  "rounds": [
+    {
+      "round": 1,
+      "focus": "Default layout and primary behavior",
+      "status": "not-run"
+    },
+    {
+      "round": 2,
+      "focus": "Narrow layout and pointer targets",
+      "status": "not-run"
+    },
+    {
+      "round": 3,
+      "focus": "Multiple windows, restart and absent services",
+      "status": "not-run"
+    }
+  ],
+  "requiredEachSession": [
+    "Actual candidate metadata, package digest and renderer readback",
+    "960x640 and 640x420 rendered inspection",
+    "Ctrl+C interruption with surviving terminal input",
+    "Ctrl+Shift+C exact selection clipboard readback",
+    "Ctrl+Shift+V pasted command and Ctrl+Shift+T/W pane identity",
+    "Actual minimize, restore, maximize, title drag, eight resize areas and close",
+    "Real folder dialog cancellation, Unicode/spaces selection and retry",
+    "Two pane notification delivery and ActionInvoked exact-pane readback",
+    "Notification click after the newest window closes",
+    "Absent notification service keeps terminal input responsive",
+    "Restart preserves isolated configuration and sessions",
+    "Actual Commands button and About prompt at default and narrow sizes, exact repository URI dispatch"
+  ],
+  "additionalReleaseAcceptance": [
+    "Native Unicode and IME preedit/commit, recorded separately",
+    "Native Ctrl+click link activation",
+    "Worktree creation and foreground directory without OSC 7",
+    "Installed agent hook execution and MCP after relaunch"
+  ],
+  "evidence": [
+    "Native PNGs and independent rendered inspection",
+    "Screenshot-derived pointer coordinates and observed geometry",
+    "Shell markers, pane ids, D-Bus delivery and activation logs",
+    "Same candidate and artifact digests across all three rounds"
+  ],
+  "limits": [
+    "CI automation is separate from the three independent rendered reviews",
+    "Development failures do not pass a review round",
+    "ARM tool probes do not establish x86_64 product execution",
+    "Software rendering does not establish physical-GPU coverage",
+    "Unicode paste does not establish IME composition"
+  ]
+}

@@ -16,12 +16,57 @@ session, and the same candidate is used across distributions and both formats.
 conversation is used. Software Vulkan checks do not establish physical-GPU or
 desktop-specific IME coverage.
 
+`Linux packages` runs the full development journey on X11/Openbox and native
+Wayland/Mutter. Mutter deliberately has no decoration protocol: the application
+must draw and operate its actual client controls. Only the nested compositor's
+input and capture use an X11 parent. The application receives no `DISPLAY` and
+uses its Wayland socket. Labwc remains available for server-decoration checks.
+
+Pointer movement uses XTest motion events on the isolated X11 input surface.
+Debian's older xdotool uses XWarpPointer, which can move the nested parent's
+cursor without delivering the initial native Wayland motion. A separate fresh
+Mutter and foot reproduction distinguished that fixture failure from product
+selection or clipboard behavior. Clicks and drags share the tested XTest path.
+
+The journey checks real terminal input, selection and clipboard readback,
+window controls, title movement, every resize area, GTK folder selection,
+notification activation across panes and windows, absent services and restart.
+MCP status input is an explicit fixture through the packaged CLI, not a paid
+provider conversation. Screenshots and state changes still require independent
+inspection; automation never sets a full-round pass.
+
+Startup waits for the candidate's rendered shell prompt before typing and checks
+the rendered command afterward. A mapped window and a writable PTY alone cannot
+pass. Readiness captures use unique filenames, preserving every attempt.
+
+The restart journey freezes the installed hook commands, stops the app, removes
+only that launch's owned temporary runtime directory, then starts with a new
+TMPDIR. It runs the same saved commands, concurrent helper CLI and MCP requests,
+streaming MCP before stdin EOF, and direct helper-PID termination. Helpers must
+leave the GUI responsive, stop descendants and clean their own extraction paths.
+The direct helper tests remove inherited AppImage environment variables and use
+no FUSE device, representing saved commands run outside the GUI's terminal.
+These protocol inputs are fixtures, not a real provider session.
+
+After the final main build succeeds, dispatch `Linux native review` with that
+run id and its exact SHA. It downloads the existing artifacts for all three
+rounds, validates their provenance and executes the pre-recorded
+[`rounds.json`](rounds.json) in fresh sessions. Do not rebuild between rounds or
+replace missing IME/visual evidence with a successful automation exit code.
+
+The additional `ime-wayland` session uses labwc, Fcitx5 Hangul, and native Wayland text-input-v3. It records actual preedit key composition and exact committed text. Xwayland is used only for the input engine discovery; the application has no DISPLAY. This supplements Mutter CSD coverage and does not imply GNOME Shell IME coverage. Commands and About checks exercise actual pointer targets at default and narrow sizes, then an isolated HTTPS URI handler. Independent PNG inspection is still required.
+
+X11 full acceptance uses stock Ubuntu 24.04 IBus. Debian 13 IBus 1.5.32 was also executed and failed when the external ibus-x11 bridge crashed after a few keys; this is retained as failed evidence. The matching upstream heap-corruption fix is ibus/ibus fd18bda (issue 2789). An affected unpatched XIM server is not a supported IME environment. Native Wayland Fcitx5 composition remains a separate session.
+
 The glibc 2.31 compatibility image retains Ubuntu 20.04 userspace and builds
-Mesa 23.3.6 as a test-host Vulkan driver. Its official source checksum and
-Python build dependencies are pinned. The driver is selected through
+Mesa 25.2.8 with LLVM 20.1.8 as a test-host Vulkan driver. Its official source
+checksums, signed Focal LLVM packages and Python build dependencies are pinned.
+The driver is selected through
 `VK_ICD_FILENAMES`, has its own ABI audit and manifest, and is never copied to
 the application payload. This checks an old libc with a compatible driver; it
 does not establish support for every driver shipped with that distribution.
+The earlier Mesa 23.3.6 and LLVM 12 host passed the configuration limits but
+rendered a black application body for 40 seconds; it remains failed evidence.
 Separate negative sessions retain actual application startup failures on stock
 Debian 11 Mesa 20 and stock Ubuntu 20.04 Mesa 21. A successful negative check
 always records product startup as failed.

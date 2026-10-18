@@ -12,6 +12,12 @@ the scenarios use real shells in temporary homes. Windows currently builds in CI
 
 ## Rules
 
+Linux package checks use the actual x86_64 AppImage and portable payload with
+native X11 and Wayland windows, temporary HOME/XDG paths and software Vulkan.
+They are separate from GPUI's headless scenarios. See
+[`tests/linux-native/README.md`](../tests/linux-native/README.md) for the desktop
+journey, exact-candidate three-round plan and independent visual/IME gates.
+
 - A bug fix comes with a test that fails without the fix: a logic test when
   the bug is in a crate's logic, a scenario when it is in how the window
   behaves.
