@@ -248,7 +248,8 @@ def main():
                     nonlocal readiness_attempt
                     readiness_attempt += 1
                     image = driver.screenshot(f"startup-readiness-{readiness_attempt:02d}")
-                    return any("CHDA_VALIDATION" in word["text"] for word in ocr_words(image))
+                    letters = "".join(char for word in ocr_words(image) for char in word["text"] if char.isalpha()).upper()
+                    return "CHDAVALIDATION" in letters
                 wait_until(rendered_prompt, "actual candidate rendered shell prompt", timeout=40)
             else:
                 time.sleep(1)

@@ -444,6 +444,7 @@ class Journey:
             if self.args.backend == "x11":
                 from native_ime import exercise
                 self.step("native IBus XIM preedit and commit", lambda: exercise(self.driver))
+                self.report["imeCompositionStatus"] = "native IBus commit passed; independent preedit PNG review pending"
             self.step("terminal Ctrl+C, CtrlShiftT/W/V", self.driver.terminal_checks)
             self.step("actual selection and CtrlShiftC exact clipboard", self.driver.copy_selection)
             self.step("foreground child cwd without OSC7 and recovery after CtrlC", self.acceptance.cwd_checks)
