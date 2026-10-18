@@ -516,6 +516,31 @@ mod tests {
     }
 
     #[test]
+    fn bash_integration_preserves_spaces_and_unicode_in_directory_titles() {
+        for bash in bashes() {
+            let home = temp_home("bash-directory-title");
+            let directory = "folder with spaces 世界 [x]";
+            fs::create_dir(home.join(directory)).unwrap();
+            fs::write(home.join(".bash_profile"), "PS1='chda$ '\n").unwrap();
+            let launch = launch_for(ShellIntegration::Detect, &bash, &home).unwrap();
+            let mut command = vec![bash.to_string_lossy().into_owned()];
+            command.extend(launch.args.iter().cloned());
+            let mut t = Transcript::spawn(&command, &home, &launch);
+            t.wait_for("chda$ ", 1);
+            t.send(&format!("cd \"$HOME/{directory}\"\n"));
+            t.wait_for("chda$ ", 2);
+            let out = t.finish();
+            assert!(
+                out.contains(&format!("\x1b]2;~/{directory}\x07")),
+                "{}: directory title was split: {out:?}",
+                bash.display()
+            );
+            assert!(!out.contains("not a valid identifier"), "{out:?}");
+            fs::remove_dir_all(home).unwrap();
+        }
+    }
+
+    #[test]
     fn fish_integration_writes_marks_and_keeps_user_config() {
         let Some(fish) = fish() else {
             return;
