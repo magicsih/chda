@@ -22,6 +22,14 @@ is the installation path when a FUSE mount is unavailable; neither package needs
 root access. Host Vulkan support is a runtime requirement, checked in native
 sessions separately from the ABI audit.
 
+AppImage agent commands use a private launcher in the user's chda data directory,
+referencing the original image rather than its temporary mount. Every helper
+extracts into a separate temporary directory so overlapping hooks, MCP and the
+running GUI cannot delete each other's runtime. The launcher requires util-linux
+`setsid`, preserves protocol stdin, forwards direct termination to its child
+process group and removes its own temporary directory on normal exit or trapped
+signals. Portable binaries keep their installed executable path.
+
 Linux updates are manual downloads from GitHub Releases. Linux release discovery
 selects the newest stable release that contains a Linux x86_64 package, rather
 than offering a macOS-only release. The title bar opens its release page and

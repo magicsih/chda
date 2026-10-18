@@ -6,8 +6,10 @@
 
 #[cfg(all(test, unix))]
 mod children_tests;
+mod executable;
 mod process;
 mod rpc;
+pub use executable::helper_executable;
 pub use process::{
     capture_command, is_executable, protect_file, with_process, write_private_atomic,
 };

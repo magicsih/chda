@@ -261,7 +261,7 @@ impl TerminalView {
             chda_core::agents::CODEX_DAEMON_CONFIG.into(),
         ));
         if env.collect_telemetry {
-            if let Ok(bin) = std::env::current_exe() {
+            if let Ok(bin) = chda_core::agents::ipc::helper_executable() {
                 options
                     .env
                     .push(("CHDA_HOOK_BIN".into(), bin.to_string_lossy().into_owned()));

@@ -60,6 +60,8 @@ assert floor <= (2, 31), floor
     'privateLibdrm': '2.4.120; static; test-host driver only',
     'libdrmSourceSha256': '3bf55363f76c7250946441ab51d3a6cc0ae518055c0ff017324ab76cdefb327a',
     'libc': libc, 'driverRequiredGlibc': '.'.join(map(str, floor)),
+    'glibcAbi': subprocess.check_output(['getconf', 'GNU_LIBC_VERSION'], text=True).strip(),
+    'libcPackages': subprocess.check_output(['dpkg-query', '-W', '-f=${binary:Package} ${Version}\n', 'libc6', 'libc-bin'], text=True).splitlines(),
     'icd': str(icds[0]), 'llvm': '12',
 }, indent=2) + '\n')
 PY
