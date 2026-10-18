@@ -20,7 +20,7 @@
     },
     {
       "area": "Title bar",
-      "details": "The focused pane's repository and branch-note alias appear as repo - task; the branch is the fallback. Custom tab names remain on tabs without hiding the repository context. Hover for the repository, full note, branch and worktree path. Open the focused worktree in a chosen installed editor or Finder. Linux discovers installed folder-capable desktop applications and available icons, and opens the selected folder through gio; the default file manager uses xdg-open. Linux has a Commands button and draws minimize, maximize and close controls plus resize edges when the compositor does not provide window decorations.",
+      "details": "The focused pane's repository and branch-note alias appear as repo - task; the branch is the fallback. Custom tab names remain on tabs without hiding the repository context. Hover for the repository, full note, branch and worktree path. Open the focused worktree in a chosen installed editor or Finder. Linux discovers installed folder-capable desktop applications and available icons, and opens the selected folder through gio; the default file manager uses xdg-open. Linux has a Commands button and draws minimize, maximize and close controls plus resize edges when the compositor does not provide window decorations. Linux client window controls preserve the visible window size when minimizing and restoring.",
       "title": "The task in the title",
       "summary": "See the repository and focused branch task together. Hover for the full context or open the worktree in your favorite editor."
     },
