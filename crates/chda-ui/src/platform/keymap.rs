@@ -21,7 +21,6 @@ const SHORTCUTS: &[(&str, &str)] = &[
     ("cmd-alt-right", "ctrl-shift-right"),
     ("cmd-alt-up", "ctrl-shift-up"),
     ("cmd-alt-down", "ctrl-shift-down"),
-    ("cmd-alt-h", "ctrl-alt-shift-h"),
     ("cmd-click", "ctrl-click"),
     ("cmd-up", "ctrl-shift-pageup"),
     ("cmd-down", "ctrl-shift-pagedown"),
@@ -36,7 +35,6 @@ const SHORTCUTS: &[(&str, &str)] = &[
     ("cmd-b", "ctrl-shift-b"),
     ("cmd-n", "ctrl-alt-n"),
     ("cmd-m", "ctrl-shift-m"),
-    ("cmd-h", "ctrl-shift-h"),
     ("cmd-1", "alt-1"),
     ("cmd-2", "alt-2"),
     ("cmd-3", "alt-3"),
@@ -54,6 +52,21 @@ const SHORTCUTS: &[(&str, &str)] = &[
     ("cmd-0", "ctrl-0"),
     ("cmd-,", "ctrl-,"),
 ];
+
+pub(crate) fn hide_key_bindings() -> Vec<gpui::KeyBinding> {
+    #[cfg(target_os = "linux")]
+    {
+        // GPUI's Linux hide operations are unsupported.
+        Vec::new()
+    }
+    #[cfg(not(target_os = "linux"))]
+    {
+        vec![
+            gpui::KeyBinding::new("cmd-h", crate::menus::Hide, None),
+            gpui::KeyBinding::new("cmd-alt-h", crate::menus::HideOthers, None),
+        ]
+    }
+}
 
 pub(crate) fn shortcut(key: &str) -> &str {
     #[cfg(target_os = "linux")]
@@ -161,5 +174,11 @@ mod tests {
         );
         assert!(link_modifier(link_modifiers()));
         assert!(!link_modifier(gpui::Modifiers::command()));
+        assert!(hide_key_bindings().is_empty());
+        for binding in ["ctrl-shift-h", "ctrl-alt-shift-h"] {
+            assert!(!consumes_terminal_key(
+                &gpui::Keystroke::parse(binding).unwrap()
+            ));
+        }
     }
 }
