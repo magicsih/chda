@@ -196,6 +196,9 @@ pub(crate) mod test_shells {
         let dir = std::env::temp_dir().join(format!("chda-{tag}-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&dir);
         std::fs::create_dir_all(&dir).unwrap();
+        // Test only the fixture's startup files, independent of system-wide
+        // completion setup and the developer/runner's installed plugins.
+        std::fs::write(dir.join(".zshenv"), "unsetopt GLOBAL_RCS\n").unwrap();
         std::fs::canonicalize(&dir).unwrap()
     }
 
@@ -280,8 +283,10 @@ mod tests {
         fn spawn(command: &[String], home: &Path, launch: &ShellLaunch) -> Self {
             let command: Vec<&str> = command.iter().map(String::as_str).collect();
             let home_str = home.to_string_lossy();
+            let config = home.join(".config").to_string_lossy().into_owned();
             let mut env: Vec<(&str, &str)> = vec![
                 ("HOME", &home_str),
+                ("XDG_CONFIG_HOME", &config),
                 ("TERM", "xterm-256color"),
                 ("BASH_SILENCE_DEPRECATION_WARNING", "1"),
             ];
@@ -515,6 +520,12 @@ mod tests {
         let Some(fish) = fish() else {
             return;
         };
+        let has_native_marks = std::process::Command::new(&fish)
+            .args(["-c", "status test-feature mark-prompt"])
+            .output()
+            .unwrap()
+            .status
+            .success();
         // Native: fish 4 writes the marks itself (ST-terminated) and the
         // script must stay out of the way. Fallback: with fish's own marks
         // off, as in fish 3, the script writes them (BEL-terminated).
@@ -569,7 +580,7 @@ mod tests {
             for needle in own {
                 assert_eq!(
                     out.contains(needle),
-                    !native,
+                    !(native && has_native_marks),
                     "native={native} {needle:?} in {out:?}"
                 );
             }

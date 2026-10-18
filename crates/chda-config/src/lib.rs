@@ -623,10 +623,6 @@ mod tests {
         fs::create_dir_all(&support).unwrap();
         let newest = expected.last().unwrap();
         assert_eq!(paths.preferred_config_file(), Some(newest.as_path()));
-        assert_eq!(
-            paths.preferred_config_file(),
-            Some(support.join("config.ghostty").as_path())
-        );
 
         fs::write(xdg.join("config"), "font-size = 11\nfont-family = A\n").unwrap();
         assert_eq!(

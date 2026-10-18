@@ -106,6 +106,20 @@ fn commands_run_in_a_tab_a_split_and_a_floating_terminal(cx: &mut TestAppContext
 
 #[gpui::test]
 fn broken_command_entries_are_reported_once_and_the_rest_still_run(cx: &mut TestAppContext) {
+    let new_tab_key = crate::key_bindings()
+        .into_iter()
+        .find(|binding| {
+            binding
+                .action()
+                .as_any()
+                .is::<crate::workspace_view::NewTab>()
+        })
+        .unwrap()
+        .keystrokes()
+        .iter()
+        .map(|key| key.unparse())
+        .collect::<Vec<_>>()
+        .join(" ");
     let mut h = Harness::open(cx, "commands-errors", |home| {
         std::fs::write(
             &home.config,
@@ -124,7 +138,8 @@ key = "cmd-t"
 name = "nowhere"
 run = "true"
 open = "window"
-"#,
+"#
+            .replace("key = \"cmd-t\"", &format!("key = {new_tab_key:?}")),
         )
         .unwrap();
     });
@@ -142,7 +157,7 @@ open = "window"
     let reported = problems(&h);
     assert_eq!(reported.len(), 1, "{reported:?}");
     assert!(
-        reported[0].contains("cmd-t is a built-in shortcut"),
+        reported[0].contains(&format!("{new_tab_key} is a built-in shortcut")),
         "{reported:?}"
     );
     assert!(reported[0].contains("unknown `open`"), "{reported:?}");

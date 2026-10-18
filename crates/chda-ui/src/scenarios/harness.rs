@@ -272,6 +272,8 @@ impl Home {
         let repo = self.home.join("src").join(name);
         std::fs::create_dir_all(&repo).unwrap();
         git(&repo, &["init", "-q", "-b", "main"]);
+        git(&repo, &["config", "user.name", "Test User"]);
+        git(&repo, &["config", "user.email", "test@example.invalid"]);
         git(&repo, &["commit", "-q", "--allow-empty", "-m", "init"]);
         repo
     }
@@ -308,6 +310,7 @@ impl Harness {
         };
         std::fs::create_dir_all(home.home.join(".config/chda")).unwrap();
         std::fs::create_dir_all(home.home.join(".config/ghostty")).unwrap();
+        std::fs::write(home.home.join(".zshenv"), "unsetopt GLOBAL_RCS\n").unwrap();
         std::fs::write(
             home.home.join(".zshrc"),
             "PS1='test%# '\nPROMPT_EOL_MARK=''\n",
@@ -361,6 +364,10 @@ fn open_window(
             // diffs like the app does, independently of that host setting.
             ("GIT_PAGER".into(), "less -+F -R".into()),
             ("HOME".into(), home.home.to_string_lossy().into_owned()),
+            (
+                "XDG_CONFIG_HOME".into(),
+                home.home.join(".config").to_string_lossy().into_owned(),
+            ),
             ("ZDOTDIR".into(), home.home.to_string_lossy().into_owned()),
         ];
         // Tests may model a Dock launch without mutating the test process
