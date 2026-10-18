@@ -11,7 +11,7 @@ fn main() {
                 .map(std::path::PathBuf::from)
                 .zip(chda_agents::hook::data_dir())
                 .zip(std::env::current_dir().ok())
-                .zip(std::env::current_exe().ok())
+                .zip(chda_agents::ipc::helper_executable().ok())
                 .ok_or_else(|| std::io::Error::other("agent settings locations unavailable"))
                 .and_then(|(((home, dir), cwd), bin)| {
                     chda_agents::statusline::launch_settings(&home, &cwd, &dir, &bin)

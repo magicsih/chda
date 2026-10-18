@@ -1,7 +1,7 @@
 //! macOS: AppKit and the UserNotifications framework.
 
 use std::cell::{Cell, RefCell};
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 
 use block2::{DynBlock, RcBlock};
 use futures::channel::oneshot;
@@ -14,7 +14,7 @@ use objc2_app_kit::{
     NSModalResponseOK, NSOpenPanel, NSWorkspace,
 };
 use objc2_foundation::{
-    NSBundle, NSDictionary, NSError, NSLocale, NSPoint, NSRect, NSSize, NSString, NSURL,
+    NSBundle, NSDictionary, NSError, NSLocale, NSPoint, NSRect, NSSize, NSString,
 };
 use objc2_user_notifications::{
     UNAuthorizationOptions, UNMutableNotificationContent, UNNotification,
@@ -32,30 +32,6 @@ unsafe extern "C" {
 pub fn beep() {
     // SAFETY: NSBeep takes no arguments and may be called from any thread.
     unsafe { NSBeep() }
-}
-
-#[link(name = "CoreText", kind = "framework")]
-unsafe extern "C" {
-    fn CTFontManagerRegisterFontsForURL(
-        url: &NSURL,
-        scope: u32,
-        error: *mut *mut std::ffi::c_void,
-    ) -> bool;
-}
-
-/// `kCTFontManagerScopeProcess`: visible to this process only.
-const FONT_SCOPE_PROCESS: u32 = 1;
-
-/// Register a font file with CoreText for this process, so font
-/// descriptors (and with them fallback lists) find it by family name.
-pub fn register_font_file(path: &Path) {
-    let url = NSURL::fileURLWithPath(&NSString::from_str(&path.to_string_lossy()));
-    // SAFETY: NSURL is toll-free bridged to CFURL, and a null error
-    // pointer is allowed. Registering an already registered file fails
-    // harmlessly.
-    unsafe {
-        CTFontManagerRegisterFontsForURL(&url, FONT_SCOPE_PROCESS, std::ptr::null_mut());
-    }
 }
 
 /// Receives the identifier of a clicked notification.

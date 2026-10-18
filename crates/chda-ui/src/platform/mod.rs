@@ -1,14 +1,30 @@
 //! Platform-specific UI pieces: fonts, locale, alert sound, notifications,
 //! the Dock badge and the folder picker.
 
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 
 use futures::FutureExt;
 use futures::channel::oneshot;
 use futures::future::LocalBoxFuture;
 
+mod keymap;
+mod window;
+#[cfg(test)]
+pub(crate) use keymap::link_modifiers;
+pub(crate) use keymap::{
+    consumes_terminal_key, hide_key_bindings, link_modifier, shortcut, shortcut_hint,
+};
+pub(crate) use window::{controls as window_controls, frame as window_frame, has_application_menu};
+
+#[cfg(target_os = "linux")]
+mod linux;
 #[cfg(target_os = "macos")]
 mod macos;
+
+pub(crate) fn init_graphics_diagnostics() {
+    #[cfg(target_os = "linux")]
+    linux::init_graphics_diagnostics();
+}
 
 /// The outcome of [`pick_folders`].
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -76,7 +92,11 @@ pub fn default_lang() -> Option<String> {
                 .is_dir()
         }))
     }
-    #[cfg(not(target_os = "macos"))]
+    #[cfg(target_os = "linux")]
+    {
+        Some("C.UTF-8".to_owned())
+    }
+    #[cfg(not(any(target_os = "macos", target_os = "linux")))]
     {
         None
     }
@@ -93,49 +113,6 @@ fn utf8_locale(identifier: &str, exists: impl Fn(&str) -> bool) -> String {
     } else {
         "en_US.UTF-8".to_owned()
     }
-}
-
-/// Make a font that is only used as a fallback available. GPUI loads a
-/// family only when it has an `m` glyph, which icon fonts lack, so on macOS
-/// the font is written to `data_dir/fonts` and registered with CoreText,
-/// where fallback lists look.
-pub fn register_fallback_font(file_name: &str, data: &'static [u8], cx: &gpui::App) {
-    #[cfg(target_os = "macos")]
-    {
-        let _ = cx;
-        let path = chda_core::agents::data_dir()
-            .ok_or_else(|| std::io::Error::other("no data directory"))
-            .and_then(|dir| write_font(&dir.join("fonts"), file_name, data));
-        match path {
-            Ok(path) => macos::register_font_file(&path),
-            Err(e) => eprintln!("chda: could not install {file_name}: {e}"),
-        }
-    }
-    #[cfg(not(target_os = "macos"))]
-    {
-        let _ = file_name;
-        if let Err(e) = cx
-            .text_system()
-            .add_fonts(vec![std::borrow::Cow::Borrowed(data)])
-        {
-            eprintln!("chda: could not load a bundled font: {e}");
-        }
-    }
-}
-
-/// Write `data` to `dir/name` unless an identical copy is there.
-#[cfg_attr(not(target_os = "macos"), allow(dead_code))]
-fn write_font(dir: &Path, name: &str, data: &[u8]) -> std::io::Result<PathBuf> {
-    let path = dir.join(name);
-    if std::fs::read(&path).ok().as_deref() == Some(data) {
-        return Ok(path);
-    }
-    std::fs::create_dir_all(dir)?;
-    // Write aside and rename, so a running instance never sees half a font.
-    let partial = dir.join(format!("{name}.partial"));
-    std::fs::write(&partial, data)?;
-    std::fs::rename(&partial, &path)?;
-    Ok(path)
 }
 
 /// Left padding of the window's own title bar: room for the macOS window
@@ -169,7 +146,8 @@ pub struct FolderApp {
     pub icon: Option<std::sync::Arc<gpui::Image>>,
 }
 
-/// Apps the title bar offers, in menu order: id, name, macOS bundle id.
+/// Apps the macOS title bar offers, in menu order: id, name, bundle id.
+#[cfg(target_os = "macos")]
 const FOLDER_APPS: &[(&str, &str, &str)] = &[
     ("finder", "Finder", "com.apple.finder"),
     ("vscode", "VS Code", "com.microsoft.VSCode"),
@@ -201,8 +179,7 @@ const FOLDER_APPS: &[(&str, &str, &str)] = &[
     ("ghostty", "Ghostty", "com.mitchellh.ghostty"),
 ];
 
-/// The installed apps from [`FOLDER_APPS`], with their icons. Empty where
-/// apps are not looked up yet (Linux, Windows).
+/// Installed editors and file managers, with available application icons.
 pub fn folder_apps() -> Vec<FolderApp> {
     #[cfg(target_os = "macos")]
     {
@@ -221,20 +198,23 @@ pub fn folder_apps() -> Vec<FolderApp> {
             })
             .collect()
     }
-    #[cfg(not(target_os = "macos"))]
+    #[cfg(target_os = "linux")]
     {
-        let _ = FOLDER_APPS;
+        linux::folder_apps()
+    }
+    #[cfg(not(any(target_os = "macos", target_os = "linux")))]
+    {
         Vec::new()
     }
 }
 
-/// Open `folder` in the app with `id` from [`FOLDER_APPS`].
+/// Open `folder` in the installed app with `id`.
 pub fn open_folder_in(id: &str, folder: &std::path::Path) -> std::io::Result<()> {
-    let Some((_, _, bundle)) = FOLDER_APPS.iter().find(|(i, _, _)| *i == id) else {
-        return Err(std::io::Error::other(format!("unknown app {id}")));
-    };
     #[cfg(target_os = "macos")]
     {
+        let Some((_, _, bundle)) = FOLDER_APPS.iter().find(|(i, _, _)| *i == id) else {
+            return Err(std::io::Error::other(format!("unknown app {id}")));
+        };
         let status = std::process::Command::new("open")
             .arg("-b")
             .arg(bundle)
@@ -246,9 +226,13 @@ pub fn open_folder_in(id: &str, folder: &std::path::Path) -> std::io::Result<()>
             Err(std::io::Error::other(format!("open -b {bundle} failed")))
         }
     }
-    #[cfg(not(target_os = "macos"))]
+    #[cfg(target_os = "linux")]
     {
-        let _ = (bundle, folder);
+        linux::open_folder_in(id, folder)
+    }
+    #[cfg(not(any(target_os = "macos", target_os = "linux")))]
+    {
+        let _ = (id, folder);
         Err(std::io::Error::other("not supported on this platform yet"))
     }
 }
@@ -277,7 +261,7 @@ pub struct NotificationTarget {
     pub worktree: PathBuf,
 }
 
-#[cfg(any(target_os = "macos", test))]
+#[cfg(any(target_os = "macos", target_os = "linux", test))]
 impl NotificationTarget {
     /// Encode as a notification identifier: `chda/<nonce>/<pane or ->/<path>`.
     /// The nonce keeps identifiers unique so notifications do not replace
@@ -303,34 +287,79 @@ impl NotificationTarget {
 
 /// Start delivering notification clicks to `on_click`. Call once, on the
 /// main thread.
-pub fn init_notifications(on_click: impl Fn(NotificationTarget) + 'static) {
+pub fn init_notifications(on_click: impl Fn(NotificationTarget) + 'static, cx: &gpui::App) {
     #[cfg(target_os = "macos")]
     macos::init_notifications(move |id| {
         if let Some(target) = NotificationTarget::decode(&id) {
             on_click(target);
         }
     });
-    #[cfg(not(target_os = "macos"))]
+    #[cfg(target_os = "linux")]
+    cx.on_system_notification_response(move |response, _| {
+        if let Some(target) = NotificationTarget::decode(&response.tag) {
+            on_click(target);
+        }
+    });
+    #[cfg(not(target_os = "linux"))]
+    let _ = cx;
+    #[cfg(not(any(target_os = "macos", target_os = "linux")))]
     let _ = on_click;
 }
 
 /// Show a user notification; clicking it reports `target`.
-pub fn notify(title: &str, body: &str, target: &NotificationTarget) {
-    #[cfg(target_os = "macos")]
+pub fn notify(title: &str, body: &str, target: &NotificationTarget, cx: &gpui::App) {
+    #[cfg(any(target_os = "macos", target_os = "linux"))]
     {
         use std::sync::atomic::{AtomicU64, Ordering};
         static NONCE: AtomicU64 = AtomicU64::new(0);
         let id = target.encode(NONCE.fetch_add(1, Ordering::Relaxed));
+        #[cfg(target_os = "macos")]
         macos::notify(title, body, &id);
+        #[cfg(target_os = "linux")]
+        cx.show_system_notification(gpui::SystemNotification {
+            tag: id.into(),
+            title: title.to_owned().into(),
+            body: body.to_owned().into(),
+            actions: vec![gpui::SystemNotificationAction {
+                id: "open".into(),
+                label: "Open terminal".into(),
+            }],
+        });
     }
-    #[cfg(not(target_os = "macos"))]
+    #[cfg(not(target_os = "linux"))]
+    let _ = cx;
+    #[cfg(not(any(target_os = "macos", target_os = "linux")))]
     let _ = (title, body, target);
 }
 
 /// Show the standard About panel: name, version and icon from the bundle.
-pub fn show_about() {
+pub fn show_about(cx: &mut gpui::App) {
     #[cfg(target_os = "macos")]
     macos::show_about();
+    #[cfg(target_os = "linux")]
+    if let Some(window) = cx.active_window() {
+        // Actions can run while this window is already borrowed by GPUI.
+        // Keep its exact handle and open the prompt after that update ends.
+        cx.defer(move |cx| {
+            let _ = window.update(cx, |_, window, cx| {
+                let answer = window.prompt(
+                    gpui::PromptLevel::Info,
+                    &format!("chda {}", env!("CARGO_PKG_VERSION")),
+                    // GPUI's 288px fallback prompt does not wrap detail text.
+                    Some("Terminal with a git worktree\nsidebar and a live status board\nfor coding agents.\nMIT license.\nhttps://github.com/magicsih/chda"),
+                    &["Close", "Open repository"],
+                    cx,
+                );
+                cx.spawn(async move |cx| {
+                    if answer.await == Ok(1) {
+                        cx.update(|cx| cx.open_url(env!("CARGO_PKG_REPOSITORY")));
+                    }
+                }).detach();
+            });
+        });
+    }
+    #[cfg(not(target_os = "linux"))]
+    let _ = cx;
 }
 
 /// Un-minimize the app's windows (before bringing one to the front).
@@ -358,22 +387,6 @@ mod tests {
         assert_eq!(utf8_locale("ko_KR@rg=krzzzz", exists), "ko_KR.UTF-8");
         assert_eq!(utf8_locale("en_KR", exists), "en_US.UTF-8");
         assert_eq!(utf8_locale("", exists), "en_US.UTF-8");
-    }
-
-    #[test]
-    fn fonts_are_written_once() {
-        let dir = std::env::temp_dir().join(format!("chda-font-test-{}", std::process::id()));
-        let path = write_font(&dir, "a.ttf", b"one").unwrap();
-        assert_eq!(std::fs::read(&path).unwrap(), b"one");
-        let modified = std::fs::metadata(&path).unwrap().modified().unwrap();
-        write_font(&dir, "a.ttf", b"one").unwrap();
-        assert_eq!(
-            std::fs::metadata(&path).unwrap().modified().unwrap(),
-            modified
-        );
-        write_font(&dir, "a.ttf", b"two").unwrap();
-        assert_eq!(std::fs::read(&path).unwrap(), b"two");
-        std::fs::remove_dir_all(&dir).unwrap();
     }
 
     #[test]
@@ -414,11 +427,47 @@ mod tests {
         assert_eq!(NotificationTarget::decode(&t.encode(0)), Some(t));
         assert_eq!(NotificationTarget::decode("other/1/2/x"), None);
     }
+
+    #[gpui::test]
+    #[cfg(target_os = "linux")]
+    fn linux_notification_clicks_preserve_the_exact_pane(cx: &mut gpui::TestAppContext) {
+        use std::{cell::RefCell, rc::Rc};
+        let received = Rc::new(RefCell::new(Vec::new()));
+        let target = NotificationTarget {
+            pane: Some(42),
+            worktree: PathBuf::from("/work/a project/世界"),
+        };
+        cx.update(|cx| {
+            cx.set_app_identity("com.magicsih.chda", "chda");
+            init_notifications(
+                {
+                    let received = received.clone();
+                    move |target| received.borrow_mut().push(target)
+                },
+                cx,
+            );
+            notify("Agent is waiting", "in main", &target, cx);
+        });
+        let notifications = cx.delivered_system_notifications();
+        assert_eq!(notifications.len(), 1);
+        let tag = notifications[0].tag.clone();
+        for action_id in [None, Some("open".into())] {
+            cx.simulate_system_notification_response(gpui::SystemNotificationResponse {
+                tag: tag.clone(),
+                action_id,
+            });
+        }
+        cx.simulate_system_notification_response(gpui::SystemNotificationResponse {
+            tag: "unrelated".into(),
+            action_id: None,
+        });
+        assert_eq!(*received.borrow(), [target.clone(), target]);
+    }
 }
 
-#[cfg(target_os = "macos")]
+#[cfg(any(target_os = "macos", target_os = "linux"))]
 pub(crate) mod resources;
-#[cfg(not(target_os = "macos"))]
+#[cfg(not(any(target_os = "macos", target_os = "linux")))]
 pub(crate) mod resources {
     #[derive(Default)]
     pub struct Sampler;

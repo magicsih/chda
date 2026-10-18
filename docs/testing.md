@@ -85,6 +85,8 @@ the scenarios use real shells in temporary homes. Windows currently builds in CI
 | Esc reaches a working agent; an open palette consumes Esc first | `input::escape_reaches_a_working_agent_but_closes_the_palette_first` | |
 | IME composition with a hidden cursor | `input::ime_composition_is_placed_even_when_the_app_hides_the_cursor` | #37 |
 | Shells get a UTF-8 locale | `input::shells_get_the_locale` | #38 |
+| Linux foreground cwd without OSC 7, byte-preserving paths and deleted directories | `chda-pty` `foreground_cwd_*` | #186 |
+| Linux desktop-entry filtering, TCP/UDP and IPv6 socket sampling, notification activation targeting the exact pane | `platform::linux::tests::*`, `platform::resources::linux::tests::*`, `platform::tests::linux_notification_clicks_preserve_the_exact_pane` | #187, #197, #198 |
 | cmd-hover and cmd-click on a URL | `input::cmd_hover_underlines_a_url_and_cmd_click_opens_it` | #7 |
 | Mermaid output: cmd-click and the palette open the offline viewer | `diagrams::mermaid_output_opens_in_the_offline_viewer` | #35 |
 | Right-click a folder in `ls -la`: open a tab there, `cd` there | `paths::ls_folder_opens_a_terminal_tab_and_cds_there` | #34 |
@@ -289,3 +291,15 @@ require the final macOS candidate check.
 `chda-agents::sharing::tests` covers real CLI/VT partial code and nested-list captures, Unicode and partial line boundaries, duplicate/overlapping source ranges, malformed or incomplete exact transcripts and unconfirmed versions. Only uniquely selected source ranges are copied; hidden fences and other answer text are excluded. `scenarios::sharing` retains actual PTY selection, preview scope, ordinary Copy, clipboard-before-confirm, edited text, cancellation and update/navigation regressions. Headless scenarios do not replace the final native macOS and unsent composer verification.
 
 `scripts/test-macos-release.py` requires all 16 ISSUE conditions in each of three review rounds and both separate E2Es starting with v0.1.23, while preserving historical v0.1.21/v0.1.22 exact coverage and rejecting their exceptions for v0.1.23. These are synthetic validator tests and never release evidence.
+
+`chda-agents::ipc::executable::appimage::tests` reproduces an AppImage helper path
+lost when its temporary runtime directory disappears. A private executable
+launcher retains the original package only when APPDIR contains this exact
+packaged chda executable and its desktop marker; portable executables ignore
+another application's inherited AppImage environment. Each helper uses its own
+temporary extraction directory, preserves stdin and exits with its child status.
+Its extract-and-run mode also works without the GUI's AppImage environment or FUSE.
+Direct termination forwards to the helper process group before cleanup. Private
+metadata stays non-executable. Native package acceptance separately executes frozen
+pre-restart hook commands after removing the stopped runtime's isolated temp
+directory and relaunching under a different TMPDIR.

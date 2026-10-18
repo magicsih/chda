@@ -40,7 +40,7 @@ pub struct Recorded {
 pub struct RecordingSystem(pub RefCell<Recorded>);
 
 impl System for RecordingSystem {
-    fn notify(&self, title: &str, body: &str, target: &NotificationTarget) {
+    fn notify(&self, title: &str, body: &str, target: &NotificationTarget, _: &App) {
         self.0
             .borrow_mut()
             .notifications
@@ -61,7 +61,7 @@ impl System for RecordingSystem {
         Some("en_US.UTF-8".into())
     }
 
-    fn on_notification_click(&self, handler: Box<dyn Fn(NotificationTarget)>) {
+    fn on_notification_click(&self, handler: Box<dyn Fn(NotificationTarget)>, _: &App) {
         self.0.borrow_mut().click = Some(handler);
     }
 
@@ -489,7 +489,12 @@ impl Harness {
 
     /// Type key bindings, e.g. `"cmd-t"` or `"cmd-shift-a"`.
     pub fn keys(&mut self, keys: &str) {
-        self.cx.simulate_keystrokes(keys);
+        let keys = keys
+            .split_whitespace()
+            .map(crate::platform::shortcut)
+            .collect::<Vec<_>>()
+            .join(" ");
+        self.cx.simulate_keystrokes(&keys);
         self.cx.run_until_parked();
     }
 

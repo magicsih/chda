@@ -119,7 +119,7 @@ fn compiler_error_path_reveals_the_file(cx: &mut gpui::TestAppContext) {
     let at = find_on_screen(&mut h, &term, |t| t.starts_with("error at"), "main");
 
     // cmd-hover: a file link with its absolute path.
-    h.cx.simulate_mouse_move(at, None, Modifiers::command());
+    h.cx.simulate_mouse_move(at, None, crate::platform::link_modifiers());
     let open = h.read(|_, cx| term.read(cx).hovered_link.clone().map(|l| l.open));
     assert_eq!(
         open,
@@ -200,7 +200,7 @@ fn parenthesized_space_paths_hover_open_and_reveal_across_wraps(cx: &mut gpui::T
                     g.origin.y + g.line_height * (f32::from(row) + 0.5),
                 )
             });
-            h.cx.simulate_mouse_move(at, None, Modifiers::command());
+            h.cx.simulate_mouse_move(at, None, crate::platform::link_modifiers());
             (at, h.read(|_, cx| term.read(cx).hovered_link.clone()))
         };
         let path_start = ("Plan (".len() + prose.len()) as u16;
@@ -221,7 +221,7 @@ fn parenthesized_space_paths_hover_open_and_reveal_across_wraps(cx: &mut gpui::T
             for col in [start, (start + end) / 2, end] {
                 let (at, hovered) = hover(&mut h, row, col);
                 assert_eq!(hovered.as_ref(), Some(&link), "({col}, {row})");
-                h.cx.simulate_click(at, Modifiers::command());
+                h.cx.simulate_click(at, crate::platform::link_modifiers());
                 h.cx.run_until_parked();
                 assert_eq!(h.system.0.borrow().opened_files.last(), Some(&full));
                 h.cx.simulate_mouse_move(at, None, Modifiers::none());
@@ -504,7 +504,7 @@ fn bare_paths_share_complete_hover_click_and_menu_targets_across_soft_wraps(
             })
         };
         let at = position(&h, row, 5);
-        h.cx.simulate_mouse_move(at, None, Modifiers::command());
+        h.cx.simulate_mouse_move(at, None, crate::platform::link_modifiers());
         let link = h
             .read(|_, cx| term.read(cx).hovered_link.clone())
             .expect("full bare path");
@@ -521,12 +521,12 @@ fn bare_paths_share_complete_hover_click_and_menu_targets_across_soft_wraps(
         for (row, start, end) in link.cells.clone() {
             for col in [start, (start + end) / 2, end] {
                 let at = position(&h, row, col);
-                h.cx.simulate_mouse_move(at, None, Modifiers::command());
+                h.cx.simulate_mouse_move(at, None, crate::platform::link_modifiers());
                 assert_eq!(
                     h.read(|_, cx| term.read(cx).hovered_link.clone()),
                     Some(link.clone())
                 );
-                h.cx.simulate_click(at, Modifiers::command());
+                h.cx.simulate_click(at, crate::platform::link_modifiers());
                 h.cx.run_until_parked();
                 assert_eq!(h.system.0.borrow().opened_files.last(), Some(&full));
                 right_click(&mut h, at);
@@ -544,7 +544,7 @@ fn bare_paths_share_complete_hover_click_and_menu_targets_across_soft_wraps(
         let (row, start, _) = link.cells[0];
         let at = position(&h, row, start);
         h.cx.run_until_parked();
-        h.cx.simulate_mouse_move(at, None, Modifiers::command());
+        h.cx.simulate_mouse_move(at, None, crate::platform::link_modifiers());
         h.cx.run_until_parked();
         assert_eq!(
             h.read(|_, cx| term.read(cx).hovered_link.clone())
@@ -554,7 +554,7 @@ fn bare_paths_share_complete_hover_click_and_menu_targets_across_soft_wraps(
         std::fs::remove_file(&full).unwrap();
         let count = h.system.0.borrow().opened_files.len();
         for _ in 0..2 {
-            h.cx.simulate_click(at, Modifiers::command());
+            h.cx.simulate_click(at, crate::platform::link_modifiers());
             h.cx.run_until_parked();
             assert_eq!(
                 h.system.0.borrow().opened_files.len(),
@@ -590,7 +590,7 @@ fn missing_path_cache_does_not_hide_an_adjacent_legacy_file_or_a_new_file(
         |text| text.starts_with("Cache "),
         "not-yet-created",
     );
-    h.cx.simulate_mouse_move(first, None, Modifiers::command());
+    h.cx.simulate_mouse_move(first, None, crate::platform::link_modifiers());
     assert!(h.read(|_, cx| term.read(cx).hovered_link.is_none()));
     let second = find_on_screen(
         &mut h,
@@ -598,14 +598,14 @@ fn missing_path_cache_does_not_hide_an_adjacent_legacy_file_or_a_new_file(
         |text| text.starts_with("Cache "),
         "README.md",
     );
-    h.cx.simulate_mouse_move(second, None, Modifiers::command());
+    h.cx.simulate_mouse_move(second, None, crate::platform::link_modifiers());
     assert!(
         matches!(h.read(|_,cx|term.read(cx).hovered_link.clone()).map(|link|link.open),Some(LinkOpen::Path{path,..}) if path==h.home.home.join("README.md"))
     );
-    h.cx.simulate_mouse_move(first, None, Modifiers::command());
+    h.cx.simulate_mouse_move(first, None, crate::platform::link_modifiers());
     assert!(h.read(|_, cx| term.read(cx).hovered_link.is_none()));
     std::fs::write(&missing, "now present").unwrap();
-    h.cx.simulate_mouse_move(first, None, Modifiers::command());
+    h.cx.simulate_mouse_move(first, None, crate::platform::link_modifiers());
     assert!(
         matches!(h.read(|_,cx|term.read(cx).hovered_link.clone()).map(|link|link.open),Some(LinkOpen::Path{path,..}) if path==missing)
     );
@@ -623,14 +623,14 @@ fn a_new_longest_path_replaces_an_existing_prefix_without_new_output(
     h.wait_prompt();
     let term = h.focused_terminal();
     let at = find_on_screen(&mut h, &term, |text| text.starts_with("Saved "), "Notes");
-    h.cx.simulate_mouse_move(at, None, Modifiers::command());
+    h.cx.simulate_mouse_move(at, None, crate::platform::link_modifiers());
     assert!(
         matches!(h.read(|_,cx|term.read(cx).hovered_link.clone()).map(|link|link.open),Some(LinkOpen::Path{path,..}) if path==h.home.home.join("Notes"))
     );
     let full = h.home.home.join("Notes Folder/report.md");
     std::fs::create_dir_all(full.parent().unwrap()).unwrap();
     std::fs::write(&full, "longest").unwrap();
-    h.cx.simulate_click(at, Modifiers::command());
+    h.cx.simulate_click(at, crate::platform::link_modifiers());
     h.cx.run_until_parked();
     assert_eq!(h.system.0.borrow().opened_files.last(), Some(&full));
 }

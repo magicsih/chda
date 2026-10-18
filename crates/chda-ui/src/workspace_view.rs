@@ -682,16 +682,23 @@ impl WorkspaceView {
         this
     }
 
-    fn hook_bin() -> PathBuf {
-        std::env::current_exe().unwrap_or_else(|_| PathBuf::from("chda"))
+    fn hook_bin() -> std::io::Result<PathBuf> {
+        ipc::helper_executable()
     }
 
-    fn install_hooks(&self) {
+    fn install_hooks(&mut self) {
         let Some(data_dir) = self.env.data_dir.as_deref() else {
             return;
         };
+        let bin = match Self::hook_bin() {
+            Ok(bin) => bin,
+            Err(error) => {
+                self.notify_error(format!("Agent integration unavailable: {error}"));
+                return;
+            }
+        };
         for adapter in self.adapters.iter() {
-            let _ = adapter.install_hooks(data_dir, &Self::hook_bin());
+            let _ = adapter.install_hooks(data_dir, &bin);
         }
     }
 
@@ -1560,6 +1567,7 @@ impl WorkspaceView {
                     &format!("{agent} is waiting"),
                     &format!("in {name}"),
                     &target,
+                    cx,
                 );
             }
             AgentStatus::Review if self.config.notifications && !looking => {
@@ -1567,6 +1575,7 @@ impl WorkspaceView {
                     &format!("{agent} finished"),
                     &format!("in {name}"),
                     &target,
+                    cx,
                 );
             }
             _ => {}
@@ -1801,23 +1810,56 @@ impl WorkspaceView {
     /// Bring the window forward when the user clicks one of our
     /// notifications, and show the agent's pane, or its worktree when the
     /// pane is gone.
-    fn start_notification_clicks(&self, window: &mut Window, cx: &mut Context<Self>) {
+    fn start_notification_clicks(&self, _: &mut Window, cx: &mut Context<Self>) {
         let (tx, mut rx) = unbounded::<platform::NotificationTarget>();
-        self.env
-            .system
-            .on_notification_click(Box::new(move |target| {
+        self.env.system.on_notification_click(
+            Box::new(move |target| {
                 let _ = tx.unbounded_send(target);
-            }));
-        cx.spawn_in(window, async move |this, cx| {
+            }),
+            cx,
+        );
+        let registry = self.env.windows.clone();
+        // A platform has one notification callback. Its receiver belongs to
+        // the app, so closing the last window that registered it cannot drop
+        // clicks destined for a different surviving window.
+        cx.spawn(async move |_, cx| {
             while let Some(target) = rx.next().await {
-                if this
-                    .update_in(cx, |view, window, cx| {
-                        view.on_notification_click(target, window, cx)
-                    })
-                    .is_err()
-                {
-                    break;
-                }
+                let registry = registry.clone();
+                cx.update(|cx| {
+                    let owner =
+                        {
+                            let windows = registry.borrow();
+                            target
+                                .pane
+                                .and_then(|raw| {
+                                    windows.entries.iter().find(|entry| {
+                                        entry.panes.keys().any(|pane| pane.raw() == raw)
+                                    })
+                                })
+                                .or_else(|| {
+                                    windows.entries.iter().find(|entry| {
+                                        entry
+                                            .panes
+                                            .values()
+                                            .any(|(cwd, _)| cwd.starts_with(&target.worktree))
+                                    })
+                                })
+                                .or_else(|| {
+                                    windows.entries.iter().find(|entry| {
+                                        Some(entry.window.window_id()) == windows.active
+                                    })
+                                })
+                                .or_else(|| windows.entries.first())
+                                .cloned()
+                        };
+                    if let Some(owner) = owner {
+                        let _ = owner.window.update(cx, |_, window, cx| {
+                            let _ = owner.view.update(cx, |view, cx| {
+                                view.on_notification_click(target, window, cx)
+                            });
+                        });
+                    }
+                });
             }
         })
         .detach();
@@ -3366,11 +3408,13 @@ impl WorkspaceView {
                     .cursor_pointer()
                     .hover(|s| s.bg(fg.opacity(0.1)))
                     .on_mouse_down(MouseButton::Left, stop)
-                    .tooltip(crate::tooltip::text(if self.sidebar_visible {
-                        "Hide the sidebar (cmd-b)"
-                    } else {
-                        "Show the sidebar (cmd-b)"
-                    }))
+                    .tooltip(crate::tooltip::text(platform::shortcut_hint(
+                        if self.sidebar_visible {
+                            "Hide the sidebar (cmd-b)"
+                        } else {
+                            "Show the sidebar (cmd-b)"
+                        },
+                    )))
                     .on_click(cx.listener(|this, _, window, cx| {
                         this.toggle_sidebar(&ToggleSidebar, window, cx);
                         cx.notify();
@@ -3466,7 +3510,36 @@ impl WorkspaceView {
                 .child(optical("\u{25b6}"));
             bar = bar.child(div().flex().flex_row().gap_1().child(picker).child(go));
         }
-        bar.into_any_element()
+        if platform::has_application_menu() {
+            bar = bar.child(
+                div()
+                    .id("application-menu")
+                    .debug_selector(|| "application-menu".into())
+                    .px_2()
+                    .h(px(28.0))
+                    .flex()
+                    .items_center()
+                    .flex_shrink_0()
+                    .cursor_pointer()
+                    .rounded_md()
+                    .hover(|style| style.bg(fg.opacity(0.1)))
+                    .on_mouse_down(MouseButton::Left, stop)
+                    .tooltip(crate::tooltip::text(platform::shortcut_hint(
+                        "Commands (cmd-shift-p)",
+                    )))
+                    .on_click(cx.listener(|this, _, window, cx| {
+                        this.toggle_palette(&TogglePalette, window, cx);
+                    }))
+                    .child(optical("☰")),
+            );
+        }
+        let registry = self.env.windows.clone();
+        bar.children(platform::window_controls(window, move |window, _| {
+            if !registry.borrow().update.frozen {
+                window.remove_window();
+            }
+        }))
+        .into_any_element()
     }
 
     /// Render a Markdown file to a local page and open it in the browser.
@@ -4780,7 +4853,8 @@ impl WorkspaceView {
         executable: &Path,
     ) -> Option<Vec<String>> {
         let adapter = self.adapters.iter().find(|a| a.id() == agent)?;
-        let original = adapter.launch_command(cwd, resume, &Self::hook_bin());
+        let hook_bin = Self::hook_bin().ok()?;
+        let original = adapter.launch_command(cwd, resume, &hook_bin);
         let mut args: Vec<std::ffi::OsString> = original.get_args().map(Into::into).collect();
         if agent == AgentId::Claude
             && let Some(dir) = &self.env.data_dir
@@ -4788,7 +4862,7 @@ impl WorkspaceView {
                 &self.env.home(),
                 cwd,
                 dir,
-                &Self::hook_bin(),
+                &hook_bin,
             )
         {
             if let Some(index) = args.iter().position(|arg| arg == "--settings") {
@@ -5897,12 +5971,12 @@ impl WorkspaceView {
             ("Select theme...", "preview with the arrow keys", "theme"),
             (
                 "Select light theme...",
-                "used while macOS is in Light mode",
+                "used while the system is in Light mode",
                 "light_theme",
             ),
             (
                 "Select dark theme...",
-                "used while macOS is in Dark mode",
+                "used while the system is in Dark mode",
                 "dark_theme",
             ),
             ("Go to waiting agent", "cmd-shift-a", "waiting_agent"),
@@ -5915,10 +5989,37 @@ impl WorkspaceView {
         .into_iter()
         .map(|(label, detail, action)| PaletteItem {
             label: label.into(),
-            detail: detail.into(),
+            detail: crate::platform::shortcut(detail).into(),
             command: PaletteCommand::Action(action),
         })
         .collect();
+        if platform::has_application_menu() {
+            items.extend(
+                [
+                    ("New window", "cmd-shift-n", "new_window"),
+                    ("New worktree...", "cmd-n", "new_worktree"),
+                    ("Copy", "cmd-c", "copy"),
+                    ("Paste", "cmd-v", "paste"),
+                    ("Find...", "cmd-f", "find"),
+                    ("Settings...", "cmd-,", "config"),
+                    ("Open Ghostty Config", "", "ghostty_config"),
+                    ("Reload Config", "cmd-shift-,", "reload_config"),
+                    ("Minimize window", "cmd-m", "minimize"),
+                    ("Maximize or restore window", "", "maximize"),
+                    ("About chda", "", "about"),
+                    ("Open repository", "", "repository"),
+                    ("Report an issue", "", "report_issue"),
+                    ("Release notes and downloads", "", "release_notes"),
+                    ("Quit chda", "cmd-q", "quit"),
+                ]
+                .into_iter()
+                .map(|(label, detail, action)| PaletteItem {
+                    label: label.into(),
+                    detail: platform::shortcut(detail).into(),
+                    command: PaletteCommand::Action(action),
+                }),
+            );
+        }
         for command in self.config.valid_commands().0 {
             items.push(PaletteItem {
                 label: format!("Run {}", command.name.trim()),
@@ -6273,7 +6374,11 @@ impl WorkspaceView {
     ) {
         match command {
             PaletteCommand::Action(name) => match name {
+                "new_window" => {
+                    crate::open_workspace_window(None, self.env.clone(), cx);
+                }
                 "new_tab" => self.new_tab(&NewTab, window, cx),
+                "new_worktree" => self.new_worktree_action(&NewWorktree, window, cx),
                 "close" => self.close_surface(&CloseSurface, window, cx),
                 "split_right" => self.split(Axis::Horizontal, window, cx),
                 "split_down" => self.split(Axis::Vertical, window, cx),
@@ -6297,6 +6402,28 @@ impl WorkspaceView {
                 "font_bigger" => self.increase_font_size(&IncreaseFontSize, window, cx),
                 "font_smaller" => self.decrease_font_size(&DecreaseFontSize, window, cx),
                 "font_reset" => self.reset_font_size(&ResetFontSize, window, cx),
+                "config" => self.open_config(&OpenConfig, window, cx),
+                "ghostty_config" => self.open_ghostty_config(&OpenGhosttyConfig, window, cx),
+                "reload_config" => self.reload_config(window, cx),
+                "minimize" => window.minimize_window(),
+                "maximize" => window.zoom_window(),
+                "about" => {
+                    self.restore_focus(window, cx);
+                    platform::show_about(cx);
+                }
+                "repository" => cx.dispatch_action(&crate::menus::OpenRepository),
+                "report_issue" => cx.dispatch_action(&crate::menus::ReportIssue),
+                "release_notes" => cx.dispatch_action(&crate::menus::ReleaseNotes),
+                "quit" => cx.dispatch_action(&Quit),
+                "copy" | "paste" | "find" => {
+                    self.restore_focus(window, cx);
+                    let action: Box<dyn gpui::Action> = match name {
+                        "copy" => Box::new(crate::terminal_view::Copy),
+                        "paste" => Box::new(crate::terminal_view::Paste),
+                        _ => Box::new(crate::terminal_view::Find),
+                    };
+                    window.dispatch_action(action, cx);
+                }
                 "waiting_agent" => self.go_to_waiting_agent(&GoToWaitingAgent, window, cx),
                 "theme" => self.select_theme(&SelectTheme, window, cx),
                 "light_theme" => self.select_light_theme(&SelectLightTheme, window, cx),
@@ -6621,7 +6748,9 @@ impl WorkspaceView {
             .text_color(fg.opacity(0.7))
             .cursor_pointer()
             .hover(|style| style.bg(fg.opacity(0.12)).text_color(fg))
-            .tooltip(crate::tooltip::text("New terminal tab (cmd-t)"))
+            .tooltip(crate::tooltip::text(crate::platform::shortcut_hint(
+                "New terminal tab (cmd-t)",
+            )))
             .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
             .on_click(cx.listener(|this, _, window, cx| {
                 cx.stop_propagation();
@@ -7263,7 +7392,7 @@ impl Render for WorkspaceView {
             .child(self.render_tab_bar(cx))
             .child(div().flex_1().min_h_0().w_full().child(content));
         let title_bar = self.render_title_bar(window, cx);
-        div()
+        let content = div()
             .size_full()
             .relative()
             .flex()
@@ -7492,7 +7621,8 @@ impl Render for WorkspaceView {
             .children(self.render_notifications(cx))
             .children(self.render_child_details(cx))
             .children(self.render_share_sheet(cx))
-            .into_any_element()
+            .into_any_element();
+        platform::window_frame(content, window, bg, fg)
     }
 }
 

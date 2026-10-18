@@ -2,7 +2,7 @@
 
 use std::rc::Rc;
 
-use gpui::{Modifiers, TestAppContext, point};
+use gpui::{TestAppContext, point};
 
 use super::harness::Harness;
 
@@ -27,8 +27,8 @@ fn mermaid_output_opens_in_the_offline_viewer(cx: &mut TestAppContext) {
         geometry.origin.x + geometry.cell_width * 3.5,
         geometry.origin.y + geometry.line_height * (f32::from(row) + 0.5),
     );
-    h.cx.simulate_mouse_move(at, None, Modifiers::command());
-    h.cx.simulate_click(at, Modifiers::command());
+    h.cx.simulate_mouse_move(at, None, crate::platform::link_modifiers());
+    h.cx.simulate_click(at, crate::platform::link_modifiers());
     let page = {
         let opened = &h.system.0.borrow().opened_files;
         assert_eq!(opened.len(), 1);

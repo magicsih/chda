@@ -2067,7 +2067,9 @@ impl Render for SidebarView {
             .rounded_sm()
             .cursor_pointer()
             .hover(|s| s.bg(fg.opacity(0.15)))
-            .tooltip(crate::tooltip::text("Add a repository (cmd-shift-o)"))
+            .tooltip(crate::tooltip::text(crate::platform::shortcut_hint(
+                "Add a repository (cmd-shift-o)",
+            )))
             .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
             .on_click(cx.listener(|_, _, _, cx| {
                 cx.stop_propagation();

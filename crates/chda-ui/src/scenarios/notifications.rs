@@ -5,6 +5,40 @@ use super::harness::Harness;
 use crate::workspace_view::{ResumeSession, RunClaude};
 
 #[gpui::test]
+fn desktop_notification_clicks_survive_closing_the_last_registered_window(cx: &mut TestAppContext) {
+    use super::harness::wait_until;
+    let mut h = Harness::open(cx, "notification-close", |_| {});
+    h.wait_prompt();
+    let source = h.read(|v, _| v.ws.focused_pane().unwrap());
+    h.keys("cmd-t");
+    h.wait_prompt();
+    let env = h.read(|v, _| v.env.clone());
+    let handle =
+        h.cx.update(|_, cx| crate::open_workspace_window(None, env.clone(), cx));
+    let mut other_cx = gpui::VisualTestContext::from_window(handle.into(), cx);
+    let other = handle.root(&mut other_cx).unwrap();
+    wait_until(
+        &mut other_cx,
+        &other,
+        "the second window's shell",
+        |v, cx| v.focused_text(cx).contains("test%"),
+    );
+    other_cx.update(|window, _| window.remove_window());
+    drop(other);
+    drop(other_cx);
+    h.cx.run_until_parked();
+    let target = crate::platform::NotificationTarget {
+        pane: Some(source.raw()),
+        worktree: h.home.home.clone(),
+    };
+    h.system.0.borrow().click.as_ref().unwrap()(target);
+    h.wait_for(
+        "the notification to focus its source after the other window closed",
+        |v, _| v.ws.focused_pane() == Some(source),
+    );
+}
+
+#[gpui::test]
 fn successive_errors_remain_in_the_title_bar_queue(cx: &mut TestAppContext) {
     let mut h = Harness::open(cx, "notifications", |_| {});
     h.wait_prompt();

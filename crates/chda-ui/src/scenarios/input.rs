@@ -1,8 +1,46 @@
 //! Typed input: IME composition, the shell's locale, cmd-click links.
 
-use gpui::{EntityInputHandler, Modifiers, TestAppContext, point};
+use gpui::{EntityInputHandler, TestAppContext, point};
 
 use super::harness::Harness;
+
+#[gpui::test]
+fn application_shortcuts_leave_control_c_for_the_shell(cx: &mut TestAppContext) {
+    let mut h = Harness::open(cx, "desktop-controls", |_| {});
+    h.wait_prompt();
+    let first = h.focused_terminal();
+    h.type_text("printf '\\nINTERRUPT_READY\\n'; sleep 30");
+    h.keys("enter");
+    h.wait_for("the foreground process", |_, cx| {
+        let frame = first.read(cx).frame();
+        (0..frame.size.rows).any(|row| frame.row_text(row).trim() == "INTERRUPT_READY")
+    });
+    h.keys("ctrl-c");
+    h.wait_prompt();
+    h.keys("cmd-t");
+    h.wait_prompt();
+    assert_eq!(h.read(|view, _| view.ws.tabs().len()), 2);
+    h.type_text("printf '\\nAPP_SHORTCUTS_OK\\n'");
+    h.keys("enter");
+    h.wait_for(
+        "a clean command after the application shortcut",
+        |view, cx| {
+            let frame = view.panes[&view.ws.focused_pane().unwrap()]
+                .0
+                .read(cx)
+                .frame();
+            (0..frame.size.rows).any(|row| frame.row_text(row).trim() == "APP_SHORTCUTS_OK")
+        },
+    );
+    h.keys("cmd-w");
+    h.wait_for("the original tab", |view, _| view.ws.tabs().len() == 1);
+    h.type_text("printf '\\nINTERRUPT_OK\\n'");
+    h.keys("enter");
+    h.wait_for("the interrupted shell to accept input", |_, cx| {
+        let frame = first.read(cx).frame();
+        (0..frame.size.rows).any(|row| frame.row_text(row).trim() == "INTERRUPT_OK")
+    });
+}
 
 #[gpui::test]
 fn ime_composition_is_placed_even_when_the_app_hides_the_cursor(cx: &mut TestAppContext) {
@@ -63,7 +101,7 @@ fn cmd_hover_underlines_a_url_and_cmd_click_opens_it(cx: &mut TestAppContext) {
         geometry.origin.x + geometry.cell_width * 10.5,
         geometry.origin.y + geometry.line_height * (f32::from(row) + 0.5),
     );
-    let cmd = Modifiers::command();
+    let cmd = crate::platform::link_modifiers();
     h.cx.simulate_mouse_move(at, None, cmd);
     let link = h.read(|_, cx| term.read(cx).hovered_link.clone());
     assert!(
