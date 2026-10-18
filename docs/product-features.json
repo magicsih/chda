@@ -68,7 +68,7 @@
     },
     {
       "area": "Palette",
-      "details": "`cmd-shift-p`: every action, worktree, agent launch and session in one fuzzy list On Linux, Settings, Ghostty config, window actions, terminal copy/paste/search, About, help links and Quit are also available from the palette. Linux opens it with Ctrl+Shift+P or the Commands button.",
+      "details": "`cmd-shift-p`: every action, worktree, agent launch and session in one fuzzy list On Linux, Settings, Ghostty config, window actions, terminal copy/paste/search, About, help links and Quit are also available from the palette. Linux opens it with Ctrl+Shift+P or the Commands button. The Linux About dialog shows the version, full description, license and repository link at default and narrow window sizes.",
       "title": "Every action in one place",
       "summary": "Press `cmd-shift-p` to find worktrees, launch or resume agents and run your own commands in a tab, split or floating terminal. Agents can use `chda mcp` to create worktrees, open tabs, read session output and wait for other agents."
     },
