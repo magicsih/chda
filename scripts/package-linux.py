@@ -16,7 +16,8 @@ import subprocess
 FLOORS = {"GLIBC": (2, 31), "GLIBCXX": (3, 4, 28), "CXXABI": (1, 3, 12)}
 HOST_LIBRARIES = re.compile(
     r"^(?:ld-linux.*|lib(?:c|m|pthread|rt|dl|resolv|nss_[^.]+|util|anl)\.so\..*|"
-    r"lib(?:gcc_s|stdc\+\+)\.so\..*|lib(?:GL|EGL|GLES|vulkan|drm|gbm|cuda|nvidia|LLVM).*)$"
+    r"lib(?:gcc_s|stdc\+\+)\.so\..*|lib(?:GL|EGL|GLES|vulkan|drm|gbm|cuda|nvidia|LLVM).*|"
+    r"lib(?:wayland-client|xcb)\.so\..*)$"
 )
 
 
@@ -77,15 +78,8 @@ def stage(binary, output, version, sha, collect_sources):
     executable = bindir / "chda"
     shutil.copy2(binary, executable)
     dependencies = dependency_paths(run("ldd", str(binary)))
-    # wayland-backend loads its system client with dlopen, so ldd on the
-    # executable alone cannot discover it or its transitive dependencies.
-    cache = run("ldconfig", "-p")
-    wayland = re.search(r"^\s*libwayland-client\.so\.0\s+\([^)]*\)\s+=>\s+(/\S+)", cache, re.MULTILINE)
-    if not wayland:
-        raise ValueError("Missing Wayland client runtime")
-    client = pathlib.Path(wayland.group(1))
-    dependencies["libwayland-client.so.0"] = client
-    dependencies.update(dependency_paths(run("ldd", str(client))))
+    # EGL/Vulkan drivers share the process's Wayland/XCB client libraries.
+    # Loading a bundled older client can hide symbols the host driver needs.
     libraries = []
     sources = set()
     for name, path in sorted(dependencies.items()):
