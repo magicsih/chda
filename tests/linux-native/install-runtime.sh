@@ -2,6 +2,10 @@
 set -eu
 if command -v apt-get >/dev/null; then
     export DEBIAN_FRONTEND=noninteractive
+    # Bullseye's security packages moved to Debian's archive after LTS ended.
+    if [ -f /etc/apt/sources.list ] && . /etc/os-release && [ "$VERSION_CODENAME" = bullseye ]; then
+        sed -i 's,deb.debian.org/debian-security,archive.debian.org/debian-security,g' /etc/apt/sources.list
+    fi
     apt-get update
     apt-get install -y --no-install-recommends \
         ca-certificates bash git python3 python3-dbus python3-gi python3-pil \
@@ -17,7 +21,7 @@ elif command -v dnf >/dev/null; then
     dnf install -y --setopt=install_weak_deps=False \
         bash git python3 python3-dbus python3-gobject python3-pillow \
         dbus-daemon mesa-vulkan-drivers vulkan-tools \
-        xorg-x11-server-Xvfb xorg-x11-utils xdotool openbox scrot xclip \
+        xorg-x11-server-Xvfb xdpyinfo xwininfo xdotool openbox scrot xclip \
         dejavu-sans-mono-fonts google-noto-sans-cjk-fonts
     dnf clean all
 elif command -v pacman >/dev/null; then
