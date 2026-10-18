@@ -11,9 +11,9 @@ spec.loader.exec_module(package)
 
 class PackageTests(unittest.TestCase):
     def test_host_graphics_and_c_runtime_stay_outside_the_payload(self):
-        for name in ["libc.so.6", "libm.so.6", "ld-linux-x86-64.so.2", "libvulkan.so.1", "libGL.so.1", "libstdc++.so.6", "libgcc_s.so.1"]:
+        for name in ["libc.so.6", "libm.so.6", "ld-linux-x86-64.so.2", "libvulkan.so.1", "libGL.so.1", "libstdc++.so.6", "libgcc_s.so.1", "libwayland-client.so.0", "libxcb.so.1"]:
             self.assertTrue(package.host_library(name), name)
-        for name in ["libwayland-client.so.0", "libxkbcommon.so.0", "libfontconfig.so.1"]:
+        for name in ["libxkbcommon.so.0", "libfontconfig.so.1"]:
             self.assertFalse(package.host_library(name), name)
 
     def test_abi_audit_uses_imports_and_compares_versions_numerically(self):
