@@ -36,8 +36,10 @@ def main():
     parser.add_argument("--round", type=int, choices=[1, 2, 3], required=True)
     parser.add_argument("--evidence", required=True)
     parser.add_argument("--preparation-probe", action="store_true")
-    parser.add_argument("--stage", choices=["startup", "clipboard", "terminal", "windows", "full"], default="startup")
+    parser.add_argument("--stage", choices=["startup", "clipboard", "terminal", "windows", "full", "ime-wayland"], default="startup")
     args = parser.parse_args()
+    if args.stage == "ime-wayland" and (args.backend != "wayland" or args.compositor != "labwc"):
+        raise SystemExit("Native Wayland IME supplement requires labwc and actual Wayland input")
     if args.stage == "full" and args.backend == "wayland" and args.compositor != "mutter":
         raise SystemExit("Full Wayland journey uses Mutter for actual product CSD; labwc remains startup/clipboard/window SSD coverage")
     if platform.system() != "Linux" or (platform.machine() != "x86_64" and not args.preparation_probe):
@@ -186,6 +188,9 @@ def main():
                        "--dest=org.freedesktop.DBus", "/org/freedesktop/DBus", "org.freedesktop.DBus.NameHasOwner",
                        "string:org.freedesktop.impl.portal.desktop.gtk"]).stdout, "explicit GTK portal backend")
             start(["/usr/libexec/xdg-desktop-portal"], "portal", process_env=portal_env)
+        if args.stage == "ime-wayland":
+            from native_ime_wayland import prepare_labwc
+            prepare_labwc(start, env, root)
         app_env = dict(env)
         if args.backend == "wayland":
             app_env.pop("DISPLAY", None)
@@ -212,7 +217,7 @@ def main():
                                   capture_backend="x11" if args.backend == "x11" or args.compositor == "mutter" else "wayland",
                                   evidence=str(root), artifact=str(artifact), screen_width=1440,
                                   screen_height=1000, preparation_probe=args.preparation_probe)
-        if args.backend == "wayland" and args.compositor == "labwc" and args.stage != "startup":
+        if args.backend == "wayland" and args.compositor == "labwc" and args.stage not in ["startup", "ime-wayland"]:
             build = root / "pointer-helper"
             build.mkdir()
             for name in ["build-drag.sh", "wayland-drag.c", "wlr-virtual-pointer-unstable-v1.xml"]:
@@ -232,6 +237,12 @@ def main():
             driver.screenshot("02-after-input")
             result["startupStatus"] = "passed"
             result["automationStatus"] = "passed"
+            if args.stage == "ime-wayland":
+                from native_ime_wayland import exercise
+                result["imeWayland"] = exercise(driver)
+                result.update(applicationBackend="native-wayland", inputBackend="native-wayland",
+                              captureBackend="native-wayland", compositor="labwc",
+                              imeVisualStatus="pending independent preedit PNG review")
             if args.stage == "terminal":
                 driver.terminal_checks()
             if args.stage in ["clipboard", "terminal"]:

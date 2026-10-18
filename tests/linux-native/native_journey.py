@@ -449,6 +449,9 @@ class Journey:
             self.step("foreground child cwd without OSC7 and recovery after CtrlC", self.acceptance.cwd_checks)
             self.step("actual worktree creation sheet, branch and terminal", self.acceptance.worktree_checks)
             self.step("native terminal Ctrl+click URI dispatch", self.acceptance.link_checks)
+            from native_commands import exercise as commands_about
+            self.step("actual Commands button and About prompt at default/narrow sizes",
+                      lambda: commands_about(self))
             self.step("default and narrow window, actual buttons, title move, eight resize areas", self.window_checks)
             self.step("real folder chooser cancel, select and retry", self.folder_checks)
             self.step("actual installed hook command and pane-specific MCP status",

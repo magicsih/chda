@@ -165,10 +165,11 @@ if result.returncode:raise SystemExit(result.returncode)
                            "Path("+repr(str(handler_output))+").write_text(json.dumps({'uri':actual,'reply':reply,'scope':'isolated native URI handler fixture'}))\n")
         applications=self.root/"data/applications";applications.mkdir(exist_ok=True)
         desktop=applications/"chda-validation-uri.desktop"
-        # Desktop Exec quoting, not shell quoting. The private path is an
-        # actual argument and %u is the desktop URI field code.
-        quoted='"'+str(handler).replace('\\','\\\\').replace('"','\\"').replace('`','\\`').replace('$','\\$').replace('%','%%')+'"'
-        desktop.write_text("[Desktop Entry]\nType=Application\nName=chda native URI fixture\nExec=/usr/bin/python3 "+quoted+" %u\nNoDisplay=true\nMimeType=x-scheme-handler/http;\n")
+        # xdg-open generic keeps quotes literal in Exec arguments. The CI
+        # /evidence/session path is a safe single unquoted argument.
+        if any(c not in "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789_./-" for c in str(handler)):
+            raise RuntimeError("URI fixture requires a safe /evidence/session path")
+        desktop.write_text("[Desktop Entry]\nType=Application\nName=chda native URI fixture\nExec=/usr/bin/python3 "+str(handler)+" %u\nNoDisplay=true\nMimeType=x-scheme-handler/http;\n")
         mimeapps=self.root/"config/mimeapps.list"
         if mimeapps.exists():raise RuntimeError("Refusing to overwrite an existing URI preference in the test session")
         mimeapps.write_text("[Default Applications]\nx-scheme-handler/http=chda-validation-uri.desktop\n")
