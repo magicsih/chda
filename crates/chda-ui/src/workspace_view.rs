@@ -1560,6 +1560,7 @@ impl WorkspaceView {
                     &format!("{agent} is waiting"),
                     &format!("in {name}"),
                     &target,
+                    cx,
                 );
             }
             AgentStatus::Review if self.config.notifications && !looking => {
@@ -1567,6 +1568,7 @@ impl WorkspaceView {
                     &format!("{agent} finished"),
                     &format!("in {name}"),
                     &target,
+                    cx,
                 );
             }
             _ => {}
@@ -1803,11 +1805,12 @@ impl WorkspaceView {
     /// pane is gone.
     fn start_notification_clicks(&self, window: &mut Window, cx: &mut Context<Self>) {
         let (tx, mut rx) = unbounded::<platform::NotificationTarget>();
-        self.env
-            .system
-            .on_notification_click(Box::new(move |target| {
+        self.env.system.on_notification_click(
+            Box::new(move |target| {
                 let _ = tx.unbounded_send(target);
-            }));
+            }),
+            cx,
+        );
         cx.spawn_in(window, async move |this, cx| {
             while let Some(target) = rx.next().await {
                 if this

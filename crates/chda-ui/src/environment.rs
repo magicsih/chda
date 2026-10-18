@@ -18,7 +18,7 @@ use crate::platform::{self, FolderApp, FolderPick, NotificationTarget};
 
 /// Side effects outside the window.
 pub trait System {
-    fn notify(&self, title: &str, body: &str, target: &NotificationTarget);
+    fn notify(&self, title: &str, body: &str, target: &NotificationTarget, cx: &gpui::App);
     /// Show `count` on the Dock icon; zero clears it.
     fn set_badge(&self, count: usize);
     fn beep(&self);
@@ -27,7 +27,7 @@ pub trait System {
     /// `LANG` for new shells when the app's own environment has none.
     fn pane_locale(&self) -> Option<String>;
     /// Report clicks on notifications sent through [`System::notify`].
-    fn on_notification_click(&self, handler: Box<dyn Fn(NotificationTarget)>);
+    fn on_notification_click(&self, handler: Box<dyn Fn(NotificationTarget)>, cx: &gpui::App);
     /// Open a file with the system's default application.
     fn open_file(&self, path: &Path, cx: &gpui::App);
     /// Show `path` selected in its folder in the file manager.
@@ -44,8 +44,8 @@ pub trait System {
 pub struct NativeSystem;
 
 impl System for NativeSystem {
-    fn notify(&self, title: &str, body: &str, target: &NotificationTarget) {
-        platform::notify(title, body, target);
+    fn notify(&self, title: &str, body: &str, target: &NotificationTarget, cx: &gpui::App) {
+        platform::notify(title, body, target, cx);
     }
 
     fn set_badge(&self, count: usize) {
@@ -64,8 +64,8 @@ impl System for NativeSystem {
         platform::default_lang()
     }
 
-    fn on_notification_click(&self, handler: Box<dyn Fn(NotificationTarget)>) {
-        platform::init_notifications(handler);
+    fn on_notification_click(&self, handler: Box<dyn Fn(NotificationTarget)>, cx: &gpui::App) {
+        platform::init_notifications(handler, cx);
     }
 
     fn open_file(&self, path: &Path, cx: &gpui::App) {

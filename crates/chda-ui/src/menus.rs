@@ -26,7 +26,7 @@ const REPOSITORY: &str = env!("CARGO_PKG_REPOSITORY");
 
 /// Register the app-level menu actions and set the menu bar.
 pub fn install(cx: &mut App) {
-    cx.on_action(|_: &About, _| platform::show_about());
+    cx.on_action(|_: &About, cx| platform::show_about(cx));
     cx.on_action(|_: &Hide, cx| cx.hide());
     cx.on_action(|_: &HideOthers, cx| cx.hide_other_apps());
     cx.on_action(|_: &ShowAll, cx| cx.unhide_other_apps());

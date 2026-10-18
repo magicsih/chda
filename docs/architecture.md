@@ -142,7 +142,9 @@ dotfiles:
 Because the bash launch changes the command line, it applies only when chda
 starts the login shell itself, not to agent commands. Shells without
 integration fall back to asking the OS for the foreground process's
-directory (`chda-pty`, macOS only so far).
+directory (`chda-pty`, macOS and Linux). Linux reads the foreground process
+group's `/proc` directory link without changing its path bytes; deleted and
+unreadable directories remain unknown.
 
 ## Title bar
 
@@ -155,8 +157,10 @@ in a GUI app. `chda-ui/platform` looks up a fixed list of apps (Finder,
 editors, IDEs, git clients, terminals) by bundle identifier through
 `NSWorkspace`, draws each installed one's icon into a 64-pixel PNG once
 after the first frame, and opens folders with `open -b <bundle id>`. The
-pick is saved as `open-in` in `config.toml`. On Linux and Windows the system
-title bar stays and no apps are listed yet.
+pick is saved as `open-in` in `config.toml`. Linux discovers folder-capable XDG
+desktop entries and launches them through GLib's `gio`, preserving desktop
+quoting and D-Bus activation. `xdg-open` provides the default file manager.
+Windows does not list installed apps yet.
 
 ## Sidebar and agents
 
@@ -240,7 +244,9 @@ Every pane's shell gets `CHDA_PANE_ID`. Agents inherit it and `chda hook`
 sends it back, so status is tracked per pane as well as per worktree: tabs
 show the most urgent status of their panes and Sessions each agent pane's own, the Dock badge
 counts waiting agents the user has not looked at, and a notification click
-(through `UNUserNotificationCenter` in the app bundle) focuses that pane.
+(through `UNUserNotificationCenter` on macOS, or GPUI's asynchronous D-Bus
+notification adapter on Linux) focuses that pane. Linux does not add a launcher
+badge or a separate terminal alert sound.
 
 Each non-main worktree also gets its change size against the default branch
 (`origin/<default>` when it exists): `git diff --numstat` from its merge base,

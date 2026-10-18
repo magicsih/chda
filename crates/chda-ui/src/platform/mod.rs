@@ -7,6 +7,8 @@ use futures::FutureExt;
 use futures::channel::oneshot;
 use futures::future::LocalBoxFuture;
 
+#[cfg(target_os = "linux")]
+mod linux;
 #[cfg(target_os = "macos")]
 mod macos;
 
@@ -76,7 +78,11 @@ pub fn default_lang() -> Option<String> {
                 .is_dir()
         }))
     }
-    #[cfg(not(target_os = "macos"))]
+    #[cfg(target_os = "linux")]
+    {
+        Some("C.UTF-8".to_owned())
+    }
+    #[cfg(not(any(target_os = "macos", target_os = "linux")))]
     {
         None
     }
@@ -169,7 +175,8 @@ pub struct FolderApp {
     pub icon: Option<std::sync::Arc<gpui::Image>>,
 }
 
-/// Apps the title bar offers, in menu order: id, name, macOS bundle id.
+/// Apps the macOS title bar offers, in menu order: id, name, bundle id.
+#[cfg(target_os = "macos")]
 const FOLDER_APPS: &[(&str, &str, &str)] = &[
     ("finder", "Finder", "com.apple.finder"),
     ("vscode", "VS Code", "com.microsoft.VSCode"),
@@ -201,8 +208,7 @@ const FOLDER_APPS: &[(&str, &str, &str)] = &[
     ("ghostty", "Ghostty", "com.mitchellh.ghostty"),
 ];
 
-/// The installed apps from [`FOLDER_APPS`], with their icons. Empty where
-/// apps are not looked up yet (Linux, Windows).
+/// Installed editors and file managers, with available application icons.
 pub fn folder_apps() -> Vec<FolderApp> {
     #[cfg(target_os = "macos")]
     {
@@ -221,20 +227,23 @@ pub fn folder_apps() -> Vec<FolderApp> {
             })
             .collect()
     }
-    #[cfg(not(target_os = "macos"))]
+    #[cfg(target_os = "linux")]
     {
-        let _ = FOLDER_APPS;
+        linux::folder_apps()
+    }
+    #[cfg(not(any(target_os = "macos", target_os = "linux")))]
+    {
         Vec::new()
     }
 }
 
-/// Open `folder` in the app with `id` from [`FOLDER_APPS`].
+/// Open `folder` in the installed app with `id`.
 pub fn open_folder_in(id: &str, folder: &std::path::Path) -> std::io::Result<()> {
-    let Some((_, _, bundle)) = FOLDER_APPS.iter().find(|(i, _, _)| *i == id) else {
-        return Err(std::io::Error::other(format!("unknown app {id}")));
-    };
     #[cfg(target_os = "macos")]
     {
+        let Some((_, _, bundle)) = FOLDER_APPS.iter().find(|(i, _, _)| *i == id) else {
+            return Err(std::io::Error::other(format!("unknown app {id}")));
+        };
         let status = std::process::Command::new("open")
             .arg("-b")
             .arg(bundle)
@@ -246,9 +255,13 @@ pub fn open_folder_in(id: &str, folder: &std::path::Path) -> std::io::Result<()>
             Err(std::io::Error::other(format!("open -b {bundle} failed")))
         }
     }
-    #[cfg(not(target_os = "macos"))]
+    #[cfg(target_os = "linux")]
     {
-        let _ = (bundle, folder);
+        linux::open_folder_in(id, folder)
+    }
+    #[cfg(not(any(target_os = "macos", target_os = "linux")))]
+    {
+        let _ = (id, folder);
         Err(std::io::Error::other("not supported on this platform yet"))
     }
 }
@@ -302,34 +315,74 @@ impl NotificationTarget {
 
 /// Start delivering notification clicks to `on_click`. Call once, on the
 /// main thread.
-pub fn init_notifications(on_click: impl Fn(NotificationTarget) + 'static) {
+pub fn init_notifications(on_click: impl Fn(NotificationTarget) + 'static, cx: &gpui::App) {
     #[cfg(target_os = "macos")]
     macos::init_notifications(move |id| {
         if let Some(target) = NotificationTarget::decode(&id) {
             on_click(target);
         }
     });
-    #[cfg(not(target_os = "macos"))]
+    #[cfg(target_os = "linux")]
+    cx.on_system_notification_response(move |response, _| {
+        if let Some(target) = NotificationTarget::decode(&response.tag) {
+            on_click(target);
+        }
+    });
+    #[cfg(not(target_os = "linux"))]
+    let _ = cx;
+    #[cfg(not(any(target_os = "macos", target_os = "linux")))]
     let _ = on_click;
 }
 
 /// Show a user notification; clicking it reports `target`.
-pub fn notify(title: &str, body: &str, target: &NotificationTarget) {
-    #[cfg(target_os = "macos")]
+pub fn notify(title: &str, body: &str, target: &NotificationTarget, cx: &gpui::App) {
+    #[cfg(any(target_os = "macos", target_os = "linux"))]
     {
         use std::sync::atomic::{AtomicU64, Ordering};
         static NONCE: AtomicU64 = AtomicU64::new(0);
         let id = target.encode(NONCE.fetch_add(1, Ordering::Relaxed));
+        #[cfg(target_os = "macos")]
         macos::notify(title, body, &id);
+        #[cfg(target_os = "linux")]
+        cx.show_system_notification(gpui::SystemNotification {
+            tag: id.into(),
+            title: title.to_owned().into(),
+            body: body.to_owned().into(),
+            actions: vec![gpui::SystemNotificationAction {
+                id: "open".into(),
+                label: "Open terminal".into(),
+            }],
+        });
     }
-    #[cfg(not(target_os = "macos"))]
+    #[cfg(not(target_os = "linux"))]
+    let _ = cx;
+    #[cfg(not(any(target_os = "macos", target_os = "linux")))]
     let _ = (title, body, target);
 }
 
 /// Show the standard About panel: name, version and icon from the bundle.
-pub fn show_about() {
+pub fn show_about(cx: &mut gpui::App) {
     #[cfg(target_os = "macos")]
     macos::show_about();
+    #[cfg(target_os = "linux")]
+    if let Some(window) = cx.active_window() {
+        let _ = window.update(cx, |_, window, cx| {
+            let answer = window.prompt(
+                gpui::PromptLevel::Info,
+                &format!("chda {}", env!("CARGO_PKG_VERSION")),
+                Some("Terminal with a git worktree sidebar and a live status board for coding agents.\nMIT license.\nhttps://github.com/magicsih/chda"),
+                &["Close", "Open repository"],
+                cx,
+            );
+            cx.spawn(async move |cx| {
+                if answer.await == Ok(1) {
+                    let _ = cx.update(|cx| cx.open_url(env!("CARGO_PKG_REPOSITORY")));
+                }
+            }).detach();
+        });
+    }
+    #[cfg(not(target_os = "linux"))]
+    let _ = cx;
 }
 
 /// Un-minimize the app's windows (before bringing one to the front).
@@ -413,11 +466,47 @@ mod tests {
         assert_eq!(NotificationTarget::decode(&t.encode(0)), Some(t));
         assert_eq!(NotificationTarget::decode("other/1/2/x"), None);
     }
+
+    #[gpui::test]
+    #[cfg(target_os = "linux")]
+    fn linux_notification_clicks_preserve_the_exact_pane(cx: &mut gpui::TestAppContext) {
+        use std::{cell::RefCell, rc::Rc};
+        let received = Rc::new(RefCell::new(Vec::new()));
+        let target = NotificationTarget {
+            pane: Some(42),
+            worktree: PathBuf::from("/work/a project/世界"),
+        };
+        cx.update(|cx| {
+            cx.set_app_identity("com.magicsih.chda", "chda");
+            init_notifications(
+                {
+                    let received = received.clone();
+                    move |target| received.borrow_mut().push(target)
+                },
+                cx,
+            );
+            notify("Agent is waiting", "in main", &target, cx);
+        });
+        let notifications = cx.delivered_system_notifications();
+        assert_eq!(notifications.len(), 1);
+        let tag = notifications[0].tag.clone();
+        for action_id in [None, Some("open".into())] {
+            cx.simulate_system_notification_response(gpui::SystemNotificationResponse {
+                tag: tag.clone(),
+                action_id,
+            });
+        }
+        cx.simulate_system_notification_response(gpui::SystemNotificationResponse {
+            tag: "unrelated".into(),
+            action_id: None,
+        });
+        assert_eq!(*received.borrow(), [target.clone(), target]);
+    }
 }
 
-#[cfg(target_os = "macos")]
+#[cfg(any(target_os = "macos", target_os = "linux"))]
 pub(crate) mod resources;
-#[cfg(not(target_os = "macos"))]
+#[cfg(not(any(target_os = "macos", target_os = "linux")))]
 pub(crate) mod resources {
     #[derive(Default)]
     pub struct Sampler;

@@ -40,7 +40,7 @@ pub struct Recorded {
 pub struct RecordingSystem(pub RefCell<Recorded>);
 
 impl System for RecordingSystem {
-    fn notify(&self, title: &str, body: &str, target: &NotificationTarget) {
+    fn notify(&self, title: &str, body: &str, target: &NotificationTarget, _: &App) {
         self.0
             .borrow_mut()
             .notifications
@@ -61,7 +61,7 @@ impl System for RecordingSystem {
         Some("en_US.UTF-8".into())
     }
 
-    fn on_notification_click(&self, handler: Box<dyn Fn(NotificationTarget)>) {
+    fn on_notification_click(&self, handler: Box<dyn Fn(NotificationTarget)>, _: &App) {
         self.0.borrow_mut().click = Some(handler);
     }
 

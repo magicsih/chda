@@ -174,6 +174,7 @@ fn run_inner(inherited: Option<(chda_core::handoff::Handoff, chda_term::handoff:
         reply = Some(inherited.reply);
     }
     gpui_platform::application().run(move |cx: &mut App| {
+        cx.set_app_identity("com.magicsih.chda", "chda");
         fonts::register(cx);
         cx.bind_keys(key_bindings());
         let quitting_env = env.clone();

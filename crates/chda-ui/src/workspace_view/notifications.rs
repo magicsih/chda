@@ -80,6 +80,7 @@ impl WorkspaceView {
                     pane: Some(pane.raw()),
                     worktree,
                 },
+                cx,
             );
         }
         cx.notify();

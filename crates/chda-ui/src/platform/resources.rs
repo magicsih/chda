@@ -1,7 +1,10 @@
-//! macOS sampling, run only on a worker. Missing processes are not zero usage.
+//! Process-tree sampling, run only on a worker. Missing processes are not zero usage.
 use chda_core::resources::{Listener, Resources};
-use std::{collections::HashSet, process::Command, time::Duration};
+use std::collections::HashSet;
 use sysinfo::{Pid, ProcessRefreshKind, ProcessesToUpdate, System};
+
+#[cfg(target_os = "linux")]
+mod linux;
 
 pub struct Sampler {
     system: System,
@@ -74,18 +77,8 @@ impl Sampler {
         if ports_due || self.ports.is_none() {
             let mut ids: Vec<_> = pids.iter().map(|p| p.as_u32()).collect();
             ids.sort();
-            let ids = ids.iter().map(u32::to_string).collect::<Vec<_>>().join(",");
-            let mut command = Command::new("/usr/sbin/lsof");
-            command.args(["-nP", "-a", "-p", &ids, "-FpcfPnT"]);
-            match chda_core::agents::ipc::capture_command(
-                &mut command,
-                None,
-                Duration::from_secs(1),
-                1_048_576,
-            ) {
-                Ok(output) => {
-                    self.ports = Some((now, parse_ports(&String::from_utf8_lossy(&output)), None))
-                }
+            match listeners(&ids) {
+                Ok(ports) => self.ports = Some((now, ports, None)),
                 // Listing all descriptors makes a successful empty network
                 // subset distinct from an execution or inspection failure.
                 Err(e) => self.ports = Some((now, Vec::new(), Some(e.to_string()))),
@@ -100,6 +93,29 @@ impl Sampler {
     }
 }
 
+#[cfg(target_os = "macos")]
+fn listeners(pids: &[u32]) -> Result<Vec<Listener>, String> {
+    let ids = pids
+        .iter()
+        .map(u32::to_string)
+        .collect::<Vec<_>>()
+        .join(",");
+    let mut command = std::process::Command::new("/usr/sbin/lsof");
+    command.args(["-nP", "-a", "-p", &ids, "-FpcfPnT"]);
+    chda_core::agents::ipc::capture_command(
+        &mut command,
+        None,
+        std::time::Duration::from_secs(1),
+        1_048_576,
+    )
+    .map(|output| parse_ports(&String::from_utf8_lossy(&output)))
+    .map_err(|error| error.to_string())
+}
+
+#[cfg(target_os = "linux")]
+use linux::listeners;
+
+#[cfg(any(target_os = "macos", test))]
 fn parse_ports(output: &str) -> Vec<Listener> {
     let mut ports = Vec::new();
     let mut pid = 0;

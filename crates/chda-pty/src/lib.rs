@@ -322,18 +322,30 @@ impl Pty {
     }
 
     /// Working directory of the process in the foreground of this PTY, for
-    /// shells that do not report it through OSC 7. macOS only for now.
+    /// shells that do not report it through OSC 7.
     pub fn foreground_cwd(&self) -> Option<PathBuf> {
-        #[cfg(target_os = "macos")]
+        #[cfg(any(target_os = "macos", target_os = "linux"))]
         {
             let fd = self.raw_fd()?;
+            // SAFETY: the PTY master remains open for the life of `self`.
             let pgrp = unsafe { libc::tcgetpgrp(fd) };
             if pgrp <= 0 {
                 return None;
             }
-            macos::process_cwd(pgrp)
+            #[cfg(target_os = "macos")]
+            {
+                macos::process_cwd(pgrp)
+            }
+            #[cfg(target_os = "linux")]
+            {
+                let directory = std::fs::read_link(format!("/proc/{pgrp}/cwd")).ok()?;
+                // Deleted cwd links carry a synthetic " (deleted)" suffix.
+                // Check the actual directory rather than stripping bytes: that
+                // suffix is also a valid part of a live directory's name.
+                (directory.is_absolute() && directory.is_dir()).then_some(directory)
+            }
         }
-        #[cfg(not(target_os = "macos"))]
+        #[cfg(not(any(target_os = "macos", target_os = "linux")))]
         {
             None
         }
@@ -581,12 +593,14 @@ mod tests {
     }
 
     #[test]
-    #[cfg(target_os = "macos")]
+    #[cfg(any(target_os = "macos", target_os = "linux"))]
     fn foreground_cwd_follows_the_child() {
+        let directory = std::env::temp_dir().canonicalize().unwrap();
         let mut pty = Pty::spawn(
             size(),
             SpawnOptions {
-                command: Some(&["/bin/sh", "-c", "cd /private/tmp && read x"]),
+                command: Some(&["/bin/sh", "-c", "read x"]),
+                cwd: Some(&directory),
                 ..Default::default()
             },
         )
@@ -602,12 +616,47 @@ mod tests {
         let mut cwd = None;
         while std::time::Instant::now() < deadline {
             cwd = pty.foreground_cwd();
-            if cwd.as_deref() == Some(Path::new("/private/tmp")) {
+            if cwd.as_deref() == Some(directory.as_path()) {
                 break;
             }
             std::thread::sleep(std::time::Duration::from_millis(50));
         }
-        assert_eq!(cwd.as_deref(), Some(Path::new("/private/tmp")));
+        assert_eq!(cwd.as_deref(), Some(directory.as_path()));
+        pty.write_all(b"\n").unwrap();
+        assert!(pty.wait().unwrap().unwrap().success());
+        drain.join().unwrap();
+    }
+
+    #[test]
+    #[cfg(target_os = "linux")]
+    fn foreground_cwd_preserves_bytes_and_rejects_a_deleted_directory() {
+        use std::os::unix::ffi::OsStringExt;
+        let directory = std::env::temp_dir().join(std::ffi::OsString::from_vec(
+            format!("chda-cwd-{}-space ", std::process::id())
+                .into_bytes()
+                .into_iter()
+                .chain([0xff])
+                .chain(b" (deleted)".iter().copied())
+                .collect(),
+        ));
+        std::fs::create_dir(&directory).unwrap();
+        let directory = directory.canonicalize().unwrap();
+        let mut pty = Pty::spawn(
+            size(),
+            SpawnOptions {
+                command: Some(&["/bin/sh", "-c", "read x"]),
+                cwd: Some(&directory),
+                ..Default::default()
+            },
+        )
+        .unwrap();
+        let mut reader = pty.reader().unwrap();
+        let drain = std::thread::spawn(move || {
+            let _ = reader.read_to_end(&mut Vec::new());
+        });
+        assert_eq!(pty.foreground_cwd().as_deref(), Some(directory.as_path()));
+        std::fs::remove_dir(&directory).unwrap();
+        assert_eq!(pty.foreground_cwd(), None);
         pty.write_all(b"\n").unwrap();
         assert!(pty.wait().unwrap().unwrap().success());
         drain.join().unwrap();

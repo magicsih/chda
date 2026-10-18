@@ -83,6 +83,8 @@ Three layers, all run by `cargo test --workspace` (CI: the macOS job).
 | Esc reaches a working agent; an open palette consumes Esc first | `input::escape_reaches_a_working_agent_but_closes_the_palette_first` | |
 | IME composition with a hidden cursor | `input::ime_composition_is_placed_even_when_the_app_hides_the_cursor` | #37 |
 | Shells get a UTF-8 locale | `input::shells_get_the_locale` | #38 |
+| Linux foreground cwd without OSC 7, byte-preserving paths and deleted directories | `chda-pty` `foreground_cwd_*` | #186 |
+| Linux desktop-entry filtering, TCP/UDP and IPv6 socket sampling, notification activation targeting the exact pane | `platform::linux::tests::*`, `platform::resources::linux::tests::*`, `platform::tests::linux_notification_clicks_preserve_the_exact_pane` | #187, #197, #198 |
 | cmd-hover and cmd-click on a URL | `input::cmd_hover_underlines_a_url_and_cmd_click_opens_it` | #7 |
 | Mermaid output: cmd-click and the palette open the offline viewer | `diagrams::mermaid_output_opens_in_the_offline_viewer` | #35 |
 | Right-click a folder in `ls -la`: open a tab there, `cd` there | `paths::ls_folder_opens_a_terminal_tab_and_cds_there` | #34 |
