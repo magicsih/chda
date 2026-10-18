@@ -7,6 +7,19 @@ import subprocess
 from pathlib import Path
 
 
+def validate_reply(reply, request):
+    if (not isinstance(reply, dict) or reply.get("jsonrpc") != "2.0"
+            or reply.get("id") != request["id"] or "error" in reply
+            or not isinstance(reply.get("result"), dict)
+            or reply["result"].get("isError")):
+        raise RuntimeError("MCP fixture received an invalid or failed response: " + json.dumps(reply))
+    if request["params"]["name"] == "list_sessions":
+        content = reply["result"].get("structuredContent")
+        if not isinstance(content, dict) or not isinstance(content.get("sessions"), list):
+            raise RuntimeError("MCP list_sessions omitted its structured session list")
+    return reply
+
+
 def call(launcher, cwd, tool, arguments, pane=None, environment=None):
     env = dict(environment if environment is not None else os.environ)
     if env.get("CHDA_NATIVE_ISOLATED") != "1":
@@ -24,8 +37,7 @@ def call(launcher, cwd, tool, arguments, pane=None, environment=None):
     if not replies:
         raise RuntimeError("MCP fixture received no JSON-RPC reply: " + child.stderr)
     reply = replies[-1]
-    if "error" in reply or reply.get("result", {}).get("isError"):
-        raise RuntimeError("MCP fixture failed: " + json.dumps(reply))
+    validate_reply(reply, request)
     return {"scope": "actual candidate CLI input fixture, not a provider CLI session",
             "pane": pane, "request": request, "reply": reply}
 

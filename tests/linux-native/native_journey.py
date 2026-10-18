@@ -421,9 +421,11 @@ class Journey:
         retired = self.context["retire_runtime"]()
         (self.root / "retired-runtime.json").write_text(json.dumps(retired, indent=2)+"\n")
         self.context["launch_again"]()
-        time.sleep(1)
         if self.args.backend == "x11":
             self.driver.options.window = wait(lambda: self.x11_windows(), "restarted product X11 window")[-1]
+            run(["xdotool", "windowactivate", "--sync", self.driver.options.window])
+        from native_visual import wait_for_rendered
+        wait_for_rendered(self.driver, "CHDAVALIDATION", "restart-readiness")
         after = self.sessions("restart-after")
         if len(after) != len(before):
             raise AssertionError("Restart changed restored session count")

@@ -7,6 +7,7 @@ import selectors
 import shlex
 import signal
 import subprocess
+import time
 
 import mcp_fixture
 from native_journey import wait
@@ -84,14 +85,25 @@ def exercise(journey):
         child.stdin.flush()
         selector = selectors.DefaultSelector()
         try:
-            selector.register(child.stdout, selectors.EVENT_READ)
-            if not selector.select(timeout=30):
-                raise AssertionError("Streaming helper MCP did not answer before stdin EOF")
-            streamed = json.loads(child.stdout.readline())
+            descriptor = child.stdout.fileno()
+            os.set_blocking(descriptor, False)
+            selector.register(descriptor, selectors.EVENT_READ)
+            deadline = time.monotonic() + 30
+            line = bytearray()
+            while b"\n" not in line:
+                remaining = deadline - time.monotonic()
+                if remaining <= 0 or not selector.select(timeout=remaining):
+                    raise AssertionError("Streaming helper MCP did not answer before stdin EOF")
+                chunk = os.read(descriptor, 65536)
+                if not chunk:
+                    raise AssertionError("Streaming helper MCP closed stdout before a JSON line")
+                line.extend(chunk)
+                if len(line) > 1024 * 1024:
+                    raise AssertionError("Streaming helper MCP exceeded the fixture response limit")
+            streamed = json.loads(line.split(b"\n", 1)[0])
         finally:
             selector.close()
-        if streamed.get("id") != request["id"] or "error" in streamed or streamed.get("result", {}).get("isError"):
-            raise AssertionError("Streaming helper MCP returned an error")
+        mcp_fixture.validate_reply(streamed, request)
         remember_descendants()
         child.terminate()  # Deliberately signal the launcher PID, not its group.
         status = child.wait(timeout=10)
