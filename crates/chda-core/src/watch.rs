@@ -207,14 +207,16 @@ mod tests {
             std::env::temp_dir().join(format!("chda-watch-read-config-{}", std::process::id()));
         std::fs::create_dir_all(&root).unwrap();
         let file = root.join("config");
-        std::fs::write(&file, "value").unwrap();
+        assert!(!file.exists());
         let (tx, rx) = mpsc::channel();
         let mut watcher = FileWatcher::new(move || {
             let _ = tx.send(());
         })
         .unwrap();
         watcher.set_files([file.clone()]);
-        std::thread::sleep(Duration::from_millis(100));
+        std::fs::write(&file, "value").unwrap();
+        rx.recv_timeout(Duration::from_secs(5))
+            .expect("initial write reported");
         assert_eq!(std::fs::read_to_string(file).unwrap(), "value");
         assert!(
             rx.recv_timeout(Duration::from_millis(800)).is_err(),
