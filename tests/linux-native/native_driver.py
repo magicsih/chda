@@ -109,6 +109,7 @@ class Driver:
         while time.monotonic() < deadline and (not marker.exists() or marker.stat().st_size == 0):
             time.sleep(.1)
         if not marker.exists() or marker.stat().st_size == 0:
+            self.screenshot("failed-marker-" + marker.stem)
             raise AssertionError(f"Actual terminal input did not produce {name}")
         self.record("marker-observed", name=name, value=marker.read_text())
         return marker.read_text()
@@ -119,6 +120,12 @@ class Driver:
         if self.capture_backend == "x11":
             run(["scrot", str(path)])
             geometry = run(["xdotool", "getwindowgeometry", "--shell", self.options.window])
+            focus = {}
+            for label, query in [("active", "getactivewindow"), ("input", "getwindowfocus")]:
+                observed = subprocess.run(["xdotool", query], text=True,
+                                          stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+                focus[label] = {"window": observed.stdout.strip(), "returncode": observed.returncode}
+            (self.evidence / (name + "-x11-focus.json")).write_text(json.dumps(focus, indent=2) + "\n")
         else:
             run(["grim", str(path)])
             geometry = (run(["swaymsg", "-t", "get_tree"])
