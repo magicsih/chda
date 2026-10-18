@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <meta name="google-site-verification" content="j8EO1uVH1ACx_3kqjQv6DBjows6o5SNc1RNQhBA5B7A">
 <title>chda — terminal for running Claude Code and Codex in parallel git worktrees</title>
-<meta name="description" content="chda is a macOS terminal with a git worktree sidebar and a live status board for coding agents: Claude Code, Codex, Gemini CLI, GitHub Copilot CLI and OpenCode. Ghostty terminal core, written in Rust on GPUI. Free and open source.">
+<meta name="description" content="chda is a macOS and Linux terminal with a git worktree sidebar and a live status board for coding agents: Claude Code, Codex, Gemini CLI, GitHub Copilot CLI and OpenCode. Ghostty terminal core, written in Rust on GPUI. Free and open source.">
 <link rel="canonical" href="https://magicsih.github.io/chda/">
 <meta property="og:type" content="website">
 <meta property="og:title" content="chda — terminal for running Claude Code and Codex in parallel git worktrees">
@@ -22,7 +22,7 @@
   "@context": "https://schema.org",
   "@type": "SoftwareApplication",
   "name": "chda",
-  "operatingSystem": "macOS 14 or newer (Apple silicon or Intel)",
+  "operatingSystem": ["macOS 14 or newer (Apple silicon or Intel)", "Linux x86_64 (X11 or Wayland)"],
   "applicationCategory": "DeveloperApplication",
   "license": "https://opensource.org/licenses/MIT",
   "url": "https://magicsih.github.io/chda/",
@@ -70,7 +70,7 @@
    "name": "Does chda read my prompts?",
    "acceptedAnswer": {
     "@type": "Answer",
-    "text": "Only on your Mac. Hooks pass a session id, directory, event kind and time; the session list reads the agents’ local transcripts for each session’s first prompt and token usage. Nothing is sent anywhere. A daily GitHub release check can be disabled with update-check = false. Clicking Update downloads the signed macOS update through Sparkle; downloads and installation never begin automatically."
+    "text": "Only on your computer. Hooks pass a session id, directory, event kind and time; the session list reads the agents’ local transcripts for each session’s first prompt and token usage. Nothing is sent anywhere. A daily GitHub release check can be disabled with update-check = false. Clicking Update downloads the signed macOS update through Sparkle; downloads and installation never begin automatically."
    }
   },
   {
@@ -86,7 +86,7 @@
    "name": "Linux or Windows?",
    "acceptedAnswer": {
     "@type": "Answer",
-    "text": "They build in CI and are the next milestone. Today it is macOS only, on Apple silicon or Intel."
+    "text": "Linux x86_64 has AppImage and portable packages for X11 and Wayland. See the Linux installation guide for graphics requirements and the verified environment matrix. Windows builds in CI; a desktop release remains planned."
    }
   },
   {
@@ -158,6 +158,7 @@
       <code id="cmd">brew tap magicsih/tap &amp;&amp; brew trust magicsih/tap &amp;&amp; brew install --cask chda</code>
       <button type="button" onclick="navigator.clipboard.writeText(document.getElementById('cmd').textContent).then(()=>{this.textContent='Copied'})">Copy</button>
     </div>
+    <p><a href="#linux">Linux downloads and installation</a></p>
     <div class="hero"><img src="demo.gif" alt="A native chda tour: sample agent status, an API test command in a floating terminal, Git history, moving a running pane and previewing a light theme" width="1200" height="750"></div>
     <p class="lead">Captured in chda 1.0.25 with a local demo repository and sample agent events.</p>
   </header>
@@ -179,6 +180,7 @@
       <div class="col"><h3>Quota and local session resources</h3><p>See Claude Code and Codex quota, clear loading and retry states, reset countdowns, and selected-pane CPU, memory and listeners. Open bottom-left details with labeled bars for each reported quota window. Claude usage updates keep other windows and their live sessions running.</p></div>
       <div class="col"><h3>Every action in one place</h3><p>Press <code>cmd-shift-p</code> to find worktrees, launch or resume agents and run your own commands in a tab, split or floating terminal. Agents can use <code>chda mcp</code> to create worktrees, open tabs, read session output and wait for other agents.</p></div>
       <div class="col"><h3>Your terminal, your settings</h3><p>Reuse your Ghostty font, colors and padding, with a light and dark theme pair that follows macOS. Edit chda&#x27;s TOML settings without restarting. Homebrew and version-manager agents are found through your login shell&#x27;s PATH.</p></div>
+      <div class="col"><h3>Linux, with familiar terminal controls</h3><p>Use X11 or Wayland with an AppImage or portable package. Copy and paste with Ctrl+Shift+C/V, keep Ctrl+C for the shell, and open actions from the Commands button.</p></div>
     </div>
     <h3 class="gallery-title">Git history and live sessions</h3>
     <div class="shots">
@@ -216,6 +218,13 @@ brew install --cask chda</pre>
     <p>macOS 14 or newer, Apple silicon or Intel. Signed and notarized. Needs <code>git</code>; <code>gh</code>, <code>glab</code> or <code>tea</code> add pull request badges for GitHub, GitLab or Gitea. Prefer a zip? Get it from the <a href="https://github.com/magicsih/chda/releases/latest">releases page</a>.</p>
   </section>
 
+  <section id="linux">
+    <h2>Linux</h2>
+    <p>Run chda on x86_64 with X11 or Wayland. Choose an AppImage or a portable archive; both contain the same application. Requires glibc 2.31 or newer, <code>git</code> and a compatible graphics driver.</p>
+    <p><a data-linux-release href="https://github.com/magicsih/chda/releases">Linux releases</a> · <a href="https://github.com/magicsih/chda/blob/main/docs/linux.md">Installation, checksums and shortcuts</a></p>
+    <p>Linux updates are manual downloads. Your configuration and saved sessions stay outside the package.</p>
+  </section>
+
   <section>
     <h2>Questions</h2>
     <dl>
@@ -226,7 +235,7 @@ brew install --cask chda</pre>
       <dt>How is chda different from tmux or Ghostty?</dt>
       <dd>Ghostty is the terminal; chda uses its core (libghostty-vt) and adds what parallel agent work needs: a sidebar of worktrees with git and pull request badges, agent status, notifications when an agent waits, and merge-and-clean when a branch is done.</dd>
       <dt>Does chda read my prompts?</dt>
-      <dd>Only on your Mac. Hooks pass a session id, directory, event kind and time; the session list reads the agents’ local transcripts for each session’s first prompt and token usage. Nothing is sent anywhere. A daily GitHub release check can be disabled with <code>update-check = false</code>. Clicking Update downloads the signed macOS update through Sparkle; downloads and installation never begin automatically.</dd>
+      <dd>Only on your computer. Hooks pass a session id, directory, event kind and time; the session list reads the agents’ local transcripts for each session’s first prompt and token usage. Nothing is sent anywhere. A daily GitHub release check can be disabled with <code>update-check = false</code>. Clicking Update downloads the signed macOS update through Sparkle; downloads and installation never begin automatically.</dd>
       <dt>Do I have to change my agents' config?</dt>
       <dd>No. chda passes hook settings per launch and leaves your config files alone. Only the optional MCP server is added once per agent, with the agent's own <code>mcp add</code> command.</dd>
       <dt>Can I just type codex in a terminal?</dt>
@@ -234,7 +243,7 @@ brew install --cask chda</pre>
       <dt>Can I launch Homebrew-installed agents from the Dock?</dt>
       <dd>Yes. chda reads PATH from your login shell's startup files and uses it to find and run agents, including Homebrew and version-manager installations. Restart chda after changing your shell's PATH. If startup files take longer than two seconds, chda keeps reading in the background for up to 20 seconds and retries after 30 seconds, two minutes and then every ten minutes. Until then it uses the inherited PATH; agents and usage appear once the shell PATH arrives.</dd>
       <dt>Linux or Windows?</dt>
-      <dd>They build in CI and are the next milestone. Today it is macOS only, on Apple silicon or Intel.</dd>
+      <dd>Linux x86_64 has AppImage and portable packages for X11 and Wayland. See the Linux installation guide for graphics requirements and the verified environment matrix. Windows builds in CI; a desktop release remains planned.</dd>
     </dl>
   </section>
 
@@ -245,5 +254,22 @@ brew install --cask chda</pre>
     MIT license
   </footer>
 </main>
+<script>
+fetch('https://api.github.com/repos/magicsih/chda/releases?per_page=100')
+  .then(response => response.ok ? response.json() : [])
+  .then(releases => {
+    if (!Array.isArray(releases)) return;
+    const linux = releases.filter(release => {
+      if (release.draft || release.prerelease || !/^v\d+\.\d+\.\d+$/.test(release.tag_name)) return false;
+      const filename = `chda-${release.tag_name.slice(1)}-linux-x86_64.AppImage`;
+      return Array.isArray(release.assets) && release.assets.some(asset => asset.name === filename);
+    }).sort((a, b) => b.tag_name.localeCompare(a.tag_name, 'en', {numeric: true}))[0];
+    if (!linux || !linux.html_url.startsWith('https://github.com/magicsih/chda/releases/tag/')) return;
+    document.querySelectorAll('[data-linux-release]').forEach(link => {
+      link.href = linux.html_url;
+      link.textContent = `Download Linux ${linux.tag_name}`;
+    });
+  }).catch(() => {});
+</script>
 </body>
 </html>

@@ -14,6 +14,7 @@ Claude Code, Codex, Gemini CLI, GitHub Copilot CLI and OpenCode.</p>
   <a href="https://github.com/magicsih/chda/releases/latest"><img src="https://img.shields.io/github/v/release/magicsih/chda?label=release" alt="Latest release"></a>
   <a href="https://github.com/magicsih/chda/actions/workflows/ci.yml"><img src="https://github.com/magicsih/chda/actions/workflows/ci.yml/badge.svg" alt="CI"></a>
   <img src="https://img.shields.io/badge/macOS-14%2B-black" alt="macOS 14 or newer">
+  <img src="https://img.shields.io/badge/Linux-x86__64-black" alt="Linux x86_64">
   <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-blue" alt="MIT license"></a>
 </p>
 
@@ -32,6 +33,8 @@ escape sequences, Unicode and key encoding behave like Ghostty. The app is Rust 
 
 ## Install
 
+### macOS
+
 ```sh
 brew tap magicsih/tap
 brew trust magicsih/tap
@@ -45,6 +48,13 @@ notarized.
 Requirements: macOS 14 or newer (Apple silicon or Intel), `git` on `PATH`. `gh` is optional
 and adds pull request badges. On a managed Mac where Homebrew cannot write to
 `/Applications`, add `--appdir=~/Applications`.
+
+### Linux
+
+Download the x86_64 AppImage or portable archive from the
+[Linux downloads page](https://magicsih.github.io/chda/#linux).
+See [Linux installation](docs/linux.md) for checksum verification, graphics
+requirements, X11 and Wayland support, shortcuts and saved data.
 
 ## A quick tour
 
@@ -131,6 +141,7 @@ document do not run. Mermaid blocks inside Markdown become diagrams too.
 | Status bar | The bottom bar reports provider quota, never inferred from token counts. Startup shows Waiting for usage for Claude Code and Loading for Codex. Claude readings follow the focused session's configuration folder, so a session that has not answered yet shows the same sign-in's newest reading, and the last reading per folder returns after a restart marked previous run. Empty reports preserve the same session or account's last valid reading and its actual age. Claude usage updates keep other windows and their live sessions running. All windows share reports and one Codex query loop; transient failures retry promptly, and a verified account's retained reading is labeled retrying. Authentication and installation problems have specific labels and details. Claude Code reports through a per-launch status line; Codex uses the local app-server account protocol. Details separate accounts or unknown session scopes and quota windows. On macOS, selected-pane PTY descendants supply CPU, summed RSS, listening endpoints, process count and uptime. Sampling runs off the UI thread with deadlines. See docs/status-bar.md for scopes and refresh behavior. Click either provider to open details above the bottom-left controls. Each reported quota window has a labeled 0–100% bar, value and reset time; scope, source, observed age, historical reports and errors stay distinct. Unknown data creates no bar. Content scrolls inside the window. Escape or the close button dismisses the details popup and returns typing focus to its original pane. Linux samples process resources and listening TCP or unconnected UDP sockets through /proc, including IPv6, without requiring lsof. |
 | Palette | `cmd-shift-p`: every action, worktree, agent launch and session in one fuzzy list On Linux, Settings, Ghostty config, window actions, terminal copy/paste/search, About, help links and Quit are also available from the palette. Linux opens it with Ctrl+Shift+P or the Commands button. |
 | Config | Reads your Ghostty font, colors and padding; chda's own settings in one TOML file; edits apply without a restart; executable discovery uses the login-shell PATH, with a validated ~/.local/bin/claude fallback for native Claude Code installations. Live configuration reload keeps the current sidebar width while its border is being dragged; other settings still apply, and file-based width changes apply again after release. Define your own `[[commands]]`, such as lazygit, a test watcher or a dev server, and run them for the focused worktree from the palette, a worktree's menu or a shortcut, in a new tab, a split or a floating terminal; each closes when the command succeeds and keeps a failure's exit status; broken entries and clashing shortcuts are reported once while the rest load. A theme pair, `theme = light:X,dark:Y` in the Ghostty config or chda's `theme`, follows macOS Light and Dark mode in every window without a restart, including Auto at sunset; View > Select Light Theme and Select Dark Theme each preview and save one half while keeping the other. |
+| Linux desktop | Linux x86_64 packages share the same payload, target glibc 2.31 or newer, and use the host graphics driver. X11 and Wayland window controls, XDG folder applications, pane-targeted desktop notifications, foreground process directories and process resource inspection integrate with the terminal. Updates open the matching stable Linux release for a manual download; configuration and saved sessions remain outside the package. See docs/linux.md for installation and verified environment limits. |
 
 <p align="center">
   <img src="docs/media/git-graph.jpg" alt="A read-only Git tree tab with commit connections, branch labels, subjects and short hashes" width="880">
@@ -188,13 +199,16 @@ transcripts are never stored. None of the agents' own settings files
 (`~/.claude/settings.json`, `~/.codex/config.toml`, `~/.gemini/settings.json`,
 `~/.copilot`, `~/.config/opencode`) are modified.
 
-At most once a day, chda asks the GitHub API for the latest release
-(`api.github.com/repos/magicsih/chda/releases/latest`, nothing else attached).
+At most once a day, chda checks public GitHub release information. Linux
+selects the latest stable release containing a Linux package; macOS checks
+`api.github.com/repos/magicsih/chda/releases/latest`. No local session data is
+attached to either request.
 `update-check = false` disables that check. In a configured, signed macOS
 release, click **Update to x.y.z** to download, verify and install through
 Sparkle. Progress is shared across windows; administrator approval uses the
 macOS system dialog. Release notes and dismissal are in the adjacent menu.
-Downloads and installation never start automatically.
+Downloads and installation never start automatically. Linux opens the matching
+release page for a manual package update, keeping running shells alive.
 
 Windows briefly reopen while the same shells and agents reconnect with their
 terminal text, scrollback, layouts and focus. A failed installation or new-app
@@ -346,13 +360,16 @@ value Ghostty would reject keeps the previous settings and shows a message.
 | `cmd-,` / `cmd-shift-,` | open `config.toml` / reload both configs |
 | `cmd-m`, `cmd-h`, `cmd-alt-h` | minimize, hide chda, hide others |
 
-Every action is also in the menu bar, with agent launches and session resume
-under Agents.
+On macOS, actions also appear in the menu bar, with agent launches and session
+resume under Agents. On Linux, use the Commands button or Ctrl+Shift+P. See
+[Linux shortcuts](docs/linux.md#shortcuts) for platform bindings.
 
 ## Status and roadmap
 
-chda runs on macOS, Apple silicon and Intel. Linux and Windows compile in CI and are
-the next milestone. See [docs/roadmap.md](docs/roadmap.md) and
+chda runs on macOS, Apple silicon and Intel, and Linux x86_64 with X11 or
+Wayland. Linux packages share one payload and require glibc 2.31 or newer
+and a compatible graphics driver. Windows continues to build in CI; its
+desktop release remains planned. See [docs/roadmap.md](docs/roadmap.md) and
 [CHANGELOG.md](CHANGELOG.md).
 
 ## FAQ

@@ -1,0 +1,89 @@
+# Linux
+
+Linux packages target x86_64, glibc 2.31 or newer, and a compatible Vulkan or EGL graphics driver.
+X11 and Wayland use the same executable. The host supplies its graphics loader
+and drivers; they are not replaced by the package.
+
+## Download and verify
+
+Download the latest Linux x86_64 AppImage or portable archive and `SHA256SUMS`
+from [GitHub Releases](https://github.com/magicsih/chda/releases). `VERSION` below
+means the version in the downloaded filename. Verify the files you downloaded:
+
+```sh
+sha256sum --check --ignore-missing SHA256SUMS
+```
+
+The release also provides the unmodified distribution sources for bundled
+shared libraries. The application directory includes their copyright notices.
+
+## AppImage
+
+```sh
+chmod +x chda-VERSION-linux-x86_64.AppImage
+./chda-VERSION-linux-x86_64.AppImage
+```
+
+If the system cannot mount an AppImage through FUSE, use its extract-and-run
+mode or the portable archive:
+
+```sh
+APPIMAGE_EXTRACT_AND_RUN=1 ./chda-VERSION-linux-x86_64.AppImage
+```
+
+## Portable archive
+
+```sh
+tar -xzf chda-VERSION-linux-x86_64.tar.gz
+./chda-VERSION-linux-x86_64/AppRun
+```
+
+Keep the complete extracted directory together. `AppRun` finds its executable
+and libraries relative to itself, so it also works through a symlink. It does
+not change `LD_LIBRARY_PATH` for your shell or editors. A symlink named `chda`
+on your PATH can point at the persistent `AppRun` path for `chda mcp` and CLI
+commands. Desktop metadata and an icon are included; desktop integration is
+optional and must reference the installed, persistent path.
+
+`git` must be on PATH. Install the coding agents you use and sign in through
+their own CLIs. A session D-Bus service provides notifications and folder
+portals; missing services leave terminal input available and report the failed
+operation. Some font characters need a font installed on the host. The
+terminal's JetBrains Mono and Nerd Font symbols are bundled.
+
+## Shortcuts
+
+| Action | Linux shortcut |
+| --- | --- |
+| Copy, paste | Ctrl+Shift+C, Ctrl+Shift+V |
+| New tab, close pane | Ctrl+Shift+T, Ctrl+Shift+W |
+| Split right, split down | Ctrl+Shift+D, Ctrl+Shift+E |
+| Commands, add folder | Ctrl+Shift+P, Ctrl+Shift+O |
+| Find | Ctrl+Shift+F |
+| Change tab | Ctrl+PageUp, Ctrl+PageDown, Alt+1 through Alt+9 |
+| Focus a split | Ctrl+Shift+arrow |
+| Follow a link or file path | Ctrl+click |
+
+Ctrl+C still interrupts the foreground program. The Commands button exposes
+settings, window actions, About and help links without a system menu bar.
+Client window controls appear when the compositor does not provide a title bar.
+
+## Updates and saved data
+
+The Linux update notice opens the matching release downloads. Verify the new
+package, close chda, then replace the AppImage or extracted directory. Opening
+the download page keeps running shells alive; Linux does not use the macOS
+session-preserving installer. Keep the old package until its running windows
+and child processes have exited.
+
+Configuration remains in `$XDG_CONFIG_HOME/chda/config.toml` (normally
+`~/.config/chda/config.toml`); saved sessions and hooks remain under
+`$XDG_DATA_HOME/chda` (normally `~/.local/share/chda`). Ghostty config is read
+from `$XDG_CONFIG_HOME/ghostty`. Package replacement does not remove these files.
+
+## Verification matrix
+
+Pending final candidate execution. Record distro versions, architecture,
+artifact digests, display backend and rendering device. Software-rendered CI
+does not establish physical-GPU or every desktop's IME behavior. ARM64,
+Alpine/musl, NixOS and Windows packages are outside the first delivery.
