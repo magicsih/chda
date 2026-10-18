@@ -199,13 +199,17 @@ class Journey:
         if abs(restored["width"]-geometry["width"]) > 8:
             raise AssertionError("Actual maximize/restore button did not restore size")
         self.control("minimize", restored)
-        minimized = self.driver.screenshot("window-minimized")
-        try:
-            background_bounds(minimized)
-        except AssertionError:
-            pass
-        else:
-            raise AssertionError("Actual minimize button left the candidate background visible")
+        minimized = False
+        for attempt in range(8):
+            image = self.driver.screenshot("window-minimized-" + str(attempt))
+            try:
+                background_bounds(image)
+            except AssertionError:
+                minimized = True
+                break
+            time.sleep(.3)
+        if not minimized:
+            raise AssertionError("Actual minimize button left the candidate background visible after animation settled")
         self.restore_minimized()
         self.observe("window-unminimized")
         self.driver.marker("after-unminimize.txt", "printf UNMINIMIZE_OK")

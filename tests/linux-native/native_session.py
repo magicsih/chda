@@ -138,7 +138,8 @@ def main():
                 command(["wlr-randr", "--output", "HEADLESS-1", "--custom-mode", "1440x1000@60Hz"])
                 (root / "labwc-output.json").write_text(command(["wlr-randr", "--json"]).stdout)
         if args.backend == "wayland" and args.compositor == "mutter":
-            env.update(LIBGL_ALWAYS_SOFTWARE="1", GALLIUM_DRIVER="llvmpipe", NO_AT_BRIDGE="1")
+            env.update(LIBGL_ALWAYS_SOFTWARE="1", GALLIUM_DRIVER="llvmpipe", NO_AT_BRIDGE="1",
+                       MUTTER_DEBUG_DUMMY_MODE_SPECS="1280x900", MUTTER_DEBUG_DUMMY_MONITOR_SCALES="1")
             mutter = start(["mutter", "--wayland", "--nested"], "mutter")
             wait_until(lambda: any(p.is_socket() for p in runtime.glob("wayland-*")), "nested Mutter Wayland socket")
             env["WAYLAND_DISPLAY"] = next(p.name for p in runtime.glob("wayland-*") if p.is_socket())
