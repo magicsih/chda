@@ -95,7 +95,7 @@ def main():
             raise RuntimeError("Isolated session bus did not start")
         steps.append({"step": "new HOME/XDG/repository/bus", "status": "passed"})
         if args.backend == "x11":
-            xserver = start(["Xvfb", "-displayfd", "1", "-screen", "0", "1440x1000x24", "-nolisten", "tcp"], "xvfb", stdout=subprocess.PIPE)
+            xserver = start(["Xvfb", "-displayfd", "1", "-screen", "0", "1440x1000x24", "-nolisten", "tcp", "-noreset"], "xvfb", stdout=subprocess.PIPE)
             number = xserver.stdout.readline().strip()
             env["DISPLAY"] = ":" + number
             wait_until(lambda: command(["xdpyinfo"], check=False).returncode == 0, "Xvfb")
