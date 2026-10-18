@@ -683,7 +683,7 @@ impl WorkspaceView {
     }
 
     fn hook_bin() -> PathBuf {
-        std::env::current_exe().unwrap_or_else(|_| PathBuf::from("chda"))
+        ipc::helper_executable().unwrap_or_else(|_| PathBuf::from("chda"))
     }
 
     fn install_hooks(&self) {
