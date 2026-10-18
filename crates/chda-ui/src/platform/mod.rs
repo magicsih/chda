@@ -349,7 +349,7 @@ pub fn show_about(cx: &mut gpui::App) {
             );
             cx.spawn(async move |cx| {
                 if answer.await == Ok(1) {
-                    let _ = cx.update(|cx| cx.open_url(env!("CARGO_PKG_REPOSITORY")));
+                    cx.update(|cx| cx.open_url(env!("CARGO_PKG_REPOSITORY")));
                 }
             }).detach();
         });
