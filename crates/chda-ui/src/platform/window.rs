@@ -33,21 +33,26 @@ pub(crate) fn controls(
                 .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
                 .tooltip(crate::tooltip::text(label))
         };
+        let capabilities = window.window_controls();
         Some(
             div()
                 .flex()
                 .flex_row()
                 .flex_shrink_0()
-                .child(
-                    button("window-minimize", "Minimize")
-                        .child("−")
-                        .on_click(|_, window, _| window.minimize_window()),
-                )
-                .child(
-                    button("window-maximize", "Maximize or restore")
-                        .child(if window.is_maximized() { "❐" } else { "□" })
-                        .on_click(|_, window, _| window.zoom_window()),
-                )
+                .when(capabilities.minimize, |row| {
+                    row.child(
+                        button("window-minimize", "Minimize")
+                            .child("−")
+                            .on_click(|_, window, _| window.minimize_window()),
+                    )
+                })
+                .when(capabilities.maximize, |row| {
+                    row.child(
+                        button("window-maximize", "Maximize or restore")
+                            .child(if window.is_maximized() { "❐" } else { "□" })
+                            .on_click(|_, window, _| window.zoom_window()),
+                    )
+                })
                 .child(
                     button("window-close", "Close window")
                         .hover(|style| style.bg(gpui::rgb(0xc42b1c)))
