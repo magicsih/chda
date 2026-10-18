@@ -21,6 +21,11 @@ mod linux;
 #[cfg(target_os = "macos")]
 mod macos;
 
+pub(crate) fn init_graphics_diagnostics() {
+    #[cfg(target_os = "linux")]
+    linux::init_graphics_diagnostics();
+}
+
 /// The outcome of [`pick_folders`].
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum FolderPick {

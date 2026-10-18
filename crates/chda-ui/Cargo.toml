@@ -26,6 +26,7 @@ skrifa = "0.40.0"
 
 [target.'cfg(target_os = "linux")'.dependencies]
 freedesktop-desktop-entry = { version = "0.8.3", default-features = false }
+log = "0.4"
 
 [target.'cfg(target_os = "macos")'.dependencies]
 block2.workspace = true

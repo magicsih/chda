@@ -147,6 +147,7 @@ pub fn run_adopt(fd: i32) -> std::io::Result<()> {
 }
 
 fn run_inner(inherited: Option<(chda_core::handoff::Handoff, chda_term::handoff::Inherited)>) {
+    platform::init_graphics_diagnostics();
     let env = std::rc::Rc::new(environment::Environment::for_user());
     let mut reply = None;
     let mut handoff_session = None;
