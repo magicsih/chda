@@ -1,6 +1,6 @@
 # Linux
 
-Linux packages target x86_64, glibc 2.31 or newer, and a compatible Vulkan or EGL graphics driver.
+Linux packages target x86_64, glibc 2.31 or newer, and a compatible Vulkan graphics driver.
 X11 and Wayland use the same executable. The host supplies its graphics loader
 and drivers; they are not replaced by the package.
 
@@ -50,6 +50,25 @@ their own CLIs. A session D-Bus service provides notifications and folder
 portals; missing services leave terminal input available and report the failed
 operation. Some font characters need a font installed on the host. The
 terminal's JetBrains Mono and Nerd Font symbols are bundled.
+
+On X11, an unpatched IBus 1.5.32 XIM bridge can crash after a few keystrokes
+and lose input. This also affects other XIM applications. Use your distribution's
+IBus update containing [the upstream fix](https://github.com/ibus/ibus/issues/2789),
+or use a working input server. Native Wayland input uses a separate protocol;
+the verified Fcitx5 session is listed below. The failed Debian 13 IBus 1.5.32-2
+session is not counted as an IME pass.
+
+Stock Debian 11 Mesa 20 software rendering failed: neither Vulkan nor EGL exposed
+a compatible X11 surface format to the application. glibc 2.31 by itself is not
+a graphics compatibility guarantee. This environment is retained as a negative
+check and is not counted as a supported startup.
+
+Stock Ubuntu 20.04 Mesa 21.2 software rendering also failed. Its Vulkan device
+reported fewer color attachments than the graphics engine requests. A successful
+Vulkan sample on that driver does not establish application compatibility.
+Compatibility-floor runtime verification remains pending. Its test environment
+retains glibc 2.31 and builds a separate Mesa 23.3.6 Vulkan driver; that driver
+is not part of either download.
 
 ## Shortcuts
 
