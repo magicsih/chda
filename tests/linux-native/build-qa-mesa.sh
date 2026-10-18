@@ -35,7 +35,7 @@ meson setup /tmp/mesa-23.3.6/build /tmp/mesa-23.3.6 \
     --prefix=/opt/chda-qa-mesa --libdir=lib --buildtype=release --wrap-mode=nofallback \
     -Dplatforms=x11 -Dvulkan-drivers=swrast -Dgallium-drivers=swrast \
     -Dopengl=false -Degl=disabled -Dglx=disabled -Dgles1=disabled -Dgles2=disabled \
-    -Dgbm=disabled -Dglvnd=false -Dgallium-rusticl=false \
+    -Dgbm=disabled -Dglvnd=false -Dgallium-rusticl=false -Dxlib-lease=disabled \
     -Dllvm=enabled -Dshared-llvm=enabled \
     -Dbuild-tests=false -Dvideo-codecs= \
     -Dvalgrind=disabled -Dlibunwind=disabled
