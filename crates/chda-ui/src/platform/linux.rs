@@ -19,7 +19,7 @@ pub(super) fn init_graphics_diagnostics() {
             metadata.level() <= log::Level::Info
                 && ["gpui_wgpu", "wgpu_hal", "wgpu_core"]
                     .iter()
-                    .any(|target| metadata.target().starts_with(target))
+                    .any(|target| metadata.target().starts_with(*target))
         }
 
         fn log(&self, record: &log::Record<'_>) {
