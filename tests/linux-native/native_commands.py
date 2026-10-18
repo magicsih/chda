@@ -109,9 +109,9 @@ def _commands(journey, label, width, height, keyboard=False):
             journey.driver.key("Down")
         scrolled = journey.driver.screenshot(label + "-commands-scrolled")
         _ocr(scrolled, ["Rename tab"])
-        journey.setup_geometry(960, 640, label + "-palette-grown")
+        journey.setup_geometry(960, 640, label + "-palette-grown", obscured=True)
         _ocr(journey.driver.screenshot(label + "-selection-after-grow"), ["Rename tab"])
-        journey.setup_geometry(width, height, label + "-palette-shrunk")
+        journey.setup_geometry(width, height, label + "-palette-shrunk", obscured=True)
         _ocr(journey.driver.screenshot(label + "-selection-after-shrink"), ["Rename tab"])
         for _ in range(10):
             journey.driver.key("Up")

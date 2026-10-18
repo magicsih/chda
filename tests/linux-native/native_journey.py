@@ -111,9 +111,13 @@ class Journey:
                   "width":r"Width:\s*(\d+)", "height":r"Height:\s*(\d+)"}
         return {key:int(re.search(pattern, values).group(1)) for key,pattern in fields.items()}
 
-    def observe(self, name):
+    def observe(self, name, obscured=False):
         image = self.driver.screenshot(name)
-        pixels = background_bounds(image)
+        # An open palette can cover almost all terminal pixels. X11 exposes
+        # actual native geometry directly. CSD still exposes its surrounding
+        # 5px frame, enough to measure bounds without certifying body rendering.
+        pixels = (None if obscured and self.args.backend == "x11" else
+                  background_bounds(image, minimum_pixels=4000 if obscured else 20000))
         if self.args.backend == "x11":
             geometry = self.x11_geometry(self.driver.options.window)
             response = run(["xprop", "-id", self.driver.options.window, "_NET_FRAME_EXTENTS"])
@@ -144,11 +148,12 @@ class Journey:
                         "width": pixels["width"]-offset["width"], "height": pixels["height"]-offset["height"]}
             geometry["frame"] = {"x": geometry["x"]-1, "y": geometry["y"]-27,
                                  "width": geometry["width"]+2, "height": geometry["height"]+28}
-        geometry.update(pixels=pixels, screenshot=str(image), decoration=self.window_mode)
+        geometry.update(pixels=pixels, screenshot=str(image), decoration=self.window_mode,
+                        terminalObscured=obscured)
         (self.root / (name + "-observed.json")).write_text(json.dumps(geometry, indent=2) + "\n")
         return geometry
 
-    def setup_geometry(self, width, height, name):
+    def setup_geometry(self, width, height, name, obscured=False):
         """Setup may use compositor commands; resize acceptance uses actual drags."""
         if self.args.backend == "x11":
             run(["xdotool", "windowsize", self.driver.options.window, str(width), str(height)])
@@ -165,12 +170,12 @@ class Journey:
             self.calibration = {"x": pixels["x"]-81, "y": pixels["y"]-127,
                                 "width": pixels["width"]-actual_width, "height": pixels["height"]-actual_height}
         else:
-            before = self.observe(name + "-before-setup")
+            before = self.observe(name + "-before-setup", obscured=obscured)
             frame = before["frame"]
             self.driver.drag(frame["x"]+frame["width"]-3, frame["y"]+frame["height"]-3,
                              frame["x"]+width-3, frame["y"]+height-3)
         time.sleep(.4)
-        geometry = self.observe(name)
+        geometry = self.observe(name, obscured=obscured)
         tolerance = 30 if self.args.preparation_probe else 8
         if abs(geometry["width"]-width) > tolerance or abs(geometry["height"]-height) > tolerance:
             raise AssertionError("Requested setup size not observed: " + str(geometry))
