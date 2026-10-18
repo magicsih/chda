@@ -298,6 +298,8 @@ require the final macOS candidate check.
 
 `scripts/test-macos-release.py` requires all 16 ISSUE conditions in each of three review rounds and both separate E2Es starting with v0.1.23, while preserving historical v0.1.21/v0.1.22 exact coverage and rejecting their exceptions for v0.1.23. These are synthetic validator tests and never release evidence.
 
+Linux package acceptance records supported startup separately from known incompatible graphics environments. The Ubuntu 20.04 run uses glibc 2.31 with official Mesa 21.2, but actual application startup failed because the Vulkan adapter limits were below the graphics engine's request. The glibc 2.31 environment with QA-only Mesa 23.3.6 and LLVM 12 passed configuration limits but rendered a black body for 40 seconds. Its replacement uses QA-only Mesa 25.2.8 and signed Focal LLVM 20.1.8 packages. Both actual x86_64 package formats passed rendered prompt, native input and rendered output in that replacement environment; the earlier black-window failure remains failed evidence. Final release-candidate review is separate. A mapped window and successful PTY input do not establish rendered startup. Debian 11 stock Mesa 20 failed to expose a compatible Vulkan/EGL X11 surface; its negative check must retain `productStartupStatus: failed` and `supportedEnvironment: false`. Neither failed environment satisfies a positive startup requirement. The Linux guide preserves these limits and the independently confirmed unpatched IBus 1.5.32 XIM server crash.
+
 `chda-agents::ipc::executable::appimage::tests` reproduces an AppImage helper path
 lost when its temporary runtime directory disappears. A private executable
 launcher retains the original package only when APPDIR contains this exact
