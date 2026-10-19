@@ -123,6 +123,18 @@ document do not run. Mermaid blocks inside Markdown become diagrams too.
   <img src="docs/media/markdown-flow.png" alt="The same document's Mermaid sequence diagram with cache-hit and cache-miss branches, a response and queued webhook delivery" width="434">
 </p>
 
+## Read project documents with Leaflit
+
+Work in chda. Read in [Leaflit](https://magicsih.github.io/leaflit/), a separate macOS Markdown reader for plans, specs and notes from coding agents. After installing Leaflit, run this from a shell in the chosen worktree:
+
+```sh
+leaflit ./plan.md
+```
+
+Keep the document beside your terminal while the agent works. Leaflit follows saved changes and offers Find, Outline, Mermaid diagrams and LaTeX math. For a small correction to generated Markdown, switch to Source and save explicitly.
+
+chda's built-in browser preview remains available for quick checks. Leaflit is an optional companion for **Apple Silicon Macs running macOS 14 or later**; chda's Intel Mac and Linux support does not extend to Leaflit. See [Leaflit's workflow and installation](https://magicsih.github.io/leaflit/#with-chda) or its [source repository](https://github.com/magicsih/leaflit).
+
 ## Features
 
 <!-- BEGIN GENERATED FEATURES -->
