@@ -1,12 +1,14 @@
-//! Adding folders: the folder picker, and folders that are not git
-//! repositories.
+//! Adding folders: the folder picker, folders that are not git repositories,
+//! and where the sidebar's selection goes afterwards.
 
 use std::path::{Path, PathBuf};
+use std::time::Duration;
 
 use chda_core::notifications::Severity;
-use gpui::TestAppContext;
+use gpui::{ExternalPaths, FileDropEvent, TestAppContext, point, px, size};
 
-use super::harness::Harness;
+use super::harness::{Harness, git};
+use super::sidebar::draw_sidebar_frame;
 use crate::platform::FolderPick;
 use crate::sidebar_view::SidebarEvent;
 use crate::workspace_view::{AddRepo, MenuAction};
@@ -337,4 +339,255 @@ fn a_plain_folder_comes_back_after_a_restart_with_its_sessions(cx: &mut TestAppC
         }
     });
     assert!(is_folder(&h, &notes));
+}
+
+/// A window whose PROJECT overflows: `app` with 24 more worktrees.
+fn crowded_app(home: &super::harness::Home) -> PathBuf {
+    let app = home.repo("app");
+    for index in 0..24 {
+        let branch = format!("task-{index:02}");
+        let path = home.home.join(&branch);
+        git(
+            &app,
+            &[
+                "worktree",
+                "add",
+                "-q",
+                "-b",
+                &branch,
+                path.to_str().unwrap(),
+            ],
+        );
+    }
+    app
+}
+
+fn selected(h: &Harness) -> Option<PathBuf> {
+    h.read(|v, cx| v.sidebar.read(cx).selected.clone())
+}
+
+fn row_bounds(h: &mut Harness, path: &Path) -> Option<gpui::Bounds<gpui::Pixels>> {
+    h.cx.debug_bounds(Box::leak(format!("wt:{}", path.display()).into_boxed_str()))
+}
+
+/// The whole row is inside PROJECT's visible part.
+fn in_view(h: &mut Harness, path: &Path) -> bool {
+    let viewport = h.read(|v, cx| v.sidebar.read(cx).project_scroll.bounds());
+    row_bounds(h, path)
+        .is_some_and(|row| row.top() >= viewport.top() && row.bottom() <= viewport.bottom())
+}
+
+/// Draw frames until PROJECT shows the row: a new folder's worktrees load in
+/// the background, and the reveal scrolls on a frame.
+fn wait_in_view(h: &mut Harness, path: &Path) {
+    for _ in 0..250 {
+        draw_sidebar_frame(h);
+        if in_view(h, path) {
+            return;
+        }
+        std::thread::sleep(Duration::from_millis(20));
+    }
+    let (viewport, offset, max) = h.read(|v, cx| {
+        let scroll = &v.sidebar.read(cx).project_scroll;
+        (scroll.bounds(), scroll.offset(), scroll.max_offset())
+    });
+    panic!(
+        "{} never came into view: row {:?}, PROJECT {viewport:?}, offset {offset:?}, max {max:?}",
+        path.display(),
+        row_bounds(h, path)
+    );
+}
+
+fn open_crowded(cx: &mut TestAppContext, name: &str, extra: &mut [PathBuf]) -> (Harness, PathBuf) {
+    let mut app = PathBuf::new();
+    let mut h = Harness::open(cx, name, |home| {
+        app = crowded_app(home);
+        for (index, folder) in extra.iter_mut().enumerate() {
+            *folder = home.repo(&format!("added-{index}"));
+        }
+        std::fs::write(&home.config, format!("repos = [\"{}\"]\n", app.display())).unwrap();
+    });
+    h.wait_prompt();
+    h.cx.simulate_resize(size(px(960.0), px(480.0)));
+    h.wait_for("all worktrees", |v, cx| {
+        v.sidebar.read(cx).model.repos[0].worktrees.len() == 25
+    });
+    // The terminal works in `app`, so it is the current selection.
+    h.run(&format!("cd '{}'", app.display()), "test%");
+    h.wait_for("app selected", {
+        let app = app.clone();
+        move |v, cx| v.sidebar.read(cx).selected.as_ref() == Some(&app)
+    });
+    (h, app)
+}
+
+/// #264: the folder just added, from the picker or by a drop, becomes the
+/// selected row and is in view at once, even far below PROJECT's visible part.
+#[gpui::test]
+fn an_added_folder_is_selected_and_in_view_at_once(cx: &mut TestAppContext) {
+    let mut added = vec![PathBuf::new(); 3];
+    let (mut h, app) = open_crowded(cx, "added-selected", &mut added);
+    let (first, second, dropped) = (added[0].clone(), added[1].clone(), added[2].clone());
+    let before = h.read(|v, _| {
+        let pane = v.ws.focused_pane();
+        (
+            v.ws.tabs().len(),
+            pane,
+            pane.and_then(|p| v.ws.pane(p)).and_then(|p| p.cwd.clone()),
+        )
+    });
+
+    // The picker with two folders: the one added last is selected.
+    script(&h, FolderPick::Chosen(vec![first.clone(), second.clone()]));
+    h.cx.dispatch_action(AddRepo);
+    h.wait_for("the last folder selected", {
+        let second = second.clone();
+        move |v, cx| v.sidebar.read(cx).selected.as_ref() == Some(&second)
+    });
+    wait_in_view(&mut h, &second);
+    assert_eq!(selected(&h), Some(second.clone()));
+    assert_eq!(registered(&h), [app.clone(), first, second.clone()]);
+
+    // Opening nothing: the same tab and pane keep working in `app`.
+    let after = h.read(|v, _| {
+        let pane = v.ws.focused_pane();
+        (
+            v.ws.tabs().len(),
+            pane,
+            pane.and_then(|p| v.ws.pane(p)).and_then(|p| p.cwd.clone()),
+        )
+    });
+    assert_eq!(after, before);
+
+    // A background refresh keeps the selection instead of returning to `app`.
+    let extra = h.home.home.join("extra");
+    git(
+        &second,
+        &[
+            "worktree",
+            "add",
+            "-q",
+            "-b",
+            "extra",
+            extra.to_str().unwrap(),
+        ],
+    );
+    h.cx.update(|window, cx| {
+        h.view.update(cx, |v, cx| {
+            v.run_menu_action(MenuAction::RefreshRepo(second.clone()), window, cx)
+        })
+    });
+    h.wait_for("the refreshed worktrees", {
+        let second = second.clone();
+        move |v, cx| {
+            let model = &v.sidebar.read(cx).model;
+            model
+                .repos
+                .iter()
+                .any(|r| r.path == second && r.worktrees.len() == 2)
+        }
+    });
+    wait_in_view(&mut h, &second);
+    assert_eq!(selected(&h), Some(second));
+
+    // A folder dropped on the sidebar leads to the same place.
+    let at = h.read(|v, cx| v.sidebar.read(cx).project_scroll.bounds().center());
+    h.cx.simulate_event(FileDropEvent::Entered {
+        position: at,
+        paths: ExternalPaths([dropped.clone()].into_iter().collect()),
+    });
+    h.cx.simulate_event(FileDropEvent::Pending { position: at });
+    h.cx.simulate_event(FileDropEvent::Submit { position: at });
+    h.cx.run_until_parked();
+    h.wait_for("the dropped folder selected", {
+        let dropped = dropped.clone();
+        move |v, cx| v.sidebar.read(cx).selected.as_ref() == Some(&dropped)
+    });
+    wait_in_view(&mut h, &dropped);
+    assert_eq!(h.read(|v, _| v.ws.tabs().len()), before.0);
+}
+
+/// #264: a collapsed PROJECT section and a collapsed group open for the folder
+/// the user adds, including one the sidebar already lists, and stay open.
+#[gpui::test]
+fn adding_a_folder_opens_a_collapsed_project_and_group(cx: &mut TestAppContext) {
+    let (mut shelf, mut other) = (PathBuf::new(), PathBuf::new());
+    let mut h = Harness::open(cx, "added-collapsed", |home| {
+        shelf = home.repo("shelf");
+        other = home.repo("other");
+        std::fs::write(
+            &home.config,
+            format!(
+                "repos = [\"{}\", \"{}\"]\nproject-collapsed = true\ncollapsed-repos = [\"{}\"]\n",
+                shelf.display(),
+                other.display(),
+                shelf.display()
+            ),
+        )
+        .unwrap();
+    });
+    h.wait_prompt();
+    h.wait_for("both repositories", |v, cx| {
+        v.sidebar.read(cx).model.repos.len() == 2
+    });
+    h.read(|v, cx| {
+        let sidebar = v.sidebar.read(cx);
+        assert!(v.config.project_collapsed && sidebar.project_collapsed);
+        assert!(sidebar.model.repos[0].collapsed, "shelf starts collapsed");
+    });
+
+    // `shelf` is listed already; adding it again leads to its row all the same.
+    script(&h, FolderPick::Chosen(vec![shelf.clone()]));
+    h.cx.dispatch_action(AddRepo);
+    h.wait_for("shelf selected", {
+        let shelf = shelf.clone();
+        move |v, cx| v.sidebar.read(cx).selected.as_ref() == Some(&shelf)
+    });
+    wait_in_view(&mut h, &shelf);
+    h.read(|v, cx| {
+        let sidebar = v.sidebar.read(cx);
+        assert!(!v.config.project_collapsed && !sidebar.project_collapsed);
+        assert!(!sidebar.model.repos[0].collapsed);
+    });
+    let saved = chda_config::ChdaConfig::load(&h.home.config).unwrap();
+    assert!(!saved.project_collapsed && saved.collapsed_repos.is_empty());
+    assert_eq!(registered(&h), [shelf, other]);
+}
+
+/// #264: cancelling the picker, a picker that cannot open and a plain folder
+/// the user declines leave the selection and PROJECT's scroll position alone.
+#[gpui::test]
+fn a_cancelled_or_failed_add_keeps_the_selection_and_scroll(cx: &mut TestAppContext) {
+    let (mut h, app) = open_crowded(cx, "added-cancelled", &mut []);
+    let scroll = h.read(|v, cx| v.sidebar.read(cx).project_scroll.clone());
+    scroll.set_offset(point(px(0.0), px(-120.0)));
+    for _ in 0..3 {
+        draw_sidebar_frame(&mut h);
+    }
+    let offset = scroll.offset();
+    assert!(offset.y < px(0.0), "PROJECT starts scrolled down");
+
+    for pick in [
+        FolderPick::Cancelled,
+        FolderPick::Unavailable("no open panel".into()),
+    ] {
+        script(&h, pick);
+        h.cx.dispatch_action(AddRepo);
+        h.cx.run_until_parked();
+        wait_idle(&mut h);
+    }
+    let notes = h.home.home.join("notes");
+    std::fs::create_dir_all(&notes).unwrap();
+    add(&mut h, &notes);
+    h.cx.pending_prompt().expect("asks what to do");
+    h.cx.simulate_prompt_answer("Cancel");
+    h.cx.run_until_parked();
+    wait_idle(&mut h);
+    for _ in 0..3 {
+        draw_sidebar_frame(&mut h);
+    }
+
+    assert_eq!(selected(&h), Some(app.clone()));
+    assert_eq!(scroll.offset(), offset);
+    assert_eq!(registered(&h), [app]);
 }
