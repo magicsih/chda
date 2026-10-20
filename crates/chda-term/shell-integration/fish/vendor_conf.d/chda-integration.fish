@@ -20,9 +20,10 @@ end
 
 # A program that exits without turning mouse reporting off (interrupted,
 # killed or crashed) would leave the pointer typing reports into the prompt.
-# Before each prompt, turn off every tracking mode and encoding. This also
-# runs on fish 4, which asks for the mouse itself only while it reads the
-# command line, after this handler; programs started later can request it too.
+# Before each prompt, turn off every tracking mode and encoding; programs
+# started later can request them again. This also runs on fish 4, which marks
+# prompts itself. Clicks that move fish's cursor arrive through OSC 133
+# click_events, not these modes, so they keep working.
 if status is-interactive
     function __chda_mouse_reset --on-event fish_prompt
         printf '\e[?9l\e[?1000l\e[?1002l\e[?1003l\e[?1005l\e[?1006l\e[?1015l\e[?1016l'
