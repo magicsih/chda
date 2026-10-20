@@ -697,6 +697,22 @@ impl SidebarView {
         cx.notify();
     }
 
+    /// Highlight a folder the user just added and bring its row into view,
+    /// opening its group when collapsed, without moving the terminal focus.
+    /// Its worktrees may not be listed yet: the highlight and the reveal wait
+    /// for the row to be drawn, and a later refresh keeps the selection.
+    pub(crate) fn select_added(&mut self, path: &Path, cx: &mut Context<Self>) {
+        let reopened = self
+            .model
+            .repo_mut(path)
+            .is_some_and(|r| std::mem::take(&mut r.collapsed));
+        self.select_row(Some(path.to_path_buf()), None, cx);
+        self.reveal = Some(path.to_path_buf());
+        if reopened {
+            cx.emit(SidebarEvent::ReposCollapsed);
+        }
+    }
+
     /// The Sessions row holding the focus.
     pub(crate) fn focused_session(&self) -> Option<SessionKey> {
         let (tab, pane) = self.focus?;
@@ -1404,18 +1420,34 @@ impl SidebarView {
                     let scroll = scroll.clone();
                     let path = path.clone();
                     let this = this.clone();
+                    let measured_at = scroll.offset();
                     window.on_next_frame(move |_, cx| {
                         let _ = this.update(cx, |s, cx| {
                             if s.reveal.as_ref() != Some(&path) {
                                 return;
                             }
-                            s.reveal = None;
+                            // Frames drawn before an earlier move applied
+                            // measured against the old offset; the frame
+                            // after that move measures again.
+                            if scroll.offset() != measured_at {
+                                return;
+                            }
                             let mut offset = scroll.offset();
                             offset.y =
                                 (offset.y + delta).clamp(-scroll.max_offset().y, gpui::px(0.0));
-                            if offset != scroll.offset() {
+                            let moved = offset != scroll.offset();
+                            if moved {
                                 scroll.set_offset(offset);
                                 cx.notify();
+                            }
+                            // A row listed just now makes PROJECT taller than
+                            // the last frame knew, so one move can stop short:
+                            // the next frame measures again. The reveal ends
+                            // when the list cannot move further or the row
+                            // needed less than a pixel, so pixel rounding can
+                            // never keep it redrawing.
+                            if !moved || delta.abs() < gpui::px(1.0) {
+                                s.reveal = None;
                             }
                         });
                     });

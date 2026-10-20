@@ -211,7 +211,11 @@ mod tests {
                     ("ZDOTDIR", home_str),
                     ("XDG_CONFIG_HOME", config.to_str().unwrap()),
                 ],
-                Duration::from_secs(2),
+                // The deadline only stops a hang here; keeping to it is
+                // `blocked_startup_is_terminated_within_the_deadline`'s job.
+                // A busy CI runner can take over two seconds to start a
+                // login shell.
+                Duration::from_secs(10),
             )
             .unwrap();
             let dirs: Vec<_> = std::env::split_paths(&path).collect();
