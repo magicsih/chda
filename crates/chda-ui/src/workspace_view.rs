@@ -22,6 +22,7 @@ mod agent_restart;
 mod children;
 mod commands;
 mod coordination;
+mod identicon;
 mod moves;
 pub(crate) use moves::PaneDestination;
 mod notifications;
@@ -368,6 +369,9 @@ pub struct WorkspaceView {
     notification_focus: Option<gpui::WeakFocusHandle>,
     pub(crate) child_detail: Option<chda_core::agents::ChildActivity>,
     child_focus: Option<gpui::WeakFocusHandle>,
+    /// The enlarged session identicon, and where input was before it opened.
+    pub(crate) identicon_preview: Option<identicon::IdenticonPreview>,
+    identicon_origin: Option<CloseFocus>,
     /// When each pane's programs last asked for desktop notifications, to
     /// keep a flood out of the history and the OS notification center.
     program_notices: HashMap<PaneId, std::collections::VecDeque<u64>>,
@@ -548,6 +552,8 @@ impl WorkspaceView {
             notifications_open: false,
             child_detail: None,
             child_focus: None,
+            identicon_preview: None,
+            identicon_origin: None,
             program_notices: HashMap::new(),
             status_waits: Vec::new(),
             floating: None,
@@ -4542,6 +4548,9 @@ impl WorkspaceView {
             SidebarEvent::NewWorktree(repo) => self.open_sheet(repo, window, cx),
             SidebarEvent::ResumeSessions(picks) => self.resume_sessions(picks, window, cx),
             SidebarEvent::AddRepo => self.add_repo(&AddRepo, window, cx),
+            SidebarEvent::ShowIdenticon(identity, position) => {
+                self.open_identicon(identity, position, window, cx)
+            }
             SidebarEvent::AddRepos(paths) => {
                 for path in paths {
                     self.register_repo(path, window, cx);
@@ -6001,6 +6010,13 @@ impl WorkspaceView {
             command: PaletteCommand::Action(action),
         })
         .collect();
+        if self.focused_identity(cx).is_some() {
+            items.push(PaletteItem {
+                label: "Show session icon".into(),
+                detail: "the focused session's picture and id".into(),
+                command: PaletteCommand::Action("session_icon"),
+            });
+        }
         if platform::has_application_menu() {
             items.extend(
                 [
@@ -6443,6 +6459,7 @@ impl WorkspaceView {
                         view.read(cx).view_last_diagram();
                     }
                 }
+                "session_icon" => self.show_focused_session_icon(window, cx),
                 "rename_tab" => {
                     if let Some(tab) = self.ws.active_tab().map(|t| t.id) {
                         self.start_rename(tab, window, cx);
@@ -6548,6 +6565,10 @@ impl WorkspaceView {
 
     fn dismiss(&mut self, _: &Dismiss, window: &mut Window, cx: &mut Context<Self>) {
         if self.dismiss_floating(false, window, cx) {
+            return;
+        }
+        if self.identicon_preview.is_some() {
+            self.close_identicon(window, cx);
             return;
         }
         if self.launch_sheet.is_some() {
@@ -7392,7 +7413,10 @@ impl Render for WorkspaceView {
             },
             None => div().into_any_element(),
         };
-        let sidebar_width = px(self.sidebar_width(window));
+        let sidebar_width = self.sidebar_width(window);
+        self.sidebar
+            .update(cx, |s, cx| s.set_width(sidebar_width, cx));
+        let sidebar_width = px(sidebar_width);
         let main = div()
             .flex_1()
             .min_w_0()
@@ -7630,6 +7654,7 @@ impl Render for WorkspaceView {
             .children(self.render_palette())
             .children(self.render_notifications(cx))
             .children(self.render_child_details(cx))
+            .children(self.render_identicon_preview(cx))
             .children(self.render_share_sheet(cx))
             .into_any_element();
         platform::window_frame(content, window, bg, fg)

@@ -31,6 +31,24 @@ pub enum SessionKind {
     View(ViewKind),
 }
 
+/// Providers whose conversations get an identicon.
+const IDENTICON_PROVIDERS: [&str; 2] = ["claude", "codex"];
+
+/// Which conversation an agent row shows: the provider and the full session
+/// id its identicon is made from.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct SessionIdentity {
+    /// Agent id, e.g. `claude`.
+    pub provider: String,
+    pub id: String,
+}
+
+impl SessionIdentity {
+    pub fn identicon(&self) -> crate::Identicon {
+        crate::Identicon::new(&self.provider, &self.id)
+    }
+}
+
 /// One Sessions row. Rebuilt from the workspace, never saved.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct SessionRow {
@@ -39,6 +57,9 @@ pub struct SessionRow {
     pub kind: SessionKind,
     /// Agent id of an agent row, e.g. `claude`.
     pub agent: Option<String>,
+    /// The conversation of a Claude or Codex row once its provider has
+    /// reported the session id.
+    pub identity: Option<SessionIdentity>,
     /// A runtime event named this pane, so a live process holds the agent.
     pub agent_live: bool,
     /// The status icon; `None` is the gray dot of a row without a live agent.
@@ -165,6 +186,14 @@ pub fn session_rows(
                 tab: tab.id,
                 kind: SessionKind::Agent,
                 agent,
+                identity: info
+                    .agent_session
+                    .as_ref()
+                    .filter(|s| IDENTICON_PROVIDERS.contains(&s.agent.as_str()))
+                    .map(|s| SessionIdentity {
+                        provider: s.agent.clone(),
+                        id: s.session.clone(),
+                    }),
                 agent_live: info.agent_live,
                 status,
                 since: info.agent.as_ref().map_or(0, |a| a.since),
@@ -198,6 +227,7 @@ pub fn session_rows(
             tab: tab.id,
             kind,
             agent: None,
+            identity: None,
             agent_live: false,
             // Hook reports that named no pane can still show attention.
             status: ws
@@ -280,7 +310,7 @@ pub fn focused_session(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{Axis, PaneAgent};
+    use crate::{AgentSessionRef, Axis, PaneAgent};
     use chda_config::ActiveLabel;
     use std::path::Path;
 
@@ -317,6 +347,62 @@ mod tests {
             vec![shell, agents, graph, other, review],
             vec![shell_pane, first, second, plain, other_pane],
         )
+    }
+
+    #[test]
+    fn claude_and_codex_rows_keep_their_conversation_through_every_change() {
+        let (mut ws, _, panes) = fixture();
+        let session = |agent: &str, id: &str| AgentSessionRef {
+            agent: agent.into(),
+            session: id.into(),
+            cwd: None,
+        };
+        let rows = |ws: &Workspace, label| session_rows(ws, &Sidebar::new(), label);
+
+        // Until the provider reports a session id there is nothing to draw.
+        assert!(
+            rows(&ws, ActiveLabel::Branch)
+                .iter()
+                .all(|r| r.identity.is_none())
+        );
+
+        ws.set_agent_session(panes[1], Some(session("claude", "claude-session-1")));
+        ws.set_agent_session(panes[2], Some(session("codex", "codex-session-1")));
+        let first = rows(&ws, ActiveLabel::Branch);
+        assert_eq!(
+            first[0].identity,
+            Some(SessionIdentity {
+                provider: "claude".into(),
+                id: "claude-session-1".into()
+            })
+        );
+        assert_eq!(first[1].identity.as_ref().unwrap().provider, "codex");
+        // Terminals and views have no conversation.
+        assert!(first[2..].iter().all(|r| r.identity.is_none()));
+
+        // A new status, another label and the other focus keep the pictures.
+        agent(&mut ws, panes[1], "claude", AgentStatus::WaitingInput, true);
+        ws.focus_pane(panes[2]);
+        let later = rows(&ws, ActiveLabel::Alias);
+        for (before, after) in first.iter().zip(&later).take(2) {
+            assert_eq!(before.identity, after.identity);
+            assert_eq!(
+                before.identity.as_ref().unwrap().identicon(),
+                after.identity.as_ref().unwrap().identicon()
+            );
+        }
+
+        // The same id under another session is another conversation.
+        ws.set_agent_session(panes[1], Some(session("claude", "claude-session-2")));
+        let resumed = rows(&ws, ActiveLabel::Branch);
+        assert_ne!(
+            first[0].identity.as_ref().unwrap().identicon(),
+            resumed[0].identity.as_ref().unwrap().identicon()
+        );
+
+        // Providers outside Claude and Codex are not drawn.
+        ws.set_agent_session(panes[2], Some(session("gemini", "gemini-session-1")));
+        assert_eq!(rows(&ws, ActiveLabel::Branch)[1].identity, None);
     }
 
     #[test]

@@ -573,7 +573,7 @@ fn saved(h: &Harness) -> String {
     std::fs::read_to_string(&h.home.config).unwrap_or_default()
 }
 
-fn draw_sidebar_frame(h: &mut Harness) {
+pub(super) fn draw_sidebar_frame(h: &mut Harness) {
     h.cx.run_until_parked();
     h.cx.update(|window, cx| {
         // simulate_next_frame drains callbacks; it does not draw the window.

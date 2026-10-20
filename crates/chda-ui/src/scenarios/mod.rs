@@ -16,6 +16,7 @@ mod diff_review;
 mod folders;
 mod git_graph;
 mod harness;
+mod identicons;
 mod idle_agents;
 mod input;
 mod lifecycle;
