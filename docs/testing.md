@@ -92,6 +92,7 @@ journey, exact-candidate three-round plan and independent visual/IME gates.
 | Title bar opens the worktree root in the picked app, pick remembered | `worktrees::title_bar_opens_the_worktree_in_the_picked_app` | #81 |
 | Missing worktree folders | `worktrees::missing_worktree_is_marked_and_pruned` | #42 |
 | Esc reaches a working agent; an open palette consumes Esc first | `input::escape_reaches_a_working_agent_but_closes_the_palette_first` | |
+| Mouse reporting: a running program gets the pointer's reports; when it exits without turning the modes off, the returned prompt takes the mouse back in zsh, bash and fish (with fish's own prompt marking where the installed fish has it), keeps the exit status for user prompt hooks, and move, click and wheel no longer reach the command line while typing, selection and scrollback work and a later program can ask for the mouse again | `mouse::mouse_reports_belong_to_the_program_and_end_when_the_shell_returns`, `chda-term` `shell_integration::tests::mouse_reporting_ends_when_the_prompt_returns` | #263 |
 | IME composition with a hidden cursor | `input::ime_composition_is_placed_even_when_the_app_hides_the_cursor` | #37 |
 | Shells get a UTF-8 locale | `input::shells_get_the_locale` | #38 |
 | Linux foreground cwd without OSC 7, byte-preserving paths and deleted directories | `chda-pty` `foreground_cwd_*` | #186 |
@@ -105,6 +106,9 @@ journey, exact-candidate three-round plan and independent visual/IME gates.
 | Drop files on a pane: quoted paths pasted, even right after typing | `paths::dropped_files_paste_as_quoted_paths` | #17 |
 | Drop a folder on the sidebar: added as a repository | `paths::dropped_folder_on_the_sidebar_becomes_a_repository` | #17 |
 | Add repository when the system cannot open the folder picker: one error, unchanged typed input, config and tabs; silent cancel; retry from the shortcut, palette and menu, several folders at once | `folders::add_repository_survives_an_unavailable_picker_and_retries`, `platform::tests::path_prompt_results_map_to_folder_picks`, `platform::macos::tests::*` | #181 |
+| The folder just added, from the picker (several at once: the last is selected) or a drop on the sidebar, is the selected row and fully in PROJECT's view even far below it, the terminal keeps its tab, pane and directory, and a later refresh keeps the selection | `folders::an_added_folder_is_selected_and_in_view_at_once` | #264 |
+| A collapsed PROJECT section and a collapsed group open for a folder added again, and the change is saved | `folders::adding_a_folder_opens_a_collapsed_project_and_group` | #264 |
+| A cancelled picker, a picker that cannot open and a declined plain folder keep the selection and PROJECT's scroll position | `folders::a_cancelled_or_failed_add_keeps_the_selection_and_scroll` | #264 |
 | Palette arrow keys choose a later entry | `palette::arrow_keys_choose_a_later_entry` | |
 | Theme picker: preview, restore on escape, save on enter | `palette::theme_picker_previews_restores_and_saves` | |
 | A light and dark theme pair follows the window's appearance in every pane without a restart; the dark picker previews and saves only its half | `palette::a_theme_pair_follows_the_appearance_and_each_picker_keeps_the_other_half`, `chda-config` `tests::theme_pairs_follow_the_appearance_and_keep_the_other_half` | #247 |

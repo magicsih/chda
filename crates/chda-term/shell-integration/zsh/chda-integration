@@ -13,15 +13,24 @@ _chda_title() {
     'builtin' 'printf' '\e]2;%s\a' "${PWD/#$HOME/~}"
 }
 
-# Runs before each prompt: close the previous command's output (D), report
-# the directory, then mark the prompt start (A). The prompt end (B) is added
-# to PS1 so the shell emits it right where input begins.
+# A program that exits without turning mouse reporting off (interrupted,
+# killed or crashed) would leave the pointer typing reports into the prompt.
+# Turn off every tracking mode and encoding; programs and widgets that start
+# later can request them again.
+_chda_mouse_reset() {
+    'builtin' 'printf' '\e[?9l\e[?1000l\e[?1002l\e[?1003l\e[?1005l\e[?1006l\e[?1015l\e[?1016l'
+}
+
+# Runs before each prompt: close the previous command's output (D), take the
+# mouse back, report the directory, then mark the prompt start (A). The prompt
+# end (B) is added to PS1 so the shell emits it right where input begins.
 _chda_precmd() {
     'builtin' 'local' _chda_status=$?
     if (( _chda_in_command )); then
         'builtin' 'printf' '\e]133;D;%s\a' "$_chda_status"
         _chda_in_command=0
     fi
+    _chda_mouse_reset
     _chda_cwd_report
     _chda_title
     'builtin' 'printf' '\e]133;A\a'

@@ -4230,7 +4230,7 @@ impl WorkspaceView {
     /// is in none, ask whether to run `git init` or add it as it is.
     fn register_repo(&mut self, path: PathBuf, window: &mut Window, cx: &mut Context<Self>) {
         match chda_core::repo_of(&path) {
-            Ok(repo) => self.add_to_sidebar(repo, cx),
+            Ok(repo) => self.add_and_reveal(repo, cx),
             Err(_) if path.is_dir() => self.ask_about_folder(path, window, cx),
             Err(e) => {
                 self.notify_error(format!("{}: {e}", path.display()));
@@ -4262,7 +4262,7 @@ impl WorkspaceView {
             };
             let _ = this.update(cx, |view, cx| match choice {
                 0 => view.init_git(path, cx),
-                1 => view.add_to_sidebar(path, cx),
+                1 => view.add_and_reveal(path, cx),
                 _ => {}
             });
         })
@@ -4283,9 +4283,10 @@ impl WorkspaceView {
             let _ = this.update(cx, |view, cx| match result {
                 Ok(()) => {
                     if view.sidebar.read(cx).model.is_folder(&path) {
-                        view.refresh_repo(path, cx);
+                        view.refresh_repo(path.clone(), cx);
+                        view.reveal_added(&path, cx);
                     } else {
-                        view.add_to_sidebar(path, cx);
+                        view.add_and_reveal(path, cx);
                     }
                 }
                 Err(e) => {
@@ -4300,6 +4301,24 @@ impl WorkspaceView {
             });
         })
         .detach();
+    }
+
+    /// Add a folder the user chose, then make it the sidebar's selection.
+    /// Repositories an agent's request registers for itself go through
+    /// [`Self::add_to_sidebar`] alone and never take the selection.
+    fn add_and_reveal(&mut self, repo: PathBuf, cx: &mut Context<Self>) {
+        self.add_to_sidebar(repo.clone(), cx);
+        self.reveal_added(&repo, cx);
+    }
+
+    /// Select a folder the user just added, whether or not it was already
+    /// listed, and bring it into view in PROJECT: the section and the
+    /// folder's group open if collapsed, and PROJECT scrolls only as far as
+    /// the row needs. The terminal focus stays where it is, and a folder
+    /// added later in the same batch takes the selection from this one.
+    fn reveal_added(&mut self, repo: &Path, cx: &mut Context<Self>) {
+        self.expand_project(cx);
+        self.sidebar.update(cx, |s, cx| s.select_added(repo, cx));
     }
 
     /// Register a repository's main worktree, or a plain folder.

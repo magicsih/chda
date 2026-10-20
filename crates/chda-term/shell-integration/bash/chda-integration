@@ -36,14 +36,19 @@ if [[ $- == *i* && -z "${_chda_installed-}" ]]; then
     _chda_at_prompt=0
     _chda_status=0
 
-    # First in PROMPT_COMMAND: close the previous command's output (D) and
-    # report the directory and title. Keeps $? for the user's own hooks.
+    # First in PROMPT_COMMAND: close the previous command's output (D), take
+    # the mouse back and report the directory and title. Keeps $? for the
+    # user's own hooks. A program that exits without turning mouse reporting
+    # off (interrupted, killed or crashed) would otherwise leave the pointer
+    # typing reports into the prompt; programs and widgets that start later
+    # can request the modes again.
     _chda_precmd() {
         builtin local status=$?
         if [[ $_chda_in_command == 1 ]]; then
             builtin printf '\033]133;D;%s\007' "$status"
             _chda_in_command=0
         fi
+        builtin printf '\033[?9l\033[?1000l\033[?1002l\033[?1003l\033[?1005l\033[?1006l\033[?1015l\033[?1016l'
         builtin printf '\033]7;file://%s%s\007' "$HOSTNAME" "$PWD"
         builtin local title="$PWD"
         if [[ -n $HOME && ($title == "$HOME" || $title == "$HOME"/*) ]]; then
