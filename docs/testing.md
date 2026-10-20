@@ -89,6 +89,7 @@ journey, exact-candidate three-round plan and independent visual/IME gates.
 | Title bar opens the worktree root in the picked app, pick remembered | `worktrees::title_bar_opens_the_worktree_in_the_picked_app` | #81 |
 | Missing worktree folders | `worktrees::missing_worktree_is_marked_and_pruned` | #42 |
 | Esc reaches a working agent; an open palette consumes Esc first | `input::escape_reaches_a_working_agent_but_closes_the_palette_first` | |
+| Mouse reporting: a running program gets the pointer's reports; when it exits without turning the modes off, the returned prompt takes the mouse back in zsh, bash and fish (with fish's own prompt marking where the installed fish has it), keeps the exit status for user prompt hooks, and move, click and wheel no longer reach the command line while typing, selection and scrollback work and a later program can ask for the mouse again | `mouse::mouse_reports_belong_to_the_program_and_end_when_the_shell_returns`, `chda-term` `shell_integration::tests::mouse_reporting_ends_when_the_prompt_returns` | #263 |
 | IME composition with a hidden cursor | `input::ime_composition_is_placed_even_when_the_app_hides_the_cursor` | #37 |
 | Shells get a UTF-8 locale | `input::shells_get_the_locale` | #38 |
 | Linux foreground cwd without OSC 7, byte-preserving paths and deleted directories | `chda-pty` `foreground_cwd_*` | #186 |
