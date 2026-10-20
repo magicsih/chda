@@ -120,7 +120,8 @@ class Acceptance:
                 raise AssertionError("Old AppImage runtime path still exists during durable helper validation")
         # This script runs INSIDE the real terminal, so the hook inherits the
         # actual CHDA_PANE_ID and cwd. Never substitute the launcher for its
-        # installed hook command, including after AppImage relaunch.
+        # installed hook command, including after AppImage relaunch. The result
+        # is renamed into place because the driver reads it as soon as it exists.
         script.write_text("""import json,os,shlex,subprocess,sys
 from pathlib import Path
 event=sys.argv[1]
@@ -130,7 +131,10 @@ if not program.is_file() or not os.access(program,os.X_OK):
     raise RuntimeError('Installed hook executable is unavailable: '+str(program))
 payload={'hook_event_name':event,'session_id':'native-hook-'+PHASE+'-'+os.environ['CHDA_PANE_ID'],'cwd':os.getcwd()}
 result=subprocess.run(['/bin/sh','-c',command],input=json.dumps(payload),text=True,stdout=subprocess.PIPE,stderr=subprocess.PIPE,timeout=15)
-Path(OUTPUT_PREFIX+event+'.json').write_text(json.dumps({'event':event,'phase':PHASE,'pane':os.environ['CHDA_PANE_ID'],'cwd':os.getcwd(),'command':command,'returncode':result.returncode,'stdout':result.stdout,'stderr':result.stderr},indent=2)+'\\n')
+output=Path(OUTPUT_PREFIX+event+'.json')
+partial=output.with_name(output.name+'.partial')
+partial.write_text(json.dumps({'event':event,'phase':PHASE,'pane':os.environ['CHDA_PANE_ID'],'cwd':os.getcwd(),'command':command,'returncode':result.returncode,'stdout':result.stdout,'stderr':result.stderr},indent=2)+'\\n')
+partial.replace(output)
 if result.returncode:raise SystemExit(result.returncode)
 """.replace("FROZEN_COMMANDS",repr(commands)).replace("PHASE",repr(phase)).replace("OUTPUT_PREFIX",repr(str(self.root/("hooks-"+phase+"-")))))
         compile(script.read_text(),str(script),"exec")
@@ -175,11 +179,14 @@ if result.returncode:raise SystemExit(result.returncode)
         url="http://127.0.0.1:"+str(server.server_port)+expected_path
         handler_output=self.root/"uri-handler.json"
         handler=self.root/"uri-handler.py"
+        # Renamed into place, like the hook results: the driver reads it as soon as it exists.
         handler.write_text("import json,sys,urllib.request\nfrom pathlib import Path\n"
                            "expected="+repr(url)+"\nactual=sys.argv[1]\n"
                            "if actual!=expected:raise SystemExit('Unexpected URI')\n"
                            "reply=urllib.request.urlopen(actual,timeout=5).read().decode()\n"
-                           "Path("+repr(str(handler_output))+").write_text(json.dumps({'uri':actual,'reply':reply,'scope':'isolated native URI handler fixture'}))\n")
+                           "partial=Path("+repr(str(handler_output)+".partial")+")\n"
+                           "partial.write_text(json.dumps({'uri':actual,'reply':reply,'scope':'isolated native URI handler fixture'}))\n"
+                           "partial.replace("+repr(str(handler_output))+")\n")
         applications=self.root/"data/applications";applications.mkdir(exist_ok=True)
         desktop=applications/"chda-validation-uri.desktop"
         # xdg-open generic keeps quotes literal in Exec arguments. The CI

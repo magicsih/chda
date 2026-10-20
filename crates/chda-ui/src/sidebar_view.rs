@@ -8,9 +8,9 @@ use crate::status_icon::status_icon;
 use crate::workspace_view::blend;
 
 use chda_core::{
-    AgentStatus, CheckState, DiffSummary, GitBadges, PaneId, PrInfo, PrState, RepoEntry,
-    SessionEntry, SessionKey, SessionKind, SessionRow, Sidebar, TabId, WorktreeEntry, activity_age,
-    relative_age,
+    AgentStatus, CheckState, DiffSummary, GitBadges, Identicon, PaneId, PrInfo, PrState, RepoEntry,
+    SessionEntry, SessionIdentity, SessionKey, SessionKind, SessionRow, Sidebar, TabId,
+    WorktreeEntry, activity_age, relative_age,
 };
 use gpui::{
     AnyElement, App, ClickEvent, Context, ElementId, EventEmitter, FocusHandle, Focusable, Hsla,
@@ -31,6 +31,8 @@ pub enum SidebarEvent {
     /// pane each.
     ResumeSessions(Vec<SessionPick>),
     AddRepo,
+    /// Enlarge a conversation's identicon in a popover at a window position.
+    ShowIdenticon(SessionIdentity, Point<Pixels>),
     /// Restore typing focus after a repository disclosure changes.
     RefocusTerminal,
     /// Repositories were collapsed or expanded: save the state and restore
@@ -239,6 +241,9 @@ pub struct SidebarView {
     pub active_label: chda_config::ActiveLabel,
     pub(crate) sessions_collapsed: bool,
     pub(crate) project_collapsed: bool,
+    /// The width the window gives the sidebar, as of its last render; `None`
+    /// until the window has said.
+    width: Option<f32>,
     sticky_repo: Option<PathBuf>,
     /// How far the sticky repository's group starts above PROJECT's top, as
     /// of the last layout; collapsing it from the sticky name scrolls back
@@ -327,6 +332,51 @@ fn sidebar_mark_color(base: Hsla, fg: Hsla, bg: Hsla, minimum: f32) -> Hsla {
         ],
         minimum,
     )
+}
+
+/// Side of one identicon cell in a Sessions row: five of them are 15px,
+/// which fits the row's text line, so the row stays as tall as without it.
+pub(crate) const ROW_IDENTICON_CELL: f32 = 3.0;
+
+/// The room a row's picture takes: its width and the gap after it.
+const ROW_IDENTICON_SLOT: f32 = 5.0 * ROW_IDENTICON_CELL + 4.0;
+
+/// Pictures are left out of Sessions rows narrower than this, where a name
+/// would fall under the width the narrow-sidebar scenarios keep readable. The
+/// sidebar's minimum width is under it, so the narrowest layout is unchanged.
+const SESSION_PICTURE_MIN_WIDTH: f32 = 200.0;
+
+/// How narrow a Sessions label may get before the rest of the row yields. A
+/// row with a picture gives the picture's room back from this reserve, so
+/// the narrowest sidebar still fits the pane number, age and close control
+/// and the label truncates instead.
+const SESSION_LABEL_MIN: f32 = 48.0;
+
+/// The identicon's cells as colored squares on a faint tile.
+pub(crate) fn identicon_element(
+    icon: &Identicon,
+    cell: Pixels,
+    color: Hsla,
+    tile: Hsla,
+) -> gpui::Div {
+    div()
+        .flex()
+        .flex_col()
+        .flex_shrink_0()
+        .bg(tile)
+        .children(icon.cells.iter().map(|row| {
+            div().flex().children(
+                row.iter()
+                    .map(|on| div().size(cell).when(*on, |d| d.bg(color))),
+            )
+        }))
+}
+
+/// The identicon's color: its hue, kept readable on the surfaces a Sessions
+/// row can have (plain, selected, waiting, hovered) like the status marks.
+pub(crate) fn identicon_color(icon: &Identicon, fg: Hsla, bg: Hsla) -> Hsla {
+    let base = gpui::hsla(f32::from(icon.hue) / 360.0, 0.6, 0.55, 1.0);
+    sidebar_mark_color(base, fg, bg, 3.0)
 }
 
 fn fit_color(mut color: Hsla, surfaces: &[Hsla], minimum: f32) -> Hsla {
@@ -454,6 +504,22 @@ impl SidebarView {
     fn narrow_sessions(&self) -> bool {
         let width = f32::from(self.sessions_scroll.bounds().size.width);
         width > 0.0 && width < NARROW_SESSIONS
+    }
+
+    /// Sessions is wide enough for rows to carry their pictures.
+    fn pictures_fit(&self) -> bool {
+        self.width
+            .is_none_or(|width| width >= SESSION_PICTURE_MIN_WIDTH)
+    }
+
+    /// The window gives the sidebar this width. Taken from the window rather
+    /// than measured, so a narrowed sidebar never draws a frame with pictures.
+    pub(crate) fn set_width(&mut self, width: f32, cx: &mut Context<Self>) {
+        let before = self.pictures_fit();
+        self.width = Some(width);
+        if self.pictures_fit() != before {
+            cx.notify();
+        }
     }
 
     /// One parent's children on its Sessions row: a count per state with an
@@ -598,6 +664,7 @@ impl SidebarView {
             active_label: Default::default(),
             sessions_collapsed: false,
             project_collapsed: false,
+            width: None,
             sticky_repo: None,
             sticky_overhang: Rc::default(),
             sessions_loaded: false,
@@ -1771,6 +1838,37 @@ fn session_id(key: SessionKey) -> String {
 }
 
 impl SidebarView {
+    /// A conversation's picture before its name. A click opens the enlarged
+    /// preview and only that: the row underneath is not activated.
+    fn render_row_identicon(
+        &self,
+        id: &str,
+        identity: SessionIdentity,
+        cx: &mut Context<Self>,
+    ) -> AnyElement {
+        let icon = identity.identicon();
+        let color = identicon_color(&icon, self.fg, self.bg);
+        let picture = identicon_element(
+            &icon,
+            gpui::px(ROW_IDENTICON_CELL),
+            color,
+            self.fg.opacity(0.08),
+        );
+        let selector = format!("session-identicon-{id}");
+        div()
+            .id(ElementId::Name(format!("session-identicon:{id}").into()))
+            .debug_selector(move || selector.clone())
+            .flex_shrink_0()
+            .cursor_pointer()
+            .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
+            .on_click(cx.listener(move |_, e: &ClickEvent, _, cx| {
+                cx.stop_propagation();
+                cx.emit(SidebarEvent::ShowIdenticon(identity.clone(), e.position()));
+            }))
+            .child(picture)
+            .into_any_element()
+    }
+
     /// One Sessions row: status icon, label, what it is, activity age and,
     /// for terminals and agents, a close button. Child agents follow it.
     fn render_session_row(
@@ -1784,6 +1882,7 @@ impl SidebarView {
         let fg = self.fg;
         let key = row.key;
         let id = session_id(key);
+        let picture = row.identity.clone().filter(|_| self.pictures_fit());
         let agent_label = row
             .agent
             .as_ref()
@@ -1883,6 +1982,9 @@ impl SidebarView {
                     .tooltip(crate::tooltip::text(row.status_label()))
                     .child(status_icon(row.status, self.spin, self.fg, self.bg)),
             )
+            .when_some(picture.clone(), |d, identity| {
+                d.child(self.render_row_identicon(&id, identity, cx))
+            })
             // The label keeps a readable width; what the row is gives way first.
             .child(
                 div()
@@ -1891,7 +1993,11 @@ impl SidebarView {
                         move || format!("session-label-{id}")
                     })
                     .flex_1()
-                    .min_w(gpui::px(48.0))
+                    .min_w(gpui::px(if picture.is_some() {
+                        SESSION_LABEL_MIN - ROW_IDENTICON_SLOT
+                    } else {
+                        SESSION_LABEL_MIN
+                    }))
                     .overflow_hidden()
                     .whitespace_nowrap()
                     .text_ellipsis()
@@ -2564,6 +2670,47 @@ mod tests {
                         contrast(color, surface) >= 3.0 - 1e-3,
                         "{base:06x} on {surface:?}: {}",
                         contrast(color, surface)
+                    );
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn identicons_stand_out_three_to_one_in_light_and_dark_themes() {
+        let contrast = |a: Hsla, b: Hsla| ratio(luminance(a), luminance(b));
+        let themes = [
+            ("GitHub Light Default", 0xffffff, 0x1f2328),
+            ("Catppuccin Latte", 0xeff1f5, 0x4c4f69),
+            ("GitHub Dark Default", 0x0d1117, 0xe6edf3),
+            ("Catppuccin Mocha", 0x1e1e2e, 0xcdd6f4),
+        ];
+        for (theme, bg, fg) in themes {
+            let (bg, fg): (Hsla, Hsla) = (gpui::rgb(bg).into(), gpui::rgb(fg).into());
+            let sidebar = blend(bg, fg, 0.04);
+            let waiting = waiting_tint(fg, sidebar);
+            // What a picture can sit on: a plain, selected, waiting or hovered
+            // row, and its own tile.
+            let surfaces = [
+                ("sidebar", sidebar),
+                ("selected row", blend(sidebar, fg, SELECTED_ROW)),
+                (
+                    "waiting row",
+                    blend(sidebar, waiting.opacity(1.0), waiting.a),
+                ),
+                ("hovered row and tile", blend(sidebar, fg, 0.08)),
+            ];
+            for hue in 0..360 {
+                let icon = Identicon {
+                    cells: [[true; 5]; 5],
+                    hue,
+                };
+                let color = identicon_color(&icon, fg, sidebar);
+                for (name, surface) in surfaces {
+                    let found = contrast(color, surface);
+                    assert!(
+                        found >= 3.0,
+                        "{theme} hue {hue} on the {name}: {found:.2}:1"
                     );
                 }
             }
