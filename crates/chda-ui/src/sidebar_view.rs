@@ -1435,15 +1435,19 @@ impl SidebarView {
                             let mut offset = scroll.offset();
                             offset.y =
                                 (offset.y + delta).clamp(-scroll.max_offset().y, gpui::px(0.0));
-                            // A row listed just now makes PROJECT taller than
-                            // the last frame knew, so one move can stop short.
-                            // Keep the reveal until the row is in view or the
-                            // list cannot move further.
-                            if offset == scroll.offset() {
-                                s.reveal = None;
-                            } else {
+                            let moved = offset != scroll.offset();
+                            if moved {
                                 scroll.set_offset(offset);
                                 cx.notify();
+                            }
+                            // A row listed just now makes PROJECT taller than
+                            // the last frame knew, so one move can stop short:
+                            // the next frame measures again. The reveal ends
+                            // when the list cannot move further or the row
+                            // needed less than a pixel, so pixel rounding can
+                            // never keep it redrawing.
+                            if !moved || delta.abs() < gpui::px(1.0) {
+                                s.reveal = None;
                             }
                         });
                     });
