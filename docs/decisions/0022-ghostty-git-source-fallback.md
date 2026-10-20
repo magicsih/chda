@@ -1,4 +1,4 @@
-# ADR 0022: Git fallback for the pinned Ghostty source
+# ADR 0022: Git fallback for pinned Ghostty sources and packages
 
 Status: accepted, 2026-10-20.
 
@@ -17,6 +17,13 @@ by its object ID, and the script requires it to resolve to `ghostty_commit`. The
 extracted tree must still match `source_sha256` after `terminal-integrity.patch`
 applies, and that patch must match `patch_sha256`. `archive_sha256` applies only
 to the codeload bytes, since git's tar is not codeload's gzip.
+
+The same fallback covers the GitHub archive packages that `zig build` needs. The
+script reads them from the verified root `build.zig.zon` and from the pinned
+translate-c package's manifest, fetches each commit with git, and accepts it only
+when `zig fetch` reports the manifest's `.hash`. Packages served from
+`deps.files.ghostty.org` still come from zig itself, since those hosts are
+reachable where codeload is not.
 
 Git runs with `core.autocrlf=false` and `core.eol=lf`, so a Windows or
 user-level line-ending setting cannot change file bytes. Any byte change would
