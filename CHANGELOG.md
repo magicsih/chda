@@ -4,6 +4,17 @@ All notable changes to chda. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); entries are
 generated from conventional commit messages by release-plz.
 
+## [1.2.0](https://github.com/magicsih/chda/compare/v1.1.0...v1.2.0) - 2026-10-20
+
+### Added
+
+- *(sidebar)* show a pixel identicon before each Claude Code and Codex session ([#280](https://github.com/magicsih/chda/pull/280))
+- *(sidebar)* select and reveal a folder as soon as it is added ([#279](https://github.com/magicsih/chda/pull/279))
+
+### Fixed
+
+- *(terminal)* stop mouse reports typing into the prompt after a program exits ([#278](https://github.com/magicsih/chda/pull/278))
+
 ## [1.1.0](https://github.com/magicsih/chda/compare/v1.0.25...v1.1.0) - 2026-10-18
 
 ### Added
