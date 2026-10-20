@@ -183,8 +183,22 @@ mod tests {
         let origin = root.join("origin");
         std::fs::create_dir_all(&origin).unwrap();
         git(&origin, &["init", "-q", "-b", "main"]);
+        // Disposable repositories need no detached maintenance during cleanup:
+        // git 2.47 and later run it in the background after commits, fetches
+        // and merges, and it can write into the directory being removed.
+        git(&origin, &["config", "maintenance.auto", "false"]);
         commit(&origin, "a");
-        git(&root, &["clone", "-q", "origin", "clone"]);
+        git(
+            &root,
+            &[
+                "clone",
+                "-q",
+                "-c",
+                "maintenance.auto=false",
+                "origin",
+                "clone",
+            ],
+        );
         let clone = root.join("clone");
         // Rebase and merge run through the real update command, without the
         // helper's -c options. Do not depend on the runner's global identity.
