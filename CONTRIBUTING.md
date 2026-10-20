@@ -13,7 +13,7 @@ The first build fetches the Zed repository (for GPUI) and preparation downloads 
 
 ## Workflow
 
-- Branch from `main`, open a pull request. Commit messages and PR text in English, in Conventional Commits form (`fix: ...`, `feat(sidebar): ...`); `scripts/check-commits.sh` runs in CI.
+- Branch from `main`, open a pull request. Write public issues, documentation, commit messages and PR text in English. Commit subjects and PR titles use Conventional Commits form (`fix: ...`, `feat(sidebar): ...`); `scripts/check-commits.sh` runs in CI.
 - CI must be green: `cargo fmt --all --check`, `cargo clippy --workspace --all-targets -- -D warnings`, `cargo deny check`, tests on macOS, release builds on macOS, Linux and Windows.
 - Crate dependency direction is enforced by `deny.toml`. See `docs/architecture.md` before adding a dependency between crates.
 - Architecture changes go through an ADR under `docs/decisions/`.

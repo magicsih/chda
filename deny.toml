@@ -1,4 +1,4 @@
-# cargo-deny configuration. Run `cargo deny check` locally; CI runs it too.
+# Dependency policy checked locally and in CI with `cargo deny check`.
 #
 # The `bans.deny` table encodes the crate dependency direction from
 # docs/architecture.md. Each entry names a crate and the only crates

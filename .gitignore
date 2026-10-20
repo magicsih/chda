@@ -3,7 +3,7 @@
 .DS_Store
 *.log
 
-# Agent-local files (private notes, machine-specific paths)
+# Keep private notes and machine-specific paths out of commits.
 CLAUDE.md
 CLAUDE.local.md
 AGENTS.local.md
