@@ -133,12 +133,15 @@ def _register_https(journey):
     handler = root / "about-repository-handler.py"
     if output.exists() or handler.exists():
         raise RuntimeError("Refusing to reuse About repository evidence")
+    # The result is renamed into place: the driver reads it as soon as it exists.
     handler.write_text("import json,sys\nfrom pathlib import Path\n"
                        "expected=" + repr(REPOSITORY) + "\n"
                        "actual=sys.argv[1]\n"
                        "if actual!=expected:raise SystemExit('Unexpected repository URI')\n"
-                       "Path(" + repr(str(output)) + ").write_text(json.dumps({'uri':actual,"
-                       "'externalNetwork':False,'trigger':'native desktop URI dispatch'}))\n")
+                       "partial=Path(" + repr(str(output) + ".partial") + ")\n"
+                       "partial.write_text(json.dumps({'uri':actual,"
+                       "'externalNetwork':False,'trigger':'native desktop URI dispatch'}))\n"
+                       "partial.replace(" + repr(str(output)) + ")\n")
     applications = root / "data/applications"
     applications.mkdir(exist_ok=True)
     desktop = applications / "chda-validation-about.desktop"
