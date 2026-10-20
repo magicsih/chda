@@ -13,6 +13,8 @@ import urllib.request
 ROOT = Path(__file__).resolve().parent.parent
 RESOURCES = ROOT / "resources/ghostty"
 CACHES = {".zig-cache", "zig-out", "zig-pkg"}
+GHOSTTY_GIT_URL = "https://github.com/ghostty-org/ghostty.git"
+GIT_TIMEOUT_SECONDS = 300
 
 
 def source_digest(source):
@@ -45,6 +47,45 @@ def verify_source(manifest, source):
         raise ValueError(f"Ghostty source integrity mismatch; existing source was preserved. Move {source} aside, then rerun preparation")
 
 
+def download_archive(manifest, destination):
+    with urllib.request.urlopen(manifest["archive_url"], timeout=45) as response, destination.open("wb") as output:
+        size = 0
+        while block := response.read(1024 * 1024):
+            size += len(block)
+            if size > 100 * 1024 * 1024:
+                raise ValueError("Ghostty archive exceeds the size limit")
+            output.write(block)
+    if hashlib.sha256(destination.read_bytes()).hexdigest() != manifest["archive_sha256"]:
+        raise ValueError("Ghostty archive integrity mismatch")
+
+
+def run_git(arguments, env):
+    try:
+        result = subprocess.run(arguments, capture_output=True, text=True, env=env, timeout=GIT_TIMEOUT_SECONDS)
+    except subprocess.TimeoutExpired as error:
+        raise ValueError("git timed out") from error
+    if result.returncode != 0:
+        raise ValueError((result.stderr.strip().splitlines() or ["no error output"])[-1])
+    return result.stdout.strip()
+
+
+def fetch_git_archive(manifest, workdir):
+    # Git fetches the pinned commit by object ID and checks that it resolves to it.
+    # Its tar is not codeload's gzip, so archive_sha256 does not apply; the caller
+    # still gates the extracted tree with source_sha256 and the patch with patch_sha256.
+    commit = manifest["ghostty_commit"]
+    repository = workdir / "ghostty.git"
+    git = ["git", "--git-dir", str(repository), "-c", "core.autocrlf=false", "-c", "core.eol=lf"]
+    env = {**os.environ, "GIT_TERMINAL_PROMPT": "0"}
+    run_git(["git", "init", "--bare", "--quiet", str(repository)], env)
+    run_git([*git, "fetch", "--depth", "1", "--no-tags", GHOSTTY_GIT_URL, commit], env)
+    if run_git([*git, "rev-parse", "--verify", f"{commit}^{{commit}}"], env) != commit:
+        raise ValueError("git resolved a different Ghostty commit")
+    archive = workdir / "ghostty-git.tar"
+    run_git([*git, "archive", "--format=tar", f"--prefix=ghostty-{commit}/", "-o", str(archive), commit], env)
+    return archive
+
+
 def prepare(manifest, patches, source, archive=None, *, check=False):
     patch = patches / manifest["patch"]
     if hashlib.sha256(patch.read_bytes()).hexdigest() != manifest["patch_sha256"]:
@@ -69,14 +110,16 @@ def prepare(manifest, patches, source, archive=None, *, check=False):
         staging.mkdir()
         if archive is None:
             archive = Path(temporary) / "source.tar.gz"
-            with urllib.request.urlopen(manifest["archive_url"], timeout=45) as response, archive.open("wb") as output:
-                size = 0
-                while block := response.read(1024 * 1024):
-                    size += len(block)
-                    if size > 100 * 1024 * 1024:
-                        raise ValueError("Ghostty archive exceeds the size limit")
-                    output.write(block)
-        if hashlib.sha256(archive.read_bytes()).hexdigest() != manifest["archive_sha256"]:
+            try:
+                download_archive(manifest, archive)
+            except OSError as error:
+                # codeload.github.com refuses some sessions even for public repositories.
+                # Git fetches the same pinned commit; the tree digest below still gates it.
+                try:
+                    archive = fetch_git_archive(manifest, Path(temporary))
+                except (OSError, ValueError) as git_error:
+                    raise ValueError(f"Ghostty archive download failed ({error}); git fetch failed ({git_error})") from git_error
+        elif hashlib.sha256(archive.read_bytes()).hexdigest() != manifest["archive_sha256"]:
             raise ValueError("Ghostty archive integrity mismatch")
         try:
             with tarfile.open(archive) as bundle:

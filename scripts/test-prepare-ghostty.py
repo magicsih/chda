@@ -11,6 +11,7 @@ import tempfile
 import subprocess
 import sys
 import unittest
+import urllib.error
 from unittest import mock
 
 sys.dont_write_bytecode = True
@@ -149,6 +150,71 @@ class PreparationTests(unittest.TestCase):
         (self.output / "unexpected.zig").write_text("changed")
         with self.assertRaisesRegex(ValueError, "source"):
             self.run_prepare(check=True)
+
+    def make_ghostty_repository(self, files):
+        repository = self.root / "ghostty-repository"
+        repository.mkdir()
+        for name, data in files.items():
+            (repository / name).parent.mkdir(parents=True, exist_ok=True)
+            (repository / name).write_bytes(data)
+        subprocess.run(["git", "init", "-q", str(repository)], check=True)
+        git = ["git", "-c", "user.name=chda", "-c", "user.email=chda@example.invalid", "-c", "commit.gpgsign=false"]
+        subprocess.run([*git, "add", "."], cwd=repository, check=True)
+        subprocess.run([*git, "commit", "-q", "-m", "source"], cwd=repository, check=True)
+        subprocess.run(["git", "config", "uploadpack.allowAnySHA1InWant", "true"], cwd=repository, check=True)
+        commit = subprocess.run(["git", "rev-parse", "HEAD"], cwd=repository, capture_output=True, text=True, check=True).stdout.strip()
+        return repository, commit
+
+    def refused_download(self):
+        refused = urllib.error.HTTPError(self.manifest["archive_url"], 403, "Forbidden", None, None)
+        return mock.patch("urllib.request.urlopen", side_effect=refused)
+
+    def test_refused_archive_download_fetches_the_pinned_commit_with_git(self):
+        repository, commit = self.make_ghostty_repository({"build.zig": b"original\n", "src/vt.zig": b"terminal\n"})
+        self.manifest["ghostty_commit"] = commit
+        with self.refused_download(), mock.patch.object(prepare, "GHOSTTY_GIT_URL", repository.as_uri()):
+            prepare.prepare(self.manifest, self.root, self.output)
+        self.assertEqual((self.output / "build.zig").read_bytes(), b"patched\n")
+        self.assertEqual((self.output / "src/vt.zig").read_bytes(), b"terminal\n")
+
+    def test_git_fetch_ignores_a_windows_autocrlf_config(self):
+        repository, commit = self.make_ghostty_repository({"build.zig": b"original\n", "src/vt.zig": b"terminal\n"})
+        self.manifest["ghostty_commit"] = commit
+        autocrlf = {"GIT_CONFIG_COUNT": "1", "GIT_CONFIG_KEY_0": "core.autocrlf", "GIT_CONFIG_VALUE_0": "true"}
+        with self.refused_download(), mock.patch.object(prepare, "GHOSTTY_GIT_URL", repository.as_uri()), mock.patch.dict(os.environ, autocrlf):
+            prepare.prepare(self.manifest, self.root, self.output)
+        self.assertEqual((self.output / "build.zig").read_bytes(), b"patched\n")
+
+    def test_git_fetch_with_a_different_tree_is_rejected(self):
+        repository, commit = self.make_ghostty_repository({"build.zig": b"original\n", "src/vt.zig": b"changed\n"})
+        self.manifest["ghostty_commit"] = commit
+        with self.refused_download(), mock.patch.object(prepare, "GHOSTTY_GIT_URL", repository.as_uri()):
+            with self.assertRaisesRegex(ValueError, "source integrity"):
+                prepare.prepare(self.manifest, self.root, self.output)
+        self.assertFalse(self.output.exists())
+
+    def test_downloaded_archive_is_preferred_over_git(self):
+        with mock.patch("urllib.request.urlopen", return_value=io.BytesIO(self.archive.read_bytes())), \
+                mock.patch.object(prepare, "fetch_git_archive") as fetch:
+            prepare.prepare(self.manifest, self.root, self.output)
+        fetch.assert_not_called()
+        self.assertEqual((self.output / "build.zig").read_bytes(), b"patched\n")
+
+    def test_downloaded_archive_with_wrong_digest_is_rejected_without_git(self):
+        self.manifest["archive_sha256"] = "0" * 64
+        with mock.patch("urllib.request.urlopen", return_value=io.BytesIO(self.archive.read_bytes())), \
+                mock.patch.object(prepare, "fetch_git_archive") as fetch:
+            with self.assertRaisesRegex(ValueError, "archive integrity"):
+                prepare.prepare(self.manifest, self.root, self.output)
+        fetch.assert_not_called()
+        self.assertFalse(self.output.exists())
+
+    def test_refused_download_and_failed_git_fetch_report_both(self):
+        self.manifest["ghostty_commit"] = "0" * 40
+        with self.refused_download(), mock.patch.object(prepare, "GHOSTTY_GIT_URL", (self.root / "missing.git").as_uri()):
+            with self.assertRaisesRegex(ValueError, "download failed.*git fetch failed"):
+                prepare.prepare(self.manifest, self.root, self.output)
+        self.assertFalse(self.output.exists())
 
 
 if __name__ == "__main__":

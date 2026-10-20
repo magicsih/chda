@@ -23,3 +23,4 @@ new record rather than editing an accepted one.
 | [0016](0016-selection-scoped-sharing.md) | Selection-scoped, source-verified sharing previews with explicit plain-text editing |
 | [0019](0019-unified-sessions.md) | One Sessions list scrolled only by the user; PROJECT scrolls separately and reveals the focused worktree |
 | [0020](0020-session-addressed-prompt-delivery.md) | Proposed: deliver prompts to an exact Claude Code or Codex session through channels and the Codex queue, never by typing |
+| [0022](0022-ghostty-git-source-fallback.md) | Pinned Ghostty source falls back to a commit-pinned git fetch when codeload refuses the archive; the tree digest and patch hash still gate it |

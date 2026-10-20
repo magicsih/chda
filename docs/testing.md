@@ -259,6 +259,9 @@ updater-enabled release. See [decision 0011](decisions/0011-session-preserving-u
 
 Run `python3 scripts/test-prepare-ghostty.py` for synthetic preparation guards
 and `python3 scripts/prepare-ghostty.py --check` for the real prepared source.
+When codeload refuses the archive, preparation fetches the same pinned commit
+with git; the git fallback has its own guards in the same script
+([decision 0022](decisions/0022-ghostty-git-source-fallback.md)).
 With the pinned Zig on PATH, `python3 scripts/test-ghostty-build-guard.py`
 checks that actual Cargo rejects a new root file and a changed nested source,
 then restores the exact bytes and verifies a clean build.
