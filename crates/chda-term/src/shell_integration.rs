@@ -612,4 +612,103 @@ mod tests {
             fs::remove_dir_all(&home).unwrap();
         }
     }
+
+    /// Every mouse tracking mode and encoding a program can leave on.
+    const MOUSE_ON: &str = "\\033[?9h\\033[?1000h\\033[?1002h\\033[?1003h\
+                            \\033[?1005h\\033[?1006h\\033[?1015h\\033[?1016h";
+
+    /// Whether a terminal that processed `output` would still hand the mouse
+    /// to the running program.
+    fn tracks_mouse(output: &[u8]) -> bool {
+        let mut term = crate::vt::Terminal::new(
+            crate::frame::Size {
+                cols: 120,
+                rows: 40,
+            },
+            1000,
+        )
+        .unwrap();
+        term.feed(output);
+        term.mouse_tracking()
+    }
+
+    /// A program that turns the mouse on and exits without turning it off,
+    /// as an interrupted or crashed full-screen program does (#263): the next
+    /// prompt must take the mouse back, and the user's own prompt hook must
+    /// still see the program's exit status.
+    #[test]
+    fn mouse_reporting_ends_when_the_prompt_returns() {
+        let mut cases: Vec<(PathBuf, &str)> = bashes().into_iter().map(|b| (b, "bash")).collect();
+        cases.push((PathBuf::from("/bin/zsh"), "zsh"));
+        if let Some(fish) = fish() {
+            cases.push((fish.clone(), "fish"));
+            cases.push((fish, "fish-native"));
+        }
+        for (index, (shell, kind)) in cases.into_iter().enumerate() {
+            let home = temp_home(&format!("mouse-modes-{index}"));
+            let hook = "echo \"hook-status=$?\"";
+            match kind {
+                "zsh" => fs::write(
+                    home.join(".zshrc"),
+                    format!("PS1='chda$ '\nPROMPT_EOL_MARK=''\nuser_hook() {{ {hook} }}\nprecmd_functions+=(user_hook)\n"),
+                )
+                .unwrap(),
+                "bash" => {
+                    fs::write(home.join(".bash_profile"), ". \"$HOME/.bashrc\"\n").unwrap();
+                    fs::write(
+                        home.join(".bashrc"),
+                        format!("PS1='chda$ '\nuser_hook() {{ {hook}; }}\nPROMPT_COMMAND=user_hook\n"),
+                    )
+                    .unwrap();
+                }
+                _ => {
+                    let config = home.join(".config/fish");
+                    fs::create_dir_all(&config).unwrap();
+                    fs::write(
+                        config.join("config.fish"),
+                        "set -g fish_greeting\n\
+                         function fish_prompt; echo \"hook-status=$status\"; echo -n 'chda> '; end\n",
+                    )
+                    .unwrap();
+                }
+            }
+            let launch = launch_for(ShellIntegration::Detect, &shell, &home).unwrap();
+            let mut command = vec![shell.to_string_lossy().into_owned()];
+            command.extend(launch.args.iter().cloned());
+            if kind.starts_with("fish") {
+                command.push("-l".into());
+                if kind == "fish" {
+                    command.extend(["--features".into(), "no-mark-prompt".into()]);
+                }
+            } else if kind == "zsh" {
+                command.push("-i".into());
+            }
+            let mut t = Transcript::spawn(&command, &home, &launch);
+            let prompt = if kind.starts_with("fish") {
+                "chda> "
+            } else {
+                "chda$ "
+            };
+            t.wait_for(prompt, 1);
+
+            for round in 1..=2 {
+                t.send(&format!("sh -c 'printf \"{MOUSE_ON}\"; exit 3'\n"));
+                t.wait_for("hook-status=3", round);
+                t.wait_for(prompt, round + 1);
+            }
+            // `exit` returns the last command's status; end on a success.
+            t.send("true\n");
+            t.wait_for(prompt, 4);
+            let out = t.finish();
+
+            let label = format!("{kind} {}", shell.display());
+            // The stand-in did turn the mouse on, so a terminal still tracks
+            // it up to the end of the program's output ...
+            let enabled = out.rfind("\x1b[?1000h").expect(&label) + "\x1b[?1000h".len();
+            assert!(tracks_mouse(&out.as_bytes()[..enabled]), "{label}");
+            // ... and the returned prompt hands it back.
+            assert!(!tracks_mouse(out.as_bytes()), "{label}: {out:?}");
+            fs::remove_dir_all(&home).unwrap();
+        }
+    }
 }

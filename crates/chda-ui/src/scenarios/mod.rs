@@ -21,6 +21,7 @@ mod input;
 mod lifecycle;
 mod mcp;
 mod menus;
+mod mouse;
 mod moves;
 mod navigation;
 mod notifications;
