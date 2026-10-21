@@ -81,7 +81,7 @@ fn package() -> BTreeMap<String, Vec<u8>> {
         hooks.insert(
             event.into(),
             json!([{ "hooks": [{
-            "type": "command", "command": "node \"${PLUGIN_ROOT}/report.cjs\"", "timeout": 10
+            "type": "command", "command": "node -e \"require(process.env.PLUGIN_ROOT + '/report.cjs')\"", "timeout": 10
         }] }]),
         );
     }

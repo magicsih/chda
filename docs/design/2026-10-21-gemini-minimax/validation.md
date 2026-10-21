@@ -16,6 +16,7 @@ Implementation: `eee1edced4655412b25a2c812d96389806b6fc58` and the follow-up
 | Formatting and lints | `cargo fmt --all --check` and `cargo clippy --workspace --all-targets -- -D warnings` passed |
 | Documentation | Product documentation tests and `scripts/sync-product-docs.py --check` passed |
 | Pages layout | Inspected screenshots at 1280px and 390px; no horizontal overflow or clipped provider text |
+| Native entrypoint paths | A provider directory containing quotes and `$(...)` reproduced path evaluation with the original command; reading PLUGIN_ROOT inside Node fixes it, and the binary integration now runs the declared native shell entrypoint |
 
 The workspace regression covers the implementation commit. The follow-up's
 additional root-session guard and permission test were checked by the targeted
@@ -38,5 +39,8 @@ All provider tests used temporary data or synthetic events. The installed CLI
 check did not request a model response or touch the user's MiniMax data.
 MiniMax historical conversations, exact resume, restart and usage remain
 unsupported. No release, tag, merge or public deployment is part of this work.
-Required checks and local review are reported in the PR rather than inferred
-from this local record.
+The local MiniMax advisory review and its one retry both reached the configured
+40-step execution limit at `93018bc`; no review result was obtained. The later
+native-entrypoint correction was self-reviewed and verified by its regression
+test. Required checks are reported in the PR rather than inferred from this
+local record.

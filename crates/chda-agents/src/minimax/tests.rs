@@ -22,6 +22,20 @@ impl Fixture {
 }
 impl Drop for Fixture {
     fn drop(&mut self) {
+        // The native CLI makes its own hook-cache directories read-only.
+        // Only visit this freshly created fixture; never follow its symlinks.
+        fn writable_dirs(path: &Path) {
+            if !fs::symlink_metadata(path).is_ok_and(|m| m.is_dir()) {
+                return;
+            }
+            let _ = fs::set_permissions(path, fs::Permissions::from_mode(0o700));
+            if let Ok(entries) = fs::read_dir(path) {
+                for entry in entries.flatten() {
+                    writable_dirs(&entry.path());
+                }
+            }
+        }
+        writable_dirs(&self.0);
         let _ = fs::remove_dir_all(&self.0);
     }
 }

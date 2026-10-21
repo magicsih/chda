@@ -19,11 +19,21 @@ impl Drop for Root {
 
 fn send(script: &Path, path: &std::ffi::OsStr, home: &Path, payload: serde_json::Value) {
     // Match MiniMax's safeHookEnvironment: custom CHDA_* and XDG_* are absent.
-    let mut child = Command::new("node")
-        .arg(script)
+    let plugin = script.parent().unwrap();
+    let hooks: serde_json::Value =
+        serde_json::from_slice(&fs::read(plugin.join("hooks.json")).unwrap()).unwrap();
+    // The native runner expands ${PLUGIN_ROOT} before starting the shell.
+    let command = hooks["hooks"]["SessionStart"][0]["hooks"][0]["command"]
+        .as_str()
+        .unwrap()
+        .replace("${PLUGIN_ROOT}", &plugin.to_string_lossy());
+    let mut child = Command::new("/bin/sh")
+        .args(["-c", &command])
+        .current_dir(home)
         .env_clear()
         .env("PATH", path)
         .env("HOME", home)
+        .env("PLUGIN_ROOT", plugin)
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
@@ -49,7 +59,9 @@ fn managed_plugin_routes_only_root_metadata_to_the_real_hook() {
     let root = Root(std::env::temp_dir().join(format!("chda-mm-hook-{}", std::process::id())));
     fs::create_dir(&root.0).unwrap();
     let data = root.0.join("custom chda data");
-    let provider = root.0.join("provider");
+    let provider = root
+        .0
+        .join("provider 'quoted' $(touch unexpected-shell-file)");
     let exe = root.0.join("mcode");
     fs::write(&exe, "#!/bin/sh\necho 0.6.12\n").unwrap();
     fs::set_permissions(&exe, fs::Permissions::from_mode(0o700)).unwrap();
@@ -163,4 +175,8 @@ fn managed_plugin_routes_only_root_metadata_to_the_real_hook() {
     remove_context(&data, 11);
     send(&script, &path1, &root.0, payload("Stop", "root-1"));
     assert!(ipc::take_fallback(&data).unwrap().is_empty());
+    assert!(
+        !root.0.join("unexpected-shell-file").exists(),
+        "the native command must not evaluate the provider path"
+    );
 }
