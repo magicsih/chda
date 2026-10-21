@@ -4,6 +4,12 @@ All notable changes to chda. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); entries are
 generated from conventional commit messages by release-plz.
 
+## [1.3.0](https://github.com/magicsih/chda/compare/v1.2.0...v1.3.0) - 2026-10-21
+
+### Added
+
+- *(agents)* add MiniMax Code and expose Gemini by default
+
 ## [1.2.0](https://github.com/magicsih/chda/compare/v1.1.0...v1.2.0) - 2026-10-20
 
 ### Added
