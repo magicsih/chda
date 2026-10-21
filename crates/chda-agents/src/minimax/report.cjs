@@ -20,6 +20,7 @@ try {
   let root;
   try { root = JSON.parse(fs.readFileSync(path.join(directory, "state.json"), "utf8")).session_id; } catch {}
   if (kind === "SessionStart") {
+    if (root && root !== input.session_id && !["clear", "resume"].includes(input.source)) process.exit(0);
     // Runtime emits root admission hooks separately from child tool events.
     root = input.session_id;
     const temporary = path.join(directory, `.state-${process.pid}`);

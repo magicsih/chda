@@ -99,6 +99,12 @@ fn managed_plugin_routes_only_root_metadata_to_the_real_hook() {
         &root.0,
         payload("UserPromptSubmit", "child-session"),
     );
+    send(
+        &script,
+        &path1,
+        &root.0,
+        payload("SessionStart", "child-session"),
+    );
     let mut child_start = payload("SessionStart", "child-session");
     child_start["agent_id"] = "child".into();
     send(&script, &path1, &root.0, child_start);
@@ -113,10 +119,17 @@ fn managed_plugin_routes_only_root_metadata_to_the_real_hook() {
     }
     send(&script, &path1, &root.0, payload("Cancelled", "root-1"));
     let journal = ipc::take_fallback(&data).unwrap();
-    assert!(
-        !journal.contains("private"),
-        "the actual hook log contains metadata only"
-    );
+    for private in [
+        "private prompt",
+        "private tool input",
+        "/private/transcript",
+        "\"tool_input\"",
+    ] {
+        assert!(
+            !journal.contains(private),
+            "the actual hook log contains metadata only"
+        );
+    }
     let events: Vec<HookEvent> = journal
         .lines()
         .map(|line| serde_json::from_str(line).unwrap())

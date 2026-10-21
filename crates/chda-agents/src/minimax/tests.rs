@@ -158,6 +158,24 @@ fn preparation_honors_data_overrides_and_isolates_and_removes_each_pane() {
 }
 
 #[test]
+fn permission_failure_preserves_the_existing_provider_configuration() {
+    let f = Fixture::new();
+    let provider = f.0.join("provider");
+    let plugins = provider.join("plugins");
+    fs::create_dir_all(&plugins).unwrap();
+    fs::write(provider.join("config.yaml"), "original settings").unwrap();
+    fs::set_permissions(&plugins, fs::Permissions::from_mode(0o500)).unwrap();
+    let result = install_plugin(&provider, &f.0.join("data"));
+    fs::set_permissions(&plugins, fs::Permissions::from_mode(0o700)).unwrap();
+    assert!(result.is_err());
+    assert_eq!(
+        fs::read_to_string(provider.join("config.yaml")).unwrap(),
+        "original settings"
+    );
+    assert!(!plugins.join("chda-status").exists());
+}
+
+#[test]
 fn native_payload_mapping_rejects_children_and_does_not_invent_completion() {
     use crate::hook::{HookKind, minimax_event};
     let mut input =
