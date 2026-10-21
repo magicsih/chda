@@ -2820,8 +2820,36 @@ impl WorkspaceView {
             info.cwd = cwd.clone();
         }
         let settings = self.settings.clone();
-        let result = TerminalView::plan(&settings, &self.env, pane.raw(), cwd.clone(), command)
-            .and_then(TerminalView::prepare);
+        let result = (|| {
+            let mut command = command;
+            if !self.env.windows.borrow().update.adopting
+                && let Some(context) = self.ws.pane(pane).and_then(|p| p.agent_launch.as_ref())
+                && context.managed
+                && context.agent == AgentId::MiniMax
+                && let Some(argv) = command.as_mut()
+            {
+                use chda_core::agents::minimax::{LaunchPreparation, prepare_launch};
+                let data_dir = self.env.data_dir.as_deref().ok_or_else(|| {
+                    std::io::Error::other("MiniMax status needs a chda data directory")
+                })?;
+                let path = prepare_launch(&LaunchPreparation {
+                    home: &self.env.home(),
+                    cwd: &context.cwd,
+                    data_dir,
+                    hook_bin: &Self::hook_bin()?,
+                    pane: pane.raw(),
+                    executable: &context.executable,
+                    search_path: &self.env.search_path(),
+                    environment: &self.env.pane_env(),
+                })?;
+                argv.splice(
+                    0..0,
+                    ["env".into(), format!("PATH={}", path.to_string_lossy())],
+                );
+            }
+            TerminalView::plan(&settings, &self.env, pane.raw(), cwd.clone(), command)
+        })()
+        .and_then(TerminalView::prepare);
         let prepared = match result {
             Ok(prepared) => prepared,
             Err(e) => {
@@ -3979,6 +4007,9 @@ impl WorkspaceView {
         }
         for pane in panes {
             self.panes.remove(&pane);
+            if let Some(dir) = &self.env.data_dir {
+                chda_core::agents::minimax::remove_context(dir, pane.raw());
+            }
         }
         self.resync_closed_agents(agents, cx);
         if self

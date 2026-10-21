@@ -1,6 +1,6 @@
 {
   "version": "1.0",
-  "status": "proposed",
+  "status": "approved",
   "design": "design.md",
   "baseline": "fc8512afb550348156db8271d7b46d6a0e0c31b6",
   "level": "L1",
@@ -43,5 +43,6 @@
     "requested": false,
     "markets": [],
     "until": "ready-pr"
-  }
+  },
+  "approval": "approval.md"
 }

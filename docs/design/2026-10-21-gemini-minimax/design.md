@@ -1,6 +1,6 @@
 # Gemini and MiniMax support
 
-Version: 1.0. Status: proposed; implementation approval pending.
+Version: 1.0. Status: approved; see [approval.md](approval.md).
 Baseline: `fc8512afb550348156db8271d7b46d6a0e0c31b6`.
 Test plan: [test-plan.json](test-plan.json).
 

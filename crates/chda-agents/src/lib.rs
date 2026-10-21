@@ -1,5 +1,5 @@
 //! `AgentAdapter` trait, the adapters for Claude Code, Codex, Gemini CLI,
-//! GitHub Copilot CLI and OpenCode, the hook receiver and the session indexer.
+//! GitHub Copilot CLI, OpenCode and MiniMax Code, the hook receiver and the session indexer.
 //!
 //! Platform-specific IPC code lives under `ipc`.
 
@@ -13,6 +13,7 @@ pub mod hook;
 pub mod ipc;
 mod launch;
 mod mcp;
+pub mod minimax;
 mod opencode;
 mod pricing;
 pub mod quota;
@@ -38,6 +39,7 @@ pub use launch::{
     validate_resume_options,
 };
 pub use mcp::mcp_main;
+pub use minimax::MiniMaxAdapter;
 pub use opencode::OpenCodeAdapter;
 pub use session::{AgentSession, SessionCache, SessionId};
 pub use sharing::{SharePreview, recent_answers, sharing_preview};
@@ -55,15 +57,17 @@ pub enum AgentId {
     Copilot,
     #[serde(rename = "opencode")]
     OpenCode,
+    MiniMax,
 }
 
 impl AgentId {
-    pub const ALL: [AgentId; 5] = [
+    pub const ALL: [AgentId; 6] = [
         AgentId::Claude,
         AgentId::Codex,
         AgentId::Gemini,
         AgentId::Copilot,
         AgentId::OpenCode,
+        AgentId::MiniMax,
     ];
 
     pub fn as_str(self) -> &'static str {
@@ -71,6 +75,7 @@ impl AgentId {
             AgentId::Claude => "claude",
             AgentId::Codex => "codex",
             AgentId::Gemini => "gemini",
+            AgentId::MiniMax => "minimax",
             AgentId::Copilot => "copilot",
             AgentId::OpenCode => "opencode",
         }
@@ -166,7 +171,32 @@ pub fn adapters() -> Vec<Box<dyn AgentAdapter>> {
         Box::new(GeminiAdapter),
         Box::new(CopilotAdapter),
         Box::new(OpenCodeAdapter),
+        Box::new(MiniMaxAdapter),
     ]
+}
+
+#[cfg(test)]
+mod provider_tests {
+    use super::*;
+
+    #[test]
+    fn minimax_is_registered_without_claiming_historical_resume() {
+        let providers = adapters();
+        let adapter = providers
+            .iter()
+            .find(|a| a.id().as_str() == "minimax")
+            .expect("MiniMax Code is available alongside Gemini");
+        assert_eq!(adapter.display_name(), "MiniMax Code");
+        assert_eq!(adapter.short_label(), "MM");
+        assert!(adapter.session_roots().is_empty());
+        assert!(!adapter.has_session(&SessionId("saved-conversation".into())));
+        assert_eq!(
+            adapter
+                .launch_command(Path::new("/work/app"), None, Path::new("/bin/chda"))
+                .get_program(),
+            "mcode"
+        );
+    }
 }
 
 /// A launch command as the argument vector a pane runs. Environment

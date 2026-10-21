@@ -8,6 +8,94 @@ use gpui::TestAppContext;
 use super::harness::Harness;
 
 #[gpui::test]
+fn default_provider_palette_launches_gemini_and_minimax_and_preserves_exact_resume_limits(
+    cx: &mut TestAppContext,
+) {
+    use std::os::unix::fs::PermissionsExt;
+    let mut h = Harness::open(cx, "providers", |home| {
+        let repo = home.repo("app");
+        std::fs::write(&home.config, format!("repos = [{}]\n[[agent-presets]]\nname = 'Mini preset'\nagent = 'minimax'\nargs = ['--model', 'chosen-model']\n", serde_json::to_string(&repo).unwrap())).unwrap();
+        std::fs::create_dir_all(&home.bin).unwrap();
+        for (name, label) in [("mcode", "fake-mcode"), ("gemini", "fake-gemini")] {
+            let script = home.bin.join(name);
+            std::fs::write(&script, format!("#!/bin/sh\nif [ \"$1\" = '--version' ]; then echo 0.6.12; exit; fi\necho \"{label} $*\"\nwhile IFS= read -r line; do [ \"$line\" != fail ] || exit 7; done\n")).unwrap();
+            std::fs::set_permissions(script, std::fs::Permissions::from_mode(0o700)).unwrap();
+        }
+    });
+    h.wait_prompt();
+    assert!(
+        !h.home.home.join(".minimax").exists(),
+        "startup did not install a provider plugin"
+    );
+    h.keys("cmd-shift-p");
+    h.type_text("Run Gemini CLI in app");
+    h.keys("enter");
+    h.wait_for("Gemini runs from the default palette", |v, cx| {
+        v.focused_text(cx).contains("fake-gemini")
+    });
+    h.keys("cmd-shift-p");
+    h.type_text("Run MiniMax Code in app");
+    h.keys("enter");
+    h.wait_for("MiniMax runs from the default palette", |v, cx| {
+        v.focused_text(cx).contains("fake-mcode")
+    });
+    let pane = h.read(|v, _| v.ws.focused_pane().unwrap());
+    assert!(
+        h.home
+            .home
+            .join(".minimax/plugins/chda-status/hooks.json")
+            .is_file()
+    );
+    let cwd = h.home.home.join("src/app");
+    h.hook_from(
+        "minimax",
+        Some(pane.raw()),
+        &cwd,
+        HookKind::SessionStart,
+        "exact",
+    );
+    h.wait_for("the MiniMax conversation is captured", move |v, _| {
+        v.ws.pane(pane)
+            .and_then(|p| p.agent_launch.as_ref())
+            .is_some_and(|c| c.session.as_ref().is_some_and(|id| id.0 == "exact"))
+    });
+    h.type_text("fail");
+    h.keys("enter");
+    h.wait_for("failed MiniMax retains its pane", move |v, _| {
+        v.ws.pane(pane)
+            .and_then(|p| p.pane_run.as_ref())
+            .is_some_and(chda_core::PaneRun::stopped)
+    });
+    let restart = h.cx.debug_bounds("agent-restart").unwrap();
+    h.cx.simulate_click(restart.center(), gpui::Modifiers::default());
+    h.cx.run_until_parked();
+    assert!(
+        h.read(|v, _| v.ws.pane(pane).unwrap().pane_run.as_ref().unwrap().label())
+            .contains("exact resume is unavailable")
+    );
+    h.keys("cmd-w");
+    assert!(!chda_core::agents::minimax::context_dir(&h.home.data, pane.raw()).exists());
+    h.keys("cmd-shift-p");
+    h.type_text("Run Mini preset in app");
+    h.keys("enter");
+    h.wait_for("MiniMax preset retains its options", |v, cx| {
+        v.focused_text(cx)
+            .contains("fake-mcode --model chosen-model")
+    });
+    let missing = h.home.bin.join("mcode");
+    std::fs::remove_file(missing).unwrap();
+    let count = h.read(|v, _| v.ws.tabs().len());
+    h.keys("cmd-shift-p");
+    h.type_text("Run MiniMax Code in app");
+    h.keys("enter");
+    assert_eq!(
+        h.read(|v, _| v.ws.tabs().len()),
+        count,
+        "a missing executable starts no replacement shell or agent"
+    );
+}
+
+#[gpui::test]
 fn hook_events_drive_status_badge_jump_and_notification_click(cx: &mut TestAppContext) {
     let mut h = Harness::open(cx, "agents", |_| {});
     h.wait_prompt();
@@ -74,13 +162,14 @@ fn hook_events_drive_status_badge_jump_and_notification_click(cx: &mut TestAppCo
 }
 
 #[gpui::test]
-fn gemini_copilot_and_opencode_report_like_claude_code(cx: &mut TestAppContext) {
+fn gemini_minimax_copilot_and_opencode_report_like_claude_code(cx: &mut TestAppContext) {
     let mut h = Harness::open(cx, "moreagents", |_| {});
     h.wait_prompt();
     let pane = h.read(|v, _| v.ws.tabs()[0].panes()[0]);
     let home = h.home.home.clone();
     for (agent, name) in [
         ("gemini", "Gemini CLI"),
+        ("minimax", "MiniMax Code"),
         ("copilot", "Copilot CLI"),
         ("opencode", "OpenCode"),
     ] {

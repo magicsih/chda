@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <meta name="google-site-verification" content="j8EO1uVH1ACx_3kqjQv6DBjows6o5SNc1RNQhBA5B7A">
 <title>chda — terminal for running Claude Code and Codex in parallel git worktrees</title>
-<meta name="description" content="chda is a macOS and Linux terminal with a git worktree sidebar and a live status board for coding agents: Claude Code, Codex, Gemini CLI, GitHub Copilot CLI and OpenCode. Ghostty terminal core, written in Rust on GPUI. Free and open source.">
+<meta name="description" content="chda is a macOS and Linux terminal with a git worktree sidebar and a live status board for coding agents: Claude Code, Codex, Gemini CLI, GitHub Copilot CLI, OpenCode and MiniMax Code. Ghostty terminal core, written in Rust on GPUI. Free and open source.">
 <link rel="canonical" href="https://magicsih.github.io/chda/">
 <meta property="og:type" content="website">
 <meta property="og:title" content="chda — terminal for running Claude Code and Codex in parallel git worktrees">
@@ -28,7 +28,7 @@
   "url": "https://magicsih.github.io/chda/",
   "downloadUrl": "https://github.com/magicsih/chda/releases/latest",
   "softwareHelp": "https://github.com/magicsih/chda#readme",
-  "description": "Terminal with a git worktree sidebar and a live status board for coding agents: Claude Code, Codex, Gemini CLI, GitHub Copilot CLI and OpenCode.",
+  "description": "Terminal with a git worktree sidebar and a live status board for coding agents: Claude Code, Codex, Gemini CLI, GitHub Copilot CLI, OpenCode and MiniMax Code.",
   "offers": { "@type": "Offer", "price": "0", "priceCurrency": "USD" },
   "image": "https://magicsih.github.io/chda/social-preview.png",
   "screenshot": "https://magicsih.github.io/chda/sidebar.png",
@@ -54,7 +54,7 @@
    "name": "Which coding agents does chda work with?",
    "acceptedAnswer": {
     "@type": "Answer",
-    "text": "Claude Code, Codex, Gemini CLI, GitHub Copilot CLI and OpenCode. Their status shows in the sidebar, on tabs and on the Dock icon. Codex is also tracked when you type codex directly in a chda zsh, bash or fish terminal with shell integration enabled."
+    "text": "Claude Code, Codex, Gemini CLI, GitHub Copilot CLI, OpenCode and MiniMax Code. Their status shows in the sidebar, on tabs and on the Dock icon. Codex is also tracked when you type codex directly in a chda zsh, bash or fish terminal with shell integration enabled."
    }
   },
   {
@@ -78,7 +78,7 @@
    "name": "Do I have to change my agents' config?",
    "acceptedAnswer": {
     "@type": "Answer",
-    "text": "No. chda passes hook settings per launch and leaves your config files alone. Only the optional MCP server is added once per agent, with the agent's own mcp add command."
+    "text": "chda leaves your config files alone. Most agents receive hook settings per launch; managed MiniMax Code launches install a chda-owned local plugin that reports nothing outside those launches. Existing disabled plugin state is preserved. The optional MCP server is added with the agent's own mcp add command."
    }
   },
   {
@@ -176,7 +176,7 @@
       <div class="col"><h3>One worktree per task</h3><p>Create from any branch, label it with a note, read its diff, update from upstream, then merge and clean up with checks for unsaved or unpushed work. Opt in to selected local-file copies and ordered setup commands before opening a new worktree.</p></div>
       <div class="col"><h3>Read the Git tree</h3><p>Choose View Git tree from the repository menu for commit connections, subjects, short hashes and branch, tag and HEAD labels. Browse in a read-only tab, refresh and restore it after restarting.</p></div>
       <div class="col"><h3>Review changes with private notes</h3><p>Choose Review diff from a worktree menu. Select old or new lines, add private notes and preview a batch for an exact live agent conversation. Copy and focus its pane, then paste when ready.</p></div>
-      <div class="col"><h3>Agents you can see</h3><p>Track Claude Code, Codex, Gemini CLI, Copilot CLI and OpenCode. Choose permissions per launch, resume exact supported conversations and retain failed output. See child activity as compact counts on the parent row; right-click for details. Codex starts in its pane without the shared background server warning.</p></div>
+      <div class="col"><h3>Agents you can see</h3><p>Track Claude Code, Codex, Gemini CLI, Copilot CLI, OpenCode and MiniMax Code. Gemini and MiniMax appear in default menus. See pane-specific status and notifications; resume exact supported conversations and retain failed output. MiniMax currently supports managed launches and live status.</p></div>
       <div class="col"><h3>Quota and local session resources</h3><p>See Claude Code and Codex quota, clear loading and retry states, reset countdowns, and selected-pane CPU, memory and listeners. Open bottom-left details with labeled bars for each reported quota window. Claude usage updates keep other windows and their live sessions running.</p></div>
       <div class="col"><h3>Every action in one place</h3><p>Press <code>cmd-shift-p</code> to find worktrees, launch or resume agents and run your own commands in a tab, split or floating terminal. Agents can use <code>chda mcp</code> to create worktrees, open tabs, read session output and wait for other agents.</p></div>
       <div class="col"><h3>Your terminal, your settings</h3><p>Reuse your Ghostty font, colors and padding, with a light and dark theme pair that follows macOS. Edit chda&#x27;s TOML settings without restarting. Homebrew and version-manager agents are found through your login shell&#x27;s PATH.</p></div>
@@ -241,13 +241,13 @@ brew install --cask chda</pre>
       <dt>How do I run several Claude Code agents in parallel?</dt>
       <dd>Give each task its own git worktree and run one agent in each. chda creates the worktree from the sidebar (or from the agent, through chda mcp), opens a tab in it, and shows every agent's state next to its branch: working, waiting for you, or done.</dd>
       <dt>Which coding agents does chda work with?</dt>
-      <dd>Claude Code, Codex, Gemini CLI, GitHub Copilot CLI and OpenCode. Their status shows in the sidebar, on tabs and on the Dock icon. Codex is also tracked when you type codex directly in a chda zsh, bash or fish terminal with shell integration enabled.</dd>
+      <dd>Claude Code, Codex, Gemini CLI, GitHub Copilot CLI, OpenCode and MiniMax Code. Their status shows in the sidebar, on tabs and on the Dock icon. Codex is also tracked when you type codex directly in a chda zsh, bash or fish terminal with shell integration enabled.</dd>
       <dt>How is chda different from tmux or Ghostty?</dt>
       <dd>Ghostty is the terminal; chda uses its core (libghostty-vt) and adds what parallel agent work needs: a sidebar of worktrees with git and pull request badges, agent status, notifications when an agent waits, and merge-and-clean when a branch is done.</dd>
       <dt>Does chda read my prompts?</dt>
       <dd>Only on your computer. Hooks pass a session id, directory, event kind and time; the session list reads the agents’ local transcripts for each session’s first prompt and token usage. Nothing is sent anywhere. A daily GitHub release check can be disabled with <code>update-check = false</code>. Clicking Update downloads the signed macOS update through Sparkle; downloads and installation never begin automatically.</dd>
       <dt>Do I have to change my agents' config?</dt>
-      <dd>No. chda passes hook settings per launch and leaves your config files alone. Only the optional MCP server is added once per agent, with the agent's own <code>mcp add</code> command.</dd>
+      <dd>chda leaves your config files alone. Most agents receive hook settings per launch; managed MiniMax Code launches install a chda-owned local plugin that reports nothing outside those launches. Existing disabled plugin state is preserved. The optional MCP server is added with the agent's own <code>mcp add</code> command.</dd>
       <dt>Can I just type codex in a terminal?</dt>
       <dd>Yes. In chda's zsh, bash and fish terminals, typing codex tracks working, waiting for input and finished turns with shell integration enabled. Existing aliases and functions are kept. If your own wrapper bypasses the helper, use Run Codex from the worktree menu. See the README for Codex terminal-title requirements.</dd>
       <dt>Can I launch Homebrew-installed agents from the Dock?</dt>

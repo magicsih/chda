@@ -57,6 +57,9 @@ impl HookEvent {
 
 /// Per-user data directory, shared with the rest of chda.
 pub fn data_dir() -> Option<PathBuf> {
+    if let Some(dir) = std::env::var_os("CHDA_HOOK_DATA_DIR") {
+        return Some(PathBuf::from(dir));
+    }
     if let Some(dir) = std::env::var_os("XDG_DATA_HOME") {
         return Some(PathBuf::from(dir).join("chda"));
     }
@@ -158,6 +161,39 @@ pub fn gemini_event(payload: &Value) -> Option<HookEvent> {
     })
 }
 
+/// MiniMax's native hook shape. Root conversation binding and removal of
+/// prompt/tool content happen in the managed local plugin before this process.
+pub fn minimax_event(payload: &Value) -> Option<HookEvent> {
+    if ["agent_id", "parent_session_id", "parentSessionId"]
+        .iter()
+        .any(|key| payload.get(key).is_some_and(|v| !v.is_null()))
+    {
+        return None;
+    }
+    let kind = match payload.get("hook_event_name")?.as_str()? {
+        "SessionStart" => HookKind::SessionStart,
+        "UserPromptSubmit" | "PostToolUse" => HookKind::PromptSubmitted,
+        "PermissionRequest" => HookKind::WaitingInput,
+        "Stop" => HookKind::Stopped,
+        "SessionEnd" => HookKind::SessionEnd,
+        _ => return None,
+    };
+    let session = payload.get("session_id")?.as_str()?;
+    let cwd = payload.get("cwd")?.as_str()?;
+    if session.is_empty() || cwd.is_empty() {
+        return None;
+    }
+    Some(HookEvent {
+        agent: "minimax".into(),
+        session_id: session.into(),
+        cwd: cwd.into(),
+        kind,
+        timestamp: now_ms(),
+        pane: None,
+        child: None,
+    })
+}
+
 /// Map a GitHub Copilot CLI hook payload (stdin JSON) to an event. Its
 /// payloads do not name the event, so chda registers one command per event
 /// and passes the name as an argument.
@@ -254,7 +290,7 @@ fn codex_event(payload: &Value, cwd: &Path) -> Option<HookEvent> {
 /// hook that errors must not disturb the agent.
 pub fn hook_main(args: &[String]) -> i32 {
     let Some(agent) = args.first() else {
-        eprintln!("usage: chda hook <claude|codex|gemini|copilot|opencode>");
+        eprintln!("usage: chda hook <claude|codex|gemini|minimax|copilot|opencode>");
         return 2;
     };
     let stdin_json = || {
@@ -265,6 +301,14 @@ pub fn hook_main(args: &[String]) -> i32 {
     let event = match agent.as_str() {
         "claude" => stdin_json().and_then(|v| claude_event(&v)),
         "gemini" => stdin_json().and_then(|v| gemini_event(&v)),
+        "minimax"
+            if std::env::var(PANE_ENV)
+                .ok()
+                .and_then(|v| v.parse::<u64>().ok())
+                .is_some_and(|p| p > 0) =>
+        {
+            stdin_json().and_then(|v| minimax_event(&v))
+        }
         "copilot" => {
             let name = args.get(1).map(String::as_str).unwrap_or("");
             stdin_json().and_then(|v| copilot_event(name, &v))
@@ -290,7 +334,7 @@ pub fn hook_main(args: &[String]) -> i32 {
     }
     // Claude Code and Gemini CLI read stdout as JSON; an empty object means
     // "carry on".
-    if agent == "claude" || agent == "gemini" {
+    if agent == "claude" || agent == "gemini" || agent == "minimax" {
         println!("{{}}");
     }
     0

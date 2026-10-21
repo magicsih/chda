@@ -922,6 +922,7 @@ dependencies = [
  "chda-config",
  "chda-core",
  "chda-ui",
+ "serde_json",
 ]
 
 [[package]]

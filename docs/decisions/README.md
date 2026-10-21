@@ -24,3 +24,4 @@ new record rather than editing an accepted one.
 | [0019](0019-unified-sessions.md) | One Sessions list scrolled only by the user; PROJECT scrolls separately and reveals the focused worktree |
 | [0020](0020-session-addressed-prompt-delivery.md) | Proposed: deliver prompts to an exact Claude Code or Codex session through channels and the Codex queue, never by typing |
 | [0022](0022-ghostty-git-source-fallback.md) | Pinned Ghostty source and its GitHub archive packages fall back to commit-pinned git fetches when codeload refuses them; the existing digests still gate them |
+| [0023](0023-minimax-local-status-plugin.md) | MiniMax Code managed launches use a chda-owned local plugin and private pane routing; historical transcripts remain unsupported |
