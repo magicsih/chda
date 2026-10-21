@@ -42,11 +42,11 @@
   "release": {
     "requested": true,
     "markets": [
-      "github-macos",
-      "github-linux"
+      "github-macos"
     ],
     "until": "public",
-    "validationPolicy": "docs/releasing.md"
+    "validationPolicy": "docs/releasing.md",
+    "distributionPolicy": "ADR 0021 keeps Linux publication on a separate cadence; Linux CI remains required for this macOS release."
   },
   "approval": "approval.md",
   "releaseAuthorization": {
