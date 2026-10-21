@@ -18,5 +18,8 @@ chda-config.workspace = true
 chda-core.workspace = true
 chda-ui.workspace = true
 
+[dev-dependencies]
+serde_json.workspace = true
+
 [lints]
 workspace = true

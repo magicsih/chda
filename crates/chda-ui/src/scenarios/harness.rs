@@ -157,7 +157,9 @@ impl AgentAdapter for TestAdapter {
             return real;
         };
         let mut cmd = std::process::Command::new(bin);
-        cmd.args(real.get_args()).current_dir(cwd);
+        cmd.args(real.get_args())
+            .current_dir(cwd)
+            .envs(real.get_envs().filter_map(|(k, v)| v.map(|v| (k, v))));
         cmd
     }
     fn session_roots(&self) -> Vec<PathBuf> {
@@ -369,6 +371,11 @@ fn open_window(
             ("GIT_PAGER".into(), "less -+F -R".into()),
             ("HOME".into(), home.home.to_string_lossy().into_owned()),
             (
+                "MINIMAX_DATA_DIR".into(),
+                home.home.join(".minimax").to_string_lossy().into_owned(),
+            ),
+            ("__MAVIS_RUNTIME_PROFILE".into(), String::new()),
+            (
                 "XDG_CONFIG_HOME".into(),
                 home.home.join(".config").to_string_lossy().into_owned(),
             ),
@@ -428,6 +435,8 @@ fn open_window(
                     .map(|inner| {
                         let claude = inner.id() == AgentId::Claude;
                         let codex = inner.id() == AgentId::Codex;
+                        let minimax = inner.id() == AgentId::MiniMax;
+                        let gemini = inner.id() == AgentId::Gemini;
                         Box::new(TestAdapter {
                             inner,
                             projects: if claude {
@@ -437,7 +446,11 @@ fn open_window(
                             } else {
                                 None
                             },
-                            bin: if claude {
+                            bin: if minimax {
+                                Some(home.bin.join("mcode"))
+                            } else if gemini {
+                                Some(home.bin.join("gemini"))
+                            } else if claude {
                                 Some(home.claude_bin.clone())
                             } else if codex {
                                 Some(home.bin.join("codex"))

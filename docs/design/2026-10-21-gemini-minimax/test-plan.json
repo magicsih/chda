@@ -1,0 +1,48 @@
+{
+  "version": "1.0",
+  "status": "approved",
+  "design": "design.md",
+  "baseline": "fc8512afb550348156db8271d7b46d6a0e0c31b6",
+  "level": "L1",
+  "environment": "dev",
+  "executor": "author; existing CI for cross-platform regression",
+  "redesign": false,
+  "scope": [
+    "Expose Gemini and MiniMax in the default provider list without rewriting explicit user lists",
+    "Add MiniMax Code managed launch, preset and default-action support",
+    "Map native MiniMax hook metadata to existing pane status and notifications",
+    "Preserve unsupported MiniMax historical resume and restore as an explicit limitation"
+  ],
+  "dataIsolation": "Temporary homes, provider data directories, synthetic payloads and local CLI stand-ins; no changes to live provider data",
+  "checks": [
+    "Requirement tests fail before implementation for MiniMax registration, executable lookup and configuration parsing",
+    "Gemini adapter tests and the existing Gemini status GPUI scenario pass",
+    "MiniMax launches mcode with exact cwd and preset arguments; absence of mcode reports an error",
+    "The installed MiniMax CLI discovers the generated local plugin in an isolated data directory without authentication or model requests",
+    "The plugin helper invokes the real chda hook process with synthetic native payloads; no-op outside managed launches",
+    "Working, waiting, continued work, completion and session end reach only the owning pane; notifications and jump focus agree",
+    "Cancellation or failure without Stop does not fabricate successful completion",
+    "Child events and malformed payloads cannot overwrite a parent or another provider",
+    "Plugin collision, disabled state, permission errors, repeated installation and interrupted updates preserve unrelated files and settings",
+    "MiniMax historical resume, exact restart and restore do not silently create another conversation",
+    "cargo fmt --all --check",
+    "cargo clippy --workspace --all-targets -- -D warnings",
+    "cargo test --workspace on macOS and Linux through the existing checks; Windows build through existing CI",
+    "python3 scripts/test-product-docs.py",
+    "python3 scripts/sync-product-docs.py --check",
+    "Inspect changed rendered examples and Pages at desktop and narrow widths"
+  ],
+  "evidenceRules": [
+    "Record the candidate SHA and actual command results",
+    "Distinguish synthetic hook scenarios, installed CLI discovery and live model turns",
+    "Native desktop interaction and authenticated provider turns are unrun unless separately authorized and actually executed",
+    "Adding existing menu entries and provider labels does not introduce a new screen or redesign"
+  ],
+  "delivery": "Reviewed Ready PR and required checks",
+  "release": {
+    "requested": false,
+    "markets": [],
+    "until": "ready-pr"
+  },
+  "approval": "approval.md"
+}

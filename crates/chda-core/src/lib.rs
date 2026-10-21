@@ -49,7 +49,7 @@ pub mod agents {
         parse_codex_title, permission_arguments, read_codex_children, recent_answers,
         sharing_preview, validate_resume_options,
     };
-    pub use chda_agents::{control, quota, statusline, which};
+    pub use chda_agents::{control, minimax, quota, statusline, which};
 }
 pub use chda_git::PullMode;
 pub use chda_git::worktree_root;

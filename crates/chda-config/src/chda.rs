@@ -41,6 +41,7 @@ pub enum DefaultAction {
     Claude,
     Codex,
     Gemini,
+    Minimax,
     Copilot,
     #[serde(rename = "opencode")]
     OpenCode,
@@ -54,6 +55,7 @@ impl DefaultAction {
             DefaultAction::Claude => Some("claude"),
             DefaultAction::Codex => Some("codex"),
             DefaultAction::Gemini => Some("gemini"),
+            DefaultAction::Minimax => Some("minimax"),
             DefaultAction::Copilot => Some("copilot"),
             DefaultAction::OpenCode => Some("opencode"),
         }
@@ -152,7 +154,7 @@ pub struct ChdaConfig {
     /// Repositories whose worktree lists are collapsed in PROJECT.
     pub collapsed_repos: Vec<PathBuf>,
     /// Agents offered in the sidebar and the palette, by id (`claude`,
-    /// `codex`, `gemini`, `copilot`, `opencode`).
+    /// `codex`, `gemini`, `minimax`, `copilot`, `opencode`).
     pub agents: Vec<String>,
     pub sidebar_width: u32,
     pub sidebar_visible: bool,
@@ -199,7 +201,9 @@ impl Default for ChdaConfig {
             sessions_collapsed: false,
             project_collapsed: false,
             collapsed_repos: Vec::new(),
-            agents: vec!["claude".into(), "codex".into()],
+            agents: ["claude", "codex", "gemini", "minimax"]
+                .map(String::from)
+                .to_vec(),
             sidebar_width: 280,
             sidebar_visible: true,
             notifications: true,
@@ -420,7 +424,7 @@ mod tests {
             c.repo_hosts.get(Path::new("/src/app")).map(String::as_str),
             Some("github.example.com")
         );
-        assert_eq!(c.agents, vec!["claude", "codex"]);
+        assert_eq!(c.agents, vec!["claude", "codex", "gemini", "minimax"]);
         assert_eq!(c.pull, PullStrategy::FfOnly);
         fs::write(&path, "pull = \"rebase\"\n").unwrap();
         assert_eq!(ChdaConfig::load(&path).unwrap().pull, PullStrategy::Rebase);
@@ -429,6 +433,18 @@ mod tests {
         fs::write(&path, "default-action = \"opencode\"\n").unwrap();
         let c = ChdaConfig::load(&path).unwrap();
         assert_eq!(c.default_action.agent(), Some("opencode"));
+        fs::write(
+            &path,
+            "default-action = 'minimax'\nagents = ['codex', 'gemini']\n",
+        )
+        .unwrap();
+        let c = ChdaConfig::load(&path).unwrap();
+        assert_eq!(c.default_action.agent(), Some("minimax"));
+        assert_eq!(
+            c.agents,
+            ["codex", "gemini"],
+            "an explicit list is preserved"
+        );
         fs::remove_dir_all(&dir).unwrap();
     }
 

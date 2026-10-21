@@ -147,7 +147,7 @@ pub(crate) struct ChildGroup {
 }
 
 /// Label colors, by adapter order.
-const AGENT_COLORS: [u32; 5] = [0xcba6f7, 0x94e2d5, 0xf9e2af, 0xf5c2e7, 0x74c7ec];
+const AGENT_COLORS: [u32; 6] = [0xcba6f7, 0x94e2d5, 0xf9e2af, 0xf5c2e7, 0x74c7ec, 0xfab387];
 
 impl AgentLabel {
     pub fn new(index: usize, id: &str, short: String, name: &str) -> Self {
