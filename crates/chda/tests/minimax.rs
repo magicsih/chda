@@ -172,6 +172,33 @@ fn managed_plugin_routes_only_root_metadata_to_the_real_hook() {
             .skip(2)
             .all(|e| e.pane == Some(11) && e.session_id == "root-1" && e.agent == "minimax")
     );
+    // Pane numbers can repeat in a new app process. A fresh managed launch
+    // must admit its new root even when the previous app left routing state.
+    let fresh_path = prepare(11);
+    let mut fresh_start = payload("SessionStart", "fresh-process-root");
+    fresh_start["source"] = "startup".into();
+    send(&script, &fresh_path, &root.0, fresh_start);
+    send(
+        &script,
+        &fresh_path,
+        &root.0,
+        payload("UserPromptSubmit", "fresh-process-root"),
+    );
+    let fresh_events: Vec<HookEvent> = ipc::take_fallback(&data)
+        .unwrap()
+        .lines()
+        .map(|line| serde_json::from_str(line).unwrap())
+        .collect();
+    assert_eq!(
+        fresh_events.len(),
+        2,
+        "a new managed launch must replace the earlier process's root binding"
+    );
+    assert!(
+        fresh_events
+            .iter()
+            .all(|event| { event.pane == Some(11) && event.session_id == "fresh-process-root" })
+    );
     remove_context(&data, 11);
     send(&script, &path1, &root.0, payload("Stop", "root-1"));
     assert!(ipc::take_fallback(&data).unwrap().is_empty());

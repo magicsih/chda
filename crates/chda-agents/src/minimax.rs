@@ -246,6 +246,13 @@ pub fn prepare_launch(launch: &LaunchPreparation<'_>) -> io::Result<std::ffi::Os
         return Err(collision());
     }
     fs::create_dir_all(&context)?;
+    // A fresh process must not inherit a prior app process's root binding.
+    // Adoption skips preparation and keeps the running process's context.
+    match fs::remove_file(context.join("state.json")) {
+        Ok(()) => {}
+        Err(error) if error.kind() == io::ErrorKind::NotFound => {}
+        Err(error) => return Err(error),
+    }
     let value = json!({"version": 1, "pane": pane, "hook_bin": hook_bin, "data_dir": data_dir});
     ipc::write_private_atomic(&context.join("context.json"), &serde_json::to_vec(&value)?)?;
     let paths = std::iter::once(context).chain(std::env::split_paths(search_path));

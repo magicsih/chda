@@ -34,7 +34,8 @@ the native hook's ten-second limit, and the hook integration passed again.
 
 ## Boundaries
 
-No live authenticated model turn or native desktop interaction was executed.
+No authenticated Gemini/MiniMax conversation through chda or native desktop
+interaction was executed.
 All provider tests used temporary data or synthetic events. The installed CLI
 check did not request a model response or touch the user's MiniMax data.
 MiniMax historical conversations, exact resume, restart and usage remain
@@ -44,3 +45,25 @@ The local MiniMax advisory review and its one retry both reached the configured
 native-entrypoint correction was self-reviewed and verified by its regression
 test. Required checks are reported in the PR rather than inferred from this
 local record.
+
+## Fresh-launch follow-up
+
+A new app process can reuse a numeric pane ID whose MiniMax context survived
+the previous process. Its old root-session binding prevented the new
+`SessionStart` and subsequent status events from being reported. Fresh managed
+launch preparation now removes only that pane's previous `state.json` before
+publishing its context. Process adoption skips preparation and retains the
+running session's binding.
+
+The actual hook-process integration was extended to prepare the same pane
+again and report a new root's startup and prompt. It failed before the fix
+(zero events instead of two) and passed afterward. The five MiniMax adapter
+tests, workspace clippy and formatting also passed.
+
+After the user requested another advisory review, the 100-step run at
+`dcd4c35` also ended at its execution limit after approximately nine minutes.
+Its log showed blocked attachment reads and continued source exploration.
+A corrective retry supplies the code and surrounding implementation directly
+as text and prohibits further tool exploration, with the same 100-step and
+20-minute limits. Its outcome and the current candidate's CI are recorded in
+the PR. Review output remains outside the repository and is not posted to the PR.
