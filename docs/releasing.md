@@ -64,6 +64,13 @@ v1.0.25는 부분 검수와 화면 조작 차단을 전달한 뒤 사용자가 �
 통과를 뜻하지 않는다. 기존 서명·공증·universal·ZIP·업데이트 서명·동일 draft 공개
 검사는 유지하며 다른 후보나 다음 버전에 적용할 수 없다.
 
+For v1.3.0 only, the owner selected publication of candidate `068ef5f` with the
+enumerated native checks incomplete. The [candidate-specific approval](releases/v1.3.0-publication-approval.md)
+retains `native_result: blocked`; the limited isolated-launcher check does not
+establish the normal 43-case and 13-area coverage. Signing, notarization,
+universal architectures, update signatures and immutable draft/file checks remain
+required. This approval cannot authorize another candidate or future version.
+
 ## 버전 정책
 
 `v0.1.24` 다음 릴리스부터 `v1.0.25`로 전환한다. 마지막 자리 `25`는 기존

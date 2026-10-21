@@ -214,7 +214,7 @@ class V1025CoverageTests(unittest.TestCase):
     def test_prior_contracts_remain_exact_and_later_versions_retain_recent_cases(self):
         for tag in ('v0.1.23', 'v0.1.24', 'v0.2.0'):
             self.assertEqual(release.cases_for(tag), release.V023_CASES)
-        for tag in ('v1.0.25', 'v1.0.26', 'v1.1.0', 'v2.0.0'):
+        for tag in ('v1.0.25', 'v1.0.26', 'v1.1.0', 'v1.3.0', 'v1.3.1', 'v2.0.0'):
             self.assertEqual(release.cases_for(tag), release.V023_CASES | self.NEW_CASES)
 
 
@@ -387,6 +387,18 @@ class V1025PublicationApprovalTests(V023PublicationApprovalTests):
             self.verify(self.evidence(self.approval()), previous)
 
 
+class V130PublicationApprovalTests(V1025PublicationApprovalTests):
+    TAG = 'v1.3.0'
+    INSTRUCTION = ('Publish this v1.3.0 candidate with the stated native validation incomplete; '
+                   'retain signing, notarization and file verification.')
+    NEXT = 'v1.3.1'
+
+    def test_v1025_approval_cannot_authorize_v130(self):
+        previous = V1025PublicationApprovalTests().approval()
+        with self.assertRaises(ValueError):
+            self.verify(self.evidence(self.approval()), previous)
+
+
 class ReleaseNotesTests(unittest.TestCase):
     def test_historical_exception_notes_remain_unchanged(self):
         for tag in ('v0.1.21', 'v0.1.22', 'v0.1.23'):
@@ -400,6 +412,12 @@ class ReleaseNotesTests(unittest.TestCase):
         self.assertIn('incomplete', notes)
         self.assertIn('v1.0.25-publication-approval.md', notes)
         self.assertEqual(release.exception_notes('v1.0.26'), '')
+
+    def test_v130_discloses_its_own_incomplete_validation_only(self):
+        notes = release.exception_notes('v1.3.0')
+        self.assertIn('incomplete', notes)
+        self.assertIn('v1.3.0-publication-approval.md', notes)
+        self.assertEqual(release.exception_notes('v1.3.1'), '')
 
 def reduced_exception_record():
     record = json.loads(exception_record())
@@ -834,6 +852,34 @@ class PromotionTests(unittest.TestCase):
         with patch.dict(os.environ, {'GITHUB_EVENT_NAME': 'push'}):
             with self.assertRaises(ValueError):
                 release.workflow_context()
+
+    def test_linux_catalog_area_preserves_exact_macos_coverage(self):
+        macos = sorted(release.FEATURES)
+        catalogs = (
+            (macos + ['Linux desktop'], True),
+            ([area for area in macos if area != 'Terminal'] + ['Linux desktop'], False),
+            (macos + ['Linux desktop', 'Linux desktop'], False),
+            (macos + ['Linux desktop', 'Unreviewed platform'], False),
+            (macos, True),
+        )
+        for index, (areas, accepted) in enumerate(catalogs):
+            version = f'1.3.{index}'
+            (self.repo / 'Cargo.toml').write_text(f'[workspace.package]\nversion = "{version}"\n')
+            release.write_json(self.repo / 'docs/product-features.json',
+                               {'features': [{'area': area} for area in areas]})
+            self.git('add', '.')
+            self.git('commit', '-m', 'test: synthetic platform catalog')
+            sha = self.git('rev-parse', 'HEAD')
+            self.git('tag', 'v' + version)
+            self.git('update-ref', 'refs/remotes/origin/main', sha)
+            with self.subTest(areas=areas):
+                if accepted:
+                    self.assertEqual(release.check_source('v' + version, sha, CONFIG),
+                                     self.git('rev-parse', 'HEAD^{tree}'))
+                else:
+                    with self.assertRaises(ValueError):
+                        release.check_source('v' + version, sha, CONFIG)
+            self.assertEqual(release.FEATURES, frozenset(macos))
 
     def test_exception_promotion_retains_blocked_result_and_same_signed_asset_checks(self):
         record = exception_record(self.sha, self.tree)
