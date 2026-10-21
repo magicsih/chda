@@ -11,3 +11,18 @@
   pane context from a directory on the managed launch's inherited PATH, then
   restores only chda's helper and pane routing environment for the hook process.
   The context contains routing metadata only and is absent outside that launch.
+
+## Expanded release endpoint
+
+On 2026-10-21 the user explicitly requested continuing through the next public
+version release. This supersedes the earlier Ready-PR-only endpoint. The next
+minor version is 1.3.0 under the repository version policy; release-plz owns its
+version and changelog changes.
+
+The release follows the existing macOS distribution channel, full CI regression,
+the repository's native release evidence, signed artifacts, publication and public
+download verification. ADR 0021 keeps Linux publication on a separate cadence;
+Linux CI remains required and the existing Linux public release is preserved.
+The unavailable MiniMax advisory
+review remains recorded as unavailable. Previous version-specific publication
+exceptions do not apply to 1.3.0, and unrun native checks must not be marked passed.

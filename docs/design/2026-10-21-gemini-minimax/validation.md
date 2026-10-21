@@ -67,3 +67,11 @@ A corrective retry supplies the code and surrounding implementation directly
 as text and prohibits further tool exploration, with the same 100-step and
 20-minute limits. Its outcome and the current candidate's CI are recorded in
 the PR. Review output remains outside the repository and is not posted to the PR.
+
+## Release continuation
+
+The records above describe implementation validation before release. The user
+subsequently expanded the endpoint to public release, as recorded in
+[approval.md](approval.md). Release-plz PR #284 prepares 1.3.0. Release validation,
+artifacts and publication status are tracked separately and are not implied by
+the earlier CI results.
