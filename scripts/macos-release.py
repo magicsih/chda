@@ -50,6 +50,7 @@ EXCEPTION_PATHS = {
     'v0.1.23': 'docs/releases/v0.1.23-publication-approval.json',
     'v0.1.24': 'docs/releases/v0.1.24-publication-approval.json',
     'v1.0.25': 'docs/releases/v1.0.25-publication-approval.json',
+    'v1.3.0': 'docs/releases/v1.3.0-publication-approval.json',
 }
 OWNER_INSTRUCTIONS = {
     'v0.1.21': '이제 좀 공개해라 좀',
@@ -57,6 +58,8 @@ OWNER_INSTRUCTIONS = {
     'v0.1.23': 'PR 병합하고 공개해 빨리. 아무도 쓰는 사람도 없는데 뭘 자꾸 뜸을드려 빨리 빨리 좀 해 그냥',
     'v0.1.24': '공개 하자',
     'v1.0.25': 'rhdrogo.',
+    'v1.3.0': ('Publish this v1.3.0 candidate with the stated native validation incomplete; '
+               'retain signing, notarization and file verification.'),
 }
 POSTBUILD_EXCEPTION_PATH = 'docs/releases/v0.1.22-signed-update-exception.json'
 POSTBUILD_CHECKS = {
@@ -427,7 +430,12 @@ def check_source(tag, sha, config):
     version = re.search(r'^version\s*=\s*"([^"]+)"\s*$', section[1], re.M) if section else None
     require(version is not None and 'v' + version[1] == tag, 'Workspace version differs from the release tag')
     features = json.loads(command('git', 'show', '%s:docs/product-features.json' % sha))
-    unique_items([f['area'] for f in features['features']], FEATURES)
+    areas = [f['area'] for f in features['features']]
+    catalog_areas = FEATURES
+    if tuple(map(int, tag[1:].split('.'))) >= (1, 1, 0) and 'Linux desktop' in areas:
+        # ADR 0021 gives Linux its own publication and native review channel.
+        catalog_areas = FEATURES | {'Linux desktop'}
+    unique_items(areas, catalog_areas)
     return tree
 
 
@@ -575,6 +583,13 @@ def native_archive(root, tag):
 
 def exception_notes(tag):
     """Per-version validation notices for explicitly approved releases."""
+    if tag == 'v1.3.0':
+        return ('Native UI validation is incomplete. The owner authorized this v1.3.0 candidate '
+                'with the three full native review rounds, both full native E2E runs and exact '
+                'signed-ZIP GUI checks unverified. Developer ID signing, notarization, universal '
+                'architectures, checksums and update signatures remain required. '
+                '[Validation status](https://github.com/%s/blob/main/docs/releases/'
+                'v1.3.0-publication-approval.md).\n\n' % REPO)
     if tag == 'v1.0.25':
         return ('Native UI validation is incomplete. The owner authorized publication with '
                 'the remaining native review rounds, both full native E2E runs and exact '
