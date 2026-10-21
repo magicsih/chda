@@ -3,9 +3,9 @@
   "status": "approved",
   "design": "design.md",
   "baseline": "fc8512afb550348156db8271d7b46d6a0e0c31b6",
-  "level": "L1",
+  "level": "L3",
   "environment": "dev",
-  "executor": "author; existing CI for cross-platform regression",
+  "executor": "existing CI for full regression; independent reviewers for native release evidence",
   "redesign": false,
   "scope": [
     "Expose Gemini and MiniMax in the default provider list without rewriting explicit user lists",
@@ -40,9 +40,18 @@
   ],
   "delivery": "Reviewed Ready PR and required checks",
   "release": {
-    "requested": false,
-    "markets": [],
-    "until": "ready-pr"
+    "requested": true,
+    "markets": [
+      "github-macos",
+      "github-linux"
+    ],
+    "until": "public",
+    "validationPolicy": "docs/releasing.md"
   },
-  "approval": "approval.md"
+  "approval": "approval.md",
+  "releaseAuthorization": {
+    "date": "2026-10-21",
+    "source": "User explicitly requested continuing through the next public version release after the implementation and advisory-review status report.",
+    "instruction_sha256": "fcfbe53d9386d1583db3ec36f9b5e7904482dd7845535c4a1f6a44b63fb74b0a"
+  }
 }
