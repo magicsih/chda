@@ -12,3 +12,4 @@ AGENTS.local.md
 
 # Pinned native source stays outside Cargo caches.
 /.ghostty-source/
+.serena/
