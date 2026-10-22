@@ -2783,7 +2783,7 @@ impl WorkspaceView {
                     })
                     .collect();
         }
-        if self.config.restore_session
+        if (self.config.restore_session || self.env.session_service.is_some())
             && !registry.restoring
             && let Some(dir) = self.env.data_dir.as_deref()
         {

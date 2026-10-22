@@ -3,6 +3,63 @@ use super::harness::{Harness, wait_until};
 use gpui::{Modifiers, TestAppContext, VisualTestContext};
 
 #[gpui::test]
+fn unsupported_agent_explains_resume_limits_and_offers_a_separate_new_conversation(
+    cx: &mut TestAppContext,
+) {
+    use std::os::unix::fs::PermissionsExt;
+    let mut h = Harness::open_service(cx, "service-minimax", |home| {
+        let repo = home.repo("app");
+        std::fs::write(
+            &home.config,
+            format!(
+                "restore-session = false\nrepos = [{}]\n",
+                serde_json::to_string(&repo).unwrap()
+            ),
+        )
+        .unwrap();
+        std::fs::create_dir_all(&home.bin).unwrap();
+        let script = home.bin.join("mcode");
+        std::fs::write(&script, "#!/bin/sh\nif [ \"$1\" = '--version' ]; then echo 0.6.12; exit; fi\necho fake-mcode\nwhile IFS= read -r line; do [ \"$line\" != fail ] || exit 7; done\n").unwrap();
+        std::fs::set_permissions(script, std::fs::Permissions::from_mode(0o700)).unwrap();
+    });
+    h.wait_prompt();
+    h.keys("cmd-shift-p");
+    h.type_text("Run MiniMax Code in app");
+    h.keys("enter");
+    h.wait_for("managed MiniMax", |v, cx| {
+        v.focused_text(cx).contains("fake-mcode")
+    });
+    let pane = h.read(|v, _| v.ws.focused_pane().unwrap());
+    let client = h.read(|v, _| v.env.session_service.clone().unwrap());
+    assert!(
+        client
+            .state()
+            .unwrap()
+            .sessions
+            .iter()
+            .any(|r| r.pane == pane.raw() && r.launch.is_some()),
+        "Disabling layout restore must not discard captured launch metadata"
+    );
+    h.type_text("fail");
+    h.keys("enter");
+    h.wait_for("resume unavailable reason", |v, _| {
+        v.ws.pane(pane)
+            .unwrap()
+            .pane_run
+            .as_ref()
+            .is_some_and(|r| r.label().contains("exact resume is unavailable"))
+    });
+    assert!(h.cx.debug_bounds("agent-restart").is_none());
+    let new = h.cx.debug_bounds("new-conversation").unwrap();
+    let count = client.state().unwrap().sessions.len();
+    h.cx.simulate_click(new.center(), Modifiers::default());
+    h.wait_for("explicit new conversation", |v, cx| {
+        v.ws.focused_pane() != Some(pane) && v.focused_text(cx).contains("fake-mcode")
+    });
+    assert_eq!(client.state().unwrap().sessions.len(), count + 1);
+}
+
+#[gpui::test]
 fn live_agent_attachment_keeps_the_reported_turn_state(cx: &mut TestAppContext) {
     let mut h = Harness::open_service(cx, "service-agent-attach", |home| home.fake_claude());
     h.wait_prompt();
