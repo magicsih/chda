@@ -64,7 +64,8 @@ fn retain(data: &Path, source: &Path) -> io::Result<PathBuf> {
     let bytes = std::fs::read(source).map_err(|_| {
         io::Error::other("Build or install chda-session beside chda before opening a macOS window")
     })?;
-    let hash = format!("{:x}", Sha256::digest(&bytes));
+    let digest = Sha256::digest(&bytes);
+    let hash = format!("{digest:x}");
     let directory = data.join("session-service/bin").join(hash);
     // The retained tree is outside the replaced application bundle. Its
     // content hash binds helpers to the exact source executable.
@@ -89,7 +90,7 @@ fn retain(data: &Path, source: &Path) -> io::Result<PathBuf> {
             "The retained session executable failed code signature verification",
         ));
     }
-    if Sha256::digest(std::fs::read(&target)?) != Sha256::digest(&bytes) {
+    if Sha256::digest(std::fs::read(&target)?) != digest {
         return Err(io::Error::other(
             "The retained session executable changed during preparation",
         ));
