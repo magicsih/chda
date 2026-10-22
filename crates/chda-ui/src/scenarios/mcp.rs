@@ -301,6 +301,7 @@ fn requests_drained_by_another_window_can_coordinate_without_reentering_it(
                 .borrow_mut()
                 .replay
                 .push(Incoming::Event(HookEvent {
+                    run: None,
                     child: None,
                     agent: "claude".into(),
                     session_id: session.into(),

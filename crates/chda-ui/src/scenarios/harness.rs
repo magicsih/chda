@@ -579,6 +579,7 @@ impl Harness {
         session: &str,
     ) {
         let event = HookEvent {
+            run: None,
             child: None,
             agent: agent.into(),
             session_id: session.into(),

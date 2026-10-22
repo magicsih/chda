@@ -971,6 +971,21 @@ version = "1.3.0"
 dependencies = [
  "libc",
  "portable-pty",
+ "serde",
+]
+
+[[package]]
+name = "chda-session"
+version = "1.3.0"
+dependencies = [
+ "chda-agents",
+ "chda-core",
+ "chda-git",
+ "chda-pty",
+ "chda-term",
+ "serde",
+ "serde_json",
+ "sha2",
 ]
 
 [[package]]
@@ -982,6 +997,7 @@ dependencies = [
  "libghostty-vt",
  "png 0.18.1",
  "regex",
+ "serde",
  "serde_json",
  "sha2",
 ]

@@ -21,7 +21,7 @@ name = "chda"
 version_group = "chda"
 changelog_update = true
 changelog_path = "./CHANGELOG.md"
-changelog_include = ["chda-ui", "chda-core", "chda-term", "chda-pty", "chda-git", "chda-agents", "chda-config"]
+changelog_include = ["chda-ui", "chda-core", "chda-term", "chda-pty", "chda-git", "chda-agents", "chda-config", "chda-session"]
 git_tag_enable = true
 
 [[package]]
@@ -50,6 +50,10 @@ version_group = "chda"
 
 [[package]]
 name = "chda-config"
+version_group = "chda"
+
+[[package]]
+name = "chda-session"
 version_group = "chda"
 
 [changelog]

@@ -5,7 +5,7 @@
 use regex::{Regex, RegexBuilder};
 
 /// What to look for.
-#[derive(Clone, Debug, Default, PartialEq, Eq)]
+#[derive(serde::Serialize, serde::Deserialize, Clone, Debug, Default, PartialEq, Eq)]
 pub struct SearchQuery {
     pub text: String,
     pub case_sensitive: bool,
@@ -27,7 +27,7 @@ impl SearchQuery {
 }
 
 /// Outcome of the latest search run, for the search bar.
-#[derive(Clone, Debug, Default, PartialEq, Eq)]
+#[derive(serde::Serialize, serde::Deserialize, Clone, Debug, Default, PartialEq, Eq)]
 pub struct SearchStatus {
     pub total: usize,
     /// Position of the current match counted from the newest one (1-based).
@@ -38,7 +38,9 @@ pub struct SearchStatus {
 
 /// One match: cells `start..=end` of screen row `row`, where row 0 is the
 /// oldest scrollback row.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
+#[derive(
+    serde::Serialize, serde::Deserialize, Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord,
+)]
 pub struct Match {
     pub row: u64,
     pub start: u16,
@@ -46,7 +48,7 @@ pub struct Match {
 }
 
 /// How a cell is highlighted by the search.
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+#[derive(serde::Serialize, serde::Deserialize, Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub enum SearchMark {
     #[default]
     None,

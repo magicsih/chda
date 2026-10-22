@@ -32,6 +32,7 @@ fn send_from(
     ipc::send(
         &ipc::socket_path(&h.home.data),
         &HookEvent {
+            run: None,
             agent: agent.into(),
             session_id: parent.into(),
             cwd: h.home.home.clone(),

@@ -16,6 +16,7 @@ use libghostty_vt::kitty::graphics::{DecodePng, DecodedImage, ImageFormat};
 pub(crate) const STORAGE_LIMIT: u64 = 320_000_000;
 
 /// Decoded pixels of one stored image, 8-bit RGBA, row-major.
+#[derive(serde::Serialize, serde::Deserialize)]
 pub struct Image {
     pub id: u32,
     /// Changes whenever the image's pixels may have changed, so renderers
@@ -46,7 +47,9 @@ impl fmt::Debug for Image {
 }
 
 /// Where an image is drawn relative to the cell contents.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
+#[derive(
+    serde::Serialize, serde::Deserialize, Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord,
+)]
 pub enum ImageLayer {
     /// Under the cell backgrounds (`z < i32::MIN / 2`).
     BelowBackground,
@@ -58,7 +61,7 @@ pub enum ImageLayer {
 
 /// One visible placement of an image, in device pixels relative to the
 /// viewport's cell grid. Placements come sorted by `z`.
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(serde::Serialize, serde::Deserialize, Clone, Debug, PartialEq, Eq)]
 pub struct ImagePlacement {
     pub image: Arc<Image>,
     /// Top-left cell; `row` is negative when the image has partly scrolled
