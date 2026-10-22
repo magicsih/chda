@@ -159,6 +159,8 @@ fn run_inner(inherited: Option<(chda_core::handoff::Handoff, chda_term::handoff:
         let mut registry = env.windows.borrow_mut();
         registry.started_at = Some(state.started_at);
         registry.update.adopting = true;
+        registry.update.server_owned = state.service.is_some();
+        registry.detached = state.detached;
         registry.inherited_notifications = state.notifications.into_iter().collect();
         registry.children = state.children;
         registry.update.frozen = true;
@@ -271,10 +273,23 @@ fn run_inner(inherited: Option<(chda_core::handoff::Handoff, chda_term::handoff:
                         .timer(std::time::Duration::from_millis(10))
                         .await;
                 }
-                let committed = cx
-                    .background_spawn(
-                        async move { reply.prepared(std::time::Duration::from_secs(30)) },
+                let (client, layout, children) = cx.update(|_| {
+                    let registry = env.windows.borrow();
+                    (
+                        env.session_service
+                            .clone()
+                            .filter(chda_session::Client::has_imports),
+                        registry.snapshot(),
+                        registry.children.clone(),
                     )
+                });
+                let committed = cx
+                    .background_spawn(async move {
+                        match client {
+                            Some(client) => client.commit_imports(reply, layout, children),
+                            None => reply.prepared(std::time::Duration::from_secs(30)),
+                        }
+                    })
                     .await;
                 if committed.is_err() {
                     std::process::exit(1);

@@ -38,6 +38,9 @@ impl Connection {
 pub struct Client {
     data: PathBuf,
     connection: Arc<Mutex<Connection>>,
+    imports: Arc<Mutex<Vec<Identity>>>,
+    group: String,
+    pending_executable: Arc<Mutex<Option<PathBuf>>>,
 }
 
 pub struct Watch {
@@ -53,6 +56,9 @@ impl Drop for Watch {
     }
 }
 impl Client {
+    pub fn data_directory(&self) -> &Path {
+        &self.data
+    }
     pub fn helper_executable(&self) -> io::Result<PathBuf> {
         Ok(self.state()?.executable)
     }
@@ -62,6 +68,9 @@ impl Client {
             return Err(io::Error::other("Invalid session handshake"));
         }
         Ok(Self {
+            pending_executable: Default::default(),
+            imports: Default::default(),
+            group: chda_pty::local::token()?,
             data: data.to_owned(),
             connection: Arc::new(Mutex::new(connection)),
         })
@@ -73,6 +82,9 @@ impl Client {
             Ok(mut connection) => {
                 if matches!(connection.request(Request::Hello)?, Response::State(_)) {
                     return Ok(Self {
+                        pending_executable: Default::default(),
+                        imports: Default::default(),
+                        group: chda_pty::local::token()?,
                         data: data.to_owned(),
                         connection: Arc::new(Mutex::new(connection)),
                     });
@@ -119,6 +131,67 @@ impl Client {
     pub fn set_gui_available(&self, available: bool) -> io::Result<()> {
         self.request(Request::GuiPresence(available))?;
         Ok(())
+    }
+    pub fn set_pending_executable(&self, executable: PathBuf) {
+        *self.pending_executable.lock().unwrap() = Some(executable);
+    }
+    pub fn upgrade_pending(&self) -> bool {
+        self.pending_executable.lock().unwrap().is_some()
+    }
+    /// Called with the profile's startup lock held. A live process or another
+    /// terminal attachment prevents retirement; no running executable is replaced.
+    pub fn upgrade_if_idle(&self) -> io::Result<bool> {
+        let mut pending = self.pending_executable.lock().unwrap();
+        let Some(executable) = pending.as_ref() else {
+            return Ok(false);
+        };
+        let mut connection = self.connection.lock().unwrap();
+        let Response::State(state) = connection.request(Request::List)? else {
+            return Err(io::Error::other("Invalid service state"));
+        };
+        if state.executable == *executable {
+            *pending = None;
+            return Ok(false);
+        }
+        if state.sessions.iter().any(|s| s.running) {
+            return Ok(false);
+        }
+        if !matches!(
+            connection.request(Request::RetireIfIdle)?,
+            Response::Retired(true)
+        ) {
+            return Ok(false);
+        }
+        let deadline = std::time::Instant::now() + Duration::from_secs(5);
+        loop {
+            // Wait for the retiring listener to disappear. Starting a candidate
+            // while it still holds the profile lock would only create a loser.
+            match Connection::open(&self.data) {
+                Err(e)
+                    if matches!(
+                        e.kind(),
+                        io::ErrorKind::NotFound | io::ErrorKind::ConnectionRefused
+                    ) =>
+                {
+                    break;
+                }
+                Err(e) => return Err(e),
+                Ok(_) if std::time::Instant::now() < deadline => {
+                    std::thread::sleep(Duration::from_millis(10))
+                }
+                Ok(_) => return Err(io::Error::other("The idle service did not retire")),
+            }
+        }
+        let next = Self::connect_or_start(&self.data, executable)?;
+        let mut replacement = Connection::open(&self.data)?;
+        if !matches!(replacement.request(Request::Hello)?, Response::State(_)) {
+            return Err(io::Error::other("Invalid replacement service"));
+        }
+        *connection = replacement;
+        let _ = connection.request(Request::GuiPresence(true))?;
+        drop(next);
+        *pending = None;
+        Ok(true)
     }
     pub fn reserve_ids(&self) -> io::Result<u64> {
         match self.request(Request::ReserveIds)? {
@@ -191,11 +264,96 @@ impl Client {
     ) -> io::Result<RemoteSession> {
         let reattached = matches!(request, Request::Attach { .. });
         let mut connection = Connection::open(&self.data)?;
+        let response = connection.request(request)?;
+        self.remote(connection, response, reattached, events, wake)
+    }
+    pub fn prepare_import(
+        &self,
+        pane: u64,
+        options: SessionOptions,
+        detached: chda_term::DetachedSession,
+        metadata: chda_core::handoff::HandoffPane,
+        events: mpsc::Sender<Event>,
+        wake: impl Fn() + Send + 'static,
+    ) -> io::Result<Session> {
+        use std::io::Write;
+        if detached.snapshot.len() > 512 * 1024 * 1024 {
+            return Err(io::Error::other("Terminal snapshot exceeds handoff limit"));
+        }
+        let mut connection = Connection::open(&self.data)?;
+        protocol::write(
+            &mut connection.0,
+            &Envelope {
+                version: PROTOCOL_VERSION,
+                request: Request::PrepareImport {
+                    group: self.group.clone(),
+                    pane,
+                    options,
+                    pid: detached.pty.pid(),
+                    size: detached.size,
+                    snapshot_len: detached.snapshot.len(),
+                    agent: metadata.agent,
+                    agent_live: metadata.agent_live,
+                },
+            },
+        )?;
+        connection.0.send_pty(&detached.pty)?;
+        connection.0.write_all(&detached.snapshot)?;
+        let response = protocol::read(&mut connection.0, false)?;
+        let remote = self.remote(connection, response, false, events, wake)?;
+        self.imports
+            .lock()
+            .unwrap()
+            .push(remote.record.identity.clone());
+        Ok(Session::Remote(remote))
+    }
+    pub fn has_imports(&self) -> bool {
+        !self.imports.lock().unwrap().is_empty()
+    }
+    /// The server receives the broker's answer socket and waits for the actual
+    /// commit itself. A GUI crash cannot lose ownership between these steps.
+    pub fn commit_imports(
+        &self,
+        reply: chda_pty::handoff::Reply,
+        layout: chda_core::SavedSession,
+        children: chda_agents::ChildBoard,
+    ) -> io::Result<()> {
+        let mut c = Connection::open(&self.data)?;
+        c.0.timeout(Duration::from_secs(45))?;
+        protocol::write(
+            &mut c.0,
+            &Envelope {
+                version: PROTOCOL_VERSION,
+                request: Request::CommitImports {
+                    group: self.group.clone(),
+                    layout,
+                    children,
+                },
+            },
+        )?;
+        c.0.send_reply(&reply)?;
+        match protocol::read(&mut c.0, false)? {
+            Response::Ok => {
+                self.imports.lock().unwrap().clear();
+                Ok(())
+            }
+            Response::Error(e) => Err(io::Error::other(e)),
+            _ => Err(io::Error::other("Invalid import commit response")),
+        }
+    }
+    fn remote(
+        &self,
+        mut connection: Connection,
+        response: Response,
+        reattached: bool,
+        events: mpsc::Sender<Event>,
+        wake: impl Fn() + Send + 'static,
+    ) -> io::Result<RemoteSession> {
         let Response::Attached {
             record,
             mut frame,
             mut sequence,
-        } = connection.request(request)?
+        } = response
         else {
             return Err(io::Error::other("Invalid attach response"));
         };

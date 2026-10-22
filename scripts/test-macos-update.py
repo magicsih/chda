@@ -10,6 +10,7 @@ import atexit
 import base64
 import functools
 import http.server
+import hashlib
 import json
 import os
 from pathlib import Path
@@ -45,7 +46,7 @@ def write_plist(app, **values):
 
 
 class Fixture:
-    def __init__(self, binary, identity):
+    def __init__(self, binary, service_binary, identity):
         self.root = Path(tempfile.mkdtemp(prefix='chda-up-', dir='/tmp'))
         self.identity = identity
         self.original = self.root / 'Original.app'
@@ -83,8 +84,12 @@ class Fixture:
         threading.Thread(target=self.server.serve_forever, daemon=True).start()
         (self.original / 'Contents/MacOS').mkdir(parents=True)
         shutil.copy2(binary, self.original / 'Contents/MacOS/chda')
+        shutil.copy2(service_binary, self.original / 'Contents/MacOS/chda-session')
+        protocol = subprocess.check_output([str(service_binary), '--protocol'], text=True).strip()
+        assert protocol.isdecimal() and int(protocol) > 0
+        self.protocol = int(protocol)
         (self.original / 'Contents/Info.plist').write_bytes(
-            (REPO / 'resources/Info.plist').read_bytes().replace(b'__VERSION__', b'0.1.19'))
+            (REPO / 'resources/Info.plist').read_bytes().replace(b'__VERSION__', b'0.1.19').replace(b'__SESSION_PROTOCOL__', protocol.encode()))
         write_plist(self.original, CFBundleIdentifier=f'com.magicsih.chda.qa.{self.root.name}')
         self.run(REPO / 'scripts/package-macos-updater.sh', self.original, env=self.env)
         write_plist(self.original, SUFeedURL=self.url + 'appcast.xml')
@@ -105,6 +110,8 @@ class Fixture:
 
     def sign(self, app):
         self.run('codesign', '--force', '--options', 'runtime', '--timestamp',
+                 '--sign', self.identity, app / 'Contents/MacOS/chda-session')
+        self.run('codesign', '--force', '--options', 'runtime', '--timestamp',
                  '--entitlements', REPO / 'resources/entitlements.plist',
                  '--sign', self.identity, app)
         self.run('codesign', '--verify', '--deep', '--strict', app)
@@ -121,8 +128,42 @@ class Fixture:
         home = job / 'home'
         (home / '.config/chda').mkdir(parents=True)
         (home / '.config/chda/config.toml').write_text('update-check = false\n')
-        return dict(os.environ, HOME=str(home), ZDOTDIR=str(home),
-                    XDG_CONFIG_HOME=str(home / '.config'), XDG_DATA_HOME=str(job / 'data'))
+        (job / 'tmp').mkdir()
+        return dict(HOME=str(home), ZDOTDIR=str(home), PATH='/usr/bin:/bin:/usr/sbin:/sbin',
+                    SHELL='/bin/zsh', TMPDIR=str(job / 'tmp'),
+                    XDG_CONFIG_HOME=str(home / '.config'), XDG_DATA_HOME=str(job / 'data'),
+                    XDG_STATE_HOME=str(job / 'state'), XDG_CACHE_HOME=str(job / 'cache'),
+                    CODEX_HOME=str(home / '.codex'), MINIMAX_DATA_DIR=str(home / '.minimax'),
+                    GIT_CONFIG_GLOBAL='/dev/null', GIT_CONFIG_NOSYSTEM='1',
+                    CHDA_HOOK_DATA_DIR=str(job / 'data/chda'))
+
+    def service_request(self, job, request):
+        data = (job / 'data/chda').resolve()
+        name = hashlib.sha256(os.fsencode(data)).hexdigest()[:32]
+        def read(stream, size):
+            result = bytearray()
+            while len(result) < size:
+                block = stream.recv(size - len(result))
+                if not block:
+                    raise RuntimeError('session service disconnected')
+                result.extend(block)
+            return result
+        with socket.socket(socket.AF_UNIX) as stream:
+            stream.settimeout(5)
+            stream.connect(f'/tmp/chda-session-{os.geteuid()}/{name}.sock')
+            message = json.dumps(dict(version=self.protocol, request=request)).encode()
+            stream.sendall(struct.pack('>I', len(message)) + message)
+            length, = struct.unpack('>I', read(stream, 4))
+            assert length <= 4 * 1024 * 1024
+            return json.loads(read(stream, length))
+
+    def stop_owned_sessions(self, job):
+        try:
+            state = self.service_request(job, 'List')['State']
+            for session in state['sessions']:
+                self.service_request(job, {'Terminate': {'identity': session['identity']}})
+        except (OSError, KeyError):
+            pass  # A failed-start case may never create a server.
 
     def job(self, name):
         job = self.root / name
@@ -154,6 +195,10 @@ class Fixture:
         if name == 'bad-signature':
             enclosure.set('{http://www.andymatuschak.org/xml-namespaces/sparkle}edSignature',
                           base64.b64encode(bytes(64)).decode())
+        elif name == 'missing-protocol':
+            feed.find('./channel/item').remove(feed.find('./channel/item/chdaSessionProtocol'))
+        elif name == 'incompatible-protocol':
+            feed.find('./channel/item/chdaSessionProtocol').text = str(self.protocol + 1)
         elif name == 'network':
             enclosure.set('url', self.url + 'missing.zip')
         ET.ElementTree(feed).write(self.feed / 'appcast.xml', encoding='utf-8', xml_declaration=True)
@@ -190,6 +235,7 @@ class Fixture:
                 if child.poll() is None:
                     child.terminate()
                 child.wait(timeout=15)
+            self.stop_owned_sessions(job)
 
     def adoption(self, name):
         import fcntl
@@ -267,7 +313,7 @@ class Fixture:
                     break
                 assert time.monotonic() < deadline, reply
                 time.sleep(.1)
-            saved = json.loads((job / 'data/chda/session.json').read_text())
+            saved = json.loads((job / 'data/chda/session-service/layout.json').read_text())
             assert saved['active_window'] == 0, 'adoption moved focus to the last window'
             (job / 'handoff.json').write_text(json.dumps(state, indent=2))
             self.passed(name, 'same 3 shell PIDs; 2 GUI windows, split and original focus; post-commit IPC responds')
@@ -275,31 +321,41 @@ class Fixture:
             if broker and broker.poll() is None:
                 broker.terminate()
                 broker.wait(timeout=10)
-            # Only terminate GUI executables inside this private test directory.
-            for row in subprocess.check_output(['ps', '-axo', 'pid,command'], text=True).splitlines()[1:]:
-                pid, cmd = row.strip().split(None, 1)
-                if cmd.startswith(str(self.root) + '/') and '/Contents/MacOS/chda --adopt ' in cmd:
-                    try:
-                        os.kill(int(pid), signal.SIGTERM)
-                    except ProcessLookupError:
-                        pass
+            # The broker records the exact child it started; never enumerate
+            # other applications or user command lines.
+            manifest = job / 'successor.json'
+            if manifest.is_file():
+                owned = json.loads(manifest.read_text())
+                executable = Path(owned['executable']).resolve()
+                assert executable.is_relative_to(self.root.resolve())
+                pid = owned['pid']
+                if type(pid) is int and pid > 1:
+                    actual = subprocess.run(['ps', '-p', str(pid), '-o', 'comm='],
+                                            capture_output=True, text=True).stdout.strip()
+                    if actual == str(executable):
+                        try:
+                            os.kill(pid, signal.SIGTERM)
+                        except ProcessLookupError:
+                            pass
             for fd in fds:
                 os.close(fd)
             for child in children:
                 if child.poll() is None:
                     child.terminate()
                 child.wait(timeout=10)
+            self.stop_owned_sessions(job)
 
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--identity', required=True, help='Existing Developer ID signing identity')
+    parser.add_argument('--service-binary', type=Path, default=REPO / 'target/debug/chda-session')
     parser.add_argument('--binary', type=Path, default=REPO / 'target/debug/chda')
     args = parser.parse_args()
-    fixture = Fixture(args.binary.resolve(), args.identity)
+    fixture = Fixture(args.binary.resolve(), args.service_binary.resolve(), args.identity)
     print(f'Private evidence directory: {fixture.root}', flush=True)
     try:
-        for case in ('install', 'bad-signature', 'network', 'cancel'):
+        for case in ('install', 'bad-signature', 'network', 'cancel', 'missing-protocol', 'incompatible-protocol'):
             fixture.installer(case)
         for case in ('adopt', 'install-failure', 'new-app-failure'):
             fixture.adoption(case)

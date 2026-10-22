@@ -7,6 +7,7 @@
 @property(nonatomic, strong) SPUUpdater *updater;
 @property(nonatomic, copy) NSString *directory;
 @property(nonatomic, copy) NSString *version;
+@property(nonatomic, strong) NSNumber *sessionProtocol;
 @property(nonatomic, copy) void (^installReply)(SPUUserUpdateChoice);
 @property(nonatomic, copy) void (^cancelCheck)(void);
 @property(nonatomic) uint64_t total;
@@ -49,6 +50,12 @@
 - (BOOL)updaterShouldRelaunchApplication:(SPUUpdater *)updater { return NO; }
 - (BOOL)updaterShouldPromptForPermissionToCheckForUpdates:(SPUUpdater *)updater { return NO; }
 - (BOOL)updater:(SPUUpdater *)updater shouldProceedWithUpdate:(SUAppcastItem *)item updateCheck:(SPUUpdateCheck)check error:(NSError **)error {
+    id advertised = item.propertiesDictionary[@"chdaSessionProtocol"];
+    if (self.sessionProtocol && (![advertised isKindOfClass:NSString.class]
+            || ![advertised isEqualToString:self.sessionProtocol.stringValue])) {
+        if (error) *error = [NSError errorWithDomain:@"chda.updater" code:2 userInfo:@{NSLocalizedDescriptionKey:@"This update uses an incompatible session service. Finish running sessions before installing a compatible release."}];
+        return NO;
+    }
     BOOL allowed = [item.displayVersionString isEqualToString:self.version] && !item.informationOnlyUpdate;
     if (!allowed && error) *error = [NSError errorWithDomain:@"chda.updater" code:1 userInfo:@{NSLocalizedDescriptionKey:@"The release changed. Check for updates again."}];
     return allowed;
@@ -129,6 +136,7 @@ int main(int argc, const char *argv[]) {
             }];
         driver.gui = (pid_t)strtol(argv[4], NULL, 10);
         NSBundle *host = [NSBundle bundleWithPath:[NSString stringWithUTF8String:argv[1]]];
+        driver.sessionProtocol = [host objectForInfoDictionaryKey:@"CHDASessionProtocol"];
         driver.updater = [[SPUUpdater alloc] initWithHostBundle:host applicationBundle:host userDriver:driver delegate:driver];
         driver.updater.automaticallyChecksForUpdates = NO;
         driver.updater.automaticallyDownloadsUpdates = NO;

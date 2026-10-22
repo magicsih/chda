@@ -29,6 +29,17 @@ pub struct Handoff {
     pub notifications: Vec<crate::notifications::NotificationQueue>,
     #[serde(default)]
     pub children: chda_agents::ChildBoard,
+    /// Server-owned runs reconnect; no PTY or snapshot crosses GUI updates.
+    #[serde(default)]
+    pub service: Option<SessionService>,
+    #[serde(default)]
+    pub detached: Vec<crate::SavedWindow>,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct SessionService {
+    pub instance: String,
+    pub protocol: u32,
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]

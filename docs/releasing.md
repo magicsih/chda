@@ -200,3 +200,23 @@ bash -n scripts/update-cask.sh
 
 단위 테스트는 합성 Git 저장소·assets·GitHub/Apple stand-in을 사용한다. 실제 서명,
 공증, macOS 실행, 업데이트, 공개 릴리스를 수행하거나 증명하지 않는다.
+
+## Dedicated session service (1.4.0 and later)
+
+The existing native case list remains required. Add SERVICE-DETACH (normal quit,
+window close and force quit), SERVICE-RECONNECT (same PID, output, input and
+images), SERVICE-RECOVERY (server loss, saved text, no automatic process),
+SERVICE-EXACT-RESUME (options, missing prerequisites and unsupported MiniMax),
+SERVICE-FAILURES (write failure, corruption, stale identities), SERVICE-UPDATE
+(first broker adoption, rollback, compatible GUI attachment and idle service
+replacement), and SERVICE-DETACHED-IPC (hooks, completion and MCP without GUI).
+Three independent rendered rounds cover the same final source tree. Reboot
+recovery uses terminated test servers and children, never a physical reboot.
+
+The exact signed ZIP additionally needs session-server-launch,
+gui-detach-reconnect, server-restart-explicit-resume and
+server-upgrade-compatibility. The artifact validator checks the universal,
+separately signed chda-session executable, matching signing team, executable
+protocol, Info.plist and appcast protocol. These static checks do not substitute
+for actual launch, update, IPC and PID preservation checks. No older version's
+publication exception applies to a new release.

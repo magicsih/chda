@@ -12,7 +12,9 @@ images, old-effect suppression, explicit termination, server restart without
 automatic execution, independent execution identities, duplicate startup,
 protocol bounds, metadata privacy, detached completion, hooks and MCP queries.
 These tests do not establish rendered recovery-screen, GUI force-quit, first
-update adoption, signed-ZIP or physical power-loss acceptance. The
+signed-ZIP or physical power-loss acceptance. The real-process legacy adoption
+test does cover prepared rollback and commit across a successor process; it
+does not establish a rendered or signed-app update. The
 [session-service plan](design/2026-10-22-session-service/test-plan.json) retains
 those separate gates.
 
@@ -25,7 +27,12 @@ Service tests also cover current-screen metadata after late attachment, Codex
 completion without a GUI, simulated ENOSPC, actual checkpoint-path write failure,
 and salvage of valid legacy tabs beside malformed entries. Compact frame cells
 and visible-generation image caching have round-trip and reconnect coverage.
-These are development tests; the three rendered native reviews and signed update
+The service also verifies real legacy broker adoption with rollback, idle
+replacement after all processes and attachments end, retained-binary lifetime
+locks and fallback hooks without a GUI. `cargo run -p chda-session --example
+measure -- /path/to/chda-session` compares the local backend with IPC under a
+private profile and records detached RSS and disk bytes; it does not measure
+native input event delivery. These are development tests; the three rendered native reviews and signed update
 checks remain separate, with unrun results reported as unrun.
 
 | Layer | Where | What it covers |

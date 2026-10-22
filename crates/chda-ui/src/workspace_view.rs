@@ -2548,7 +2548,7 @@ impl WorkspaceView {
             self.owned_outputs.borrow_mut().insert(p.pane, file);
         }
         let adopting = self.env.windows.borrow().update.adopting;
-        if !adopting
+        if (!adopting || self.env.windows.borrow().update.server_owned)
             && (self.env.session_service.is_some() || self.env.session_service_error.is_some())
         {
             self.restore_service_pane(p, window, cx);
@@ -2783,8 +2783,9 @@ impl WorkspaceView {
                     })
                     .collect();
         }
-        if self.config.restore_session
+        if (self.config.restore_session || self.env.session_service.is_some())
             && !registry.restoring
+            && !registry.update.adopting
             && let Some(dir) = self.env.data_dir.as_deref()
         {
             let snapshot = registry.snapshot();

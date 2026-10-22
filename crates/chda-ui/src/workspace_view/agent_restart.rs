@@ -248,11 +248,6 @@ impl WorkspaceView {
         context: &chda_core::agents::AgentLaunchContext,
     ) -> Result<Vec<String>, String> {
         chda_core::agents::validate_resume_options(context.agent, &context.options)?;
-        let session = context
-            .session
-            .as_ref()
-            .filter(|s| !s.0.is_empty())
-            .ok_or("No exact conversation ID was captured; restart is unavailable")?;
         let adapter = self
             .adapters
             .iter()
@@ -261,6 +256,11 @@ impl WorkspaceView {
         if adapter.session_roots().is_empty() {
             return Err("This provider does not expose verifiable local transcripts; exact resume is unavailable".into());
         }
+        let session = context
+            .session
+            .as_ref()
+            .filter(|s| !s.0.is_empty())
+            .ok_or("No exact conversation ID was captured; restart is unavailable")?;
         if !adapter.has_session(session) {
             return Err(
                 "The exact conversation transcript is missing; no new conversation was started"
@@ -308,6 +308,18 @@ impl WorkspaceView {
             return;
         }
         if self.env.session_service.is_some() {
+            let resume_error = self
+                .ws
+                .pane(pane)
+                .and_then(|p| p.agent_launch.as_ref())
+                .filter(|c| c.agent == AgentId::MiniMax)
+                .and_then(|c| self.captured_resume_argv(c).err());
+            let stopped = PaneRun::Stopped {
+                code: status.map(|s| s.code),
+                signal: status.and_then(|s| s.signal.clone()),
+                error: None,
+            };
+            let error = resume_error.map(|reason| format!("{}. {reason}", stopped.label()));
             self.ws.end_agent(pane);
             self.panes.remove(&pane);
             self.initializing_panes.remove(&pane);
@@ -315,7 +327,7 @@ impl WorkspaceView {
                 info.pane_run = Some(PaneRun::Stopped {
                     code: status.map(|s| s.code),
                     signal: status.and_then(|s| s.signal.clone()),
-                    error: None,
+                    error,
                 });
                 info.previous_run = None;
             }
@@ -570,7 +582,7 @@ impl WorkspaceView {
             let can_restart = stopped
                 && context.is_some_and(|c| {
                     c.managed
-                        && c.agent != AgentId::MiniMax
+                        && (c.agent != AgentId::MiniMax || self.env.session_service.is_none())
                         && c.session.as_ref().is_some_and(|s| !s.0.is_empty())
                 });
             let mut status = div()

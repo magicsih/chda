@@ -8,14 +8,22 @@ use chda_agents::{
 };
 use chda_term::{Event, Session, SessionOptions};
 use std::{
-    collections::{BTreeMap, VecDeque},
+    collections::{BTreeMap, BTreeSet, VecDeque},
     io,
     path::Path,
     sync::{Arc, Mutex, mpsc},
     time::{Duration, Instant},
 };
+mod adoption;
+
+struct Importing {
+    group: String,
+    previous: Option<Box<Running>>,
+    deferred: Vec<crate::Action>,
+}
 
 struct Running {
+    importing: Option<Importing>,
     checkpoint: Checkpoint,
     terminal: Option<Session>,
     events: mpsc::Receiver<Event>,
@@ -25,6 +33,10 @@ struct Running {
     last_save: Instant,
 }
 struct Runtime {
+    retiring: bool,
+    retire_committed: bool,
+    committing: BTreeSet<String>,
+    legacy_pending: VecDeque<HookEvent>,
     children: chda_agents::ChildBoard,
     instance: String,
     store: Store,
@@ -43,6 +55,7 @@ struct Runtime {
 impl Runtime {
     fn state(&self) -> State {
         State {
+            pid: std::process::id(),
             sequence: self.sequence,
             children: self.children.clone(),
             executable: std::env::current_exe().unwrap_or_default(),
@@ -70,6 +83,11 @@ impl Runtime {
         mut options: SessionOptions,
         previous: Option<Identity>,
     ) -> io::Result<SessionRecord> {
+        if self.retiring {
+            return Err(io::Error::other(
+                "The idle service is switching versions; try again",
+            ));
+        }
         if pane == 0 || pane >= u64::MAX - 4096 {
             return Err(io::Error::other("Invalid pane ID"));
         }
@@ -126,6 +144,7 @@ impl Runtime {
             saved_at: None,
             save_error: None,
             scrollback: options.scrollback,
+            legacy_hooks: false,
         };
         let output = previous
             .as_ref()
@@ -135,6 +154,7 @@ impl Runtime {
         self.sessions.insert(
             identity.session.clone(),
             Running {
+                importing: None,
                 checkpoint: Checkpoint {
                     record: record.clone(),
                     output,
@@ -154,7 +174,13 @@ impl Runtime {
         let Some(s) = self.sessions.get_mut(id) else {
             return;
         };
-        if capture && let Some(t) = &s.terminal {
+        if s.importing.is_some() {
+            return;
+        }
+        if capture
+            && s.checkpoint.record.running
+            && let Some(t) = &s.terminal
+        {
             match t.checkpoint().recv_timeout(Duration::from_secs(2)) {
                 Ok(Ok(text)) => s.checkpoint.output = text,
                 _ => {
@@ -227,7 +253,7 @@ impl Runtime {
                     }
                 }
             }
-            if s.dirty && s.last_save.elapsed() >= Duration::from_secs(5) {
+            if s.importing.is_none() && s.dirty && s.last_save.elapsed() >= Duration::from_secs(5) {
                 flush.push((id.clone(), s.checkpoint.record.running));
             }
         }
@@ -282,9 +308,17 @@ impl Runtime {
             .values_mut()
             .find(|s| s.checkpoint.record.pane == pane && s.checkpoint.record.running)
         else {
+            if event.run.is_none() {
+                self.legacy_pending.push_back(event);
+                if self.legacy_pending.len() > 4096 {
+                    self.legacy_pending.pop_front();
+                }
+            }
             return;
         };
-        if event.run.as_deref() != Some(s.checkpoint.record.identity.run.as_str()) {
+        if event.run.as_deref() != Some(s.checkpoint.record.identity.run.as_str())
+            && !(event.run.is_none() && s.checkpoint.record.legacy_hooks)
+        {
             return;
         }
         if s.checkpoint
@@ -323,6 +357,32 @@ impl Runtime {
     }
     fn dispatch(&mut self, request: Request) -> io::Result<Response> {
         match request {
+            Request::RetireIfIdle => {
+                let mut idle = !self.sessions.values().any(|s| s.checkpoint.record.running)
+                    && self.connections == self.gui_connections
+                    && self.committing.is_empty();
+                if idle {
+                    let ids: Vec<_> = self
+                        .sessions
+                        .iter()
+                        .filter(|(_, s)| s.dirty)
+                        .map(|(id, _)| id.clone())
+                        .collect();
+                    for id in ids {
+                        self.flush(&id, true);
+                    }
+                    idle = self.save_error.is_none()
+                        && self
+                            .sessions
+                            .values()
+                            .all(|s| s.checkpoint.record.save_error.is_none());
+                    self.retiring = idle;
+                }
+                Ok(Response::Retired(idle))
+            }
+            Request::PrepareImport { .. } | Request::CommitImports { .. } => {
+                Err(io::Error::other("Import requires descriptor transport"))
+            }
             Request::GuiPresence(_) => Ok(Response::Ok),
             Request::ReserveIds => {
                 let first = self.next_pane;
@@ -344,6 +404,22 @@ impl Runtime {
             Request::Attach { identity } => self.attached(&identity),
             Request::Input { identity, action } => {
                 let s = self.get(&identity)?;
+                if let Some(importing) = &mut s.importing {
+                    match &action {
+                        crate::Action::Resize { .. } => importing
+                            .deferred
+                            .retain(|a| !matches!(a, crate::Action::Resize { .. })),
+                        crate::Action::SetColors(_) => importing
+                            .deferred
+                            .retain(|a| !matches!(a, crate::Action::SetColors(_))),
+                        crate::Action::Focus(_) => importing
+                            .deferred
+                            .retain(|a| !matches!(a, crate::Action::Focus(_))),
+                        _ => return Ok(Response::Ok),
+                    }
+                    importing.deferred.push(action);
+                    return Ok(Response::Ok);
+                }
                 if !s.checkpoint.record.running {
                     return Err(io::Error::other("Previous output is read-only"));
                 }
@@ -384,6 +460,9 @@ impl Runtime {
             Request::Detach => Ok(Response::Ok),
             Request::Terminate { identity } => {
                 let s = self.get(&identity)?;
+                if s.importing.is_some() {
+                    return Err(io::Error::other("The predecessor still owns this terminal"));
+                }
                 s.checkpoint.record.closed = true;
                 if let Some(t) = s.terminal.take() {
                     drop(t);
@@ -407,7 +486,7 @@ impl Runtime {
                 }
                 let ids: Vec<_> = self.sessions.keys().cloned().collect();
                 for id in ids {
-                    if self.sessions[&id].dirty {
+                    if capture || self.sessions[&id].dirty {
                         self.flush(&id, capture);
                     }
                 }
@@ -542,6 +621,16 @@ fn codex_title_hook(record: &SessionRecord, title: Option<&String>) -> Option<Ho
 /// Run until no process and no connection remains. Loading checkpoints never
 /// starts a process. The caller must use a separate process for real ownership.
 pub fn serve(data: &Path) -> io::Result<()> {
+    let executable = std::env::current_exe()?;
+    let retained = data
+        .join("session-service/bin")
+        .canonicalize()
+        .unwrap_or_else(|_| data.join("session-service/bin"));
+    let _executable_lease = if executable.starts_with(&retained) {
+        chda_pty::local::file_lease(&executable.with_file_name("server.lock"), true)?
+    } else {
+        None
+    };
     let listener = chda_pty::local::Listener::bind(&crate::socket_path(data))?;
     let store = Store::new(data)?;
     let layout = store.migrate(data)?;
@@ -553,6 +642,7 @@ pub fn serve(data: &Path) -> io::Result<()> {
             (
                 c.record.identity.session.clone(),
                 Running {
+                    importing: None,
                     checkpoint: c,
                     terminal: None,
                     events: mpsc::channel().1,
@@ -571,6 +661,10 @@ pub fn serve(data: &Path) -> io::Result<()> {
         .unwrap_or(0)
         + 1;
     let runtime = Arc::new(Mutex::new(Runtime {
+        retiring: false,
+        retire_committed: false,
+        committing: BTreeSet::new(),
+        legacy_pending: VecDeque::new(),
         children: Default::default(),
         instance: chda_pty::local::token()?,
         store,
@@ -587,11 +681,30 @@ pub fn serve(data: &Path) -> io::Result<()> {
         requests: BTreeMap::new(),
     }));
     let (incoming_tx, incoming) = mpsc::channel();
-    let _hooks = chda_agents::ipc::serve(&chda_agents::ipc::socket_path(data), incoming_tx, || {})?;
+    let _hooks = chda_agents::ipc::serve(
+        &chda_agents::ipc::socket_path(data),
+        incoming_tx.clone(),
+        || {},
+    )?;
     let started = Instant::now();
     let mut accepted = false;
     let mut idle = Instant::now();
+    let mut fallback = Instant::now() - Duration::from_secs(1);
     loop {
+        if fallback.elapsed() >= Duration::from_secs(1) {
+            if let Ok(text) = chda_agents::ipc::take_fallback(data) {
+                for line in text.lines() {
+                    if let Ok(event) = serde_json::from_str::<HookEvent>(line) {
+                        let _ = incoming_tx.send(Incoming::Event(event));
+                    } else if let Ok(quota) =
+                        serde_json::from_str::<chda_agents::quota::QuotaSnapshot>(line)
+                    {
+                        let _ = incoming_tx.send(Incoming::Quota(quota));
+                    }
+                }
+            }
+            fallback = Instant::now();
+        }
         match listener.accept() {
             Ok(stream) => {
                 let mut r = runtime.lock().unwrap();
@@ -609,6 +722,9 @@ pub fn serve(data: &Path) -> io::Result<()> {
         }
         {
             let mut r = runtime.lock().unwrap();
+            if r.retire_committed {
+                return Ok(());
+            }
             r.tick();
             for event in incoming.try_iter() {
                 match event {
@@ -660,6 +776,8 @@ pub fn serve(data: &Path) -> io::Result<()> {
 fn connection(mut stream: chda_pty::local::Stream, runtime: Arc<Mutex<Runtime>>) {
     let _ = stream.timeout(Duration::from_secs(10));
     let mut gui = false;
+    let mut provisional = None;
+    let mut attached = None;
     loop {
         let Envelope { version, request } = match protocol::read::<Envelope>(&mut stream, true) {
             Ok(envelope) => envelope,
@@ -683,26 +801,62 @@ fn connection(mut stream: chda_pty::local::Stream, runtime: Arc<Mutex<Runtime>>)
             );
             break;
         }
-        let response = {
-            let mut r = runtime.lock().unwrap();
-            if let Request::GuiPresence(available) = &request
-                && gui != *available
-            {
-                if *available {
-                    r.gui_connections += 1;
-                } else {
-                    r.gui_connections -= 1;
+        let response = match request {
+            request @ Request::PrepareImport { .. } => {
+                let result = adoption::receive(&mut stream, &runtime, request);
+                if let Ok(Response::Attached { record, .. }) = &result {
+                    provisional = Some(record.identity.clone());
                 }
-                gui = *available;
+                result.unwrap_or_else(|e| Response::Error(e.to_string()))
             }
-            r.dispatch(request)
-                .unwrap_or_else(|e| Response::Error(e.to_string()))
+            Request::CommitImports {
+                group,
+                layout,
+                children,
+            } => adoption::commit(&mut stream, &runtime, group, layout, children)
+                .map(|()| Response::Ok)
+                .unwrap_or_else(|e| Response::Error(e.to_string())),
+            request => {
+                let mut r = runtime.lock().unwrap();
+                if let Request::GuiPresence(available) = &request
+                    && gui != *available
+                {
+                    if *available {
+                        r.gui_connections += 1;
+                    } else {
+                        r.gui_connections -= 1;
+                    }
+                    gui = *available;
+                }
+                r.dispatch(request)
+                    .unwrap_or_else(|e| Response::Error(e.to_string()))
+            }
         };
-        if protocol::write(&mut stream, &response).is_err() {
+        if let Response::Attached { record, .. } = &response {
+            attached = Some(record.identity.clone());
+        }
+        let retired = matches!(response, Response::Retired(true));
+        let written = protocol::write(&mut stream, &response);
+        if retired {
+            let mut r = runtime.lock().unwrap();
+            r.retire_committed = written.is_ok();
+            if written.is_err() {
+                r.retiring = false;
+            }
+        }
+        if written.is_err() {
             break;
         }
     }
     let mut r = runtime.lock().unwrap();
+    if let Some(id) = provisional {
+        r.abort_import(&id.session);
+    }
+    if let Some(id) = attached
+        && r.get(&id).is_ok()
+    {
+        r.flush(&id.session, true);
+    }
     r.connections -= 1;
     if gui {
         r.gui_connections -= 1;
@@ -888,4 +1042,85 @@ fn readable_output(
             .collect::<Vec<_>>()
             .join("\n"),
     ))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    #[test]
+    fn explicit_checkpoint_captures_visible_output_before_its_dirty_event_is_drained() {
+        let data = std::env::temp_dir().join(format!(
+            "chda-checkpoint-race-{}",
+            chda_pty::local::token().unwrap()
+        ));
+        std::fs::create_dir(&data).unwrap();
+        let mut runtime = Runtime {
+            retiring: false,
+            retire_committed: false,
+            committing: BTreeSet::new(),
+            legacy_pending: VecDeque::new(),
+            children: Default::default(),
+            instance: chda_pty::local::token().unwrap(),
+            store: Store::new(&data).unwrap(),
+            sessions: BTreeMap::new(),
+            layout: None,
+            save_error: None,
+            layout_saved_at: None,
+            connections: 0,
+            gui_connections: 0,
+            next_pane: 1,
+            sequence: 0,
+            hooks: VecDeque::new(),
+            quotas: VecDeque::new(),
+            requests: BTreeMap::new(),
+        };
+        let record = runtime
+            .start(
+                1,
+                SessionOptions {
+                    command: Some(vec![
+                        "/usr/bin/env".into(),
+                        "-i".into(),
+                        format!("HOME={}", data.display()),
+                        "PATH=/usr/bin:/bin".into(),
+                        "/bin/sh".into(),
+                        "-c".into(),
+                        "read line; echo checkpoint-race; read line".into(),
+                    ]),
+                    cwd: Some(data.clone()),
+                    ..Default::default()
+                },
+                None,
+            )
+            .unwrap();
+        let id = &record.identity.session;
+        runtime.flush(id, true);
+        assert!(!runtime.sessions[id].dirty);
+        let terminal = runtime.sessions[id].terminal.as_ref().unwrap();
+        terminal.write(b"go\n".to_vec());
+        let deadline = Instant::now() + Duration::from_secs(5);
+        loop {
+            let frame = terminal.frame();
+            if (0..frame.size.rows).any(|y| frame.row_text(y).contains("checkpoint-race")) {
+                break;
+            }
+            assert!(Instant::now() < deadline);
+            std::thread::sleep(Duration::from_millis(1));
+        }
+        // The frame is visible but tick has not received its change event.
+        assert!(!runtime.sessions[id].dirty);
+        runtime
+            .dispatch(Request::Checkpoint { layout: None })
+            .unwrap();
+        assert!(
+            runtime.sessions[id]
+                .checkpoint
+                .output
+                .contains("checkpoint-race")
+        );
+        let saved = runtime.store.load();
+        assert!(saved.iter().any(|c| c.output.contains("checkpoint-race")));
+        drop(runtime);
+        std::fs::remove_dir_all(data).unwrap();
+    }
 }
