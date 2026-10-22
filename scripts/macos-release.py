@@ -67,6 +67,7 @@ EXCEPTION_PATHS = {
     'v0.1.24': 'docs/releases/v0.1.24-publication-approval.json',
     'v1.0.25': 'docs/releases/v1.0.25-publication-approval.json',
     'v1.3.0': 'docs/releases/v1.3.0-publication-approval.json',
+    'v1.4.0': 'docs/releases/v1.4.0-publication-approval.json',
 }
 OWNER_INSTRUCTIONS = {
     'v0.1.21': '이제 좀 공개해라 좀',
@@ -75,6 +76,8 @@ OWNER_INSTRUCTIONS = {
     'v0.1.24': '공개 하자',
     'v1.0.25': 'rhdrogo.',
     'v1.3.0': ('Publish this v1.3.0 candidate with the stated native validation incomplete; '
+               'retain signing, notarization and file verification.'),
+    'v1.4.0': ('Publish this v1.4.0 candidate with the stated native validation incomplete; '
                'retain signing, notarization and file verification.'),
 }
 POSTBUILD_EXCEPTION_PATH = 'docs/releases/v0.1.22-signed-update-exception.json'
@@ -218,7 +221,8 @@ def validate_exception(data, record_text, tag, sha, tree, config, stage, now,
             == (tag, sha, tree, config), 'The owner exception identifies another candidate')
     for name in ('blocked_evidence_sha256', 'independent_assessment_sha256'):
         digest(record[name])
-    incomplete = EXCEPTION_CHECKS - ARTIFACT_CHECKS if reduced else EXCEPTION_CHECKS
+    incomplete = (EXCEPTION_CHECKS - ARTIFACT_CHECKS if reduced else
+                  EXCEPTION_CHECKS | artifact_checks_for(tag))
     unique_items(record['incomplete_checks'], incomplete)
     if reduced:
         unique_items(record['observed_failures'], ('CHILD-161',))
@@ -628,6 +632,14 @@ def native_archive(root, tag):
 
 def exception_notes(tag):
     """Per-version validation notices for explicitly approved releases."""
+    if tag == 'v1.4.0':
+        return ('Native UI validation is incomplete. The owner authorized this v1.4.0 candidate '
+                'with the three full native review rounds, both full native E2E runs and all '
+                'eight exact signed-ZIP GUI and session-service checks unverified. Developer ID '
+                'signing of the app and service, notarization, universal architectures, checksums '
+                'and update signatures remain required. '
+                '[Validation status](https://github.com/%s/blob/main/docs/releases/'
+                'v1.4.0-publication-approval.md).\n\n' % REPO)
     if tag == 'v1.3.0':
         return ('Native UI validation is incomplete. The owner authorized this v1.3.0 candidate '
                 'with the three full native review rounds, both full native E2E runs and exact '

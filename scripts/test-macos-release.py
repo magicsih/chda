@@ -428,6 +428,32 @@ class V130PublicationApprovalTests(V1025PublicationApprovalTests):
             self.verify(self.evidence(self.approval()), previous)
 
 
+class V140PublicationApprovalTests(V130PublicationApprovalTests):
+    TAG = 'v1.4.0'
+    INSTRUCTION = ('Publish this v1.4.0 candidate with the stated native validation incomplete; '
+                   'retain signing, notarization and file verification.')
+    NEXT = 'v1.4.1'
+
+    def approval(self):
+        value = json.loads(super().approval())
+        value['incomplete_checks'] = sorted(
+            release.EXCEPTION_CHECKS | release.artifact_checks_for(self.TAG))
+        return json.dumps(value, sort_keys=True)
+
+    def test_v130_approval_cannot_authorize_v140(self):
+        previous = V130PublicationApprovalTests().approval()
+        with self.assertRaises(ValueError):
+            self.verify(self.evidence(self.approval()), previous)
+
+    def test_each_new_service_artifact_check_must_remain_incomplete(self):
+        for check in release.artifact_checks_for(self.TAG) - release.ARTIFACT_CHECKS:
+            value = json.loads(self.approval())
+            value['incomplete_checks'].remove(check)
+            record = json.dumps(value, sort_keys=True)
+            with self.subTest(check=check), self.assertRaises(ValueError):
+                self.verify(self.evidence(record), record)
+
+
 class ReleaseNotesTests(unittest.TestCase):
     def test_historical_exception_notes_remain_unchanged(self):
         for tag in ('v0.1.21', 'v0.1.22', 'v0.1.23'):
@@ -447,6 +473,13 @@ class ReleaseNotesTests(unittest.TestCase):
         self.assertIn('incomplete', notes)
         self.assertIn('v1.3.0-publication-approval.md', notes)
         self.assertEqual(release.exception_notes('v1.3.1'), '')
+
+    def test_v140_discloses_service_checks_and_does_not_authorize_next_version(self):
+        notes = release.exception_notes('v1.4.0')
+        self.assertIn('incomplete', notes)
+        self.assertIn('session-service', notes)
+        self.assertIn('v1.4.0-publication-approval.md', notes)
+        self.assertEqual(release.exception_notes('v1.4.1'), '')
 
 def reduced_exception_record():
     record = json.loads(exception_record())
