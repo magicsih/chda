@@ -147,6 +147,10 @@ fn main() {
         assert!(Instant::now() < deadline);
         std::thread::sleep(Duration::from_millis(10));
     };
+    // A real connected frontend polls this lease. Local comparison phases can
+    // exceed the service's idle connection timeout on a busy debug build.
+    let (hook_tx, _hook_rx) = mpsc::channel();
+    let connected = client.watch(hook_tx, || {});
     eprintln!("local input");
     let local_latency = latency(None, &data);
     eprintln!("service input: local={local_latency}");
@@ -167,6 +171,7 @@ fn main() {
         wait(&detached, "detach-ready");
         drop(detached);
     }
+    drop(connected);
     drop(client);
     let rss = || {
         Command::new("/bin/ps")

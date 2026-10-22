@@ -309,7 +309,11 @@ done
         ("work", AgentStatus::Working),
         ("ready", AgentStatus::Review),
     ] {
-        std::fs::write(h.home.home.join(format!("codex-step-{}", pane.raw())), step).unwrap();
+        chda_core::agents::ipc::write_private_atomic(
+            &h.home.home.join(format!("codex-step-{}", pane.raw())),
+            step.as_bytes(),
+        )
+        .unwrap();
         let step_path = h.home.home.join(format!("codex-step-{}", pane.raw()));
         h.wait_for(step, move |v, cx| {
             !step_path.exists()
@@ -365,9 +369,9 @@ done
         "fake-codex-ready",
     );
     let second = h.read(|v, _| v.ws.focused_pane().unwrap());
-    std::fs::write(
-        h.home.home.join(format!("codex-step-{}", second.raw())),
-        "work",
+    chda_core::agents::ipc::write_private_atomic(
+        &h.home.home.join(format!("codex-step-{}", second.raw())),
+        b"work",
     )
     .unwrap();
     h.wait_for("the second Codex works", move |v, _| {
@@ -376,9 +380,9 @@ done
             .is_some_and(|a| a.status == AgentStatus::Working)
     });
     let notify_before_exit = crate::terminal_view::now_ms();
-    std::fs::write(
-        h.home.home.join(format!("codex-step-{}", pane.raw())),
-        "clear",
+    chda_core::agents::ipc::write_private_atomic(
+        &h.home.home.join(format!("codex-step-{}", pane.raw())),
+        b"clear",
     )
     .unwrap();
     h.wait_for("a cleared title ends tracking", move |v, cx| {
@@ -425,9 +429,9 @@ done
             .is_some_and(|p| p.agent.is_none() && p.agent_session.is_none())),
         "late notify revived an ended Codex conversation"
     );
-    std::fs::write(
-        h.home.home.join(format!("codex-step-{}", pane.raw())),
-        "exit",
+    chda_core::agents::ipc::write_private_atomic(
+        &h.home.home.join(format!("codex-step-{}", pane.raw())),
+        b"exit",
     )
     .unwrap();
     h.wait_for("Codex exits back to the shell", move |v, cx| {

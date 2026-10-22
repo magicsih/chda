@@ -294,7 +294,9 @@ class Fixture:
             ours.close()
             for fd in fds:
                 os.write(fd, b'during-handoff\n')
-            assert broker.wait(timeout=45) == 0
+            # A rejected target and its recovery each have a 30-second
+            # preparation deadline. Allow both before the fixture times out.
+            assert broker.wait(timeout=75) == 0
             deadline = time.monotonic() + 10
             while time.monotonic() < deadline and not all((job / f'shell-{i}').exists() for i in range(3)):
                 time.sleep(.1)
