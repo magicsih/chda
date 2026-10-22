@@ -340,6 +340,9 @@ fn incompatible_or_oversized_connections_leave_the_existing_run_alive() {
 fn hooks_and_read_only_mcp_work_without_a_gui_and_stale_runs_are_rejected() {
     use chda_agents::{HookEvent, HookKind, control::Request};
     let server = Server::new();
+    // Keep a GUI lease while git starts (which can exceed the empty-server
+    // idle timeout on a cold CI runner). Drop it below to test no-GUI access.
+    let client = server.client();
     assert!(
         Command::new("/usr/bin/git")
             .args(["init", "-q"])
@@ -349,7 +352,6 @@ fn hooks_and_read_only_mcp_work_without_a_gui_and_stale_runs_are_rejected() {
             .unwrap()
             .success()
     );
-    let client = server.client();
     let (session, events) = server.create(&client, "echo no-gui-ready; read line");
     wait(&session, &events, "no-gui-ready");
     let record = server.record(&client);

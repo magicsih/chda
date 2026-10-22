@@ -1,12 +1,13 @@
 # Architecture
 
-chda is a Cargo workspace of eight crates. Arrows only point downward; the
+chda is a Cargo workspace of nine crates. Arrows only point downward; the
 direction is enforced by `deny.toml` (`cargo deny check bans`).
 
 | Crate | Role | May depend on |
 |---|---|---|
 | `chda` (bin) | Entry point. GUI, and CLI subcommands such as `chda hook` and `chda note` | `chda-ui`, `chda-core`, `chda-agents`, `chda-config` |
 | `chda-ui` | GPUI views, elements, theme. The only crate that knows GPUI | `chda-core`, `chda-term`, `chda-config`, `gpui` |
+| `chda-session` (lib, bin) | Local session service, private checkpoints and hook/control routing; no GUI dependency | `chda-core`, `chda-term`, `chda-pty`, `chda-git`, `chda-agents` |
 | `chda-core` | Domain hub: workspace, worktrees, agents, event bus | `chda-term`, `chda-git`, `chda-agents`, `chda-config` |
 | `chda-term` | `libghostty-vt` wrapper. PTY bytes in, plain-struct frames out | `chda-pty`, `libghostty-vt` |
 | `chda-pty` | PTY create/read/write/resize over `portable-pty` | `portable-pty` |
