@@ -12,6 +12,7 @@ chda-pty.workspace = true
 libghostty-vt.workspace = true
 png.workspace = true
 regex.workspace = true
+serde.workspace = true
 
 [dev-dependencies]
 base64 = "0.22.1"

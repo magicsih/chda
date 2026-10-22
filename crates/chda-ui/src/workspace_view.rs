@@ -2998,6 +2998,7 @@ impl WorkspaceView {
         };
         self.apply_hook_event(
             HookEvent {
+                run: None,
                 child: None,
                 agent: "codex".into(),
                 session_id: String::new(),
@@ -3036,6 +3037,10 @@ impl WorkspaceView {
                 if self.floating.as_ref().is_some_and(|f| f.pane == pane) =>
             {
                 self.floating_exited(status.as_ref(), window, cx);
+            }
+            TerminalEvent::Disconnected(error) => {
+                self.notify_error(format!("Session connection lost: {error}. Reopen chda to reconnect; input was not replayed."));
+                cx.notify();
             }
             TerminalEvent::Exited { status, output } => {
                 if self.ws.pane(pane).is_some() && self.panes.contains_key(&pane) {

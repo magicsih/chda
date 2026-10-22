@@ -15,7 +15,7 @@ use regex::Regex;
 use crate::frame::{CellWidth, Frame};
 
 /// An OSC 8 hyperlink: cells `start..=end` of viewport row `row`.
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(serde::Serialize, serde::Deserialize, Clone, Debug, PartialEq, Eq)]
 pub struct Hyperlink {
     pub row: u16,
     pub start: u16,
@@ -24,7 +24,7 @@ pub struct Hyperlink {
 }
 
 /// What a link points at.
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(serde::Serialize, serde::Deserialize, Clone, Debug, PartialEq, Eq)]
 pub enum LinkTarget {
     Url(String),
     /// A path as printed, possibly relative or starting with `~`; the caller
@@ -38,7 +38,7 @@ pub enum LinkTarget {
 
 /// A link and the cells it covers, as `(row, start, end)` with `end`
 /// inclusive, one entry per viewport row.
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(serde::Serialize, serde::Deserialize, Clone, Debug, PartialEq, Eq)]
 pub struct Link {
     pub target: LinkTarget,
     pub cells: Vec<(u16, u16, u16)>,

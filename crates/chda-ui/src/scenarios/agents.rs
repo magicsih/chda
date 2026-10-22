@@ -337,6 +337,7 @@ done
     chda_core::agents::ipc::send(
         &chda_core::agents::ipc::socket_path(&h.home.data),
         &chda_core::agents::HookEvent {
+            run: None,
             agent: "codex".into(),
             session_id: "real-session".into(),
             cwd: repo.clone(),
@@ -388,6 +389,7 @@ done
     chda_core::agents::ipc::send(
         &chda_core::agents::ipc::socket_path(&h.home.data),
         &chda_core::agents::HookEvent {
+            run: None,
             agent: "codex".into(),
             session_id: "real-session".into(),
             cwd: repo.clone(),

@@ -113,6 +113,7 @@ fn idle_parent_with_a_busy_child_requires_cancel_by_default(cx: &mut TestAppCont
     ipc::send(
         &ipc::socket_path(&h.home.data),
         &HookEvent {
+            run: None,
             agent: "claude".into(),
             session_id: "parent".into(),
             cwd: h.home.home.clone(),

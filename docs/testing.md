@@ -4,6 +4,18 @@ Three layers, all run by `cargo test --workspace` (CI: the macOS and Linux jobs)
 Linux installs git, zsh and fish in addition to the GPUI development libraries;
 the scenarios use real shells in temporary homes. Windows currently builds in CI.
 
+The GUI-independent service has process integration tests in
+`crates/chda-session/tests/lifecycle.rs` (`cargo test -p chda-session`). They start
+the built service and `/bin/sh` under private temporary profiles, without opening
+GPUI or using provider accounts. They check reconnect PID/input/output, live
+images, old-effect suppression, explicit termination, server restart without
+automatic execution, independent execution identities, duplicate startup,
+protocol bounds, metadata privacy, detached completion, hooks and MCP queries.
+These tests do not establish rendered recovery-screen, GUI force-quit, first
+update adoption, signed-ZIP or physical power-loss acceptance. The
+[session-service plan](design/2026-10-22-session-service/test-plan.json) retains
+those separate gates.
+
 | Layer | Where | What it covers |
 |---|---|---|
 | Logic | `#[test]` in each crate | Parsing, models, search and link detection, git and shell integration with real `git`, zsh, bash and fish |

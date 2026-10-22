@@ -1,7 +1,9 @@
 //! Plain-data snapshot of a terminal for one frame. No libghostty types.
 
 /// RGB color.
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
+#[derive(
+    serde::Serialize, serde::Deserialize, Clone, Copy, Debug, Default, PartialEq, Eq, Hash,
+)]
 pub struct Rgb {
     pub r: u8,
     pub g: u8,
@@ -9,7 +11,7 @@ pub struct Rgb {
 }
 
 /// Default colors handed to the terminal at creation.
-#[derive(Clone, Debug, Default, PartialEq, Eq)]
+#[derive(serde::Serialize, serde::Deserialize, Clone, Debug, Default, PartialEq, Eq)]
 pub struct ColorConfig {
     pub foreground: Option<Rgb>,
     pub background: Option<Rgb>,
@@ -22,14 +24,14 @@ pub struct ColorConfig {
 }
 
 /// Terminal size in cells.
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+#[derive(serde::Serialize, serde::Deserialize, Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct Size {
     pub cols: u16,
     pub rows: u16,
 }
 
 /// Underline decoration.
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+#[derive(serde::Serialize, serde::Deserialize, Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub enum Underline {
     #[default]
     None,
@@ -41,7 +43,7 @@ pub enum Underline {
 }
 
 /// How many columns a cell occupies.
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+#[derive(serde::Serialize, serde::Deserialize, Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub enum CellWidth {
     #[default]
     Narrow,
@@ -54,7 +56,7 @@ pub enum CellWidth {
 }
 
 /// Text attributes of a cell.
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+#[derive(serde::Serialize, serde::Deserialize, Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct CellStyle {
     pub bold: bool,
     pub italic: bool,
@@ -68,7 +70,7 @@ pub struct CellStyle {
 }
 
 /// One cell of the viewport. Text lives in [`Frame::text`].
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+#[derive(serde::Serialize, serde::Deserialize, Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct Cell {
     pub(crate) text_start: u32,
     pub(crate) text_len: u16,
@@ -93,7 +95,7 @@ impl Cell {
 }
 
 /// Per-row metadata.
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+#[derive(serde::Serialize, serde::Deserialize, Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct Row {
     /// The row is soft-wrapped into the next one.
     pub wrapped: bool,
@@ -101,7 +103,7 @@ pub struct Row {
 }
 
 /// OSC 133 prompt marking for a row.
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+#[derive(serde::Serialize, serde::Deserialize, Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub enum SemanticPrompt {
     #[default]
     None,
@@ -110,7 +112,7 @@ pub enum SemanticPrompt {
 }
 
 /// Cursor shape.
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+#[derive(serde::Serialize, serde::Deserialize, Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub enum CursorShape {
     Bar,
     #[default]
@@ -120,7 +122,7 @@ pub enum CursorShape {
 }
 
 /// Cursor state in viewport coordinates.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(serde::Serialize, serde::Deserialize, Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Cursor {
     pub x: u16,
     pub y: u16,
@@ -133,7 +135,7 @@ pub struct Cursor {
 }
 
 /// Scrollback position of the viewport, counted in rows.
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+#[derive(serde::Serialize, serde::Deserialize, Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct Scrollbar {
     pub total: u64,
     pub offset: u64,
@@ -141,7 +143,7 @@ pub struct Scrollbar {
 }
 
 /// Everything a renderer needs to draw one frame.
-#[derive(Clone, Debug, Default, PartialEq, Eq)]
+#[derive(serde::Serialize, serde::Deserialize, Clone, Debug, Default, PartialEq, Eq)]
 pub struct Frame {
     pub size: Size,
     /// `size.rows * size.cols` cells, row-major.

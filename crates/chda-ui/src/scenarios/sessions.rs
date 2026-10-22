@@ -535,6 +535,7 @@ fn status_changes_keep_session_rows_in_place(cx: &mut TestAppContext) {
     ipc::send(
         &ipc::socket_path(&h.home.data),
         &HookEvent {
+            run: None,
             agent: "claude".into(),
             session_id: "a".into(),
             cwd: first_cwd.clone(),

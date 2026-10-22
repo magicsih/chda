@@ -55,11 +55,11 @@ deny = [
 
     # Workspace crate edges. Arrows only point downward.
     { crate = "chda-ui", wrappers = ["chda"] },
-    { crate = "chda-core", wrappers = ["chda", "chda-ui"] },
-    { crate = "chda-term", wrappers = ["chda-core", "chda-ui"] },
-    { crate = "chda-pty", wrappers = ["chda-term"] },
-    { crate = "chda-git", wrappers = ["chda-core"] },
-    { crate = "chda-agents", wrappers = ["chda", "chda-core"] },
+    { crate = "chda-core", wrappers = ["chda", "chda-ui", "chda-session"] },
+    { crate = "chda-term", wrappers = ["chda-core", "chda-ui", "chda-session"] },
+    { crate = "chda-pty", wrappers = ["chda-term", "chda-session"] },
+    { crate = "chda-git", wrappers = ["chda-core", "chda-session"] },
+    { crate = "chda-agents", wrappers = ["chda", "chda-core", "chda-session"] },
     { crate = "chda-config", wrappers = ["chda", "chda-ui", "chda-core"] },
 ]
 

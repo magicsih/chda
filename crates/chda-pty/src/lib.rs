@@ -3,6 +3,7 @@
 //! Platform-specific code for the PTY lives here.
 
 pub mod handoff;
+pub mod local;
 mod shell_path;
 pub use shell_path::shell_path;
 
@@ -44,7 +45,7 @@ pub struct SpawnOptions<'a> {
 }
 
 /// Exit status of the child process.
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(serde::Serialize, serde::Deserialize, Clone, Debug, PartialEq, Eq)]
 pub struct ExitStatus {
     pub code: u32,
     pub signal: Option<String>,

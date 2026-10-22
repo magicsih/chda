@@ -55,6 +55,7 @@ struct SearchBar {
 /// What a terminal tells its workspace.
 #[derive(Clone, Debug, PartialEq)]
 pub enum TerminalEvent {
+    Disconnected(String),
     /// The shell exited; the pane should go away.
     Exited {
         status: Option<chda_term::ExitStatus>,
@@ -564,6 +565,7 @@ impl TerminalView {
     fn drain_events(&mut self, _: &mut Window, cx: &mut Context<Self>) {
         while let Ok(event) = self.events.try_recv() {
             match event {
+                Event::Disconnected(error) => cx.emit(TerminalEvent::Disconnected(error)),
                 Event::Frame { has_output } => {
                     self.frame = self.session.frame();
                     self.update_link(cx);

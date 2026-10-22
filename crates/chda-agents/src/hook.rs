@@ -30,6 +30,9 @@ pub enum HookKind {
 /// One status event. No prompt text is kept (design: privacy).
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct HookEvent {
+    /// Execution identity for server-owned panes; absent in legacy hooks.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub run: Option<String>,
     pub agent: String,
     pub session_id: String,
     pub cwd: PathBuf,
@@ -112,6 +115,7 @@ pub fn claude_event(payload: &Value) -> Option<HookEvent> {
         _ => return None,
     };
     Some(HookEvent {
+        run: None,
         child: child_id.map(|id| crate::ChildEvent {
             id: id.to_owned(),
             label: payload
@@ -151,6 +155,7 @@ pub fn gemini_event(payload: &Value) -> Option<HookEvent> {
         _ => return None,
     };
     Some(HookEvent {
+        run: None,
         child: None,
         agent: "gemini".into(),
         session_id: payload.get("session_id")?.as_str()?.to_owned(),
@@ -184,6 +189,7 @@ pub fn minimax_event(payload: &Value) -> Option<HookEvent> {
         return None;
     }
     Some(HookEvent {
+        run: None,
         agent: "minimax".into(),
         session_id: session.into(),
         cwd: cwd.into(),
@@ -210,6 +216,7 @@ pub fn copilot_event(event: &str, payload: &Value) -> Option<HookEvent> {
         _ => return None,
     };
     Some(HookEvent {
+        run: None,
         child: None,
         agent: "copilot".into(),
         session_id: payload.get("sessionId")?.as_str()?.to_owned(),
@@ -224,6 +231,7 @@ pub fn copilot_event(event: &str, payload: &Value) -> Option<HookEvent> {
 /// plugin already reduces OpenCode's bus events to a [`HookKind`].
 pub fn opencode_event(payload: &Value) -> Option<HookEvent> {
     Some(HookEvent {
+        run: None,
         child: None,
         agent: "opencode".into(),
         session_id: payload.get("session_id")?.as_str()?.to_owned(),
@@ -272,6 +280,7 @@ fn codex_event(payload: &Value, cwd: &Path) -> Option<HookEvent> {
         .and_then(Value::as_str)?
         .to_owned();
     Some(HookEvent {
+        run: None,
         child: None,
         agent: "codex".into(),
         session_id,
@@ -329,6 +338,7 @@ pub fn hook_main(args: &[String]) -> i32 {
         _ => None,
     };
     if let Some(mut event) = event {
+        event.run = std::env::var("CHDA_RUN_ID").ok();
         event.pane = std::env::var(PANE_ENV).ok().and_then(|v| v.parse().ok());
         deliver(&event);
     }
@@ -468,6 +478,7 @@ mod tests {
         );
         assert!(opencode_event(&json!({"kind": "nope", "session_id": "s", "cwd": "/w"})).is_none());
         let line = serde_json::to_string(&HookEvent {
+            run: None,
             child: None,
             pane: Some(7),
             ..old

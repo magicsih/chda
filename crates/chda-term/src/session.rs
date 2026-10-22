@@ -32,8 +32,11 @@ const FRAME_INTERVAL: Duration = Duration::from_millis(8);
 const SEARCH_INTERVAL: Duration = Duration::from_millis(250);
 
 /// Something the UI should react to.
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(serde::Serialize, serde::Deserialize, Clone, Debug, PartialEq, Eq)]
 pub enum Event {
+    /// The view lost its session service. Input is no longer sent; the
+    /// caller must explicitly reconnect rather than replay queued input.
+    Disconnected(String),
     /// A new frame is available from [`Session::frame`].
     Frame {
         has_output: bool,
@@ -72,7 +75,7 @@ pub enum Event {
 }
 
 /// Session configuration.
-#[derive(Clone, Debug)]
+#[derive(serde::Serialize, serde::Deserialize, Clone, Debug)]
 pub struct SessionOptions {
     pub size: Size,
     pub cell_width_px: u32,
@@ -137,6 +140,8 @@ enum Command {
     SetColors(ColorConfig),
     Detach(Sender<std::io::Result<DetachedSession>>),
     CommitAdoption,
+    Checkpoint(Sender<Result<String, String>>),
+    Barrier(Sender<()>),
 }
 
 /// A session let go by [`Session::detach`]: the PTY with its running child
@@ -172,6 +177,20 @@ impl std::fmt::Debug for Session {
 }
 
 impl Session {
+    /// Capture retained text without detaching or replaying terminal effects.
+    pub fn checkpoint(&self) -> Receiver<Result<String, String>> {
+        let (tx, rx) = mpsc::channel();
+        self.send(Command::Checkpoint(tx));
+        rx
+    }
+
+    /// Acknowledge after all preceding output effects have been published.
+    pub fn barrier(&self) -> Receiver<()> {
+        let (tx, rx) = mpsc::channel();
+        self.send(Command::Barrier(tx));
+        rx
+    }
+
     pub fn child_pid(&self) -> Option<u32> {
         self.child_pid
     }
@@ -489,6 +508,7 @@ fn run(
         }
     };
     let _ = term.set_colors(&opts.colors);
+    let _ = term.resize(start_size, opts.cell_width_px, opts.cell_height_px);
     if let Some(restore) = restore {
         term.feed(&restore.snapshot);
         // Rebuilding the screen is not news: no replies to the child, no
@@ -508,6 +528,7 @@ fn run(
     let mut dirty = true;
     let mut closed = false;
     let mut replies: Vec<Event> = Vec::new();
+    let mut barriers = Vec::new();
     // Output arrived since the active search last ran.
     let mut search_stale = false;
     let mut last_search = Instant::now();
@@ -539,6 +560,7 @@ fn run(
                 Msg::OutputClosed => {
                     closed = true;
                 }
+                Msg::Command(Command::Barrier(reply)) => barriers.push(reply),
                 Msg::Command(Command::CommitAdoption) => {
                     if let Some((reader, tx)) = pending_reader.take() {
                         owns_child = true;
@@ -664,6 +686,9 @@ fn run(
         if term.take_effects().prompt_shown {
             emit(Event::PromptShown);
         }
+        for reply in barriers.drain(..) {
+            let _ = reply.send(());
+        }
 
         if closed {
             break;
@@ -709,7 +734,11 @@ fn handle_command(
 ) -> bool {
     match cmd {
         // The run loop takes this one before commands reach here.
-        Command::Detach(_) | Command::CommitAdoption => false,
+        Command::Detach(_) | Command::CommitAdoption | Command::Barrier(_) => false,
+        Command::Checkpoint(reply) => {
+            let _ = reply.send(term.screen_text().map_err(|e| e.to_string()));
+            false
+        }
         Command::Key(input) => {
             if let Ok(bytes) = term.encode_key(&input)
                 && !bytes.is_empty()
