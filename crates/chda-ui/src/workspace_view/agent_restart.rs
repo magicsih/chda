@@ -248,11 +248,6 @@ impl WorkspaceView {
         context: &chda_core::agents::AgentLaunchContext,
     ) -> Result<Vec<String>, String> {
         chda_core::agents::validate_resume_options(context.agent, &context.options)?;
-        let session = context
-            .session
-            .as_ref()
-            .filter(|s| !s.0.is_empty())
-            .ok_or("No exact conversation ID was captured; restart is unavailable")?;
         let adapter = self
             .adapters
             .iter()
@@ -261,6 +256,11 @@ impl WorkspaceView {
         if adapter.session_roots().is_empty() {
             return Err("This provider does not expose verifiable local transcripts; exact resume is unavailable".into());
         }
+        let session = context
+            .session
+            .as_ref()
+            .filter(|s| !s.0.is_empty())
+            .ok_or("No exact conversation ID was captured; restart is unavailable")?;
         if !adapter.has_session(session) {
             return Err(
                 "The exact conversation transcript is missing; no new conversation was started"
