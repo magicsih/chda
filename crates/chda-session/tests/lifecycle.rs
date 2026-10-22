@@ -281,8 +281,9 @@ fn checkpoints_do_not_contain_environment_or_an_input_log() {
 fn reconnect_gets_images_but_does_not_replay_clipboard_or_notifications() {
     let server = Server::new();
     let client = server.client();
-    let(session,events)=server.create(&client,"printf '\\033]52;c;Y2xpcA==\\007\\033]9;old-notification\\007'; printf '\\033_Ga=T,f=32,s=1,v=1;/////w==\\033\\\\'; echo image-ready; read line");
+    let(session,events)=server.create(&client,"printf '\\033]52;c;Y2xpcA==\\007\\033]9;old-notification\\007'; printf '\\033_Ga=T,f=32,s=1,v=1;/////w==\\033\\\\'; echo image-ready; printf '\\033]0;current-title\\007\\033]7;file://localhost/tmp\\007\\033]133;A\\007prompt%% \\033]133;B\\007'; read line");
     wait(&session, &events, "image-ready");
+    eventually(|| session.frame().at_prompt());
     assert!(!session.frame().images.is_empty());
     let id = server.record(&client).identity;
     drop(session);
@@ -290,7 +291,19 @@ fn reconnect_gets_images_but_does_not_replay_clipboard_or_notifications() {
     let session = Session::Remote(client.attach(id, tx, || {}).unwrap());
     wait(&session, &events, "image-ready");
     assert!(!session.frame().images.is_empty());
-    for event in events.try_iter() {
+    let mut title = false;
+    let mut cwd = false;
+    let mut prompt = false;
+    let deadline = Instant::now() + Duration::from_secs(5);
+    while !(title && cwd && prompt) {
+        assert!(
+            Instant::now() < deadline,
+            "Attach must return current metadata and prompt readiness"
+        );
+        let event = events.recv_timeout(Duration::from_secs(1)).unwrap();
+        title |= matches!(&event, Event::TitleChanged(t) if t == "current-title");
+        cwd |= matches!(&event, Event::PwdChanged(p) if p == "file://localhost/tmp");
+        prompt |= matches!(event, Event::PromptShown);
         assert!(!matches!(
             event,
             Event::ClipboardWrite(_) | Event::Notification(_)
@@ -419,4 +432,68 @@ fn hooks_and_read_only_mcp_work_without_a_gui_and_stale_runs_are_rejected() {
         HookKind::Stopped
     );
     client.terminate(record.identity).unwrap();
+}
+
+#[test]
+fn codex_title_completion_is_owned_by_the_service_without_a_gui() {
+    let server = Server::new();
+    let client = server.client();
+    let (session, events) = server.create(&client, "echo codex-ready; while [ ! -f \"$HOME/go\" ]; do sleep 0.02; done; printf '\\033]0;codex | Working\\007'; sleep 0.1; printf '\\033]0;codex | Ready\\007'; read line");
+    wait(&session, &events, "codex-ready");
+    drop(session);
+    drop(client);
+    std::fs::write(server.data.join("go"), "").unwrap();
+    let client = server.client();
+    eventually(|| {
+        server
+            .record(&client)
+            .agent
+            .as_ref()
+            .is_some_and(|e| e.agent == "codex" && e.kind == chda_agents::HookKind::Stopped)
+    });
+    let record = server.record(&client);
+    assert!(
+        record.agent.unwrap().session_id.is_empty(),
+        "A title cannot invent an exact conversation ID"
+    );
+    assert!(record.running);
+    client.terminate(record.identity).unwrap();
+}
+
+#[test]
+fn a_checkpoint_write_failure_keeps_the_live_process_and_last_successful_time() {
+    let server = Server::new();
+    let client = server.client();
+    let (session, events) = server.create(
+        &client,
+        "echo save-ready; while read line; do echo saved:$line; done",
+    );
+    wait(&session, &events, "save-ready");
+    client.checkpoint(None).unwrap();
+    let before = server.record(&client);
+    let path = server.data.join("session-service/sessions");
+    let backup = path.with_extension("healthy");
+    std::fs::rename(&path, &backup).unwrap();
+    std::fs::write(&path, b"blocked storage").unwrap();
+    session.write(b"write-failure\n".to_vec());
+    wait(&session, &events, "saved:write-failure");
+    client.checkpoint(None).unwrap();
+    let failed = server.record(&client);
+    assert!(failed.running);
+    assert_eq!(failed.pid, before.pid);
+    assert_eq!(failed.saved_at, before.saved_at);
+    assert!(failed.save_error.is_some());
+    std::fs::remove_file(&path).unwrap();
+    std::fs::rename(&backup, &path).unwrap();
+    client.checkpoint(None).unwrap();
+    let recovered = server.record(&client);
+    assert!(recovered.save_error.is_none());
+    assert!(recovered.saved_at >= before.saved_at);
+    assert!(
+        client
+            .output(recovered.identity)
+            .unwrap()
+            .contains("saved:write-failure")
+    );
+    session.terminate();
 }

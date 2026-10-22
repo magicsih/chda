@@ -36,6 +36,7 @@ mod release;
 mod reorder;
 mod restore;
 mod search;
+mod session_service;
 mod sessions;
 mod sharing;
 mod sidebar;

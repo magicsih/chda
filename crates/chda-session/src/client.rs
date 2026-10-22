@@ -39,7 +39,23 @@ pub struct Client {
     data: PathBuf,
     connection: Arc<Mutex<Connection>>,
 }
+
+pub struct Watch {
+    stop: Arc<std::sync::atomic::AtomicBool>,
+    thread: Option<std::thread::JoinHandle<()>>,
+}
+impl Drop for Watch {
+    fn drop(&mut self) {
+        self.stop.store(true, std::sync::atomic::Ordering::Release);
+        if let Some(t) = self.thread.take() {
+            let _ = t.join();
+        }
+    }
+}
 impl Client {
+    pub fn helper_executable(&self) -> io::Result<PathBuf> {
+        Ok(self.state()?.executable)
+    }
     pub fn connect(data: &Path) -> io::Result<Self> {
         let mut connection = Connection::open(data)?;
         if !matches!(connection.request(Request::Hello)?, Response::State(_)) {
@@ -99,6 +115,10 @@ impl Client {
             Response::State(s) => Ok(s),
             _ => Err(io::Error::other("Invalid session state")),
         }
+    }
+    pub fn set_gui_available(&self, available: bool) -> io::Result<()> {
+        self.request(Request::GuiPresence(available))?;
+        Ok(())
     }
     pub fn reserve_ids(&self) -> io::Result<u64> {
         match self.request(Request::ReserveIds)? {
@@ -169,18 +189,21 @@ impl Client {
         events: mpsc::Sender<Event>,
         wake: impl Fn() + Send + 'static,
     ) -> io::Result<RemoteSession> {
+        let reattached = matches!(request, Request::Attach { .. });
         let mut connection = Connection::open(&self.data)?;
         let Response::Attached {
             record,
-            frame,
+            mut frame,
             mut sequence,
         } = connection.request(request)?
         else {
             return Err(io::Error::other("Invalid attach response"));
         };
+        protocol::complete_images(&mut frame, &Frame::default())?;
         let slot = Arc::new(Mutex::new(Arc::new(*frame)));
         let (tx, rx) = mpsc::sync_channel(256);
         let identity = record.identity.clone();
+        let initial_status = (record.saved_at, record.save_error.clone());
         let view = slot.clone();
         let thread = std::thread::Builder::new()
             .name("chda-session-view".into())
@@ -190,15 +213,33 @@ impl Client {
                     wake();
                 };
                 emit(Event::Frame { has_output: false });
+                // These describe the current screen, unlike one-shot effects.
+                // A fast shell can reach its prompt before Attach's barrier.
+                let initial = view.lock().unwrap().clone();
+                emit(Event::TitleChanged(initial.title.clone()));
+                if !initial.pwd.is_empty() {
+                    emit(Event::PwdChanged(initial.pwd.clone()));
+                }
+                if initial.at_prompt() {
+                    emit(Event::PromptShown);
+                }
+                let mut status = initial_status;
+                emit(Event::PersistenceStatus {
+                    saved_at: status.0,
+                    error: status.1.clone(),
+                });
                 let mut generation = view.lock().unwrap().generation;
                 let result = (|| -> io::Result<()> {
                     loop {
                         match rx.recv_timeout(Duration::from_millis(8)) {
                             Ok(action) => {
-                                connection.request(Request::Input {
-                                    identity: identity.clone(),
-                                    action,
-                                })?;
+                                for action in std::iter::once(action).chain(rx.try_iter()).take(256)
+                                {
+                                    connection.request(Request::Input {
+                                        identity: identity.clone(),
+                                        action,
+                                    })?;
+                                }
                             }
                             Err(mpsc::RecvTimeoutError::Disconnected) => {
                                 let _ = connection.request(Request::Detach);
@@ -210,8 +251,16 @@ impl Client {
                             identity: identity.clone(),
                             generation,
                             sequence,
+                            images: view
+                                .lock()
+                                .unwrap()
+                                .images
+                                .iter()
+                                .map(|p| (p.image.id, p.image.generation))
+                                .collect(),
                         })?;
                         let Response::Update {
+                            record,
                             frame,
                             events,
                             sequence: next,
@@ -221,7 +270,16 @@ impl Client {
                             return Err(io::Error::other("Invalid terminal update"));
                         };
                         sequence = next;
-                        if let Some(frame) = frame {
+                        let next_status = (record.saved_at, record.save_error);
+                        if status != next_status {
+                            status = next_status;
+                            emit(Event::PersistenceStatus {
+                                saved_at: status.0,
+                                error: status.1.clone(),
+                            });
+                        }
+                        if let Some(mut frame) = frame {
+                            protocol::complete_images(&mut frame, &view.lock().unwrap())?;
                             generation = frame.generation;
                             *view.lock().unwrap() = Arc::new(*frame);
                             emit(Event::Frame { has_output: true });
@@ -236,6 +294,7 @@ impl Client {
                 }
             })?;
         Ok(RemoteSession {
+            reattached,
             record: Box::new(record),
             frame: slot,
             tx: Some(tx),
@@ -250,11 +309,14 @@ impl Client {
         &self,
         tx: mpsc::Sender<chda_agents::control::Incoming>,
         wake: impl Fn() + Send + 'static,
-    ) {
+    ) -> Watch {
         let client = self.clone();
-        std::thread::spawn(move || {
-            let mut seq = 0;
-            loop {
+        let initial = self.state().map(|s| s.sequence).unwrap_or(u64::MAX);
+        let stop = Arc::new(std::sync::atomic::AtomicBool::new(false));
+        let stopping = stop.clone();
+        let thread = std::thread::spawn(move || {
+            let mut seq = initial;
+            while !stopping.load(std::sync::atomic::Ordering::Acquire) {
                 let response = client.request(Request::HookEvents { sequence: seq });
                 let Ok(Response::Hooks {
                     events,
@@ -266,6 +328,7 @@ impl Client {
                     break;
                 };
                 seq = sequence;
+                let changed = !events.is_empty() || !quotas.is_empty() || !requests.is_empty();
                 for e in events {
                     if tx.send(chda_agents::control::Incoming::Event(e)).is_err() {
                         return;
@@ -291,14 +354,21 @@ impl Client {
                         }
                     });
                 }
-                wake();
+                if changed {
+                    wake();
+                }
                 std::thread::sleep(Duration::from_millis(50));
             }
         });
+        Watch {
+            stop,
+            thread: Some(thread),
+        }
     }
 }
 
 pub struct RemoteSession {
+    reattached: bool,
     pub record: Box<SessionRecord>,
     frame: Arc<Mutex<Arc<Frame>>>,
     tx: Option<mpsc::SyncSender<Action>>,
@@ -321,6 +391,9 @@ pub enum Session {
     Remote(RemoteSession),
 }
 impl Session {
+    pub fn reattached(&self) -> bool {
+        matches!(self, Self::Remote(s) if s.reattached)
+    }
     pub fn spawn(
         options: SessionOptions,
         events: mpsc::Sender<Event>,

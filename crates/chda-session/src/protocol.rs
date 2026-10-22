@@ -40,11 +40,15 @@ pub struct SessionRecord {
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct State {
+    pub sequence: u64,
+    pub children: chda_agents::ChildBoard,
+    pub executable: PathBuf,
     pub instance: String,
     pub executable_version: String,
     pub layout: Option<chda_core::SavedSession>,
     pub sessions: Vec<SessionRecord>,
     pub save_error: Option<String>,
+    pub layout_saved_at: Option<u64>,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -123,6 +127,7 @@ pub(crate) enum Request {
     Hello,
     List,
     ReserveIds,
+    GuiPresence(bool),
     Create {
         pane: u64,
         options: SessionOptions,
@@ -138,6 +143,7 @@ pub(crate) enum Request {
         identity: Identity,
         generation: u64,
         sequence: u64,
+        images: Vec<(u32, u64)>,
     },
     Detach,
     Terminate {
@@ -160,6 +166,52 @@ pub(crate) enum Request {
         id: u64,
         reply: chda_agents::control::Reply,
     },
+}
+
+// Pixel bytes are sent once per visible image generation, including when the
+// same image has several placements. A reconnect starts with an empty cache.
+pub(crate) fn frame_for_wire(mut frame: Frame, known: &[(u32, u64)]) -> Frame {
+    let mut sent: std::collections::HashSet<_> = known.iter().copied().collect();
+    for placement in &mut frame.images {
+        let image = &placement.image;
+        if !sent.insert((image.id, image.generation)) {
+            placement.image = std::sync::Arc::new(chda_term::Image {
+                id: image.id,
+                generation: image.generation,
+                width: image.width,
+                height: image.height,
+                rgba: [].into(),
+            });
+        }
+    }
+    frame
+}
+
+pub(crate) fn complete_images(frame: &mut Frame, previous: &Frame) -> io::Result<()> {
+    let mut images: std::collections::HashMap<_, _> = previous
+        .images
+        .iter()
+        .map(|p| ((p.image.id, p.image.generation), p.image.clone()))
+        .collect();
+    for p in &mut frame.images {
+        let key = (p.image.id, p.image.generation);
+        if p.image.rgba.is_empty() {
+            let image = images
+                .get(&key)
+                .filter(|i| i.width == p.image.width && i.height == p.image.height)
+                .ok_or_else(|| {
+                    io::Error::other("A terminal image is missing from the current frame")
+                })?;
+            p.image = image.clone();
+        } else {
+            let expected = u64::from(p.image.width) * u64::from(p.image.height) * 4;
+            if expected != p.image.rgba.len() as u64 {
+                return Err(io::Error::other("Invalid terminal image size"));
+            }
+            images.insert(key, p.image.clone());
+        }
+    }
+    Ok(())
 }
 
 #[derive(Serialize, Deserialize)]
@@ -227,5 +279,48 @@ mod tests {
         let mut bytes = &u32::MAX.to_be_bytes()[..];
         assert!(read::<Envelope>(&mut bytes, true).is_err());
         assert!(bytes.is_empty());
+    }
+
+    #[test]
+    fn image_pixels_are_cached_only_for_the_visible_generation_and_reconnects_send_them() {
+        use chda_term::{Image, ImageLayer, ImagePlacement};
+        let mut frame = Frame::default();
+        let image = std::sync::Arc::new(Image {
+            id: 7,
+            generation: 1,
+            width: 2,
+            height: 1,
+            rgba: vec![3; 8].into(),
+        });
+        let p = ImagePlacement {
+            image,
+            col: 0,
+            row: 0,
+            x_offset: 0,
+            y_offset: 0,
+            width: 2,
+            height: 1,
+            source: (0, 0, 2, 1),
+            layer: ImageLayer::AboveText,
+            z: 0,
+        };
+        frame.images = vec![p.clone(), p];
+        let mut first = frame_for_wire(frame.clone(), &[]);
+        assert_eq!(first.images[0].image.rgba.len(), 8);
+        assert!(first.images[1].image.rgba.is_empty());
+        complete_images(&mut first, &Frame::default()).unwrap();
+        assert!(std::sync::Arc::ptr_eq(
+            &first.images[0].image,
+            &first.images[1].image
+        ));
+        let mut delta = frame_for_wire(frame.clone(), &[(7, 1)]);
+        assert!(delta.images.iter().all(|p| p.image.rgba.is_empty()));
+        assert!(complete_images(&mut delta.clone(), &Frame::default()).is_err());
+        complete_images(&mut delta, &first).unwrap();
+        assert_eq!(&*delta.images[0].image.rgba, &[3; 8]);
+        let reconnected = frame_for_wire(frame.clone(), &[]);
+        assert_eq!(reconnected.images[0].image.rgba.len(), 8);
+        let next = frame_for_wire(frame, &[(7, 0)]);
+        assert_eq!(next.images[0].image.rgba.len(), 8);
     }
 }

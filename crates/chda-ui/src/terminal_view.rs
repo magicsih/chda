@@ -8,10 +8,11 @@ use std::sync::mpsc;
 
 use std::time::Duration;
 
+use chda_session::Session;
 use chda_term::{
     Event, Frame, KeyAction, KeyCode, KeyInput, LinkTarget, Modifiers, MouseAction,
-    MouseButton as TermButton, MouseInput, SearchQuery, SearchStatus, Session, SessionOptions,
-    Size, launch_for, parse_pwd_report,
+    MouseButton as TermButton, MouseInput, SearchQuery, SearchStatus, SessionOptions, Size,
+    launch_for, parse_pwd_report,
 };
 use futures::StreamExt;
 use futures::channel::mpsc::{UnboundedReceiver, unbounded};
@@ -147,6 +148,8 @@ pub struct GridGeometry {
 const BLINK_INTERVAL: Duration = Duration::from_millis(600);
 
 pub(crate) struct TerminalPlan {
+    service: Option<chda_session::Client>,
+    pane: u64,
     options: SessionOptions,
     inherited: Option<chda_term::DetachedSession>,
     program: bool,
@@ -158,8 +161,14 @@ pub(crate) struct PreparedTerminal {
     wake_rx: UnboundedReceiver<()>,
     program: bool,
 }
+impl PreparedTerminal {
+    pub(crate) fn reattached(&self) -> bool {
+        self.session.reattached()
+    }
+}
 
 pub struct TerminalView {
+    save_status: (Option<u64>, Option<String>),
     final_output: Option<Result<String, String>>,
     /// chda started a program here rather than the login shell; unknown,
     /// so false, for a terminal adopted from an earlier chda process.
@@ -225,6 +234,10 @@ fn link_exists(link: &HoveredLink) -> bool {
 impl EventEmitter<TerminalEvent> for TerminalView {}
 
 impl TerminalView {
+    pub(crate) fn terminate(&self) {
+        self.session.terminate();
+    }
+
     pub(crate) fn child_pid(&self) -> Option<u32> {
         self.session.child_pid()
     }
@@ -262,7 +275,7 @@ impl TerminalView {
             chda_core::agents::CODEX_DAEMON_CONFIG.into(),
         ));
         if env.collect_telemetry {
-            if let Ok(bin) = chda_core::agents::ipc::helper_executable() {
+            if let Ok(bin) = crate::platform::sessions::helper(env.session_service.as_ref()) {
                 options
                     .env
                     .push(("CHDA_HOOK_BIN".into(), bin.to_string_lossy().into_owned()));
@@ -314,7 +327,14 @@ impl TerminalView {
                 "Missing inherited terminal {pane_id}"
             )));
         }
+        if let Some(error) = &env.session_service_error {
+            return Err(std::io::Error::other(format!(
+                "Session service unavailable: {error}. Existing processes were kept."
+            )));
+        }
         Ok(TerminalPlan {
+            service: env.session_service.clone(),
+            pane: pane_id,
             options,
             inherited,
             program,
@@ -323,6 +343,8 @@ impl TerminalView {
 
     pub(crate) fn prepare(plan: TerminalPlan) -> std::io::Result<PreparedTerminal> {
         let TerminalPlan {
+            service,
+            pane,
             mut options,
             inherited,
             program,
@@ -337,7 +359,10 @@ impl TerminalView {
                 options.size = detached.size;
                 Session::prepare_adoption(options, detached, events_tx, wake)
             }
-            None => Session::spawn(options, events_tx, wake),
+            None => match service {
+                Some(client) => client.pane(pane, options, events_tx, wake),
+                None => Session::spawn(options, events_tx, wake),
+            },
         }?;
         Ok(PreparedTerminal {
             session,
@@ -383,6 +408,7 @@ impl TerminalView {
         .detach();
 
         Self {
+            save_status: (None, None),
             final_output: None,
             program,
             session,
@@ -565,7 +591,13 @@ impl TerminalView {
     fn drain_events(&mut self, _: &mut Window, cx: &mut Context<Self>) {
         while let Ok(event) = self.events.try_recv() {
             match event {
-                Event::Disconnected(error) => cx.emit(TerminalEvent::Disconnected(error)),
+                Event::PersistenceStatus { saved_at, error } => {
+                    self.save_status = (saved_at, error);
+                    cx.notify();
+                }
+                Event::Disconnected(error) => {
+                    cx.emit(TerminalEvent::Disconnected(error));
+                }
                 Event::Frame { has_output } => {
                     self.frame = self.session.frame();
                     self.update_link(cx);
@@ -1482,6 +1514,24 @@ impl Render for TerminalView {
                 Self::drop_paths,
             ))
             .children(link_hint)
+            .children(self.save_status.1.as_ref().map(|error| {
+                div()
+                    .absolute()
+                    .bottom_0()
+                    .left_0()
+                    .right_0()
+                    .p_2()
+                    .text_xs()
+                    .bg(hsla(self.settings.colors.background.unwrap_or_default()))
+                    .text_color(hsla(self.settings.colors.foreground.unwrap_or_default()))
+                    .child(format!(
+                        "Output save failed: {error}. Last saved {}.",
+                        self.save_status
+                            .0
+                            .map(|at| format!("{} ago", chda_core::activity_age(now_ms(), at)))
+                            .unwrap_or_else(|| "never".into())
+                    ))
+            }))
     }
 }
 

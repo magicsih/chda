@@ -62,6 +62,7 @@ impl WorkspaceView {
                             .first()
                             .is_some_and(|e| e.view == view.self_weak);
                         if first
+                            && view.env.session_service.is_none()
                             && !view.env.windows.borrow().update.frozen
                             && let Some(dir) = &view.env.data_dir
                             && let Ok(text) = ipc::take_fallback(dir)

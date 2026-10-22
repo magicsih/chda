@@ -1,0 +1,50 @@
+# Sessions that survive the window
+
+On macOS, closing a window, quitting chda or losing the GUI leaves its terminal
+processes in a separate local service. Open chda again to attach to the same
+processes, screen, scrollback and inline images. A window closed while another
+window remains can be reopened from the detached rows in **Sessions**.
+
+Closing a terminal with cmd-w or closing a tab is an explicit stop. The existing
+confirmation for active agents still applies. Closing an empty window has no
+terminal to stop. Linux and Windows keep their existing process ownership.
+
+## After the service or computer stops
+
+With `restore-session = true`, the saved windows, tabs, splits, directories and
+names return. Their previous text is read only. No saved command runs at startup.
+
+- **Start shell** starts a shell in the saved directory.
+- **Resume conversation** starts the exact supported conversation with its
+  captured executable, options and permission choice. Missing executables,
+  directories, conversation IDs or transcripts produce an explanation.
+- **New conversation** is a separate choice for a captured agent. MiniMax does
+  not expose verifiable exact resume; use this choice or Start shell.
+
+Previous output remains separate from a new run. Repeated clicks during startup
+start one successor. Typing in previous output never sends input to a process.
+If a connection fails, chda reports it and does not replay uncertain input;
+reopen to reconnect to a surviving server.
+
+## Saving and privacy
+
+The service is the only writer of the new layout and session checkpoints. It
+saves layout and execution metadata as they change, and dirty text at most every
+five seconds, plus disconnect and exit. Output follows `scrollback-limit`.
+Only the current checkpoint and one validated previous copy are retained per
+session. Files and sockets are private to the current user and data profile.
+No full process environment or input event log is added to saved metadata.
+Terminal output can contain sensitive text just as ordinary scrollback can.
+
+The recovery status shows the last text save age. Abrupt power loss can lose
+output since that save. Save failures keep live processes running; an error
+shows the last successful save. Free the profile's storage or correct its
+permissions before relying on a new checkpoint. Existing session.json is backed
+up before migration. Damaged entries are isolated; valid entries and previous
+checkpoints remain available. Migration itself starts no processes.
+
+The service starts when chda needs it. It exits after no running session and no
+GUI connection remains. There is no remote endpoint, login item or automatic
+command execution after a reboot. Live processes cannot survive the operating
+system shutting down; saved text and explicit conversation resume are the
+recovery path.
