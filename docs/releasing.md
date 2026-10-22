@@ -71,6 +71,15 @@ establish the normal 43-case and 13-area coverage. Signing, notarization,
 universal architectures, update signatures and immutable draft/file checks remain
 required. This approval cannot authorize another candidate or future version.
 
+For v1.4.0 only, after the blocked observation was disclosed, the owner selected
+publication with native checks incomplete. The
+[candidate-specific approval](releases/v1.4.0-publication-approval.md) retains
+`native_result: blocked`, zero full native rounds and all eleven incomplete
+checks, including the four additional session-service artifact checks. App and
+service signing, notarization, universal architectures, checksums, protocol and
+update signatures, immutable draft publication and file readback remain required.
+This new approval does not reuse v1.3.0 or authorize a later candidate.
+
 ## 버전 정책
 
 `v0.1.24` 다음 릴리스부터 `v1.0.25`로 전환한다. 마지막 자리 `25`는 기존
