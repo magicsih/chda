@@ -154,7 +154,10 @@ impl Runtime {
         let Some(s) = self.sessions.get_mut(id) else {
             return;
         };
-        if capture && let Some(t) = &s.terminal {
+        if capture
+            && s.checkpoint.record.running
+            && let Some(t) = &s.terminal
+        {
             match t.checkpoint().recv_timeout(Duration::from_secs(2)) {
                 Ok(Ok(text)) => s.checkpoint.output = text,
                 _ => {
@@ -407,7 +410,7 @@ impl Runtime {
                 }
                 let ids: Vec<_> = self.sessions.keys().cloned().collect();
                 for id in ids {
-                    if self.sessions[&id].dirty {
+                    if capture || self.sessions[&id].dirty {
                         self.flush(&id, capture);
                     }
                 }
@@ -660,6 +663,7 @@ pub fn serve(data: &Path) -> io::Result<()> {
 fn connection(mut stream: chda_pty::local::Stream, runtime: Arc<Mutex<Runtime>>) {
     let _ = stream.timeout(Duration::from_secs(10));
     let mut gui = false;
+    let mut attached = None;
     loop {
         let Envelope { version, request } = match protocol::read::<Envelope>(&mut stream, true) {
             Ok(envelope) => envelope,
@@ -698,11 +702,19 @@ fn connection(mut stream: chda_pty::local::Stream, runtime: Arc<Mutex<Runtime>>)
             r.dispatch(request)
                 .unwrap_or_else(|e| Response::Error(e.to_string()))
         };
+        if let Response::Attached { record, .. } = &response {
+            attached = Some(record.identity.clone());
+        }
         if protocol::write(&mut stream, &response).is_err() {
             break;
         }
     }
     let mut r = runtime.lock().unwrap();
+    if let Some(id) = attached
+        && r.get(&id).is_ok()
+    {
+        r.flush(&id.session, true);
+    }
     r.connections -= 1;
     if gui {
         r.gui_connections -= 1;
@@ -888,4 +900,81 @@ fn readable_output(
             .collect::<Vec<_>>()
             .join("\n"),
     ))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    #[test]
+    fn explicit_checkpoint_captures_visible_output_before_its_dirty_event_is_drained() {
+        let data = std::env::temp_dir().join(format!(
+            "chda-checkpoint-race-{}",
+            chda_pty::local::token().unwrap()
+        ));
+        std::fs::create_dir(&data).unwrap();
+        let mut runtime = Runtime {
+            children: Default::default(),
+            instance: chda_pty::local::token().unwrap(),
+            store: Store::new(&data).unwrap(),
+            sessions: BTreeMap::new(),
+            layout: None,
+            save_error: None,
+            layout_saved_at: None,
+            connections: 0,
+            gui_connections: 0,
+            next_pane: 1,
+            sequence: 0,
+            hooks: VecDeque::new(),
+            quotas: VecDeque::new(),
+            requests: BTreeMap::new(),
+        };
+        let record = runtime
+            .start(
+                1,
+                SessionOptions {
+                    command: Some(vec![
+                        "/usr/bin/env".into(),
+                        "-i".into(),
+                        format!("HOME={}", data.display()),
+                        "PATH=/usr/bin:/bin".into(),
+                        "/bin/sh".into(),
+                        "-c".into(),
+                        "read line; echo checkpoint-race; read line".into(),
+                    ]),
+                    cwd: Some(data.clone()),
+                    ..Default::default()
+                },
+                None,
+            )
+            .unwrap();
+        let id = &record.identity.session;
+        runtime.flush(id, true);
+        assert!(!runtime.sessions[id].dirty);
+        let terminal = runtime.sessions[id].terminal.as_ref().unwrap();
+        terminal.write(b"go\n".to_vec());
+        let deadline = Instant::now() + Duration::from_secs(5);
+        loop {
+            let frame = terminal.frame();
+            if (0..frame.size.rows).any(|y| frame.row_text(y).contains("checkpoint-race")) {
+                break;
+            }
+            assert!(Instant::now() < deadline);
+            std::thread::sleep(Duration::from_millis(1));
+        }
+        // The frame is visible but tick has not received its change event.
+        assert!(!runtime.sessions[id].dirty);
+        runtime
+            .dispatch(Request::Checkpoint { layout: None })
+            .unwrap();
+        assert!(
+            runtime.sessions[id]
+                .checkpoint
+                .output
+                .contains("checkpoint-race")
+        );
+        let saved = runtime.store.load();
+        assert!(saved.iter().any(|c| c.output.contains("checkpoint-race")));
+        drop(runtime);
+        std::fs::remove_dir_all(data).unwrap();
+    }
 }

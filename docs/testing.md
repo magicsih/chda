@@ -11,6 +11,9 @@ GPUI or using provider accounts. They check reconnect PID/input/output, live
 images, old-effect suppression, explicit termination, server restart without
 automatic execution, independent execution identities, duplicate startup,
 protocol bounds, metadata privacy, detached completion, hooks and MCP queries.
+A real-shell regression verifies that an explicit checkpoint captures visible
+output even before the service drains its dirty notification; terminal
+disconnection captures that attachment independently of the dirty flag.
 These tests do not establish rendered recovery-screen, GUI force-quit, first
 update adoption, signed-ZIP or physical power-loss acceptance. The
 [session-service plan](design/2026-10-22-session-service/test-plan.json) retains
