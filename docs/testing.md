@@ -15,7 +15,9 @@ A real-shell regression verifies that an explicit checkpoint captures visible
 output even before the service drains its dirty notification; terminal
 disconnection captures that attachment independently of the dirty flag.
 These tests do not establish rendered recovery-screen, GUI force-quit, first
-update adoption, signed-ZIP or physical power-loss acceptance. The
+signed-ZIP or physical power-loss acceptance. The real-process legacy adoption
+test does cover prepared rollback and commit across a successor process; it
+does not establish a rendered or signed-app update. The
 [session-service plan](design/2026-10-22-session-service/test-plan.json) retains
 those separate gates.
 
@@ -28,8 +30,27 @@ Service tests also cover current-screen metadata after late attachment, Codex
 completion without a GUI, simulated ENOSPC, actual checkpoint-path write failure,
 and salvage of valid legacy tabs beside malformed entries. Compact frame cells
 and visible-generation image caching have round-trip and reconnect coverage.
-These are development tests; the three rendered native reviews and signed update
-checks remain separate, with unrun results reported as unrun.
+The service also verifies real legacy broker adoption with rollback, idle
+replacement after all processes and attachments end, retained-binary lifetime
+locks and fallback hooks without a GUI. `cargo run -p chda-session --example
+measure -- /path/to/chda-session` compares the local backend with IPC under a
+private profile and records detached RSS and disk bytes; it does not measure
+native input event delivery. PTY output has one parsed acknowledgment per at-most-4-KiB raw chunk. Real-shell
+regressions pause its consumer, interrupt a burst and close a streaming session;
+ending the owner releases acknowledgments and drains tty teardown without
+queueing unbounded raw output. Startup replacement probes the candidate first,
+excludes only its own connection and preserves GUI availability. These are
+development tests; the three rendered native reviews and signed update
+checks remain separate, with unrun results reported as unrun. The measurement
+keeps its controller lease polled during local comparisons, then drops both the
+poller and connection before sampling genuinely detached output.
+
+After changing release-plz configuration or adding a workspace member, run
+`python3 scripts/test-release-plz.py --binary /path/to/release-plz`. This offline
+integration fixture tags an initial workspace, adds the service and asks the real
+tool to generate the next shared version without editing the application repo.
+It verifies a minor feature increment, a later library-only patch and preserved workspace inheritance, and
+retains its commands and generated manifests on both success and failure.
 
 | Layer | Where | What it covers |
 |---|---|---|

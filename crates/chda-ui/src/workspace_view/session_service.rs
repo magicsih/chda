@@ -28,7 +28,10 @@ impl WorkspaceView {
         cx.spawn_in(window, async move |this, cx| {
             loop {
                 let client = client.clone();
-                let state = cx.background_spawn(async move { client.state() }).await;
+                let state = cx.background_spawn(async move {
+                    crate::platform::sessions::upgrade_if_idle(&client)?;
+                    client.state()
+                }).await;
                 if this
                     .update(cx, |view, cx| match state {
                         Ok(state) => {

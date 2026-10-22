@@ -431,6 +431,17 @@ fn hooks_and_read_only_mcp_work_without_a_gui_and_stale_runs_are_rejected() {
         server.record(&client).agent.unwrap().kind,
         HookKind::Stopped
     );
+    let mut fallback = event;
+    fallback.timestamp = 3;
+    fallback.kind = HookKind::WaitingInput;
+    chda_agents::ipc::append_fallback(&server.data, &serde_json::to_string(&fallback).unwrap())
+        .unwrap();
+    eventually(|| {
+        server
+            .record(&client)
+            .agent
+            .is_some_and(|e| e.kind == HookKind::WaitingInput)
+    });
     client.terminate(record.identity).unwrap();
 }
 
@@ -496,4 +507,277 @@ fn a_checkpoint_write_failure_keeps_the_live_process_and_last_successful_time() 
             .contains("saved:write-failure")
     );
     session.terminate();
+}
+
+// Runs only as a private successor launched by the test below. It exercises
+// the real broker reply descriptor, not a simulated ownership callback.
+#[test]
+fn legacy_adoption_fixture() {
+    let Some(fd) = std::env::var("CHDA_IMPORT_FD")
+        .ok()
+        .and_then(|s| s.parse().ok())
+    else {
+        return;
+    };
+    let data = PathBuf::from(std::env::var_os("CHDA_IMPORT_DATA").unwrap());
+    let inherited = chda_pty::handoff::receive(fd).unwrap();
+    let state = chda_core::handoff::Handoff::decode(&inherited.state).unwrap();
+    let client = Client::connect(&data).unwrap();
+    let mut sessions = Vec::new();
+    for (metadata, pty) in state.panes.into_iter().zip(inherited.ptys) {
+        let options = SessionOptions {
+            cwd: Some(data.clone()),
+            ..Default::default()
+        };
+        let detached = chda_term::DetachedSession {
+            pty,
+            snapshot: metadata.snapshot.clone(),
+            size: chda_term::Size {
+                cols: metadata.cols,
+                rows: metadata.rows,
+            },
+        };
+        sessions.push(
+            client
+                .prepare_import(
+                    metadata.pane,
+                    options,
+                    detached,
+                    metadata,
+                    mpsc::channel().0,
+                    || {},
+                )
+                .unwrap(),
+        );
+    }
+    std::fs::write(data.join("prepared-import"), b"ready").unwrap();
+    if std::env::var("CHDA_IMPORT_ABORT").is_ok() {
+        inherited.reply.fail("test rejected before commit").unwrap();
+        return;
+    }
+    client
+        .commit_imports(inherited.reply, state.session, Default::default())
+        .unwrap();
+    std::fs::write(data.join("committed-import"), b"done").unwrap();
+    // GUI process destruction only detaches the new remote handles.
+}
+
+#[test]
+fn legacy_handoff_is_atomic_and_gui_exit_preserves_the_same_process() {
+    for abort in [true, false] {
+        let server = Server::new();
+        let client = server.client();
+        let mut workspace = chda_core::Workspace::new();
+        let (_, pane) = workspace.new_tab();
+        let (tx, events) = mpsc::channel();
+        let session = chda_term::Session::spawn(
+            server.options(
+                "echo legacy-ready:$$; while IFS= read -r line; do echo legacy:$line; done",
+            ),
+            tx,
+            || {},
+        )
+        .unwrap();
+        let session = Session::Local(session);
+        wait(&session, &events, "legacy-ready:");
+        let pid = session.child_pid();
+        let detached = session
+            .detach()
+            .recv_timeout(Duration::from_secs(5))
+            .unwrap()
+            .unwrap();
+        drop(session);
+        let mut state = chda_core::handoff::Handoff::default();
+        state.session.windows.push(workspace.handoff_snapshot());
+        state.panes.push(chda_core::handoff::HandoffPane::new(
+            pane.raw(),
+            detached.size.cols,
+            detached.size.rows,
+            detached.snapshot.clone(),
+        ));
+        let mut command = Command::new(std::env::current_exe().unwrap());
+        command
+            .args(["--exact", "legacy_adoption_fixture", "--nocapture"])
+            .env_clear()
+            .env("HOME", &server.data)
+            .env("PATH", "/usr/bin:/bin")
+            .env("CHDA_IMPORT_DATA", &server.data);
+        if abort {
+            command.env("CHDA_IMPORT_ABORT", "1");
+        }
+        let mut successor = chda_pty::handoff::spawn_command(
+            command,
+            &[detached.pty.try_clone().unwrap()],
+            &state.encode().unwrap(),
+            |c, fd| {
+                c.env("CHDA_IMPORT_FD", fd.to_string());
+            },
+        )
+        .unwrap();
+        if abort {
+            assert!(successor.wait_prepared(Duration::from_secs(10)).is_err());
+            eventually(|| client.state().unwrap().sessions.is_empty());
+            let (tx, events) = mpsc::channel();
+            let restored = Session::Local(
+                chda_term::Session::adopt(server.options("unused"), detached, tx, || {}).unwrap(),
+            );
+            assert_eq!(restored.child_pid(), pid);
+            restored.write(b"rollback\n".to_vec());
+            wait(&restored, &events, "legacy:rollback");
+            drop(restored);
+        } else {
+            successor.wait_prepared(Duration::from_secs(10)).unwrap();
+            // Provisional imports have no persistent checkpoint and cannot read
+            // new PTY output, receive keystrokes or terminate the old child.
+            assert!(
+                !server
+                    .data
+                    .join("session-service/sessions")
+                    .read_dir()
+                    .unwrap()
+                    .any(|p| p.unwrap().path().extension().is_some_and(|s| s == "json"))
+            );
+            let prepared = client
+                .state()
+                .unwrap()
+                .sessions
+                .into_iter()
+                .find(|s| s.pane == pane.raw())
+                .unwrap();
+            assert!(client.terminate(prepared.identity).is_err());
+            successor.commit().unwrap();
+            drop(detached);
+            eventually(|| server.data.join("committed-import").exists());
+            let record = client
+                .state()
+                .unwrap()
+                .sessions
+                .into_iter()
+                .find(|s| s.pane == pane.raw())
+                .unwrap();
+            assert_eq!(record.pid, pid);
+            assert!(record.legacy_hooks);
+            let (tx, events) = mpsc::channel();
+            let resumed = Session::Remote(client.attach(record.identity, tx, || {}).unwrap());
+            wait(&resumed, &events, "legacy-ready:");
+            resumed.write(b"committed\n".to_vec());
+            wait(&resumed, &events, "legacy:committed");
+            resumed.terminate();
+        }
+    }
+}
+
+#[test]
+fn idle_service_upgrade_fixture() {
+    let Some(data) = std::env::var_os("CHDA_IDLE_PROFILE").map(PathBuf::from) else {
+        return;
+    };
+    let client = Client::connect(&data).unwrap();
+    let candidate = data.join("new-chda-session");
+    std::fs::copy(env!("CARGO_BIN_EXE_chda-session"), &candidate).unwrap();
+    let original = client.state().unwrap();
+    client.set_pending_executable(data.join("missing-chda-session"));
+    assert!(client.upgrade_if_idle().is_err());
+    assert_eq!(
+        client.state().unwrap().instance,
+        original.instance,
+        "a failed candidate probe keeps the previous idle server"
+    );
+    client.set_pending_executable(candidate.clone());
+    let observer = Client::connect(&data).unwrap();
+    assert!(
+        !client.upgrade_if_idle().unwrap(),
+        "another non-GUI connection is not exempted"
+    );
+    drop(observer);
+    eventually(|| client.upgrade_if_idle().unwrap());
+    let startup = client.state().unwrap();
+    assert_ne!(startup.instance, original.instance);
+    assert_eq!(startup.executable, candidate);
+    let no_gui = chda_agents::ipc::request(
+        &chda_agents::ipc::socket_path(&data),
+        &chda_agents::control::Request::OpenTab {
+            path: data.clone(),
+            agent: None,
+        },
+    )
+    .unwrap();
+    assert!(
+        !no_gui.ok && no_gui.message.contains("connected"),
+        "startup must preserve GuiPresence=false"
+    );
+    client.set_gui_available(true).unwrap();
+    let candidate = data.join("next-chda-session");
+    std::fs::copy(env!("CARGO_BIN_EXE_chda-session"), &candidate).unwrap();
+    client.set_pending_executable(candidate.clone());
+    let before = client.state().unwrap();
+    let options = SessionOptions {
+        command: Some(vec![
+            "/bin/sh".into(),
+            "-c".into(),
+            "echo upgrade-ready; read line".into(),
+        ]),
+        cwd: Some(data.clone()),
+        ..Default::default()
+    };
+    let (tx, events) = mpsc::channel();
+    let terminal = Session::Remote(client.create(1, options, tx, || {}).unwrap());
+    wait(&terminal, &events, "upgrade-ready");
+    assert!(!client.upgrade_if_idle().unwrap());
+    assert_eq!(client.state().unwrap().instance, before.instance);
+    let sessions = data.join("session-service/sessions");
+    let preserved = data.join("session-service/sessions-retained");
+    std::fs::rename(&sessions, &preserved).unwrap();
+    std::fs::write(&sessions, b"test write failure").unwrap();
+    terminal.terminate();
+    eventually(|| !client.state().unwrap().sessions[0].running);
+    assert!(
+        !client.upgrade_if_idle().unwrap(),
+        "an attached old handle prevents retirement"
+    );
+    drop(terminal);
+    assert!(
+        !client.upgrade_if_idle().unwrap(),
+        "unsaved text prevents retirement"
+    );
+    assert_eq!(client.state().unwrap().instance, before.instance);
+    std::fs::remove_file(&sessions).unwrap();
+    std::fs::rename(preserved, sessions).unwrap();
+    eventually(|| client.upgrade_if_idle().unwrap());
+    let after = client.state().unwrap();
+    assert_ne!(after.instance, before.instance);
+    assert_eq!(after.executable, candidate);
+    assert!(after.sessions.iter().all(|s| !s.running && s.pid.is_none()));
+    std::fs::write(data.join("idle-server-pid"), after.pid.to_string()).unwrap();
+    client.set_gui_available(false).unwrap();
+}
+
+#[test]
+fn service_binary_changes_only_after_running_processes_and_attachments_end() {
+    let server = Server::new();
+    let output = Command::new(std::env::current_exe().unwrap())
+        .args(["--exact", "idle_service_upgrade_fixture", "--nocapture"])
+        .env_clear()
+        .env("HOME", &server.data)
+        .env("PATH", "/usr/bin:/bin")
+        .env("CHDA_HOOK_DATA_DIR", &server.data)
+        .env("CHDA_IDLE_PROFILE", &server.data)
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "{}\n{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    // The new idle server exits on its own when the last GUI connection closes.
+    let pid = std::fs::read_to_string(server.data.join("idle-server-pid")).unwrap();
+    eventually(|| {
+        !Command::new("/bin/kill")
+            .args(["-0", pid.trim()])
+            .output()
+            .unwrap()
+            .status
+            .success()
+    });
 }

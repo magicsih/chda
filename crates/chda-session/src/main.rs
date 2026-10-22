@@ -35,6 +35,10 @@ fn main() {
         Some("hook") => chda_agents::hook_main(&args[1..]),
         Some("mcp") => chda_agents::mcp_main(&args[1..]),
         Some("statusline") => chda_agents::statusline::main(&args[1..]),
+        Some("--protocol") => {
+            println!("{}", chda_session::PROTOCOL_VERSION);
+            0
+        }
         Some("--version") => {
             println!(
                 "chda-session {} protocol {}",

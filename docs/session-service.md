@@ -48,3 +48,28 @@ GUI connection remains. There is no remote endpoint, login item or automatic
 command execution after a reboot. Live processes cannot survive the operating
 system shutting down; saved text and explicit conversation resume are the
 recovery path.
+
+## Updating while terminals are running
+
+The first update from an app that owns its terminals uses the existing prepared
+and commit handshake. The predecessor keeps its PTY descriptors until the new
+service has prepared every terminal and receives the broker's commit directly.
+A failed preparation leaves ownership with the predecessor. Inline images still
+prevent this first transfer, as before; finish those terminals or remove their
+images before updating.
+
+Later GUI updates attach to the running service without moving PTYs or images.
+The service and hook executable live in a verified, content-addressed private
+profile directory outside the replaced app bundle. A running service holds a
+lifetime lock; its executable is never overwritten or cleaned up. Once every
+run and old terminal attachment ends, chda can retire the idle service and
+start the bundled compatible replacement. It also checks for this idle
+transition before a new window starts its first shell. Other clients prevent
+retirement, and a failed or mismatching protocol probe leaves the current
+server intact. Saved runs remain stopped.
+
+The signed update feed declares its session protocol. The updater rejects a
+missing or incompatible protocol before downloading/installing a replacement.
+A direct installation with a mismatching protocol reports the connection error
+and leaves the existing server and its processes alive. Protocol compatibility
+does not authorize automatically restarting a conversation.

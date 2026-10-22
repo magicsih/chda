@@ -151,7 +151,7 @@ pub(crate) struct TerminalPlan {
     service: Option<chda_session::Client>,
     pane: u64,
     options: SessionOptions,
-    inherited: Option<chda_term::DetachedSession>,
+    inherited: Option<(chda_core::handoff::HandoffPane, chda_term::DetachedSession)>,
     program: bool,
 }
 
@@ -315,14 +315,11 @@ impl TerminalView {
                 options.env.extend(launch.env);
             }
         }
-        let inherited = env
-            .windows
-            .borrow_mut()
-            .update
-            .inherited
-            .remove(&pane_id)
-            .map(|(_, detached)| detached);
-        if inherited.is_none() && env.windows.borrow().update.adopting {
+        let inherited = env.windows.borrow_mut().update.inherited.remove(&pane_id);
+        if inherited.is_none()
+            && env.windows.borrow().update.adopting
+            && !env.windows.borrow().update.server_owned
+        {
             return Err(std::io::Error::other(format!(
                 "Missing inherited terminal {pane_id}"
             )));
@@ -355,9 +352,14 @@ impl TerminalView {
             let _ = wake_tx.unbounded_send(());
         };
         let session = match inherited {
-            Some(detached) => {
+            Some((metadata, detached)) => {
                 options.size = detached.size;
-                Session::prepare_adoption(options, detached, events_tx, wake)
+                match service {
+                    Some(client) => {
+                        client.prepare_import(pane, options, detached, metadata, events_tx, wake)
+                    }
+                    None => Session::prepare_adoption(options, detached, events_tx, wake),
+                }
             }
             None => match service {
                 Some(client) => client.pane(pane, options, events_tx, wake),

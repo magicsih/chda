@@ -1083,6 +1083,7 @@ fn session_rows_focus_their_pane_without_scrolling_its_terminal(cx: &mut TestApp
     h.wait_prompt();
     let (_, agent) = focused(&h);
     h.run("seq 1000 1300", "1299");
+    h.wait_prompt();
     h.hook(
         Some(agent.raw()),
         &h.home.home.clone(),

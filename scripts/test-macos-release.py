@@ -69,6 +69,34 @@ class EvidenceTests(unittest.TestCase):
         return release.validate_evidence(data, 'v0.1.21', SHA, TREE, CONFIG,
                                          data['stage'], now=now, **kwargs)
 
+    def test_session_release_requires_new_cases_and_signed_service_checks(self):
+        data = evidence('before-deploy')
+        tag = 'v1.4.0'
+        data['candidate']['tag'] = tag
+        for run in [*data['rounds'], data['run']]:
+            run['cases'] = sorted(release.V1025_CASES)
+            run['environment'].update(cli_provenance='test-fixtures', cli_manifest_sha256='f' * 64)
+        args = dict(now=NOW, built_at=timestamp(2), artifact_sha256='a' * 64)
+        def verify():
+            return release.validate_evidence(data, tag, SHA, TREE, CONFIG, 'before-deploy', **args)
+        with self.assertRaises(ValueError):
+            verify()
+        for run in [*data['rounds'], data['run']]:
+            run['cases'] = sorted(release.cases_for(tag))
+        with self.assertRaises(ValueError):
+            verify()
+        data['signed_artifact']['checks'] = sorted(release.artifact_checks_for(tag))
+        verify()
+        data['run']['environment']['cli_provenance'] = 'unknown'
+        with self.assertRaises(ValueError):
+            verify()
+        data['run']['environment']['cli_provenance'] = 'test-fixtures'
+        del data['run']['environment']['cli_manifest_sha256']
+        with self.assertRaises(ValueError):
+            verify()
+        self.assertEqual(release.cases_for('v1.3.0'), release.V1025_CASES)
+        self.assertEqual(release.artifact_checks_for('v1.3.0'), release.ARTIFACT_CHECKS)
+
     def test_valid_native_evidence_and_distinct_after_build_run(self):
         before = evidence()
         self.verify(before)
@@ -214,8 +242,9 @@ class V1025CoverageTests(unittest.TestCase):
     def test_prior_contracts_remain_exact_and_later_versions_retain_recent_cases(self):
         for tag in ('v0.1.23', 'v0.1.24', 'v0.2.0'):
             self.assertEqual(release.cases_for(tag), release.V023_CASES)
-        for tag in ('v1.0.25', 'v1.0.26', 'v1.1.0', 'v1.3.0', 'v1.3.1', 'v2.0.0'):
+        for tag in ('v1.0.25', 'v1.0.26', 'v1.1.0', 'v1.3.0', 'v1.3.1'):
             self.assertEqual(release.cases_for(tag), release.V023_CASES | self.NEW_CASES)
+        self.assertTrue((release.V023_CASES | self.NEW_CASES) < release.cases_for('v2.0.0'))
 
 
 def exception_record(sha=SHA, tree=TREE):

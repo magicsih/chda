@@ -89,6 +89,16 @@ required. This approval cannot authorize another candidate or future version.
 
 ## 후보와 실제 검수
 
+The existing crates keep the shared `v{{ version }}` history. Because the
+session service did not exist in older app tags, release-plz maintains a separate
+`chda-session-v{{ version }}` comparison tag for that member. It stays in the same
+version group and does not create another GitHub release; only `v*` tags trigger
+the public Release workflow. Its marker is generated on every release so future
+library-only fixes do not replay the service's entire initial feature history.
+The offline new-member test in `scripts/test-release-plz.py` exercises these
+successive releases with the real tool. See the official
+[git-only and tag settings](https://release-plz.dev/docs/config).
+
 기능 구현과 CI가 통과한 후보를 실제 macOS 개발 실행 환경에서 세 번 검수한다.
 각 회차 시작 전에 계획, 기대 결과, 격리 데이터, 설정, 구현자와 다른 리뷰 에이전트,
 증거 위치를 기록한다. 모든 신규 조건과 기존 기능을 매 회차 연결한다. headless
@@ -200,3 +210,33 @@ bash -n scripts/update-cask.sh
 
 단위 테스트는 합성 Git 저장소·assets·GitHub/Apple stand-in을 사용한다. 실제 서명,
 공증, macOS 실행, 업데이트, 공개 릴리스를 수행하거나 증명하지 않는다.
+
+## Dedicated session service (1.4.0 and later)
+
+The existing native case list remains required. Add SERVICE-DETACH (normal quit,
+window close and force quit), SERVICE-RECONNECT (same PID, output, input and
+images), SERVICE-RECOVERY (server loss, saved text, no automatic process),
+SERVICE-EXACT-RESUME (options, missing prerequisites and unsupported MiniMax),
+SERVICE-FAILURES (write failure, corruption, stale identities), SERVICE-UPDATE
+(first broker adoption, rollback, compatible GUI attachment and idle service
+replacement), and SERVICE-DETACHED-IPC (hooks, completion and MCP without GUI).
+Three independent rendered rounds cover the same final source tree. Reboot
+recovery uses terminated test servers and children, never a physical reboot.
+
+The exact signed ZIP additionally needs session-server-launch,
+gui-detach-reconnect, server-restart-explicit-resume and
+server-upgrade-compatibility. The artifact validator checks the universal,
+separately signed chda-session executable, matching signing team, executable
+protocol, Info.plist and appcast protocol. These static checks do not substitute
+for actual launch, update, IPC and PID preservation checks. No older version's
+publication exception applies to a new release.
+
+For 1.4.0 and later, every native run's environment also records
+`cli_provenance` (`test-fixtures` or `installed-cli`) and
+`cli_manifest_sha256`. The private manifest binds each executable, version and
+fixture transcript to its hash. Numeric Claude/Codex version fields describe
+that declared environment; test fixtures must never be presented as installed
+or authenticated providers. The approved session-service plan uses isolated test
+CLIs. Published evidence contains the provenance and manifest digest, not
+commands, transcripts, credentials or private paths. Older release evidence
+keeps its original exact schema.

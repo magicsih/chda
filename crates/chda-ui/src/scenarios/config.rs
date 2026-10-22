@@ -61,6 +61,10 @@ fn minimum_contrast_changes_apply_without_restarting_the_pane(cx: &mut TestAppCo
     let pane = h.read(|v, _| v.ws.focused_pane());
     assert_eq!(h.read(|v, _| v.settings.minimum_contrast), 3.0);
     h.type_text("still editing");
+    h.wait_for(
+        "the pending input echoed before changing contrast",
+        |v, cx| v.focused_text(cx).contains("still editing"),
+    );
     std::fs::write(&h.home.ghostty, "minimum-contrast = 1\n").unwrap();
     h.wait_for("contrast disabled in the existing pane", |v, cx| {
         v.settings.minimum_contrast == 1.0

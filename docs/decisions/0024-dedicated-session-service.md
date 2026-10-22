@@ -1,7 +1,8 @@
 # Dedicated session ownership
 
-Status: service foundations in progress; GUI recovery and update adoption remain
-part of the approved delivery, not established by standalone service tests.
+Status: accepted. Service ownership, explicit recovery and transactional update
+adoption are implemented; release readiness depends on the recorded L3, native
+review and exact signed-artifact gates.
 
 ## Decision
 
@@ -35,7 +36,10 @@ login item or automatic post-reboot command execution is introduced.
 ## Delivery and evidence
 
 The [approved design](../design/2026-10-22-session-service/design.md) records
-ownership, recovery UI, update compatibility and L3 acceptance. Existing update
-preparation, commit and image-transfer limitations remain until verified
-adoption replaces their ownership path. Normal release checks and immutable
+ownership, recovery UI, update compatibility and L3 acceptance. The first update
+uses the existing broker preparation/commit boundary and preserves its inline
+image restriction. The service receives the commit channel directly so that
+GUI loss cannot interrupt ownership after the predecessor commits. Subsequent
+GUI updates reconnect without transferring PTYs. Binary lifetime locks and a
+profile startup lock prevent cleanup or idle replacement racing a live server. Normal release checks and immutable
 signed-artifact verification remain mandatory for the next public release.

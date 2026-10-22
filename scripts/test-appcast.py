@@ -4,6 +4,8 @@ import base64
 import importlib.util
 from pathlib import Path
 import sys
+import plistlib
+import zipfile
 sys.dont_write_bytecode = True
 import tempfile
 import unittest
@@ -35,6 +37,38 @@ class AppcastTests(unittest.TestCase):
                 path.write_text(bad)
                 with self.assertRaises(ValueError):
                     appcast.validate(path, '1.2.3', archive)
+
+    def test_session_protocol_is_bound_to_the_archive_and_feed(self):
+        with tempfile.TemporaryDirectory() as folder:
+            folder = Path(folder)
+            archive = folder / 'chda-1.4.0-macos-universal.zip'
+            def package(protocol, executable=True):
+                with zipfile.ZipFile(archive, 'w') as bundle:
+                    bundle.writestr('chda.app/Contents/Info.plist', plistlib.dumps({'CHDASessionProtocol': protocol}))
+                    helper = zipfile.ZipInfo('chda.app/Contents/MacOS/chda-session')
+                    helper.external_attr = (0o100755 if executable else 0o100644) << 16
+                    bundle.writestr(helper, b'fixture')
+            package(1)
+            self.assertEqual(appcast.archive_protocol(archive), 1)
+            for protocol, executable in ((True, True), (0, True), ('1', True), (1, False)):
+                package(protocol, executable)
+                with self.assertRaises(ValueError):
+                    appcast.archive_protocol(archive)
+            package(1)
+            signature = base64.b64encode(bytes(64)).decode()
+            xml = (f'<rss xmlns:sparkle="{appcast.SPARKLE}"><channel><item>'
+                   '<sparkle:version>1.4.0</sparkle:version>'
+                   '<enclosure url="https://github.com/magicsih/chda/releases/download/v1.4.0/'
+                   f'{archive.name}" length="{archive.stat().st_size}" sparkle:edSignature="{signature}"/>'
+                   '</item></channel></rss>')
+            feed = folder / 'appcast.xml'
+            feed.write_text(xml)
+            with self.assertRaises(ValueError):
+                appcast.validate(feed, '1.4.0', archive, 1)
+            appcast.annotate(feed, '1.4.0', 1)
+            self.assertEqual(appcast.validate(feed, '1.4.0', archive, 1), signature)
+            with self.assertRaises(ValueError):
+                appcast.validate(feed, '1.4.0', archive, 2)
 
 
 if __name__ == '__main__':

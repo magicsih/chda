@@ -22,8 +22,13 @@ The first build fetches the Zed repository (for GPUI) and preparation downloads 
 
 ```sh
 python3 scripts/prepare-ghostty.py
+cargo build -p chda -p chda-session
 cargo run -p chda
 ```
+
+On macOS, keep `chda-session` beside the development GUI executable. The app
+retains a verified private copy for its service and hooks; build both programs
+after changing the protocol. Linux and Windows keep their local backend.
 
 Shortcuts follow Ghostty's macOS defaults: `cmd-t` new tab, `cmd-w` close,
 `cmd-1`..`cmd-9` and `cmd-shift-[`/`]` switch tabs, `cmd-d` / `cmd-shift-d`

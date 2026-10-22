@@ -28,6 +28,7 @@ pub(crate) struct UpdateState {
     pub target: Option<PathBuf>,
     pub journal: Option<PathBuf>,
     pub adopting: bool,
+    pub server_owned: bool,
     pub adoption_failed: bool,
     pub inherited: HashMap<u64, (HandoffPane, DetachedSession)>,
     operations: Arc<AtomicUsize>,
@@ -83,6 +84,16 @@ pub fn run_broker(fd: i32) -> io::Result<()> {
         update::verify(exe, &update.recovery_exe)?;
         let mut successor =
             chda_term::handoff::spawn_successor(exe, &inherited.ptys, &state.encode()?)?;
+        // Diagnostic ownership metadata must not block a live handoff when
+        // storage is full. Only the prepared/commit channel grants ownership.
+        if let Ok(bytes) = serde_json::to_vec(&serde_json::json!({
+            "pid": successor.child_pid(), "executable": exe,
+        })) {
+            let _ = chda_core::agents::ipc::write_private_atomic(
+                &update.directory.join("successor.json"),
+                &bytes,
+            );
+        }
         successor.wait_prepared(Duration::from_secs(30))?;
         successor.commit()
     };
@@ -119,6 +130,18 @@ pub(crate) fn inherited(fd: i32) -> io::Result<(Handoff, chda_term::handoff::Inh
 }
 
 pub(crate) fn validate(state: &Handoff, terminals: usize) -> io::Result<()> {
+    if let Some(service) = &state.service
+        && (service.protocol != chda_session::PROTOCOL_VERSION
+            || !state.panes.is_empty()
+            || terminals != 0
+            || service.instance.len() != 32
+            || !service.instance.bytes().all(|c| c.is_ascii_hexdigit())
+            || state.session.windows.is_empty())
+    {
+        return Err(io::Error::other(
+            "Incompatible server-owned update; the running service was kept",
+        ));
+    }
     if state.panes.len() != terminals || state.session.windows.is_empty() {
         return Err(io::Error::other("Invalid window/terminal handoff"));
     }
@@ -165,7 +188,7 @@ pub(crate) fn validate(state: &Handoff, terminals: usize) -> io::Result<()> {
     live.sort_unstable();
     let mut expected: Vec<_> = state.panes.iter().map(|p| p.pane).collect();
     expected.sort_unstable();
-    if live != expected || ids.windows(2).any(|p| p[0] == p[1]) {
+    if (state.service.is_none() && live != expected) || ids.windows(2).any(|p| p[0] == p[1]) {
         return Err(io::Error::other(
             "Window layout does not match the inherited terminals",
         ));
@@ -176,6 +199,26 @@ pub(crate) fn validate(state: &Handoff, terminals: usize) -> io::Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn server_owned_update_keeps_identity_without_descriptors() {
+        let mut workspace = chda_core::Workspace::new();
+        workspace.new_tab();
+        let mut state = Handoff::default();
+        state.session.windows.push(workspace.handoff_snapshot());
+        state.service = Some(chda_core::handoff::SessionService {
+            instance: "a".repeat(32),
+            protocol: chda_session::PROTOCOL_VERSION,
+        });
+        assert!(validate(&state, 0).is_ok());
+        state.service.as_mut().unwrap().protocol += 1;
+        assert!(validate(&state, 0).is_err());
+        state.service.as_mut().unwrap().protocol -= 1;
+        state.session.windows.push(workspace.handoff_snapshot());
+        assert!(
+            validate(&state, 0).is_err(),
+            "duplicate pane ownership is rejected"
+        );
+    }
     #[test]
     fn stopped_panes_keep_layout_identity_without_inherited_ptys() {
         let mut ws = chda_core::Workspace::new();

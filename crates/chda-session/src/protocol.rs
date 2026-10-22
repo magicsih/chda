@@ -36,10 +36,14 @@ pub struct SessionRecord {
     pub saved_at: Option<u64>,
     pub save_error: Option<String>,
     pub scrollback: usize,
+    #[serde(default)]
+    pub legacy_hooks: bool,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct State {
+    #[serde(default)]
+    pub pid: u32,
     pub sequence: u64,
     pub children: chda_agents::ChildBoard,
     pub executable: PathBuf,
@@ -128,6 +132,22 @@ pub(crate) enum Request {
     List,
     ReserveIds,
     GuiPresence(bool),
+    RetireIfIdle,
+    PrepareImport {
+        group: String,
+        pane: u64,
+        options: SessionOptions,
+        pid: u32,
+        size: Size,
+        snapshot_len: usize,
+        agent: Option<chda_core::PaneAgent>,
+        agent_live: bool,
+    },
+    CommitImports {
+        group: String,
+        layout: chda_core::SavedSession,
+        children: chda_agents::ChildBoard,
+    },
     Create {
         pane: u64,
         options: SessionOptions,
@@ -216,6 +236,7 @@ pub(crate) fn complete_images(frame: &mut Frame, previous: &Frame) -> io::Result
 
 #[derive(Serialize, Deserialize)]
 pub(crate) enum Response {
+    Retired(bool),
     IdRange(u64),
     State(State),
     Attached {

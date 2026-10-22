@@ -41,7 +41,21 @@ pub struct Inherited {
 /// The successor's answer channel to its predecessor.
 pub struct Reply {
     #[cfg(unix)]
-    stream: std::os::unix::net::UnixStream,
+    pub(crate) stream: std::os::unix::net::UnixStream,
+}
+
+impl Successor {
+    /// The exact successor started by this handle, for update attempt metadata.
+    pub fn child_pid(&self) -> Option<u32> {
+        #[cfg(unix)]
+        {
+            Some(self.child.id())
+        }
+        #[cfg(not(unix))]
+        {
+            None
+        }
+    }
 }
 
 #[cfg(unix)]
@@ -78,7 +92,9 @@ mod unix {
         })
     }
 
-    fn spawn_command(
+    /// Start an explicitly configured successor using the same inherited-descriptor
+    /// protocol. The callback receives its answer socket descriptor.
+    pub fn spawn_command(
         mut cmd: Command,
         ptys: &[DetachedPty],
         state: &[u8],
@@ -337,7 +353,7 @@ mod unix {
 }
 
 #[cfg(unix)]
-pub use unix::{receive, spawn_broker, spawn_successor};
+pub use unix::{receive, spawn_broker, spawn_command, spawn_successor};
 
 #[cfg(not(unix))]
 pub fn spawn_successor(_: &Path, _: &[DetachedPty], _: &[u8]) -> io::Result<Successor> {
@@ -374,5 +390,15 @@ pub const SUPPORTED: bool = cfg!(unix);
 
 #[cfg(not(unix))]
 pub fn spawn_broker(_: &Path, _: &[DetachedPty], _: &[u8]) -> io::Result<Successor> {
+    Err(crate::unsupported())
+}
+
+#[cfg(not(unix))]
+pub fn spawn_command(
+    _: std::process::Command,
+    _: &[DetachedPty],
+    _: &[u8],
+    _: impl FnOnce(&mut std::process::Command, i32),
+) -> io::Result<Successor> {
     Err(crate::unsupported())
 }

@@ -27,10 +27,16 @@ V023_CASES = CASES | frozenset(f'ISSUE-{n}' for n in (
 V1025_CASES = V023_CASES | frozenset(f'ISSUE-{n}' for n in (
     241, 242, 243, 244, 246, 247, 248, 249, 250, 251, 257))
 
+V140_CASES = V1025_CASES | frozenset((
+    'SERVICE-DETACH', 'SERVICE-RECONNECT', 'SERVICE-RECOVERY', 'SERVICE-EXACT-RESUME',
+    'SERVICE-FAILURES', 'SERVICE-UPDATE', 'SERVICE-DETACHED-IPC'))
+
 
 def cases_for(tag):
     # The candidate validator has already required a stable SemVer tag.
     version = tuple(int(part) for part in tag.removeprefix('v').split('.'))
+    if version >= (1, 4, 0):
+        return V140_CASES
     if version >= (1, 0, 25):
         return V1025_CASES
     return V023_CASES if version >= (0, 1, 23) else CASES
@@ -41,6 +47,16 @@ FEATURES = frozenset(('Terminal', 'Tabs and splits', 'App updates', 'Title bar',
                       'Diff review', 'Agents', 'Status bar', 'Palette', 'Config'))
 ARTIFACT_CHECKS = frozenset(('signed-launch', 'session-preserving-update',
                             'gui-ipc', 'shell-pid-preservation'))
+
+
+def artifact_checks_for(tag):
+    if tuple(map(int, tag.removeprefix('v').split('.'))) >= (1, 4, 0):
+        return ARTIFACT_CHECKS | frozenset((
+            'session-server-launch', 'gui-detach-reconnect',
+            'server-restart-explicit-resume', 'server-upgrade-compatibility'))
+    return ARTIFACT_CHECKS
+
+
 EXCEPTION_CHECKS = ARTIFACT_CHECKS | frozenset((
     'three-native-review-rounds', 'before-build-native-e2e', 'before-deploy-native-e2e'))
 EXCEPTION_PATH = 'docs/releases/v0.1.21-native-input-exception.json'
@@ -162,7 +178,14 @@ def validate_run(run, implementer, now, is_round=False, expected_cases=CASES):
     unique_items(run['cases'], expected_cases)
     unique_items(run['features'], FEATURES)
     env = run['environment']
-    fields(env, ('os', 'os_version', 'architecture', 'claude_version', 'codex_version', 'isolated'))
+    env_names = ('os', 'os_version', 'architecture', 'claude_version', 'codex_version', 'isolated')
+    if 'SERVICE-RECOVERY' in expected_cases:
+        env_names += ('cli_provenance', 'cli_manifest_sha256')
+    fields(env, env_names)
+    if 'SERVICE-RECOVERY' in expected_cases:
+        require(env['cli_provenance'] in ('test-fixtures', 'installed-cli'),
+                'CLI provenance must distinguish test fixtures from installed providers')
+        digest(env['cli_manifest_sha256'])
     require(env['os'] == 'macos' and env['architecture'] in ('arm64', 'x86_64')
             and env['isolated'] is True, 'Isolated macOS execution is required')
     for name in ('os_version', 'claude_version', 'codex_version'):
@@ -333,7 +356,7 @@ def validate_evidence(data, tag, sha, tree, config, stage, now=None,
         digest(artifact['sha256'])
         digest(artifact['evidence_sha256'])
         require(artifact['result'] == 'passed', 'Signed artifact verification did not pass')
-        unique_items(artifact['checks'], ARTIFACT_CHECKS)
+        unique_items(artifact['checks'], artifact_checks_for(tag))
         require(artifact_sha256 is not None and artifact['sha256'] == artifact_sha256,
                 'Native artifact checks must cover the exact draft archive')
         require(built_at is not None and start >= instant(built_at),
@@ -575,6 +598,28 @@ def native_archive(root, tag):
                                  stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True).stderr
         require('Authority=Developer ID Application:' in details and 'TeamIdentifier=' in details
                 and 'Signature=adhoc' not in details, 'A Developer ID signature is required')
+        if tuple(map(int, tag.removeprefix('v').split('.'))) >= (1, 4, 0):
+            helper = app / 'Contents/MacOS/chda-session'
+            require(helper.is_file() and os.access(helper, os.X_OK),
+                    'The session service executable is missing')
+            command('codesign', '--verify', '--strict', str(helper))
+            helper_details = subprocess.run(['codesign', '-d', '--verbose=2', str(helper)],
+                check=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True).stderr
+            team = re.search(r'^TeamIdentifier=(.+)$', details, re.MULTILINE)
+            helper_team = re.search(r'^TeamIdentifier=(.+)$', helper_details, re.MULTILINE)
+            require(team is not None and helper_team is not None and team[1] == helper_team[1],
+                    'The session service must have the application signing identity')
+            require(set(command('lipo', '-archs', str(helper)).split()) == {'arm64', 'x86_64'},
+                    'The session service must be universal')
+            protocol = info.get('CHDASessionProtocol')
+            require(type(protocol) is int and protocol > 0
+                    and command(str(helper), '--protocol').strip() == str(protocol),
+                    'The bundled session protocol does not match the executable')
+            feed = ET.parse(root / 'appcast.xml').getroot()
+            matching = [i for i in feed.findall('./channel/item')
+                        if i.findtext(f'{{{SPARKLE}}}version') == tag[1:]]
+            require(len(matching) == 1 and matching[0].findtext('chdaSessionProtocol') == str(protocol),
+                    'The appcast protocol does not match the signed session service')
         command('xcrun', 'stapler', 'validate', str(app))
         command('spctl', '--assess', '--type', 'execute', str(app))
         architectures = set(command('lipo', '-archs', str(app / 'Contents/MacOS/chda')).split())
