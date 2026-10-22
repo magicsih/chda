@@ -25,12 +25,15 @@ struct Running {
     last_save: Instant,
 }
 struct Runtime {
+    children: chda_agents::ChildBoard,
     instance: String,
     store: Store,
     sessions: BTreeMap<String, Running>,
     layout: Option<chda_core::SavedSession>,
     save_error: Option<String>,
+    layout_saved_at: Option<u64>,
     connections: usize,
+    gui_connections: usize,
     next_pane: u64,
     sequence: u64,
     hooks: VecDeque<(u64, HookEvent)>,
@@ -40,6 +43,9 @@ struct Runtime {
 impl Runtime {
     fn state(&self) -> State {
         State {
+            sequence: self.sequence,
+            children: self.children.clone(),
+            executable: std::env::current_exe().unwrap_or_default(),
             instance: self.instance.clone(),
             executable_version: env!("CARGO_PKG_VERSION").into(),
             layout: self.layout.clone(),
@@ -49,6 +55,7 @@ impl Runtime {
                 .map(|s| s.checkpoint.record.clone())
                 .collect(),
             save_error: self.save_error.clone(),
+            layout_saved_at: self.layout_saved_at,
         }
     }
     fn get(&mut self, id: &Identity) -> io::Result<&mut Running> {
@@ -111,14 +118,9 @@ impl Runtime {
             closed: false,
             title: String::new(),
             cwd: options.cwd,
-            launch: previous.as_ref().and_then(|id| {
-                self.sessions
-                    .get(&id.session)?
-                    .checkpoint
-                    .record
-                    .launch
-                    .clone()
-            }),
+            // The GUI checkpoints the chosen launch context for this run.
+            // A manually started shell must not inherit an old AI launch.
+            launch: None,
             agent: None,
             exit: None,
             saved_at: None,
@@ -180,11 +182,15 @@ impl Runtime {
     }
     fn tick(&mut self) {
         let mut flush = Vec::new();
+        let mut title_hooks = Vec::new();
         for (id, s) in &mut self.sessions {
             for event in s.events.try_iter() {
                 match &event {
                     Event::Frame { has_output: true } => s.dirty = true,
                     Event::TitleChanged(t) => {
+                        if let Some(kind) = codex_title_hook(&s.checkpoint.record, Some(t)) {
+                            title_hooks.push((s.checkpoint.record.clone(), kind));
+                        }
                         s.checkpoint.record.title = t.clone();
                         s.dirty = true;
                     }
@@ -196,6 +202,11 @@ impl Runtime {
                     }
                     Event::Cwd(Some(p)) => {
                         s.checkpoint.record.cwd = Some(p.clone());
+                    }
+                    Event::PromptShown => {
+                        if let Some(kind) = codex_title_hook(&s.checkpoint.record, None) {
+                            title_hooks.push((s.checkpoint.record.clone(), kind));
+                        }
                     }
                     Event::FinalOutput(Ok(text)) => s.checkpoint.output = text.clone(),
                     Event::Exited(status) => {
@@ -224,6 +235,31 @@ impl Runtime {
         flush.dedup();
         for (id, capture) in flush {
             self.flush(&id, capture);
+        }
+        for (record, kind) in title_hooks {
+            if let Some(cwd) = record.cwd {
+                let session_id = record
+                    .agent
+                    .filter(|e| e.agent == "codex")
+                    .map(|e| e.session_id)
+                    .or_else(|| {
+                        record
+                            .launch
+                            .filter(|l| l.agent == chda_agents::AgentId::Codex)
+                            .and_then(|l| l.session.map(|s| s.0))
+                    })
+                    .unwrap_or_default();
+                self.hook(HookEvent {
+                    agent: "codex".into(),
+                    session_id,
+                    cwd,
+                    kind,
+                    timestamp: protocol::now(),
+                    pane: Some(record.pane),
+                    child: None,
+                    run: Some(record.identity.run),
+                });
+            }
         }
         let expired: Vec<_> = self
             .requests
@@ -270,6 +306,14 @@ impl Runtime {
             s.dirty = true;
         }
         let id = s.checkpoint.record.identity.session.clone();
+        if let Some(child) = &event.child {
+            self.children.apply(chda_agents::ChildActivity {
+                agent: event.agent.clone(),
+                parent: event.session_id.clone(),
+                child: child.clone(),
+                observed_at: event.timestamp,
+            });
+        }
         self.flush(&id, false);
         self.sequence += 1;
         self.hooks.push_back((self.sequence, event));
@@ -279,6 +323,7 @@ impl Runtime {
     }
     fn dispatch(&mut self, request: Request) -> io::Result<Response> {
         match request {
+            Request::GuiPresence(_) => Ok(Response::Ok),
             Request::ReserveIds => {
                 let first = self.next_pane;
                 self.next_pane = first
@@ -313,6 +358,7 @@ impl Runtime {
                 identity,
                 generation,
                 sequence,
+                images,
             } => {
                 self.tick();
                 let s = self.get(&identity)?;
@@ -321,7 +367,7 @@ impl Runtime {
                     .as_ref()
                     .map(Session::frame)
                     .filter(|f| f.generation != generation)
-                    .map(|f| Box::new((*f).clone()));
+                    .map(|f| Box::new(protocol::frame_for_wire((*f).clone(), &images)));
                 let events = s
                     .pending
                     .iter()
@@ -352,7 +398,10 @@ impl Runtime {
                     self.update_launches(&layout);
                     self.layout = Some(layout.clone());
                     match self.store.save_layout(&layout) {
-                        Ok(()) => self.save_error = None,
+                        Ok(()) => {
+                            self.save_error = None;
+                            self.layout_saved_at = Some(protocol::now());
+                        }
                         Err(e) => self.save_error = Some(e.to_string()),
                     }
                 }
@@ -408,7 +457,10 @@ impl Runtime {
         if !s.checkpoint.record.running {
             return Err(io::Error::other("The process ended; use its saved output"));
         }
-        let frame = Box::new((*s.terminal.as_ref().unwrap().frame()).clone());
+        let frame = Box::new(protocol::frame_for_wire(
+            (*s.terminal.as_ref().unwrap().frame()).clone(),
+            &[],
+        ));
         Ok(Response::Attached {
             record: s.checkpoint.record.clone(),
             frame,
@@ -449,12 +501,51 @@ impl Runtime {
     }
 }
 
+fn codex_title_hook(record: &SessionRecord, title: Option<&String>) -> Option<HookKind> {
+    use chda_agents::{CodexRunState as C, parse_codex_title};
+    let old = parse_codex_title(&record.title);
+    match title.map(String::as_str) {
+        None | Some("") => {
+            let codex = old.is_some()
+                || record
+                    .agent
+                    .as_ref()
+                    .is_some_and(|e| e.agent == "codex" && e.kind != HookKind::SessionEnd);
+            codex.then_some(HookKind::SessionEnd)
+        }
+        Some(t) => {
+            let next = parse_codex_title(t)?;
+            if old == Some(next)
+                && match next {
+                    C::Working => record.agent.as_ref().is_some_and(|e| {
+                        matches!(e.kind, HookKind::SessionStart | HookKind::PromptSubmitted)
+                    }),
+                    C::WaitingInput => record
+                        .agent
+                        .as_ref()
+                        .is_some_and(|e| e.kind == HookKind::WaitingInput),
+                    C::Ready => true,
+                }
+            {
+                return None;
+            }
+            Some(match next {
+                C::Working => HookKind::PromptSubmitted,
+                C::WaitingInput => HookKind::WaitingInput,
+                C::Ready if matches!(old, Some(C::Working | C::WaitingInput)) => HookKind::Stopped,
+                C::Ready => HookKind::Idle,
+            })
+        }
+    }
+}
+
 /// Run until no process and no connection remains. Loading checkpoints never
 /// starts a process. The caller must use a separate process for real ownership.
 pub fn serve(data: &Path) -> io::Result<()> {
     let listener = chda_pty::local::Listener::bind(&crate::socket_path(data))?;
     let store = Store::new(data)?;
     let layout = store.migrate(data)?;
+    let layout_saved_at = store.layout_saved_at();
     let sessions: BTreeMap<String, Running> = store
         .load()
         .into_iter()
@@ -480,12 +571,15 @@ pub fn serve(data: &Path) -> io::Result<()> {
         .unwrap_or(0)
         + 1;
     let runtime = Arc::new(Mutex::new(Runtime {
+        children: Default::default(),
         instance: chda_pty::local::token()?,
         store,
         sessions,
         layout,
         save_error: None,
+        layout_saved_at,
         connections: 0,
+        gui_connections: 0,
         next_pane,
         sequence: 0,
         hooks: VecDeque::new(),
@@ -538,7 +632,7 @@ pub fn serve(data: &Path) -> io::Result<()> {
                             std::thread::spawn(move || {
                                 let _ = tx.send(control(state, request));
                             });
-                        } else if r.connections == 0 {
+                        } else if r.gui_connections == 0 {
                             let _ =
                                 tx.send(Reply::err("This command needs a connected chda window"));
                         } else {
@@ -565,6 +659,7 @@ pub fn serve(data: &Path) -> io::Result<()> {
 }
 fn connection(mut stream: chda_pty::local::Stream, runtime: Arc<Mutex<Runtime>>) {
     let _ = stream.timeout(Duration::from_secs(10));
+    let mut gui = false;
     loop {
         let Envelope { version, request } = match protocol::read::<Envelope>(&mut stream, true) {
             Ok(envelope) => envelope,
@@ -588,17 +683,30 @@ fn connection(mut stream: chda_pty::local::Stream, runtime: Arc<Mutex<Runtime>>)
             );
             break;
         }
-        let response = runtime
-            .lock()
-            .unwrap()
-            .dispatch(request)
-            .unwrap_or_else(|e| Response::Error(e.to_string()));
+        let response = {
+            let mut r = runtime.lock().unwrap();
+            if let Request::GuiPresence(available) = &request
+                && gui != *available
+            {
+                if *available {
+                    r.gui_connections += 1;
+                } else {
+                    r.gui_connections -= 1;
+                }
+                gui = *available;
+            }
+            r.dispatch(request)
+                .unwrap_or_else(|e| Response::Error(e.to_string()))
+        };
         if protocol::write(&mut stream, &response).is_err() {
             break;
         }
     }
     let mut r = runtime.lock().unwrap();
     r.connections -= 1;
+    if gui {
+        r.gui_connections -= 1;
+    }
     let ids: Vec<_> = r
         .sessions
         .iter()

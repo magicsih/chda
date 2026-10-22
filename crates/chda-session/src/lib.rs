@@ -3,7 +3,7 @@ mod client;
 mod protocol;
 mod server;
 mod store;
-pub use client::{Client, RemoteSession, Session};
+pub use client::{Client, RemoteSession, Session, Watch};
 pub use protocol::{Action, Identity, PROTOCOL_VERSION, SessionRecord, State};
 pub use server::serve;
 pub use store::Checkpoint;

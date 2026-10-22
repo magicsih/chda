@@ -2,6 +2,24 @@
 fn main() {
     let args: Vec<String> = std::env::args().skip(1).collect();
     let code = match args.first().map(String::as_str) {
+        Some("agent-settings") if args.get(1).map(String::as_str) == Some("claude") => {
+            let result = std::env::var_os("HOME")
+                .map(std::path::PathBuf::from)
+                .zip(chda_agents::hook::data_dir())
+                .zip(std::env::current_dir().ok())
+                .zip(std::env::current_exe().ok())
+                .ok_or_else(|| std::io::Error::other("agent settings locations unavailable"))
+                .and_then(|(((home, dir), cwd), bin)| {
+                    chda_agents::statusline::launch_settings(&home, &cwd, &dir, &bin)
+                });
+            match result {
+                Ok(path) => {
+                    println!("{}", path.display());
+                    0
+                }
+                Err(_) => 1,
+            }
+        }
         Some("serve") => match args
             .get(1)
             .map(std::path::Path::new)

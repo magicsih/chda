@@ -16,6 +16,18 @@ update adoption, signed-ZIP or physical power-loss acceptance. The
 [session-service plan](design/2026-10-22-session-service/test-plan.json) retains
 those separate gates.
 
+`scenarios::session_service` runs the macOS service backend in GPUI's test
+platform with real shells: closing a window and reconnecting from Sessions
+preserves PID and input, service restart shows copyable read-only output before
+an explicit double-click-safe Start shell, and missing transcripts never replace
+an exact conversation. Recovery controls support Tab, Shift-Tab, Enter and Space.
+Service tests also cover current-screen metadata after late attachment, Codex
+completion without a GUI, simulated ENOSPC, actual checkpoint-path write failure,
+and salvage of valid legacy tabs beside malformed entries. Compact frame cells
+and visible-generation image caching have round-trip and reconnect coverage.
+These are development tests; the three rendered native reviews and signed update
+checks remain separate, with unrun results reported as unrun.
+
 | Layer | Where | What it covers |
 |---|---|---|
 | Logic | `#[test]` in each crate | Parsing, models, search and link detection, git and shell integration with real `git`, zsh, bash and fish |

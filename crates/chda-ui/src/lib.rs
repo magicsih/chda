@@ -217,9 +217,13 @@ fn run_inner(inherited: Option<(chda_core::handoff::Handoff, chda_term::handoff:
             config
                 .restore_session
                 .then(|| {
-                    env.data_dir
-                        .as_deref()
-                        .and_then(chda_core::SavedSession::load)
+                    if let Some(client) = &env.session_service {
+                        client.state().ok().and_then(|s| s.layout)
+                    } else {
+                        env.data_dir
+                            .as_deref()
+                            .and_then(chda_core::SavedSession::load)
+                    }
                 })
                 .flatten()
         });

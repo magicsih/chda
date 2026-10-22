@@ -34,6 +34,10 @@ const SEARCH_INTERVAL: Duration = Duration::from_millis(250);
 /// Something the UI should react to.
 #[derive(serde::Serialize, serde::Deserialize, Clone, Debug, PartialEq, Eq)]
 pub enum Event {
+    PersistenceStatus {
+        saved_at: Option<u64>,
+        error: Option<String>,
+    },
     /// The view lost its session service. Input is no longer sent; the
     /// caller must explicitly reconnect rather than replay queued input.
     Disconnected(String),

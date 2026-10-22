@@ -14,6 +14,11 @@ pub(crate) struct WindowEntry {
 }
 #[derive(Default)]
 pub(crate) struct WindowRegistry {
+    pub detached: Vec<SavedWindow>,
+    pub service_records: Vec<chda_session::SessionRecord>,
+    pub service_error: Option<String>,
+    pub service_saved_at: Option<u64>,
+    pub service_watch: Option<chda_session::Watch>,
     pub preparations: HashMap<PathBuf, WeakEntity<WorkspaceView>>,
     pub reviews: Option<std::sync::Arc<chda_core::ReviewRepository>>,
     pub entries: Vec<WindowEntry>,
@@ -48,7 +53,11 @@ impl WindowRegistry {
                 .iter()
                 .position(|e| Some(e.window.window_id()) == self.active)
                 .unwrap_or(0),
-            windows: entries.into_iter().map(|e| e.saved.clone()).collect(),
+            windows: entries
+                .into_iter()
+                .map(|e| e.saved.clone())
+                .chain(self.detached.iter().cloned())
+                .collect(),
         }
     }
 }

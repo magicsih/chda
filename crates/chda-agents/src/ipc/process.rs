@@ -67,7 +67,10 @@ fn write_private_mode(path: &std::path::Path, bytes: &[u8], mode: u32) -> std::i
         file.write_all(bytes)?;
         file.sync_all()?;
         drop(file);
-        std::fs::rename(&temporary, path)
+        std::fs::rename(&temporary, path)?;
+        #[cfg(unix)]
+        std::fs::File::open(parent)?.sync_all()?;
+        Ok(())
     })();
     if result.is_err() {
         let _ = std::fs::remove_file(temporary);

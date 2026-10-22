@@ -16,6 +16,7 @@ serde.workspace = true
 
 [dev-dependencies]
 base64 = "0.22.1"
+serde_json.workspace = true
 
 [build-dependencies]
 serde_json.workspace = true
