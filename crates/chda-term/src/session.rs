@@ -161,7 +161,7 @@ pub struct DetachedSession {
 }
 
 enum Msg {
-    Output(Vec<u8>),
+    Output(Vec<u8>, Sender<()>),
     OutputClosed,
     Command(Command),
 }
@@ -469,13 +469,23 @@ fn spawn_reader(mut reader: PtyReader, tx: Sender<Msg>) {
     let _ = thread::Builder::new()
         .name("chda-pty-read".into())
         .spawn(move || {
-            let mut buf = vec![0u8; 64 * 1024];
+            let mut buf = vec![0u8; 4 * 1024];
+            let mut draining = false;
             loop {
                 match reader.read(&mut buf) {
                     Ok(0) | Err(_) => break,
                     Ok(n) => {
-                        if tx.send(Msg::Output(buf[..n].to_vec())).is_err() {
-                            break;
+                        // One raw chunk may be in flight. Slow parsing applies
+                        // backpressure to the PTY instead of growing a Rust queue.
+                        if !draining {
+                            let (parsed, ready) = mpsc::channel();
+                            if tx.send(Msg::Output(buf[..n].to_vec(), parsed)).is_err()
+                                || ready.recv().is_err()
+                            {
+                                // The owner is closing. Keep draining without
+                                // enqueueing so macOS can flush the child's tty.
+                                draining = true;
+                            }
                         }
                     }
                 }
@@ -538,8 +548,8 @@ fn run(
     let mut last_search = Instant::now();
 
     loop {
-        // Block for the first message, then drain whatever else is queued so
-        // a burst of output is parsed in one go before we draw.
+        // Keep FIFO input/output ordering, but publish and acknowledge within
+        // a frame budget even while a producer continues writing.
         let mut timeout = if dirty {
             FRAME_INTERVAL.saturating_sub(last_output_frame.elapsed())
         } else {
@@ -553,10 +563,12 @@ fn run(
             Err(RecvTimeoutError::Timeout) => None,
             Err(RecvTimeoutError::Disconnected) => break,
         };
+        let batch = Instant::now();
         for msg in first.into_iter().chain(rx.try_iter()) {
             match msg {
-                Msg::Output(bytes) => {
+                Msg::Output(bytes, parsed) => {
                     term.feed(&bytes);
+                    let _ = parsed.send(());
                     dirty = true;
                     output_pending = true;
                     search_stale = true;
@@ -611,6 +623,9 @@ fn run(
                     }
                 }
             }
+            if !barriers.is_empty() || batch.elapsed() >= FRAME_INTERVAL {
+                break;
+            }
         }
 
         if search_stale && last_search.elapsed() >= SEARCH_INTERVAL {
@@ -654,7 +669,7 @@ fn run(
             let _ = pty.write_all(&fx.pty_output);
         }
         // Publish the frame before the events so handlers see current state.
-        let force_frame = fx.title_changed || fx.pwd_changed || closed;
+        let force_frame = fx.title_changed || fx.pwd_changed || closed || !barriers.is_empty();
         let throttled = output_pending && last_output_frame.elapsed() < FRAME_INTERVAL;
         if dirty && (force_frame || !throttled) {
             if let Ok(frame) = term.frame() {
@@ -703,6 +718,9 @@ fn run(
         stop.stop();
         return;
     }
+    // Release queued parse acknowledgments before waiting for child exit.
+    // The reader switches to bounded discard mode while tty teardown drains.
+    drop(rx);
     let status = match pty.try_wait() {
         Ok(Some(s)) => s,
         _ => {
@@ -978,6 +996,102 @@ mod tests {
                 text: text.map(str::to_owned),
             });
         }
+    }
+
+    #[test]
+    fn pty_reader_keeps_one_small_chunk_in_flight_and_stop_releases_its_ack_wait() {
+        let home = temp_home("bounded-reader");
+        let home_env = format!("HOME={}", home.display());
+        let mut pty = Pty::spawn(
+            PtySize { cols: 80, rows: 24, pixel_width: 0, pixel_height: 0 },
+            chda_pty::SpawnOptions {
+                command: Some(&["/usr/bin/env", "-i", &home_env, "PATH=/usr/bin:/bin", "/bin/sh", "-c",
+                    "i=0; while [ $i -lt 10000 ]; do printf 'bounded-output-%s\\n' \"$i\"; i=$((i+1)); done; read x"]),
+                ..Default::default()
+            },
+        ).unwrap();
+        let reader = pty.reader().unwrap();
+        let stop = reader.stopper();
+        let (tx, rx) = mpsc::channel();
+        spawn_reader(reader, tx);
+        let Msg::Output(bytes, parsed) = rx.recv_timeout(Duration::from_secs(5)).unwrap() else {
+            panic!("missing output");
+        };
+        assert!(!bytes.is_empty() && bytes.len() <= 4096);
+        assert!(
+            matches!(
+                rx.recv_timeout(Duration::from_millis(50)),
+                Err(RecvTimeoutError::Timeout)
+            ),
+            "raw output must not queue while parsing is paused"
+        );
+        stop.stop();
+        drop(parsed);
+        assert!(
+            matches!(
+                rx.recv_timeout(Duration::from_secs(2)),
+                Ok(Msg::OutputClosed)
+            ),
+            "ending the consumer releases the reader even while it awaits parsing"
+        );
+        let mut drain = pty.reader().unwrap();
+        let drained = thread::spawn(move || std::io::copy(&mut drain, &mut std::io::sink()));
+        let _ = pty.kill();
+        let _ = pty.wait();
+        drained.join().unwrap().unwrap();
+        std::fs::remove_dir_all(home).unwrap();
+    }
+
+    #[test]
+    fn burst_output_publishes_frames_and_handles_barriers_and_interrupts() {
+        let home = temp_home("burst-fairness");
+        let home_env = format!("HOME={}", home.display());
+        let mut p = Probe::spawn(&[
+            "/usr/bin/env",
+            "-i",
+            &home_env,
+            "PATH=/usr/bin:/bin",
+            "/bin/sh",
+            "-c",
+            "trap 'exit 0' INT; echo burst-ready; read start; i=0; while [ $i -lt 20000 ]; do printf 'stream-%05d\\n' \"$i\"; i=$((i+1)); done; read finish",
+        ]);
+        p.wait_for_text("burst-ready");
+        p.session.write(b"go\n".to_vec());
+        p.wait_for_text("stream-");
+        p.session
+            .barrier()
+            .recv_timeout(Duration::from_secs(2))
+            .expect("a burst must not starve barrier replies");
+        p.session.write(vec![3]);
+        p.wait_for(|e| matches!(e, Event::Exited(_)));
+        drop(p);
+        std::fs::remove_dir_all(home).unwrap();
+    }
+
+    #[test]
+    fn dropping_a_streaming_session_releases_pending_parse_acknowledgments() {
+        let home = temp_home("burst-drop");
+        let home_env = format!("HOME={}", home.display());
+        let mut p = Probe::spawn(&[
+            "/usr/bin/env",
+            "-i",
+            &home_env,
+            "PATH=/usr/bin:/bin",
+            "/bin/sh",
+            "-c",
+            "echo drop-ready; read start; i=0; while [ $i -lt 20000 ]; do echo dropping-$i; i=$((i+1)); done; read finish",
+        ]);
+        p.wait_for_text("drop-ready");
+        p.session.write(b"go\n".to_vec());
+        p.wait_for_text("dropping-");
+        let (tx, rx) = mpsc::channel();
+        thread::spawn(move || {
+            drop(p);
+            let _ = tx.send(());
+        });
+        rx.recv_timeout(Duration::from_secs(5))
+            .expect("terminal close must release the reader and child");
+        std::fs::remove_dir_all(home).unwrap();
     }
 
     #[test]

@@ -178,7 +178,14 @@ def validate_run(run, implementer, now, is_round=False, expected_cases=CASES):
     unique_items(run['cases'], expected_cases)
     unique_items(run['features'], FEATURES)
     env = run['environment']
-    fields(env, ('os', 'os_version', 'architecture', 'claude_version', 'codex_version', 'isolated'))
+    env_names = ('os', 'os_version', 'architecture', 'claude_version', 'codex_version', 'isolated')
+    if 'SERVICE-RECOVERY' in expected_cases:
+        env_names += ('cli_provenance', 'cli_manifest_sha256')
+    fields(env, env_names)
+    if 'SERVICE-RECOVERY' in expected_cases:
+        require(env['cli_provenance'] in ('test-fixtures', 'installed-cli'),
+                'CLI provenance must distinguish test fixtures from installed providers')
+        digest(env['cli_manifest_sha256'])
     require(env['os'] == 'macos' and env['architecture'] in ('arm64', 'x86_64')
             and env['isolated'] is True, 'Isolated macOS execution is required')
     for name in ('os_version', 'claude_version', 'codex_version'):

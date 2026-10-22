@@ -220,3 +220,13 @@ separately signed chda-session executable, matching signing team, executable
 protocol, Info.plist and appcast protocol. These static checks do not substitute
 for actual launch, update, IPC and PID preservation checks. No older version's
 publication exception applies to a new release.
+
+For 1.4.0 and later, every native run's environment also records
+`cli_provenance` (`test-fixtures` or `installed-cli`) and
+`cli_manifest_sha256`. The private manifest binds each executable, version and
+fixture transcript to its hash. Numeric Claude/Codex version fields describe
+that declared environment; test fixtures must never be presented as installed
+or authenticated providers. The approved session-service plan uses isolated test
+CLIs. Published evidence contains the provenance and manifest digest, not
+commands, transcripts, credentials or private paths. Older release evidence
+keeps its original exact schema.

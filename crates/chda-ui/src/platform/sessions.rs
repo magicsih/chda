@@ -30,6 +30,7 @@ pub(crate) fn connect(data: Option<&Path>) -> io::Result<Option<chda_session::Cl
             None => chda_session::Client::connect_or_start(data, &retained)?,
         };
         client.set_pending_executable(retained.clone());
+        client.upgrade_if_idle()?;
         cleanup(data, &[client.helper_executable()?, retained]);
         Ok(Some(client))
     }

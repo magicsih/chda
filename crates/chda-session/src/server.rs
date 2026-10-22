@@ -355,31 +355,33 @@ impl Runtime {
             self.hooks.pop_front();
         }
     }
+    fn retire_if_idle(&mut self, requester_is_non_gui: bool) -> Response {
+        let mut idle = !self.sessions.values().any(|s| s.checkpoint.record.running)
+            && self.connections == 1
+            && self.connections == self.gui_connections + usize::from(requester_is_non_gui)
+            && self.committing.is_empty();
+        if idle {
+            let ids: Vec<_> = self
+                .sessions
+                .iter()
+                .filter(|(_, s)| s.dirty)
+                .map(|(id, _)| id.clone())
+                .collect();
+            for id in ids {
+                self.flush(&id, true);
+            }
+            idle = self.save_error.is_none()
+                && self
+                    .sessions
+                    .values()
+                    .all(|s| s.checkpoint.record.save_error.is_none());
+            self.retiring = idle;
+        }
+        Response::Retired(idle)
+    }
     fn dispatch(&mut self, request: Request) -> io::Result<Response> {
         match request {
-            Request::RetireIfIdle => {
-                let mut idle = !self.sessions.values().any(|s| s.checkpoint.record.running)
-                    && self.connections == self.gui_connections
-                    && self.committing.is_empty();
-                if idle {
-                    let ids: Vec<_> = self
-                        .sessions
-                        .iter()
-                        .filter(|(_, s)| s.dirty)
-                        .map(|(id, _)| id.clone())
-                        .collect();
-                    for id in ids {
-                        self.flush(&id, true);
-                    }
-                    idle = self.save_error.is_none()
-                        && self
-                            .sessions
-                            .values()
-                            .all(|s| s.checkpoint.record.save_error.is_none());
-                    self.retiring = idle;
-                }
-                Ok(Response::Retired(idle))
-            }
+            Request::RetireIfIdle => Ok(Response::Retired(false)),
             Request::PrepareImport { .. } | Request::CommitImports { .. } => {
                 Err(io::Error::other("Import requires descriptor transport"))
             }
@@ -802,6 +804,13 @@ fn connection(mut stream: chda_pty::local::Stream, runtime: Arc<Mutex<Runtime>>)
             break;
         }
         let response = match request {
+            Request::RetireIfIdle => {
+                if attached.is_some() {
+                    Response::Retired(false)
+                } else {
+                    runtime.lock().unwrap().retire_if_idle(!gui)
+                }
+            }
             request @ Request::PrepareImport { .. } => {
                 let result = adoption::receive(&mut stream, &runtime, request);
                 if let Ok(Response::Attached { record, .. }) = &result {

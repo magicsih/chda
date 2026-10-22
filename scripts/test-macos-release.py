@@ -75,6 +75,7 @@ class EvidenceTests(unittest.TestCase):
         data['candidate']['tag'] = tag
         for run in [*data['rounds'], data['run']]:
             run['cases'] = sorted(release.V1025_CASES)
+            run['environment'].update(cli_provenance='test-fixtures', cli_manifest_sha256='f' * 64)
         args = dict(now=NOW, built_at=timestamp(2), artifact_sha256='a' * 64)
         def verify():
             return release.validate_evidence(data, tag, SHA, TREE, CONFIG, 'before-deploy', **args)
@@ -86,6 +87,13 @@ class EvidenceTests(unittest.TestCase):
             verify()
         data['signed_artifact']['checks'] = sorted(release.artifact_checks_for(tag))
         verify()
+        data['run']['environment']['cli_provenance'] = 'unknown'
+        with self.assertRaises(ValueError):
+            verify()
+        data['run']['environment']['cli_provenance'] = 'test-fixtures'
+        del data['run']['environment']['cli_manifest_sha256']
+        with self.assertRaises(ValueError):
+            verify()
         self.assertEqual(release.cases_for('v1.3.0'), release.V1025_CASES)
         self.assertEqual(release.artifact_checks_for('v1.3.0'), release.ARTIFACT_CHECKS)
 

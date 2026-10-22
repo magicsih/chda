@@ -35,7 +35,12 @@ replacement after all processes and attachments end, retained-binary lifetime
 locks and fallback hooks without a GUI. `cargo run -p chda-session --example
 measure -- /path/to/chda-session` compares the local backend with IPC under a
 private profile and records detached RSS and disk bytes; it does not measure
-native input event delivery. These are development tests; the three rendered native reviews and signed update
+native input event delivery. PTY output has one parsed acknowledgment per at-most-4-KiB raw chunk. Real-shell
+regressions pause its consumer, interrupt a burst and close a streaming session;
+ending the owner releases acknowledgments and drains tty teardown without
+queueing unbounded raw output. Startup replacement probes the candidate first,
+excludes only its own connection and preserves GUI availability. These are
+development tests; the three rendered native reviews and signed update
 checks remain separate, with unrun results reported as unrun.
 
 | Layer | Where | What it covers |

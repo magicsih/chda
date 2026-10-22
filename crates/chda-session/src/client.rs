@@ -41,6 +41,7 @@ pub struct Client {
     imports: Arc<Mutex<Vec<Identity>>>,
     group: String,
     pending_executable: Arc<Mutex<Option<PathBuf>>>,
+    gui_available: Arc<std::sync::atomic::AtomicBool>,
 }
 
 pub struct Watch {
@@ -68,6 +69,7 @@ impl Client {
             return Err(io::Error::other("Invalid session handshake"));
         }
         Ok(Self {
+            gui_available: Default::default(),
             pending_executable: Default::default(),
             imports: Default::default(),
             group: chda_pty::local::token()?,
@@ -82,6 +84,7 @@ impl Client {
             Ok(mut connection) => {
                 if matches!(connection.request(Request::Hello)?, Response::State(_)) {
                     return Ok(Self {
+                        gui_available: Default::default(),
                         pending_executable: Default::default(),
                         imports: Default::default(),
                         group: chda_pty::local::token()?,
@@ -130,6 +133,8 @@ impl Client {
     }
     pub fn set_gui_available(&self, available: bool) -> io::Result<()> {
         self.request(Request::GuiPresence(available))?;
+        self.gui_available
+            .store(available, std::sync::atomic::Ordering::Release);
         Ok(())
     }
     pub fn set_pending_executable(&self, executable: PathBuf) {
@@ -155,6 +160,17 @@ impl Client {
         }
         if state.sessions.iter().any(|s| s.running) {
             return Ok(false);
+        }
+        let protocol = chda_agents::ipc::capture_command(
+            std::process::Command::new(executable).arg("--protocol"),
+            None,
+            Duration::from_secs(2),
+            64,
+        )?;
+        if String::from_utf8_lossy(&protocol).trim() != PROTOCOL_VERSION.to_string() {
+            return Err(io::Error::other(
+                "The candidate session protocol is incompatible; the existing service was kept",
+            ));
         }
         if !matches!(
             connection.request(Request::RetireIfIdle)?,
@@ -188,7 +204,10 @@ impl Client {
             return Err(io::Error::other("Invalid replacement service"));
         }
         *connection = replacement;
-        let _ = connection.request(Request::GuiPresence(true))?;
+        let _ = connection.request(Request::GuiPresence(
+            self.gui_available
+                .load(std::sync::atomic::Ordering::Acquire),
+        ))?;
         drop(next);
         *pending = None;
         Ok(true)

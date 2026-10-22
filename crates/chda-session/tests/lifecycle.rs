@@ -673,8 +673,41 @@ fn idle_service_upgrade_fixture() {
         return;
     };
     let client = Client::connect(&data).unwrap();
-    client.set_gui_available(true).unwrap();
     let candidate = data.join("new-chda-session");
+    std::fs::copy(env!("CARGO_BIN_EXE_chda-session"), &candidate).unwrap();
+    let original = client.state().unwrap();
+    client.set_pending_executable(data.join("missing-chda-session"));
+    assert!(client.upgrade_if_idle().is_err());
+    assert_eq!(
+        client.state().unwrap().instance,
+        original.instance,
+        "a failed candidate probe keeps the previous idle server"
+    );
+    client.set_pending_executable(candidate.clone());
+    let observer = Client::connect(&data).unwrap();
+    assert!(
+        !client.upgrade_if_idle().unwrap(),
+        "another non-GUI connection is not exempted"
+    );
+    drop(observer);
+    eventually(|| client.upgrade_if_idle().unwrap());
+    let startup = client.state().unwrap();
+    assert_ne!(startup.instance, original.instance);
+    assert_eq!(startup.executable, candidate);
+    let no_gui = chda_agents::ipc::request(
+        &chda_agents::ipc::socket_path(&data),
+        &chda_agents::control::Request::OpenTab {
+            path: data.clone(),
+            agent: None,
+        },
+    )
+    .unwrap();
+    assert!(
+        !no_gui.ok && no_gui.message.contains("connected"),
+        "startup must preserve GuiPresence=false"
+    );
+    client.set_gui_available(true).unwrap();
+    let candidate = data.join("next-chda-session");
     std::fs::copy(env!("CARGO_BIN_EXE_chda-session"), &candidate).unwrap();
     client.set_pending_executable(candidate.clone());
     let before = client.state().unwrap();

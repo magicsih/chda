@@ -63,7 +63,10 @@ The service and hook executable live in a verified, content-addressed private
 profile directory outside the replaced app bundle. A running service holds a
 lifetime lock; its executable is never overwritten or cleaned up. Once every
 run and old terminal attachment ends, chda can retire the idle service and
-start the bundled compatible replacement. Saved runs remain stopped.
+start the bundled compatible replacement. It also checks for this idle
+transition before a new window starts its first shell. Other clients prevent
+retirement, and a failed or mismatching protocol probe leaves the current
+server intact. Saved runs remain stopped.
 
 The signed update feed declares its session protocol. The updater rejects a
 missing or incompatible protocol before downloading/installing a replacement.
