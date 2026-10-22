@@ -4,6 +4,14 @@ All notable changes to chda. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); entries are
 generated from conventional commit messages by release-plz.
 
+## [1.4.0](https://github.com/magicsih/chda/compare/v1.3.0...v1.4.0) - 2026-10-22
+
+### Added
+
+- *(session)* preserve terminals through macOS app updates ([#288](https://github.com/magicsih/chda/pull/288))
+- *(session)* keep macOS terminals alive across GUI restarts ([#287](https://github.com/magicsih/chda/pull/287))
+- *(session)* keep terminal processes in an independent service ([#286](https://github.com/magicsih/chda/pull/286))
+
 ## [1.3.0](https://github.com/magicsih/chda/compare/v1.2.0...v1.3.0) - 2026-10-21
 
 ### Added
