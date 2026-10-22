@@ -89,6 +89,16 @@ required. This approval cannot authorize another candidate or future version.
 
 ## 후보와 실제 검수
 
+The existing crates keep the shared `v{{ version }}` history. Because the
+session service did not exist in older app tags, release-plz maintains a separate
+`chda-session-v{{ version }}` comparison tag for that member. It stays in the same
+version group and does not create another GitHub release; only `v*` tags trigger
+the public Release workflow. Its marker is generated on every release so future
+library-only fixes do not replay the service's entire initial feature history.
+The offline new-member test in `scripts/test-release-plz.py` exercises these
+successive releases with the real tool. See the official
+[git-only and tag settings](https://release-plz.dev/docs/config).
+
 기능 구현과 CI가 통과한 후보를 실제 macOS 개발 실행 환경에서 세 번 검수한다.
 각 회차 시작 전에 계획, 기대 결과, 격리 데이터, 설정, 구현자와 다른 리뷰 에이전트,
 증거 위치를 기록한다. 모든 신규 조건과 기존 기능을 매 회차 연결한다. headless

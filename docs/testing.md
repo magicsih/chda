@@ -41,7 +41,16 @@ ending the owner releases acknowledgments and drains tty teardown without
 queueing unbounded raw output. Startup replacement probes the candidate first,
 excludes only its own connection and preserves GUI availability. These are
 development tests; the three rendered native reviews and signed update
-checks remain separate, with unrun results reported as unrun.
+checks remain separate, with unrun results reported as unrun. The measurement
+keeps its controller lease polled during local comparisons, then drops both the
+poller and connection before sampling genuinely detached output.
+
+After changing release-plz configuration or adding a workspace member, run
+`python3 scripts/test-release-plz.py --binary /path/to/release-plz`. This offline
+integration fixture tags an initial workspace, adds the service and asks the real
+tool to generate the next shared version without editing the application repo.
+It verifies a minor feature increment, a later library-only patch and preserved workspace inheritance, and
+retains its commands and generated manifests on both success and failure.
 
 | Layer | Where | What it covers |
 |---|---|---|
