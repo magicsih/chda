@@ -5,10 +5,18 @@ use std::sync::atomic::{AtomicBool, Ordering};
 pub(super) struct Signals {
     pub accepting: AtomicBool,
     pub stop: AtomicBool,
+    saved_at: Mutex<Option<u64>>,
     events: mpsc::Sender<Event>,
     wake: Mutex<Box<dyn Fn() + Send>>,
 }
 impl Signals {
+    pub fn saved_at(&self) -> Option<u64> {
+        *self.saved_at.lock().unwrap()
+    }
+    fn persistence_status(&self, saved_at: Option<u64>, error: Option<String>) {
+        *self.saved_at.lock().unwrap() = saved_at;
+        self.emit(Event::PersistenceStatus { saved_at, error });
+    }
     pub fn emit(&self, event: Event) {
         if !self.stop.load(Ordering::Acquire) {
             let _ = self.events.send(event);
@@ -49,6 +57,7 @@ pub(super) fn start(
     let signals = Arc::new(Signals {
         accepting: AtomicBool::new(true),
         stop: AtomicBool::new(false),
+        saved_at: Mutex::new(record.saved_at),
         events,
         wake: Mutex::new(Box::new(wake)),
     });
@@ -87,10 +96,8 @@ impl Reader {
         if frame.at_prompt() {
             self.signals.emit(Event::PromptShown);
         }
-        self.signals.emit(Event::PersistenceStatus {
-            saved_at: self.status.0,
-            error: self.status.1.clone(),
-        });
+        self.signals
+            .persistence_status(self.status.0, self.status.1.clone());
     }
     fn run(mut self) {
         self.screen();
@@ -100,10 +107,8 @@ impl Reader {
                 Ok(true) => {}
                 Err(error) if unavailable(&error) => {
                     self.signals.accepting.store(false, Ordering::Release);
-                    self.signals.emit(Event::PersistenceStatus {
-                        saved_at: self.status.0,
-                        error: Some("Session connection interrupted. Reconnecting; queued input is not replayed.".into()),
-                    });
+                    self.signals.persistence_status(self.status.0,
+                        Some("Session connection interrupted. Reconnecting; queued input is not replayed.".into()));
                     match self.reconnect() {
                         Ok(false) => return,
                         Ok(true) => {}
@@ -179,10 +184,8 @@ impl Reader {
         let status = (record.saved_at, record.save_error);
         if self.status != status {
             self.status = status;
-            self.signals.emit(Event::PersistenceStatus {
-                saved_at: self.status.0,
-                error: self.status.1.clone(),
-            });
+            self.signals
+                .persistence_status(self.status.0, self.status.1.clone());
         }
         if let Some(mut frame) = frame {
             protocol::complete_images(&mut frame, &current)?;

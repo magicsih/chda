@@ -177,7 +177,7 @@ fn a_blocked_poll_does_not_block_reading_the_last_frame() {
         gui_available: Default::default(),
     };
     let _controller = listener.accept().unwrap();
-    let (tx, _events) = mpsc::channel();
+    let (tx, events) = mpsc::channel();
     let remote = client
         .remote(
             connection,
@@ -196,6 +196,20 @@ fn a_blocked_poll_does_not_block_reading_the_last_frame() {
     let server = std::thread::spawn(move || {
         let envelope: Envelope = protocol::read(&mut peer, true).unwrap();
         assert!(matches!(envelope.request, Request::Poll { .. }));
+        let mut saved = record();
+        saved.saved_at = Some(42);
+        protocol::write(
+            &mut peer,
+            &Response::Update {
+                record: saved,
+                frame: None,
+                events: vec![],
+                sequence: 0,
+            },
+        )
+        .unwrap();
+        let envelope: Envelope = protocol::read(&mut peer, true).unwrap();
+        assert!(matches!(envelope.request, Request::Poll { .. }));
         polled.send(()).unwrap();
         blocked.recv().unwrap();
         // Closing a deliberately delayed response also exercises teardown.
@@ -205,6 +219,9 @@ fn a_blocked_poll_does_not_block_reading_the_last_frame() {
     let reader = std::thread::spawn(move || {
         let session = Session::Remote(remote);
         let frame = session.frame();
+        for _ in 0..512 {
+            session.write(b"queued".to_vec());
+        }
         done.send(frame.generation).unwrap();
         session
     });
@@ -212,6 +229,12 @@ fn a_blocked_poll_does_not_block_reading_the_last_frame() {
     release.send(()).unwrap();
     server.join().unwrap();
     drop(reader.join().unwrap());
+    assert!(
+        events.try_iter().any(|e| matches!(e,
+        Event::PersistenceStatus { saved_at: Some(42), error: Some(error) }
+            if error.contains("input queue is full"))),
+        "backpressure must retain the last confirmed save time"
+    );
     drop(client);
     drop(listener);
     std::fs::remove_dir_all(data).unwrap();

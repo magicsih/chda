@@ -617,7 +617,7 @@ impl Session {
                         .accepting
                         .store(false, std::sync::atomic::Ordering::Release);
                     s.signals.emit(Event::PersistenceStatus {
-                        saved_at: s.record.saved_at,
+                        saved_at: s.signals.saved_at(),
                         error: Some("Terminal input queue is full. Reconnecting; queued input is not replayed.".into()),
                     });
                 }
