@@ -100,7 +100,8 @@ Git views and terminal tabs. Tests cover all ten positions with an eleventh
 row present, renumbering after close, missing rows preserving focus and font
 size, collapsed-Sessions and hidden-sidebar navigation, retained unfinished input, stable order after
 agent status changes, and reconnecting a detached row without restarting its
-shell. The font-size scenario checks the relocated Cmd+Alt+0 reset. Linux
+shell. Synthetic agent panes keep a real process running so shell prompt
+redraw after resize cannot end the fixture agents. The font-size scenario checks the relocated Cmd+Alt+0 reset. Linux
 translates the number bindings to Alt+1 through Alt+0 and keeps Ctrl+0 for reset.
 
 | Scenario | Test | Issues |

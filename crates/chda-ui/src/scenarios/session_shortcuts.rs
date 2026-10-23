@@ -16,11 +16,13 @@ fn rows(h: &Harness) -> Vec<SessionKey> {
     })
 }
 
+#[track_caller]
 fn assert_focused(h: &Harness, expected: SessionKey) {
-    h.read(|v, _| match expected {
-        SessionKey::Pane(pane) => assert_eq!(v.ws.focused_pane(), Some(pane)),
-        SessionKey::Tab(tab) => assert_eq!(v.ws.active_tab().map(|t| t.id), Some(tab)),
-    });
+    let (pane, tab) = h.read(|v, _| (v.ws.focused_pane(), v.ws.active_tab().map(|t| t.id)));
+    match expected {
+        SessionKey::Pane(expected) => assert_eq!(pane, Some(expected), "active tab: {tab:?}"),
+        SessionKey::Tab(expected) => assert_eq!(tab, Some(expected), "focused pane: {pane:?}"),
+    }
 }
 
 #[gpui::test]
@@ -48,9 +50,19 @@ fn number_shortcuts_follow_mixed_sessions_across_repositories_and_splits(cx: &mu
     });
     h.wait_prompt();
     let first = h.read(|v, _| v.ws.focused_pane().unwrap());
+    // Keep a process running so a resize cannot redraw a shell prompt and
+    // correctly end the synthetic agent before the navigation assertions.
+    h.run(
+        "stty -echo; printf '\\nfirst-agent-ready\\n'; exec cat",
+        "\nfirst-agent-ready\n",
+    );
     h.keys("cmd-d");
     h.wait_prompt();
     let second = h.read(|v, _| v.ws.focused_pane().unwrap());
+    h.run(
+        "stty -echo; printf '\\nsecond-agent-ready\\n'; exec cat",
+        "\nsecond-agent-ready\n",
+    );
     h.hook(Some(first.raw()), &repos[0], HookKind::PromptSubmitted);
     h.hook(Some(second.raw()), &repos[0], HookKind::WaitingInput);
     h.wait_for("split agent rows", |v, cx| {
