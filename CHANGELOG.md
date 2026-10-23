@@ -4,6 +4,16 @@ All notable changes to chda. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); entries are
 generated from conventional commit messages by release-plz.
 
+## [1.5.0](https://github.com/magicsih/chda/compare/v1.4.0...v1.5.0) - 2026-10-23
+
+### Added
+
+- *(sessions)* select Sessions rows with number shortcuts ([#293](https://github.com/magicsih/chda/pull/293))
+
+### Fixed
+
+- *(window)* reopen closed windows from the Dock ([#291](https://github.com/magicsih/chda/pull/291))
+
 ## [1.4.0](https://github.com/magicsih/chda/compare/v1.3.0...v1.4.0) - 2026-10-22
 
 ### Added
