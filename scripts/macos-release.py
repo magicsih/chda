@@ -69,6 +69,7 @@ EXCEPTION_PATHS = {
     'v1.3.0': 'docs/releases/v1.3.0-publication-approval.json',
     'v1.4.0': 'docs/releases/v1.4.0-publication-approval.json',
     'v1.5.0': 'docs/releases/v1.5.0-publication-approval.json',
+    'v1.5.1': 'docs/releases/v1.5.1-publication-approval.json',
 }
 OWNER_INSTRUCTIONS = {
     'v0.1.21': '이제 좀 공개해라 좀',
@@ -82,6 +83,7 @@ OWNER_INSTRUCTIONS = {
                'retain signing, notarization and file verification.'),
     'v1.5.0': ('Publish this v1.5.0 candidate with the stated native validation incomplete; '
                'retain signing, notarization and file verification.'),
+    'v1.5.1': '병합하고 앱 릴리즈 빨리 진행해라. 결함이 있는 상태라 빨리 보내야한다.',
 }
 POSTBUILD_EXCEPTION_PATH = 'docs/releases/v0.1.22-signed-update-exception.json'
 POSTBUILD_CHECKS = {
@@ -635,6 +637,15 @@ def native_archive(root, tag):
 
 def exception_notes(tag):
     """Per-version validation notices for explicitly approved releases."""
+    if tag == 'v1.5.1':
+        return ('Native UI validation is incomplete. The owner requested this urgent v1.5.1 '
+                'hotfix after the session-service freeze repair and regression checks. Three '
+                'full native review rounds, both full native E2E runs and all eight exact '
+                'signed-ZIP GUI and session-service checks remain unverified. Developer ID '
+                'signing, notarization, universal architectures, checksums and update '
+                'signatures remain required. '
+                '[Validation status](https://github.com/%s/blob/main/docs/releases/'
+                'v1.5.1-publication-approval.md).\n\n' % REPO)
     if tag == 'v1.5.0':
         return ('Native UI validation is incomplete. After partial development checks and a '
                 'native-control tool failure, the owner authorized this v1.5.0 candidate '

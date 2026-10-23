@@ -466,6 +466,17 @@ class V150PublicationApprovalTests(V140PublicationApprovalTests):
             self.verify(self.evidence(self.approval()), previous)
 
 
+class V151PublicationApprovalTests(V150PublicationApprovalTests):
+    TAG = 'v1.5.1'
+    INSTRUCTION = '병합하고 앱 릴리즈 빨리 진행해라. 결함이 있는 상태라 빨리 보내야한다.'
+    NEXT = 'v1.5.2'
+
+    def test_v150_approval_cannot_authorize_v151(self):
+        previous = V150PublicationApprovalTests().approval()
+        with self.assertRaises(ValueError):
+            self.verify(self.evidence(self.approval()), previous)
+
+
 class ReleaseNotesTests(unittest.TestCase):
     def test_historical_exception_notes_remain_unchanged(self):
         for tag in ('v0.1.21', 'v0.1.22', 'v0.1.23'):
@@ -498,7 +509,15 @@ class ReleaseNotesTests(unittest.TestCase):
         self.assertIn('incomplete', notes)
         self.assertIn('session-service', notes)
         self.assertIn('v1.5.0-publication-approval.md', notes)
-        self.assertEqual(release.exception_notes('v1.5.1'), '')
+        self.assertEqual(release.exception_notes('v1.5.2'), '')
+
+    def test_v151_emergency_notes_keep_native_and_service_checks_incomplete(self):
+        notes = release.exception_notes('v1.5.1')
+        self.assertIn('incomplete', notes)
+        self.assertIn('session-service', notes)
+        self.assertIn('v1.5.1-publication-approval.md', notes)
+        self.assertEqual(release.exception_notes('v1.5.2'), '')
+
 
 def reduced_exception_record():
     record = json.loads(exception_record())
