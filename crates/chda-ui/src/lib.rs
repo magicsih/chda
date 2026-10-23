@@ -202,7 +202,10 @@ fn run_inner(inherited: Option<(chda_core::handoff::Handoff, chda_term::handoff:
         handoff_session = Some(state.session);
         reply = Some(inherited.reply);
     }
-    gpui_platform::application().run(move |cx: &mut App| {
+    let app = gpui_platform::application();
+    let reopen_env = env.clone();
+    app.on_reopen(move |cx| reopen_workspace(reopen_env.clone(), cx));
+    app.run(move |cx: &mut App| {
         cx.set_app_identity("com.magicsih.chda", "chda");
         fonts::register(cx);
         cx.bind_keys(key_bindings());
@@ -326,6 +329,36 @@ fn run_inner(inherited: Option<(chda_core::handoff::Handoff, chda_term::handoff:
             .detach();
         }
     });
+}
+
+fn reopen_workspace(env: std::rc::Rc<environment::Environment>, cx: &mut App) {
+    let existing = {
+        let registry = env.windows.borrow();
+        if registry.quitting || registry.update.frozen {
+            return;
+        }
+        registry
+            .entries
+            .iter()
+            .find(|entry| Some(entry.window.window_id()) == registry.active)
+            .or_else(|| registry.entries.first())
+            .cloned()
+    };
+    env.system.restore_windows();
+    if let Some(entry) = existing {
+        let _ = entry.window.update(cx, |_, window, cx| {
+            window.activate_window();
+            let _ = entry.view.update(cx, |view, cx| view.focus(window, cx));
+        });
+    } else {
+        let saved = env.windows.borrow_mut().detached.pop();
+        let window = open_workspace_window(saved, env, cx);
+        let _ = window.update(cx, |view, window, cx| {
+            window.activate_window();
+            view.focus(window, cx);
+        });
+    }
+    cx.activate(true);
 }
 
 pub(crate) fn open_workspace_window(

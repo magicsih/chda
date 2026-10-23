@@ -21,6 +21,18 @@ does not establish a rendered or signed-app update. The
 [session-service plan](design/2026-10-22-session-service/test-plan.json) retains
 those separate gates.
 
+`scenarios::reopen` calls the production reopen handler after closing the last
+window. It checks a usable new shell on the local backend, reconnecting the
+most recently closed service window with the same split-shell PIDs, output and
+shell variables, repeated close/reopen cycles, no duplicate windows or runs,
+active-window reuse, and no new windows while quitting or updating. These
+scenarios do not exercise native Dock/Finder event delivery or minimization.
+For native acceptance, use an isolated development app and private profile:
+close its last window with the red button, open that same running app again,
+and verify the original GUI PID, shell PID, output and a shell variable. Repeat
+the close/reopen cycle, minimize and reopen, and check that there is still one
+window and one run. Do not replace the installed app or use a provider account.
+
 `scenarios::session_service` runs the macOS service backend in GPUI's test
 platform with real shells: closing a window and reconnecting from Sessions
 preserves PID and input, service restart shows copyable read-only output before
