@@ -93,6 +93,16 @@ journey, exact-candidate three-round plan and independent visual/IME gates.
 
 ## Scenarios
 
+`scenarios::session_shortcuts` dispatches the production number bindings against
+real workspaces and shells. Cmd+1 through Cmd+9 select the first nine Sessions
+rows, and Cmd+0 selects the tenth, across repository groups, split agents,
+Git views and terminal tabs. Tests cover all ten positions with an eleventh
+row present, renumbering after close, missing rows preserving focus and font
+size, collapsed-Sessions and hidden-sidebar navigation, retained unfinished input, stable order after
+agent status changes, and reconnecting a detached row without restarting its
+shell. The font-size scenario checks the relocated Cmd+Alt+0 reset. Linux
+translates the number bindings to Alt+1 through Alt+0 and keeps Ctrl+0 for reset.
+
 | Scenario | Test | Issues |
 |---|---|---|
 | S1 New work: create a worktree from the sheet | `worktrees::create_then_delete_a_worktree_in_one_go` | |

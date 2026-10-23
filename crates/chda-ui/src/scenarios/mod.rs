@@ -38,6 +38,7 @@ mod reorder;
 mod restore;
 mod search;
 mod session_service;
+mod session_shortcuts;
 mod sessions;
 mod sharing;
 mod sidebar;

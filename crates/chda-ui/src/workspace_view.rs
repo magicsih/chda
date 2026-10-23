@@ -59,15 +59,16 @@ actions!(
         CloseSurface,
         NextTab,
         PrevTab,
-        GotoTab1,
-        GotoTab2,
-        GotoTab3,
-        GotoTab4,
-        GotoTab5,
-        GotoTab6,
-        GotoTab7,
-        GotoTab8,
-        LastTab,
+        GotoSession1,
+        GotoSession2,
+        GotoSession3,
+        GotoSession4,
+        GotoSession5,
+        GotoSession6,
+        GotoSession7,
+        GotoSession8,
+        GotoSession9,
+        GotoSession10,
         SplitRight,
         SplitDown,
         FocusLeft,
@@ -308,7 +309,7 @@ struct NoteSheet {
 pub struct WorkspaceView {
     pub(crate) env: std::rc::Rc<Environment>,
     /// Settings new panes start with; `font_size` follows the font size
-    /// actions, while `configured_font_size` is what `cmd-0` returns to.
+    /// actions, while `configured_font_size` is what `cmd-alt-0` returns to.
     pub(crate) settings: Settings,
     configured_font_size: Pixels,
     pub(crate) config: ChdaConfig,
@@ -4253,6 +4254,26 @@ impl WorkspaceView {
         }
     }
 
+    fn goto_session(&mut self, index: usize, window: &mut Window, cx: &mut Context<Self>) {
+        let event = {
+            let sidebar = self.sidebar.read(cx);
+            if let Some(row) = sidebar.model.sessions.get(index) {
+                Some(match row.key {
+                    chda_core::SessionKey::Pane(pane) => SidebarEvent::FocusPane(pane),
+                    chda_core::SessionKey::Tab(tab) => SidebarEvent::FocusTab(tab),
+                })
+            } else {
+                sidebar
+                    .detached_sessions
+                    .get(index - sidebar.model.sessions.len())
+                    .map(|(pane, _, _)| SidebarEvent::ReconnectSession(*pane))
+            }
+        };
+        if let Some(event) = event {
+            self.on_sidebar_event(event, window, cx);
+        }
+    }
+
     fn expand_all_repositories(
         &mut self,
         _: &ExpandAllRepositories,
@@ -6128,7 +6149,7 @@ impl WorkspaceView {
             ("Rename tab", "double-click the tab", "rename_tab"),
             ("Increase font size", "cmd-=", "font_bigger"),
             ("Decrease font size", "cmd--", "font_smaller"),
-            ("Reset font size", "cmd-0", "font_reset"),
+            ("Reset font size", "cmd-alt-0", "font_reset"),
             ("Select theme...", "preview with the arrow keys", "theme"),
             (
                 "Select light theme...",
@@ -7653,19 +7674,16 @@ impl Render for WorkspaceView {
                 this.ws.cycle_tab_in_group(false);
                 this.focus_active(w, cx);
             }))
-            .on_action(cx.listener(|this, _: &GotoTab1, w, cx| this.goto_tab(0, w, cx)))
-            .on_action(cx.listener(|this, _: &GotoTab2, w, cx| this.goto_tab(1, w, cx)))
-            .on_action(cx.listener(|this, _: &GotoTab3, w, cx| this.goto_tab(2, w, cx)))
-            .on_action(cx.listener(|this, _: &GotoTab4, w, cx| this.goto_tab(3, w, cx)))
-            .on_action(cx.listener(|this, _: &GotoTab5, w, cx| this.goto_tab(4, w, cx)))
-            .on_action(cx.listener(|this, _: &GotoTab6, w, cx| this.goto_tab(5, w, cx)))
-            .on_action(cx.listener(|this, _: &GotoTab7, w, cx| this.goto_tab(6, w, cx)))
-            .on_action(cx.listener(|this, _: &GotoTab8, w, cx| this.goto_tab(7, w, cx)))
-            .on_action(cx.listener(|this, _: &LastTab, w, cx| {
-                let group = this.tab_group.clone();
-                let last = this.ws.tabs_in(group.as_deref()).len().saturating_sub(1);
-                this.goto_tab(last, w, cx)
-            }))
+            .on_action(cx.listener(|this, _: &GotoSession1, w, cx| this.goto_session(0, w, cx)))
+            .on_action(cx.listener(|this, _: &GotoSession2, w, cx| this.goto_session(1, w, cx)))
+            .on_action(cx.listener(|this, _: &GotoSession3, w, cx| this.goto_session(2, w, cx)))
+            .on_action(cx.listener(|this, _: &GotoSession4, w, cx| this.goto_session(3, w, cx)))
+            .on_action(cx.listener(|this, _: &GotoSession5, w, cx| this.goto_session(4, w, cx)))
+            .on_action(cx.listener(|this, _: &GotoSession6, w, cx| this.goto_session(5, w, cx)))
+            .on_action(cx.listener(|this, _: &GotoSession7, w, cx| this.goto_session(6, w, cx)))
+            .on_action(cx.listener(|this, _: &GotoSession8, w, cx| this.goto_session(7, w, cx)))
+            .on_action(cx.listener(|this, _: &GotoSession9, w, cx| this.goto_session(8, w, cx)))
+            .on_action(cx.listener(|this, _: &GotoSession10, w, cx| this.goto_session(9, w, cx)))
             .on_action(
                 cx.listener(|this, _: &SplitRight, w, cx| this.split(Axis::Horizontal, w, cx)),
             )
