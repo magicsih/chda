@@ -25,6 +25,7 @@ pub(crate) struct WindowRegistry {
     pub active: Option<WindowId>,
     pub navigation: u64,
     pub restoring: bool,
+    pub watching_window_closes: bool,
     pub quitting: bool,
     pub wake: std::sync::Arc<std::sync::Mutex<Vec<futures::channel::mpsc::UnboundedSender<()>>>>,
     pub events: Option<mpsc::Receiver<Incoming>>,

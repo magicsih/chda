@@ -463,7 +463,8 @@ impl WorkspaceView {
                 sessions: HashMap::new(),
             });
         Self::start_hook_receiver(env.clone(), window, cx);
-        if env.windows.borrow().entries.len() == 1 {
+        if !env.windows.borrow().watching_window_closes {
+            env.windows.borrow_mut().watching_window_closes = true;
             let registry = env.windows.clone();
             let directory = env.data_dir.clone();
             let restore = config.restore_session;

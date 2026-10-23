@@ -5,6 +5,14 @@ processes in a separate local service. Open chda again to attach to the same
 processes, screen, scrollback and inline images. A window closed while another
 window remains can be reopened from the detached rows in **Sessions**.
 
+After the last window closes, clicking chda in the Dock or opening it from
+Finder restores the most recently closed window with its running terminals.
+Other detached windows stay available in Sessions. If no closed window is
+available, chda opens a new window. Reopening while a window still exists brings
+that window forward without creating another one; minimized windows return too.
+Use Quit or cmd-q to exit the GUI. Its session service keeps running terminals
+alive until you explicitly close their tabs or terminals.
+
 Closing a terminal with cmd-w or closing a tab is an explicit stop. The existing
 confirmation for active agents still applies. Closing an empty window has no
 terminal to stop. Linux and Windows keep their existing process ownership.

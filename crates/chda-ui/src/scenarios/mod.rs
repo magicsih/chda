@@ -33,6 +33,7 @@ mod pull_requests;
 mod quota;
 mod redraw;
 mod release;
+mod reopen;
 mod reorder;
 mod restore;
 mod search;
