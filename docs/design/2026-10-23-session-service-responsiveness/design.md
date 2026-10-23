@@ -21,6 +21,16 @@ This reproduces a communication pause, not an ordinary idle GUI, which normally
 continues polling. It does not prove that the original incident included sleep
 or that its processes survived.
 
+The owner's installed-1.5.0 hang report from 2026-10-23 21:53:24 +09:00
+subsequently confirmed the main thread in `refresh_repos`, `sync_panes`,
+`save_session`, then the client mutex/socket wait throughout its eleven samples.
+The same report included the still-present service waiting for terminal capture
+inside `Runtime::flush` or its runtime mutex. A separate macOS disk-writes report
+recorded 2151.22 MB of file-backed memory dirtied over 486 seconds, with checkpoint
+writes in its sampled stacks and `Action taken: none`. These are observations of
+the old installed version, not candidate validation, retained-file sizes or proof
+that the service crashed. Raw system reports remain private and user-owned.
+
 Read-only, three-second samples of the currently running 1.5.0 app and service
 found the UI main thread waiting in both `WorkspaceView::save_session`'s socket
 read and `Session::frame`'s mutex lock. The service sample also contained

@@ -9,6 +9,8 @@ struct Pending {
     presence: Option<bool>,
     running: bool,
     error: Option<String>,
+    #[cfg(test)]
+    waiting: bool,
 }
 #[derive(Default)]
 pub(super) struct LayoutQueue(Mutex<Pending>, Condvar);
@@ -44,15 +46,37 @@ impl Client {
     }
     /// Call from a background quit task, after queueing the final snapshot.
     pub fn flush_layout(&self) -> io::Result<()> {
-        self.retry_layout();
-        let mut pending = self.layout.0.lock().unwrap();
-        while pending.running {
-            pending = self.layout.1.wait(pending).unwrap();
+        let mut retry = true;
+        loop {
+            self.save_pending();
+            let mut pending = self.layout.0.lock().unwrap();
+            while pending.running {
+                #[cfg(test)]
+                {
+                    pending.waiting = true;
+                }
+                pending = self.layout.1.wait(pending).unwrap();
+                #[cfg(test)]
+                {
+                    pending.waiting = false;
+                }
+            }
+            // A failure can arrive while Quit is already waiting. Retry that
+            // retained latest snapshot once, without an unbounded quit loop.
+            if retry && pending.failed.is_some() {
+                pending.layout = pending.failed.take();
+                retry = false;
+                continue;
+            }
+            return match &pending.error {
+                Some(error) => Err(io::Error::other(error.clone())),
+                None => Ok(()),
+            };
         }
-        match &pending.error {
-            Some(error) => Err(io::Error::other(error.clone())),
-            None => Ok(()),
-        }
+    }
+    #[cfg(test)]
+    pub(super) fn waiting_for_layout_save(&self) -> bool {
+        self.layout.0.lock().unwrap().waiting
     }
     fn save_pending(&self) {
         let mut pending = self.layout.0.lock().unwrap();

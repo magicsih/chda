@@ -86,21 +86,21 @@ pub(super) fn start(
     })
 }
 impl Reader {
-    fn screen(&self) {
+    fn screen(&self, announce_prompt: bool) {
         let frame = self.view.lock().unwrap().clone();
         self.signals.emit(Event::Frame { has_output: false });
         self.signals.emit(Event::TitleChanged(frame.title.clone()));
         if !frame.pwd.is_empty() {
             self.signals.emit(Event::PwdChanged(frame.pwd.clone()));
         }
-        if frame.at_prompt() {
+        if announce_prompt && frame.at_prompt() {
             self.signals.emit(Event::PromptShown);
         }
         self.signals
             .persistence_status(self.status.0, self.status.1.clone());
     }
     fn run(mut self) {
-        self.screen();
+        self.screen(true);
         loop {
             match self.poll() {
                 Ok(false) => return,
@@ -233,7 +233,9 @@ impl Reader {
                     self.status = (record.saved_at, record.save_error);
                     while self.rx.try_recv().is_ok() {}
                     self.signals.accepting.store(true, Ordering::Release);
-                    self.screen();
+                    // Title and directory are current state. A prompt event
+                    // is a lifecycle transition and must not be replayed.
+                    self.screen(false);
                     return Ok(true);
                 }
                 Ok(_) => return Err(io::Error::other("Invalid session reattachment")),

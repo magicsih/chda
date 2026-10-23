@@ -35,7 +35,7 @@ If a connection is interrupted, chda reconnects to the exact surviving run in
 the background. It keeps the last complete frame available while waiting. Input
 entered while disconnected, uncertain input and input queued behind a failed
 request are discarded; they are never submitted again. Reattachment does not
-repeat old clipboard or notification effects. A different server or run cannot
+repeat old clipboard, notification or shell-prompt events. A different server or run cannot
 receive that input. If the original service stopped or its protocol changed,
 reopen chda to load saved output and choose an explicit recovery action.
 

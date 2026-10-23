@@ -38,6 +38,108 @@ fn state() -> State {
 }
 
 #[test]
+fn quit_retries_a_layout_that_fails_while_the_final_save_is_pending() {
+    use std::sync::atomic::{AtomicBool, Ordering};
+    let data = std::env::temp_dir().join(format!(
+        "chda-quit-save-{}",
+        chda_pty::local::token().unwrap()
+    ));
+    std::fs::create_dir(&data).unwrap();
+    let listener = chda_pty::local::Listener::bind(&crate::socket_path(&data)).unwrap();
+    let connection = Connection::open(&data).unwrap();
+    let mut peer = listener.accept().unwrap();
+    let client = Client {
+        data: data.clone(),
+        connection: Arc::new(Mutex::new(connection)),
+        instance: Arc::new(Mutex::new(record().identity.server)),
+        executable: Default::default(),
+        layout: Default::default(),
+        imports: Default::default(),
+        group: String::new(),
+        pending_executable: Default::default(),
+        gui_available: Default::default(),
+    };
+    let stop = Arc::new(AtomicBool::new(false));
+    let stopping = stop.clone();
+    let (received, started) = mpsc::channel();
+    let (fail, proceed) = mpsc::channel();
+    let server = std::thread::spawn(move || {
+        peer.timeout(Duration::from_secs(3)).unwrap();
+        let first: Envelope = protocol::read(&mut peer, true).unwrap();
+        assert!(
+            matches!(first.request, Request::Checkpoint { layout: Some(s) } if s.active_window == 7)
+        );
+        received.send(()).unwrap();
+        proceed.recv().unwrap();
+        drop(peer);
+        let accept = || {
+            let deadline = std::time::Instant::now() + Duration::from_secs(3);
+            loop {
+                if stopping.load(Ordering::Acquire) {
+                    return None;
+                }
+                match listener.accept() {
+                    Ok(peer) => {
+                        peer.timeout(Duration::from_secs(3)).unwrap();
+                        return Some(peer);
+                    }
+                    Err(e)
+                        if e.kind() == io::ErrorKind::WouldBlock
+                            && std::time::Instant::now() < deadline =>
+                    {
+                        std::thread::yield_now()
+                    }
+                    Err(e) => panic!("quit reconnect: {e}"),
+                }
+            }
+        };
+        // Fail the original request's transport recovery as well. The layout
+        // worker now reports a retryable failure to the waiting quit task.
+        let mut peer = accept().unwrap();
+        let hello: Envelope = protocol::read(&mut peer, true).unwrap();
+        assert!(matches!(hello.request, Request::Hello));
+        drop(peer);
+        let Some(mut peer) = accept() else {
+            return false;
+        };
+        let hello: Envelope = protocol::read(&mut peer, true).unwrap();
+        assert!(matches!(hello.request, Request::Hello));
+        protocol::write(&mut peer, &Response::State(state())).unwrap();
+        let presence: Envelope = protocol::read(&mut peer, true).unwrap();
+        assert!(matches!(presence.request, Request::GuiPresence(false)));
+        protocol::write(&mut peer, &Response::Ok).unwrap();
+        let saved: Envelope = protocol::read(&mut peer, true).unwrap();
+        assert!(
+            matches!(saved.request, Request::Checkpoint { layout: Some(s) } if s.active_window == 7)
+        );
+        protocol::write(&mut peer, &Response::State(state())).unwrap();
+        true
+    });
+    client.queue_layout(chda_core::SavedSession {
+        active_window: 7,
+        windows: vec![],
+    });
+    started.recv_timeout(Duration::from_secs(3)).unwrap();
+    let quitting = client.clone();
+    let flush = std::thread::spawn(move || quitting.flush_layout());
+    let deadline = std::time::Instant::now() + Duration::from_secs(3);
+    while !client.waiting_for_layout_save() {
+        assert!(std::time::Instant::now() < deadline);
+        std::thread::yield_now();
+    }
+    fail.send(()).unwrap();
+    let result = flush.join().unwrap();
+    stop.store(true, Ordering::Release);
+    let persisted = server.join().unwrap();
+    drop(client);
+    std::fs::remove_dir_all(data).unwrap();
+    assert!(
+        result.is_ok() && persisted,
+        "quit lost its final layout after an interrupted save: {result:?}"
+    );
+}
+
+#[test]
 fn layout_queue_returns_while_a_save_is_blocked_and_persists_the_latest_snapshot() {
     let data =
         std::env::temp_dir().join(format!("chda-layout-{}", chda_pty::local::token().unwrap()));
@@ -333,7 +435,23 @@ fn interrupted_input_reattaches_without_replaying_uncertain_or_queued_actions() 
             &mut peer,
             &Response::Attached {
                 record: record(),
-                frame: Box::default(),
+                frame: Box::new(Frame {
+                    size: chda_term::Size { cols: 1, rows: 1 },
+                    cells: vec![chda_term::Cell::default()],
+                    rows: vec![chda_term::Row {
+                        wrapped: false,
+                        semantic_prompt: chda_term::SemanticPrompt::Prompt,
+                    }],
+                    cursor: Some(chda_term::Cursor {
+                        x: 0,
+                        y: 0,
+                        shape: Default::default(),
+                        blinking: false,
+                        at_wide_tail: false,
+                        color: None,
+                    }),
+                    ..Default::default()
+                }),
                 sequence: 42,
             },
         )
@@ -378,11 +496,12 @@ fn interrupted_input_reattaches_without_replaying_uncertain_or_queued_actions() 
     reattached.recv_timeout(Duration::from_secs(3)).unwrap();
     // Wait for the replacement frame/status publication, not just Attach's
     // bytes: input remains disabled until the complete frame is installed.
+    let mut replayed_prompt = false;
     loop {
-        if matches!(
-            events.recv_timeout(Duration::from_secs(3)).unwrap(),
-            Event::PersistenceStatus { error: None, .. }
-        ) && let Session::Remote(remote) = &session
+        let event = events.recv_timeout(Duration::from_secs(3)).unwrap();
+        replayed_prompt |= matches!(event, Event::PromptShown);
+        if matches!(event, Event::PersistenceStatus { error: None, .. })
+            && let Session::Remote(remote) = &session
             && remote
                 .signals
                 .accepting
@@ -395,6 +514,10 @@ fn interrupted_input_reattaches_without_replaying_uncertain_or_queued_actions() 
     complete.recv_timeout(Duration::from_secs(3)).unwrap();
     drop(session);
     server.join().unwrap();
+    assert!(
+        !replayed_prompt && !events.try_iter().any(|e| matches!(e, Event::PromptShown)),
+        "reattachment replayed a prompt lifecycle event"
+    );
     drop(client);
     std::fs::remove_dir_all(data).unwrap();
 }
