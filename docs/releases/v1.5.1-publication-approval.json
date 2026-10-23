@@ -18,7 +18,7 @@
   ],
   "independent_assessment_sha256": "3c769ac64c32b52e6d497215031d438d3935f1805ef1bd63205f475d413a966d",
   "owner": "magicsih",
-  "owner_instruction": "\ubcd1\ud569\ud558\uace0 \uc571 \ub9b4\ub9ac\uc988 \ube68\ub9ac \uc9c4\ud589\ud574\ub77c. \uacb0\ud568\uc774 \uc788\ub294 \uc0c1\ud0dc\ub77c \ube68\ub9ac \ubcf4\ub0b4\uc57c\ud55c\ub2e4.",
+  "owner_instruction": "병합하고 앱 릴리즈 빨리 진행해라. 결함이 있는 상태라 빨리 보내야한다.",
   "schema": 1,
   "sha": "53e26c1e584f8072c3cdd49d3c71cf7e3a2dcd0a",
   "tag": "v1.5.1",
