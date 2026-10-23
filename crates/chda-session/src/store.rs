@@ -11,6 +11,7 @@ pub struct Checkpoint {
     pub record: SessionRecord,
     pub output: String,
 }
+#[derive(Clone)]
 pub(crate) struct Store {
     root: PathBuf,
 }
@@ -89,6 +90,9 @@ impl Store {
             return Err(e);
         }
         Ok(())
+    }
+    pub fn session(&self, id: &str) -> Option<Checkpoint> {
+        self.read(&self.root.join("sessions").join(format!("{id}.json")))
     }
     pub fn load(&self) -> Vec<Checkpoint> {
         let Ok(files) = fs::read_dir(self.root.join("sessions")) else {

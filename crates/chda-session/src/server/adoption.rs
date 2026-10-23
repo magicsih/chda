@@ -119,6 +119,7 @@ pub(super) fn receive(
             sequence: 0,
             pending: VecDeque::new(),
             dirty: false,
+            revision: 0,
             last_save: Instant::now(),
         },
     );
@@ -235,18 +236,13 @@ pub(super) fn commit(
             action.apply(t);
         }
         s.dirty = true;
+        s.revision = s.revision.wrapping_add(1);
         s.last_save = Instant::now() - Duration::from_secs(5);
     }
     r.committing.remove(&group);
     r.children = children;
     r.layout = Some(layout.clone());
-    match r.store.save_layout(&layout) {
-        Ok(()) => {
-            r.save_error = None;
-            r.layout_saved_at = Some(protocol::now());
-        }
-        Err(e) => r.save_error = Some(e.to_string()),
-    }
+    r.persistence.layout(layout);
     for id in ids {
         r.flush(&id, false);
     }
@@ -254,6 +250,12 @@ pub(super) fn commit(
     for event in pending {
         r.hook(event);
     }
+    let saved = r.persistence.barrier();
+    drop(r);
+    saved
+        .recv()
+        .map_err(|_| io::Error::other("Checkpoint writer stopped"))?;
+    runtime.lock().unwrap().saved();
     Ok(())
 }
 

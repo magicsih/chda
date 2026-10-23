@@ -115,6 +115,26 @@ fn eventually(mut f: impl FnMut() -> bool) {
 }
 
 #[test]
+fn a_quiet_controller_keeps_the_same_server_and_shell_after_the_idle_timeout() {
+    let server = Server::new();
+    let client = server.client();
+    let (session, events) =
+        server.create(&client, "echo ready; while read x; do echo ack-$x; done");
+    wait(&session, &events, "ready");
+    let before = client.state().unwrap();
+    let pid = session.child_pid();
+    // This duration is the failure condition: exceed the former ten-second
+    // socket idle timeout while the shell attachment continues polling.
+    std::thread::sleep(Duration::from_secs(12));
+    let after = client.state().unwrap();
+    assert_eq!(before.instance, after.instance);
+    assert_eq!(after.sessions[0].pid, pid);
+    session.write(b"still-alive\n".to_vec());
+    wait(&session, &events, "ack-still-alive");
+    session.terminate();
+}
+
+#[test]
 fn disconnect_reconnect_preserves_pid_output_and_input_until_explicit_termination() {
     let server = Server::new();
     let client = server.client();

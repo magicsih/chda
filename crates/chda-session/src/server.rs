@@ -15,6 +15,7 @@ use std::{
     time::{Duration, Instant},
 };
 mod adoption;
+mod persistence;
 
 struct Importing {
     group: String,
@@ -30,6 +31,7 @@ struct Running {
     sequence: u64,
     pending: VecDeque<(u64, Event)>,
     dirty: bool,
+    revision: u64,
     last_save: Instant,
 }
 struct Runtime {
@@ -39,7 +41,7 @@ struct Runtime {
     legacy_pending: VecDeque<HookEvent>,
     children: chda_agents::ChildBoard,
     instance: String,
-    store: Store,
+    persistence: persistence::Persistence,
     sessions: BTreeMap<String, Running>,
     layout: Option<chda_core::SavedSession>,
     save_error: Option<String>,
@@ -164,6 +166,7 @@ impl Runtime {
                 sequence: 0,
                 pending: VecDeque::new(),
                 dirty: true,
+                revision: 1,
                 last_save: Instant::now() - Duration::from_secs(5),
             },
         );
@@ -177,40 +180,27 @@ impl Runtime {
         if s.importing.is_some() {
             return;
         }
-        if capture
-            && s.checkpoint.record.running
-            && let Some(t) = &s.terminal
-        {
-            match t.checkpoint().recv_timeout(Duration::from_secs(2)) {
-                Ok(Ok(text)) => s.checkpoint.output = text,
-                _ => {
-                    s.checkpoint.record.save_error = Some("Could not capture terminal text".into());
-                    return;
-                }
+        let text = if !s.checkpoint.record.running {
+            persistence::Text::Final(s.checkpoint.output.clone())
+        } else if capture {
+            match &s.terminal {
+                Some(t) => persistence::Text::Capture(t.checkpoint()),
+                None => return,
             }
-        }
-        let text_saved = capture || !s.checkpoint.record.running;
-        let prior_error = s.checkpoint.record.save_error.take();
-        match self.store.checkpoint(&mut s.checkpoint, text_saved) {
-            Ok(()) => {
-                s.checkpoint.record.save_error = None;
-                if text_saved {
-                    s.dirty = false;
-                    s.last_save = Instant::now();
-                }
-            }
-            Err(e) => {
-                let _ = prior_error;
-                s.checkpoint.record.save_error = Some(e.to_string());
-                s.last_save = Instant::now();
-            }
-        }
+        } else {
+            persistence::Text::Retain
+        };
+        self.persistence
+            .session(s.checkpoint.record.clone(), text, s.revision);
+        s.last_save = Instant::now();
     }
     fn tick(&mut self) {
+        self.saved();
         let mut flush = Vec::new();
         let mut title_hooks = Vec::new();
         for (id, s) in &mut self.sessions {
             for event in s.events.try_iter() {
+                s.revision = s.revision.wrapping_add(1);
                 match &event {
                     Event::Frame { has_output: true } => s.dirty = true,
                     Event::TitleChanged(t) => {
@@ -299,6 +289,41 @@ impl Runtime {
             }
         }
     }
+    fn saved(&mut self) {
+        for saved in self.persistence.completed.try_iter() {
+            match saved {
+                persistence::Saved::Layout { saved_at, error } => {
+                    if saved_at.is_some() {
+                        self.layout_saved_at = saved_at;
+                    }
+                    self.save_error = error;
+                }
+                persistence::Saved::Session {
+                    identity,
+                    output,
+                    captured_revision,
+                    saved_at,
+                    error,
+                } => {
+                    let Some(s) = self
+                        .sessions
+                        .get_mut(&identity.session)
+                        .filter(|s| s.checkpoint.record.identity == identity)
+                    else {
+                        continue;
+                    };
+                    if let Some(output) = output {
+                        s.checkpoint.output = output;
+                    }
+                    if error.is_none() && captured_revision == Some(s.revision) {
+                        s.dirty = false;
+                    }
+                    s.checkpoint.record.saved_at = saved_at;
+                    s.checkpoint.record.save_error = error;
+                }
+            }
+        }
+    }
     fn hook(&mut self, event: HookEvent) {
         let Some(pane) = event.pane else {
             return;
@@ -338,6 +363,7 @@ impl Runtime {
                 context.cwd = event.cwd.clone();
             }
             s.dirty = true;
+            s.revision = s.revision.wrapping_add(1);
         }
         let id = s.checkpoint.record.identity.session.clone();
         if let Some(child) = &event.child {
@@ -370,7 +396,12 @@ impl Runtime {
             for id in ids {
                 self.flush(&id, true);
             }
-            idle = self.save_error.is_none()
+            let settled = self.persistence.idle();
+            if settled {
+                self.saved();
+            }
+            idle = settled
+                && self.save_error.is_none()
                 && self
                     .sessions
                     .values()
@@ -478,13 +509,7 @@ impl Runtime {
                 if let Some(layout) = layout {
                     self.update_launches(&layout);
                     self.layout = Some(layout.clone());
-                    match self.store.save_layout(&layout) {
-                        Ok(()) => {
-                            self.save_error = None;
-                            self.layout_saved_at = Some(protocol::now());
-                        }
-                        Err(e) => self.save_error = Some(e.to_string()),
-                    }
+                    self.persistence.layout(layout);
                 }
                 let ids: Vec<_> = self.sessions.keys().cloned().collect();
                 for id in ids {
@@ -563,6 +588,7 @@ impl Runtime {
                     {
                         s.checkpoint.record.launch = launch.as_deref().cloned();
                         s.dirty = true;
+                        s.revision = s.revision.wrapping_add(1);
                     }
                 }
                 chda_core::SavedNode::Split { first, second, .. } => {
@@ -651,6 +677,7 @@ pub fn serve(data: &Path) -> io::Result<()> {
                     sequence: 0,
                     pending: VecDeque::new(),
                     dirty: false,
+                    revision: 0,
                     last_save: Instant::now(),
                 },
             )
@@ -669,7 +696,7 @@ pub fn serve(data: &Path) -> io::Result<()> {
         legacy_pending: VecDeque::new(),
         children: Default::default(),
         instance: chda_pty::local::token()?,
-        store,
+        persistence: persistence::Persistence::new(store),
         sessions,
         layout,
         save_error: None,
@@ -765,6 +792,7 @@ pub fn serve(data: &Path) -> io::Result<()> {
                 idle = Instant::now();
             }
             if r.connections == 0
+                && r.persistence.idle()
                 && !r.sessions.values().any(|s| s.checkpoint.record.running)
                 && ((accepted && idle.elapsed() > Duration::from_secs(1))
                     || (!accepted && started.elapsed() > Duration::from_secs(30)))
@@ -780,8 +808,9 @@ fn connection(mut stream: chda_pty::local::Stream, runtime: Arc<Mutex<Runtime>>)
     let mut gui = false;
     let mut provisional = None;
     let mut attached = None;
+    let mut established = false;
     loop {
-        let Envelope { version, request } = match protocol::read::<Envelope>(&mut stream, true) {
+        let Envelope { version, request } = match protocol::read_request(&mut stream, established) {
             Ok(envelope) => envelope,
             Err(e) => {
                 if e.kind() == io::ErrorKind::InvalidData {
@@ -803,7 +832,14 @@ fn connection(mut stream: chda_pty::local::Stream, runtime: Arc<Mutex<Runtime>>)
             );
             break;
         }
-        let response = match request {
+        established = true;
+        let checkpoint = matches!(request, Request::Checkpoint { .. });
+        let durable = checkpoint
+            || matches!(
+                request,
+                Request::Create { .. } | Request::Resume { .. } | Request::Terminate { .. }
+            );
+        let mut response = match request {
             Request::RetireIfIdle => {
                 if attached.is_some() {
                     Response::Retired(false)
@@ -841,6 +877,18 @@ fn connection(mut stream: chda_pty::local::Stream, runtime: Arc<Mutex<Runtime>>)
                     .unwrap_or_else(|e| Response::Error(e.to_string()))
             }
         };
+        if durable {
+            let pending = runtime.lock().unwrap().persistence.barrier();
+            // Capturing text and syncing files must not hold the shared lock.
+            if pending.recv().is_err() {
+                break;
+            }
+            let mut r = runtime.lock().unwrap();
+            r.saved();
+            if checkpoint {
+                response = Response::State(r.state());
+            }
+        }
         if let Response::Attached { record, .. } = &response {
             attached = Some(record.identity.clone());
         }
@@ -1070,7 +1118,7 @@ mod tests {
             legacy_pending: VecDeque::new(),
             children: Default::default(),
             instance: chda_pty::local::token().unwrap(),
-            store: Store::new(&data).unwrap(),
+            persistence: persistence::Persistence::new(Store::new(&data).unwrap()),
             sessions: BTreeMap::new(),
             layout: None,
             save_error: None,
@@ -1104,6 +1152,12 @@ mod tests {
             .unwrap();
         let id = &record.identity.session;
         runtime.flush(id, true);
+        runtime
+            .persistence
+            .barrier()
+            .recv_timeout(Duration::from_secs(5))
+            .unwrap();
+        runtime.saved();
         assert!(!runtime.sessions[id].dirty);
         let terminal = runtime.sessions[id].terminal.as_ref().unwrap();
         terminal.write(b"go\n".to_vec());
@@ -1121,13 +1175,19 @@ mod tests {
         runtime
             .dispatch(Request::Checkpoint { layout: None })
             .unwrap();
+        runtime
+            .persistence
+            .barrier()
+            .recv_timeout(Duration::from_secs(5))
+            .unwrap();
+        runtime.saved();
         assert!(
             runtime.sessions[id]
                 .checkpoint
                 .output
                 .contains("checkpoint-race")
         );
-        let saved = runtime.store.load();
+        let saved = Store::new(&data).unwrap().load();
         assert!(saved.iter().any(|c| c.output.contains("checkpoint-race")));
         drop(runtime);
         std::fs::remove_dir_all(data).unwrap();

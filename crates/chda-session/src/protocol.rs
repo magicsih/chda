@@ -126,7 +126,7 @@ pub(crate) struct Envelope {
     pub request: Request,
 }
 
-#[derive(Serialize, Deserialize)]
+#[derive(Clone, Serialize, Deserialize)]
 pub(crate) enum Request {
     Hello,
     List,
@@ -285,6 +285,29 @@ pub(crate) fn read<T: serde::de::DeserializeOwned>(
     serde_json::from_slice(&bytes).map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e))
 }
 
+/// Idle time between established requests is unlimited. Once a byte arrives,
+/// the socket timeout still bounds an incomplete frame, including its header.
+pub(crate) fn read_request(stream: &mut impl Read, established: bool) -> io::Result<Envelope> {
+    if !established {
+        return read(stream, true);
+    }
+    let mut first = [0];
+    loop {
+        match stream.read_exact(&mut first) {
+            Ok(()) => break,
+            Err(e)
+                if matches!(
+                    e.kind(),
+                    io::ErrorKind::TimedOut
+                        | io::ErrorKind::WouldBlock
+                        | io::ErrorKind::Interrupted
+                ) => {}
+            Err(e) => return Err(e),
+        }
+    }
+    read(&mut first.as_slice().chain(stream), true)
+}
+
 pub(crate) fn now() -> u64 {
     std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
@@ -295,6 +318,60 @@ pub(crate) fn now() -> u64 {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn only_timeouts_between_complete_established_requests_are_retried() {
+        struct Pause {
+            bytes: std::io::Cursor<Vec<u8>>,
+            at: u64,
+            remaining: u8,
+        }
+        impl Read for Pause {
+            fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
+                if self.bytes.position() == self.at && self.remaining > 0 {
+                    self.remaining -= 1;
+                    return Err(io::ErrorKind::TimedOut.into());
+                }
+                self.bytes.read(buf)
+            }
+        }
+        let mut bytes = vec![];
+        write(
+            &mut bytes,
+            &Envelope {
+                version: PROTOCOL_VERSION,
+                request: Request::List,
+            },
+        )
+        .unwrap();
+        let mut quiet = Pause {
+            bytes: std::io::Cursor::new(bytes.clone()),
+            at: 0,
+            remaining: 2,
+        };
+        assert!(matches!(
+            read_request(&mut quiet, true).unwrap().request,
+            Request::List
+        ));
+        for (established, at) in [(false, 0), (true, 1), (true, 4)] {
+            let mut partial = Pause {
+                bytes: std::io::Cursor::new(bytes.clone()),
+                at,
+                remaining: 1,
+            };
+            assert_eq!(
+                read_request(&mut partial, established)
+                    .err()
+                    .unwrap()
+                    .kind(),
+                io::ErrorKind::TimedOut
+            );
+            assert_eq!(
+                partial.bytes.position(),
+                at,
+                "a partial message must not be parsed from a new boundary"
+            );
+        }
+    }
     #[test]
     fn a_declared_oversized_message_is_rejected_before_reading_its_body() {
         let mut bytes = &u32::MAX.to_be_bytes()[..];

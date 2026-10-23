@@ -10,6 +10,31 @@ use std::{
     time::Duration,
 };
 
+mod layout;
+mod remote;
+#[cfg(test)]
+mod tests;
+
+fn transport_error(error: &io::Error) -> bool {
+    matches!(
+        error.kind(),
+        io::ErrorKind::BrokenPipe
+            | io::ErrorKind::UnexpectedEof
+            | io::ErrorKind::ConnectionReset
+            | io::ErrorKind::ConnectionAborted
+            | io::ErrorKind::NotConnected
+            | io::ErrorKind::TimedOut
+            | io::ErrorKind::WouldBlock
+    )
+}
+fn unavailable(error: &io::Error) -> bool {
+    transport_error(error)
+        || matches!(
+            error.kind(),
+            io::ErrorKind::NotFound | io::ErrorKind::ConnectionRefused
+        )
+}
+
 struct Connection(chda_pty::local::Stream);
 impl Connection {
     fn open(data: &Path) -> io::Result<Self> {
@@ -38,6 +63,9 @@ impl Connection {
 pub struct Client {
     data: PathBuf,
     connection: Arc<Mutex<Connection>>,
+    instance: Arc<Mutex<String>>,
+    executable: Arc<Mutex<PathBuf>>,
+    layout: Arc<layout::LayoutQueue>,
     imports: Arc<Mutex<Vec<Identity>>>,
     group: String,
     pending_executable: Arc<Mutex<Option<PathBuf>>>,
@@ -51,7 +79,7 @@ pub struct Watch {
 impl Drop for Watch {
     fn drop(&mut self) {
         self.stop.store(true, std::sync::atomic::Ordering::Release);
-        if let Some(t) = self.thread.take() {
+        if let Some(t) = self.thread.take().filter(|t| t.is_finished()) {
             let _ = t.join();
         }
     }
@@ -61,14 +89,19 @@ impl Client {
         &self.data
     }
     pub fn helper_executable(&self) -> io::Result<PathBuf> {
-        Ok(self.state()?.executable)
+        // This executable is pinned for the lifetime of the verified server.
+        // Agent launch preparation must not wait behind a layout checkpoint.
+        Ok(self.executable.lock().unwrap().clone())
     }
     pub fn connect(data: &Path) -> io::Result<Self> {
         let mut connection = Connection::open(data)?;
-        if !matches!(connection.request(Request::Hello)?, Response::State(_)) {
+        let Response::State(state) = connection.request(Request::Hello)? else {
             return Err(io::Error::other("Invalid session handshake"));
-        }
+        };
         Ok(Self {
+            instance: Arc::new(Mutex::new(state.instance)),
+            executable: Arc::new(Mutex::new(state.executable)),
+            layout: Default::default(),
             gui_available: Default::default(),
             pending_executable: Default::default(),
             imports: Default::default(),
@@ -82,8 +115,11 @@ impl Client {
     pub fn connect_or_start(data: &Path, executable: &Path) -> io::Result<Self> {
         match Connection::open(data) {
             Ok(mut connection) => {
-                if matches!(connection.request(Request::Hello)?, Response::State(_)) {
+                if let Response::State(state) = connection.request(Request::Hello)? {
                     return Ok(Self {
+                        instance: Arc::new(Mutex::new(state.instance)),
+                        executable: Arc::new(Mutex::new(state.executable)),
+                        layout: Default::default(),
                         gui_available: Default::default(),
                         pending_executable: Default::default(),
                         imports: Default::default(),
@@ -120,21 +156,62 @@ impl Client {
         }
     }
     fn request(&self, request: Request) -> io::Result<Response> {
-        self.connection
+        let mut connection = self
+            .connection
             .lock()
-            .map_err(|_| io::Error::other("Session connection lock failed"))?
-            .request(request)
+            .map_err(|_| io::Error::other("Session connection lock failed"))?;
+        // Only observations and idempotent snapshots may be retried. In
+        // particular Create, Resume, ReserveIds and terminal input are not.
+        let retry = matches!(
+            request,
+            Request::Hello
+                | Request::List
+                | Request::Output { .. }
+                | Request::HookEvents { .. }
+                | Request::Checkpoint { .. }
+                | Request::GuiPresence(_)
+        );
+        match connection.request(request.clone()) {
+            Err(error) if transport_error(&error) => {
+                *connection = self.reconnect()?;
+                if retry {
+                    connection.request(request)
+                } else {
+                    Err(error)
+                }
+            }
+            result => result,
+        }
+    }
+    fn reconnect(&self) -> io::Result<Connection> {
+        let mut connection = Connection::open(&self.data)?;
+        let Response::State(state) = connection.request(Request::Hello)? else {
+            return Err(io::Error::other("Invalid session handshake"));
+        };
+        if state.instance != *self.instance.lock().unwrap() {
+            return Err(io::Error::other(
+                "The session service restarted. Reopen chda for saved output and explicit recovery; no command was restarted.",
+            ));
+        }
+        connection.request(Request::GuiPresence(
+            self.gui_available
+                .load(std::sync::atomic::Ordering::Acquire),
+        ))?;
+        Ok(connection)
     }
     pub fn state(&self) -> io::Result<State> {
         match self.request(Request::List)? {
-            Response::State(s) => Ok(s),
+            Response::State(s) => {
+                self.retry_layout();
+                Ok(s)
+            }
             _ => Err(io::Error::other("Invalid session state")),
         }
     }
     pub fn set_gui_available(&self, available: bool) -> io::Result<()> {
-        self.request(Request::GuiPresence(available))?;
         self.gui_available
             .store(available, std::sync::atomic::Ordering::Release);
+        self.request(Request::GuiPresence(available))?;
         Ok(())
     }
     pub fn set_pending_executable(&self, executable: PathBuf) {
@@ -150,6 +227,7 @@ impl Client {
         let Some(executable) = pending.as_ref() else {
             return Ok(false);
         };
+        self.state()?;
         let mut connection = self.connection.lock().unwrap();
         let Response::State(state) = connection.request(Request::List)? else {
             return Err(io::Error::other("Invalid service state"));
@@ -200,9 +278,11 @@ impl Client {
         }
         let next = Self::connect_or_start(&self.data, executable)?;
         let mut replacement = Connection::open(&self.data)?;
-        if !matches!(replacement.request(Request::Hello)?, Response::State(_)) {
+        let Response::State(state) = replacement.request(Request::Hello)? else {
             return Err(io::Error::other("Invalid replacement service"));
-        }
+        };
+        *self.instance.lock().unwrap() = state.instance;
+        *self.executable.lock().unwrap() = state.executable;
         *connection = replacement;
         let _ = connection.request(Request::GuiPresence(
             self.gui_available
@@ -362,122 +442,13 @@ impl Client {
     }
     fn remote(
         &self,
-        mut connection: Connection,
+        connection: Connection,
         response: Response,
         reattached: bool,
         events: mpsc::Sender<Event>,
         wake: impl Fn() + Send + 'static,
     ) -> io::Result<RemoteSession> {
-        let Response::Attached {
-            record,
-            mut frame,
-            mut sequence,
-        } = response
-        else {
-            return Err(io::Error::other("Invalid attach response"));
-        };
-        protocol::complete_images(&mut frame, &Frame::default())?;
-        let slot = Arc::new(Mutex::new(Arc::new(*frame)));
-        let (tx, rx) = mpsc::sync_channel(256);
-        let identity = record.identity.clone();
-        let initial_status = (record.saved_at, record.save_error.clone());
-        let view = slot.clone();
-        let thread = std::thread::Builder::new()
-            .name("chda-session-view".into())
-            .spawn(move || {
-                let emit = |e| {
-                    let _ = events.send(e);
-                    wake();
-                };
-                emit(Event::Frame { has_output: false });
-                // These describe the current screen, unlike one-shot effects.
-                // A fast shell can reach its prompt before Attach's barrier.
-                let initial = view.lock().unwrap().clone();
-                emit(Event::TitleChanged(initial.title.clone()));
-                if !initial.pwd.is_empty() {
-                    emit(Event::PwdChanged(initial.pwd.clone()));
-                }
-                if initial.at_prompt() {
-                    emit(Event::PromptShown);
-                }
-                let mut status = initial_status;
-                emit(Event::PersistenceStatus {
-                    saved_at: status.0,
-                    error: status.1.clone(),
-                });
-                let mut generation = view.lock().unwrap().generation;
-                let result = (|| -> io::Result<()> {
-                    loop {
-                        match rx.recv_timeout(Duration::from_millis(8)) {
-                            Ok(action) => {
-                                for action in std::iter::once(action).chain(rx.try_iter()).take(256)
-                                {
-                                    connection.request(Request::Input {
-                                        identity: identity.clone(),
-                                        action,
-                                    })?;
-                                }
-                            }
-                            Err(mpsc::RecvTimeoutError::Disconnected) => {
-                                let _ = connection.request(Request::Detach);
-                                return Ok(());
-                            }
-                            Err(mpsc::RecvTimeoutError::Timeout) => {}
-                        }
-                        let response = connection.request(Request::Poll {
-                            identity: identity.clone(),
-                            generation,
-                            sequence,
-                            images: view
-                                .lock()
-                                .unwrap()
-                                .images
-                                .iter()
-                                .map(|p| (p.image.id, p.image.generation))
-                                .collect(),
-                        })?;
-                        let Response::Update {
-                            record,
-                            frame,
-                            events,
-                            sequence: next,
-                            ..
-                        } = response
-                        else {
-                            return Err(io::Error::other("Invalid terminal update"));
-                        };
-                        sequence = next;
-                        let next_status = (record.saved_at, record.save_error);
-                        if status != next_status {
-                            status = next_status;
-                            emit(Event::PersistenceStatus {
-                                saved_at: status.0,
-                                error: status.1.clone(),
-                            });
-                        }
-                        if let Some(mut frame) = frame {
-                            protocol::complete_images(&mut frame, &view.lock().unwrap())?;
-                            generation = frame.generation;
-                            *view.lock().unwrap() = Arc::new(*frame);
-                            emit(Event::Frame { has_output: true });
-                        }
-                        for event in events {
-                            emit(event);
-                        }
-                    }
-                })();
-                if let Err(e) = result {
-                    emit(Event::Disconnected(e.to_string()));
-                }
-            })?;
-        Ok(RemoteSession {
-            reattached,
-            record: Box::new(record),
-            frame: slot,
-            tx: Some(tx),
-            thread: Some(thread),
-            client: self.clone(),
-        })
+        remote::start(self, connection, response, reattached, events, wake)
     }
     /// Relay server-validated metadata and GUI-only requests to the existing
     /// app event dispatcher. Current agent states are returned separately by
@@ -495,14 +466,18 @@ impl Client {
             let mut seq = initial;
             while !stopping.load(std::sync::atomic::Ordering::Acquire) {
                 let response = client.request(Request::HookEvents { sequence: seq });
-                let Ok(Response::Hooks {
-                    events,
-                    quotas,
-                    requests,
-                    sequence,
-                }) = response
-                else {
-                    break;
+                let (events, quotas, requests, sequence) = match response {
+                    Ok(Response::Hooks {
+                        events,
+                        quotas,
+                        requests,
+                        sequence,
+                    }) => (events, quotas, requests, sequence),
+                    Err(e) if unavailable(&e) => {
+                        std::thread::sleep(Duration::from_millis(250));
+                        continue;
+                    }
+                    _ => break,
                 };
                 seq = sequence;
                 let changed = !events.is_empty() || !quotas.is_empty() || !requests.is_empty();
@@ -548,15 +523,23 @@ pub struct RemoteSession {
     reattached: bool,
     pub record: Box<SessionRecord>,
     frame: Arc<Mutex<Arc<Frame>>>,
+    signals: Arc<remote::Signals>,
     tx: Option<mpsc::SyncSender<Action>>,
     thread: Option<std::thread::JoinHandle<()>>,
     client: Client,
 }
 impl Drop for RemoteSession {
     fn drop(&mut self) {
+        self.signals
+            .stop
+            .store(true, std::sync::atomic::Ordering::Release);
         self.tx.take();
         if let Some(t) = self.thread.take() {
-            let _ = t.join();
+            // A bounded socket wait finishes in the background. Window close
+            // must not join a thread waiting on the service.
+            if t.is_finished() {
+                let _ = t.join();
+            }
         }
     }
 }
@@ -624,8 +607,19 @@ impl Session {
         match self {
             Self::Local(s) => action.apply(s),
             Self::Remote(s) => {
-                if let Some(tx) = &s.tx {
-                    let _ = tx.send(action);
+                if s.signals
+                    .accepting
+                    .load(std::sync::atomic::Ordering::Acquire)
+                    && let Some(tx) = &s.tx
+                    && let Err(mpsc::TrySendError::Full(_)) = tx.try_send(action)
+                {
+                    s.signals
+                        .accepting
+                        .store(false, std::sync::atomic::Ordering::Release);
+                    s.signals.emit(Event::PersistenceStatus {
+                        saved_at: s.record.saved_at,
+                        error: Some("Terminal input queue is full. Reconnecting; queued input is not replayed.".into()),
+                    });
                 }
             }
         }

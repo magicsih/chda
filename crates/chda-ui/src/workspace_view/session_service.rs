@@ -30,7 +30,10 @@ impl WorkspaceView {
                 let client = client.clone();
                 let state = cx.background_spawn(async move {
                     crate::platform::sessions::upgrade_if_idle(&client)?;
-                    client.state()
+                    client.state().map(|mut state| {
+                        state.save_error = state.save_error.or_else(|| client.layout_error());
+                        state
+                    })
                 }).await;
                 if this
                     .update(cx, |view, cx| match state {
@@ -45,7 +48,7 @@ impl WorkspaceView {
                             if changed { cx.notify(); }
                         }
                         Err(error) => {
-                            let error = Some(format!("Session service connection lost: {error}. Reopen chda to reconnect; input is not replayed."));
+                            let error = Some(format!("Session service connection lost: {error}. Retrying the surviving service; input is not replayed."));
                             let mut registry = view.env.windows.borrow_mut();
                             if registry.service_error != error {
                                 registry.service_error = error;
