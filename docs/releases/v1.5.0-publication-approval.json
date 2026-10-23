@@ -1,0 +1,26 @@
+{
+  "accepted_at": "2026-10-23T05:44:56Z",
+  "accepted_interpretation": "publish-with-incomplete-native-validation",
+  "blocked_evidence_sha256": "25200039b7c907d64abb0c5458100a2e1ae5deb2398cda1b66eacdda33c855bc",
+  "config_sha256": "51316eefb995e35ff2ccec05d56db8bc65b4bc511e6f082f4ac819a3254c7244",
+  "incomplete_checks": [
+    "before-build-native-e2e",
+    "before-deploy-native-e2e",
+    "gui-detach-reconnect",
+    "gui-ipc",
+    "server-restart-explicit-resume",
+    "server-upgrade-compatibility",
+    "session-preserving-update",
+    "session-server-launch",
+    "shell-pid-preservation",
+    "signed-launch",
+    "three-native-review-rounds"
+  ],
+  "independent_assessment_sha256": "c241e8faa4f83eef4b18f2ed699e58b37fa2a20d0c076f209b6936773aa0ee3a",
+  "owner": "magicsih",
+  "owner_instruction": "Publish this v1.5.0 candidate with the stated native validation incomplete; retain signing, notarization and file verification.",
+  "schema": 1,
+  "sha": "dec98c39c0da6639ad25023b0f1c8da23aa4943b",
+  "tag": "v1.5.0",
+  "tree": "e2f93d137b921fe3f208c4d8b8247d62ff05ab10"
+}

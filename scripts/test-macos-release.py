@@ -454,6 +454,18 @@ class V140PublicationApprovalTests(V130PublicationApprovalTests):
                 self.verify(self.evidence(record), record)
 
 
+class V150PublicationApprovalTests(V140PublicationApprovalTests):
+    TAG = 'v1.5.0'
+    INSTRUCTION = ('Publish this v1.5.0 candidate with the stated native validation incomplete; '
+                   'retain signing, notarization and file verification.')
+    NEXT = 'v1.5.1'
+
+    def test_v140_approval_cannot_authorize_v150(self):
+        previous = V140PublicationApprovalTests().approval()
+        with self.assertRaises(ValueError):
+            self.verify(self.evidence(self.approval()), previous)
+
+
 class ReleaseNotesTests(unittest.TestCase):
     def test_historical_exception_notes_remain_unchanged(self):
         for tag in ('v0.1.21', 'v0.1.22', 'v0.1.23'):
@@ -480,6 +492,13 @@ class ReleaseNotesTests(unittest.TestCase):
         self.assertIn('session-service', notes)
         self.assertIn('v1.4.0-publication-approval.md', notes)
         self.assertEqual(release.exception_notes('v1.4.1'), '')
+
+    def test_v150_discloses_its_own_incomplete_native_and_service_checks(self):
+        notes = release.exception_notes('v1.5.0')
+        self.assertIn('incomplete', notes)
+        self.assertIn('session-service', notes)
+        self.assertIn('v1.5.0-publication-approval.md', notes)
+        self.assertEqual(release.exception_notes('v1.5.1'), '')
 
 def reduced_exception_record():
     record = json.loads(exception_record())
