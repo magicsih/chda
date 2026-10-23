@@ -68,6 +68,7 @@ EXCEPTION_PATHS = {
     'v1.0.25': 'docs/releases/v1.0.25-publication-approval.json',
     'v1.3.0': 'docs/releases/v1.3.0-publication-approval.json',
     'v1.4.0': 'docs/releases/v1.4.0-publication-approval.json',
+    'v1.5.0': 'docs/releases/v1.5.0-publication-approval.json',
 }
 OWNER_INSTRUCTIONS = {
     'v0.1.21': '이제 좀 공개해라 좀',
@@ -78,6 +79,8 @@ OWNER_INSTRUCTIONS = {
     'v1.3.0': ('Publish this v1.3.0 candidate with the stated native validation incomplete; '
                'retain signing, notarization and file verification.'),
     'v1.4.0': ('Publish this v1.4.0 candidate with the stated native validation incomplete; '
+               'retain signing, notarization and file verification.'),
+    'v1.5.0': ('Publish this v1.5.0 candidate with the stated native validation incomplete; '
                'retain signing, notarization and file verification.'),
 }
 POSTBUILD_EXCEPTION_PATH = 'docs/releases/v0.1.22-signed-update-exception.json'
@@ -632,6 +635,15 @@ def native_archive(root, tag):
 
 def exception_notes(tag):
     """Per-version validation notices for explicitly approved releases."""
+    if tag == 'v1.5.0':
+        return ('Native UI validation is incomplete. After partial development checks and a '
+                'native-control tool failure, the owner authorized this v1.5.0 candidate '
+                'with the three full native review rounds, both full native E2E runs and all '
+                'eight exact signed-ZIP GUI and session-service checks unverified. Developer ID '
+                'signing of the app and service, notarization, universal architectures, checksums '
+                'and update signatures remain required. '
+                '[Validation status](https://github.com/%s/blob/main/docs/releases/'
+                'v1.5.0-publication-approval.md).\n\n' % REPO)
     if tag == 'v1.4.0':
         return ('Native UI validation is incomplete. The owner authorized this v1.4.0 candidate '
                 'with the three full native review rounds, both full native E2E runs and all '

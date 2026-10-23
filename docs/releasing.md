@@ -80,6 +80,16 @@ service signing, notarization, universal architectures, checksums, protocol and
 update signatures, immutable draft publication and file readback remain required.
 This new approval does not reuse v1.3.0 or authorize a later candidate.
 
+For v1.5.0 only, after partial native observations and repeated native-control
+tool connection failures were disclosed, the owner approved the
+[candidate-specific proposal](releases/v1.5.0-publication-approval.md).
+It retains `native_result: blocked`, zero complete native rounds, both full
+native E2Es and all eight exact signed-ZIP runtime checks as incomplete.
+App and helper signing, notarization, universal architectures, protocol and
+update signatures, checksums, immutable draft publication and public file
+readback remain required. This approval does not authorize another candidate
+or future release.
+
 ## 버전 정책
 
 `v0.1.24` 다음 릴리스부터 `v1.0.25`로 전환한다. 마지막 자리 `25`는 기존
