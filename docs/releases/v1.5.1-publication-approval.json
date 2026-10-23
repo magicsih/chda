@@ -1,0 +1,26 @@
+{
+  "accepted_at": "2026-10-23T14:59:49Z",
+  "accepted_interpretation": "publish-with-incomplete-native-validation",
+  "blocked_evidence_sha256": "2be83b1a399f83786da47a417bac623209d1e95de8c2676bbc428e79367e0fd2",
+  "config_sha256": "62a1517be2ee082ed0a0eddf31736a7e1c9f185d5f77d4fcc62e9e7487316db7",
+  "incomplete_checks": [
+    "before-build-native-e2e",
+    "before-deploy-native-e2e",
+    "gui-detach-reconnect",
+    "gui-ipc",
+    "server-restart-explicit-resume",
+    "server-upgrade-compatibility",
+    "session-preserving-update",
+    "session-server-launch",
+    "shell-pid-preservation",
+    "signed-launch",
+    "three-native-review-rounds"
+  ],
+  "independent_assessment_sha256": "3c769ac64c32b52e6d497215031d438d3935f1805ef1bd63205f475d413a966d",
+  "owner": "magicsih",
+  "owner_instruction": "\ubcd1\ud569\ud558\uace0 \uc571 \ub9b4\ub9ac\uc988 \ube68\ub9ac \uc9c4\ud589\ud574\ub77c. \uacb0\ud568\uc774 \uc788\ub294 \uc0c1\ud0dc\ub77c \ube68\ub9ac \ubcf4\ub0b4\uc57c\ud55c\ub2e4.",
+  "schema": 1,
+  "sha": "53e26c1e584f8072c3cdd49d3c71cf7e3a2dcd0a",
+  "tag": "v1.5.1",
+  "tree": "812f147a4da72986a46c6249dc17c833407c351d"
+}
