@@ -4,6 +4,12 @@ All notable changes to chda. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); entries are
 generated from conventional commit messages by release-plz.
 
+## [1.5.1](https://github.com/magicsih/chda/compare/v1.5.0...v1.5.1) - 2026-10-23
+
+### Fixed
+
+- *(sessions)* recover connections without blocking terminals ([#295](https://github.com/magicsih/chda/pull/295))
+
 ## [1.5.0](https://github.com/magicsih/chda/compare/v1.4.0...v1.5.0) - 2026-10-23
 
 ### Added
