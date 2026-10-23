@@ -31,14 +31,22 @@ names return. Their previous text is read only. No saved command runs at startup
 
 Previous output remains separate from a new run. Repeated clicks during startup
 start one successor. Typing in previous output never sends input to a process.
-If a connection fails, chda reports it and does not replay uncertain input;
-reopen to reconnect to a surviving server.
+If a connection is interrupted, chda reconnects to the exact surviving run in
+the background. It keeps the last complete frame available while waiting. Input
+entered while disconnected, uncertain input and input queued behind a failed
+request are discarded; they are never submitted again. Reattachment does not
+repeat old clipboard, notification or shell-prompt events. A different server or run cannot
+receive that input. If the original service stopped or its protocol changed,
+reopen chda to load saved output and choose an explicit recovery action.
 
 ## Saving and privacy
 
 The service is the only writer of the new layout and session checkpoints. It
 saves layout and execution metadata as they change, and dirty text at most every
-five seconds, plus disconnect and exit. Output follows `scrollback-limit`.
+five seconds, plus disconnect and exit. Layout saves run in order in the
+background, retaining the newest pending layout. Quit waits for its final save.
+Terminal capture and disk synchronization do not hold the shared session state
+lock or the UI frame lock. Save times advance only after a confirmed write. Output follows `scrollback-limit`.
 Only the current checkpoint and one validated previous copy are retained per
 session. Files and sockets are private to the current user and data profile.
 No full process environment or input event log is added to saved metadata.

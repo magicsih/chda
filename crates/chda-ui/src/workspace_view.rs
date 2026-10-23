@@ -492,11 +492,11 @@ impl WorkspaceView {
                     }
                     registry.entries.retain(|e| windows.contains(&e.window));
                     if let Some(client) = &service {
-                        let _ = client.set_gui_available(!registry.entries.is_empty());
+                        client.queue_gui_available(!registry.entries.is_empty());
                     }
                     if restore && let Some(dir) = directory.as_deref() {
                         if let Some(client) = &service {
-                            let _ = client.checkpoint(Some(registry.snapshot()));
+                            client.queue_layout(registry.snapshot());
                         } else if !service_failed {
                             let _ = registry.snapshot().save(dir);
                         }
@@ -630,7 +630,15 @@ impl WorkspaceView {
             this.env.windows.borrow_mut().quitting = true;
             let finished = this.stop_preparations(cx);
             let executor = cx.background_executor().clone();
+            let saved = this
+                .env
+                .session_service
+                .clone()
+                .map(|client| executor.spawn(async move { client.flush_layout() }));
             async move {
+                if let Some(saved) = saved {
+                    let _ = saved.await;
+                }
                 while finished
                     .iter()
                     .any(|flag| !flag.load(std::sync::atomic::Ordering::Acquire))
@@ -2792,14 +2800,7 @@ impl WorkspaceView {
         {
             let snapshot = registry.snapshot();
             if let Some(client) = &self.env.session_service {
-                match client.checkpoint(Some(snapshot)) {
-                    Ok(state) => {
-                        registry.service_error = state.save_error;
-                        registry.service_saved_at = state.layout_saved_at;
-                        registry.service_records = state.sessions;
-                    }
-                    Err(e) => registry.service_error = Some(e.to_string()),
-                }
+                client.queue_layout(snapshot);
             } else if self.env.session_service_error.is_none() && snapshot.save(dir).is_ok() {
                 self.prune_owned_outputs(&snapshot, dir);
             }

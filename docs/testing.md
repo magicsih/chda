@@ -14,6 +14,15 @@ protocol bounds, metadata privacy, detached completion, hooks and MCP queries.
 A real-shell regression verifies that an explicit checkpoint captures visible
 output even before the service drains its dirty notification; terminal
 disconnection captures that attachment independently of the dirty flag.
+The idle-connection regression keeps a real shell alive past the former ten-second
+timeout and checks its original server, PID and subsequent input. Controlled
+transport tests hold a Poll response, lose an input acknowledgement and verify
+that frame reads stay available, queued input is discarded and reattachment skips
+old effects. A healthy-close regression holds one input acknowledgement, fills
+all 256 queue slots and closes the view, then verifies all 257 accepted actions
+arrive in order across the reader's batch boundary. Ordered-layout and
+slow-capture tests verify bounded pending saves,
+latest-layout ordering and retained text across metadata updates.
 These tests do not establish rendered recovery-screen, GUI force-quit, first
 signed-ZIP or physical power-loss acceptance. The real-process legacy adoption
 test does cover prepared rollback and commit across a successor process; it
@@ -37,7 +46,11 @@ window and one run. Do not replace the installed app or use a provider account.
 platform with real shells: closing a window and reconnecting from Sessions
 preserves PID and input, service restart shows copyable read-only output before
 an explicit double-click-safe Start shell, and missing transcripts never replace
-an exact conversation. Recovery controls support Tab, Shift-Tab, Enter and Space.
+an exact conversation. Recovery controls support Tab, Shift-Tab, Enter and Space. A focused GPUI
+scenario pauses only its private test service, dispatches the actual split-save
+and sidebar shortcuts, reads the last frame without waiting, then resumes the
+service and verifies input in the original shell. This is development input
+coverage, not a native rendering or physical sleep test.
 Service tests also cover current-screen metadata after late attachment, Codex
 completion without a GUI, simulated ENOSPC, actual checkpoint-path write failure,
 and salvage of valid legacy tabs beside malformed entries. Compact frame cells

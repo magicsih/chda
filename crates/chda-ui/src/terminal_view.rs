@@ -1527,7 +1527,7 @@ impl Render for TerminalView {
                     .bg(hsla(self.settings.colors.background.unwrap_or_default()))
                     .text_color(hsla(self.settings.colors.foreground.unwrap_or_default()))
                     .child(format!(
-                        "Output save failed: {error}. Last saved {}.",
+                        "Session status: {error}. Last saved {}.",
                         self.save_status
                             .0
                             .map(|at| format!("{} ago", chda_core::activity_age(now_ms(), at)))

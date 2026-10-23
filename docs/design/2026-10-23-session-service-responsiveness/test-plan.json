@@ -1,0 +1,44 @@
+{
+  "version": "1.0",
+  "status": "approved",
+  "design": "design.md",
+  "baseline": "cb4eec84a66bd19545000ca1fa0023e161e84618",
+  "level": "L1",
+  "environment": "dev",
+  "executor": "author, with repository CI for platform regression checks",
+  "redesign": false,
+  "scope": [
+    "Established session connection idle handling and exact-identity reconnect",
+    "Nonblocking latest-frame access and ordered background layout saves",
+    "Checkpoint capture and persistence without a shared runtime lock during waits"
+  ],
+  "dataIsolation": "Private temporary HOME, profiles and real local test shells. Pause or terminate only test-owned processes. Never restart the installed app or service, send input to live user sessions, access provider accounts or use physical devices.",
+  "checks": [
+    "Record failing regressions before the implementation changes",
+    "Leave an established connection quiet for longer than ten seconds; verify the same server and shell PID, continued output and subsequent input",
+    "Pause a test frontend and interrupt transport; verify exact-run reconnection, no duplicate commands, no queued input replay and no replayed clipboard or notification effects",
+    "Change server/run identity or protocol; preserve existing processes and require explicit stopped-session recovery instead of automatic execution",
+    "Delay a Poll response under test control; last-frame access and GPUI input processing must complete while the response remains blocked",
+    "Delay layout checkpoint completion under test control; GPUI remains responsive and only the latest ordered layout survives window close and quit",
+    "Delay terminal capture and disk writes; unrelated pane input remains usable, pending saves remain bounded and stale-run completions are rejected",
+    "Retain current/previous checkpoint recovery, five-second dirty-output scheduling, durable layout/launch saves, failure visibility and confirmed save timestamps",
+    "Run real-shell multi-pane input/output measurements on freshly built same-candidate local and service backends; report median, p95, throughput, CPU and detached memory/disk without claiming native latency",
+    "cargo fmt --all --check",
+    "cargo clippy --workspace --all-targets -- -D warnings",
+    "cargo test --workspace on macOS with pinned Zig 0.16.0",
+    "Existing Linux tests and Windows build through repository CI",
+    "python3 scripts/sync-product-docs.py and product-documentation checks"
+  ],
+  "evidenceRules": [
+    "Bind final regression and measurement evidence to the final candidate SHA or identical Git tree",
+    "Exploratory cached-binary measurements and the installed-1.5.0 reproduction are diagnosis, not final-candidate validation",
+    "Report unrun native rendering, signed artifact and public deployment checks as unrun",
+    "Preserve live user data and archive raw evidence to verified NAS storage"
+  ],
+  "delivery": "Reviewed Ready PR only; no release tag, publication or installed app replacement",
+  "release": {
+    "requested": false,
+    "markets": []
+  },
+  "approval": "Owner approved implementation and this L1 scope on 2026-10-23: 어서 고쳐. Delivery remains a reviewed PR; public release was not requested."
+}

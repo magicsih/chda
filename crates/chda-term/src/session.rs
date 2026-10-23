@@ -38,8 +38,8 @@ pub enum Event {
         saved_at: Option<u64>,
         error: Option<String>,
     },
-    /// The view lost its session service. Input is no longer sent; the
-    /// caller must explicitly reconnect rather than replay queued input.
+    /// The exact session cannot be reattached. Input is no longer sent;
+    /// the caller may offer explicit recovery without replaying queued input.
     Disconnected(String),
     /// A new frame is available from [`Session::frame`].
     Frame {

@@ -3,6 +3,58 @@ use super::harness::{Harness, wait_until};
 use gpui::{Modifiers, TestAppContext, VisualTestContext};
 
 #[gpui::test]
+fn a_paused_service_does_not_block_workspace_actions_or_the_last_frame(cx: &mut TestAppContext) {
+    struct Resume(u32);
+    impl Drop for Resume {
+        fn drop(&mut self) {
+            let _ = std::process::Command::new("/bin/kill")
+                .args(["-CONT", &self.0.to_string()])
+                .status();
+        }
+    }
+    let mut h = Harness::open_service(cx, "service-paused-ui", |_| {});
+    h.wait_prompt();
+    let (client, pane, pid, before) = h.read(|v, cx| {
+        let pane = v.ws.focused_pane().unwrap();
+        (
+            v.env.session_service.clone().unwrap(),
+            pane,
+            v.panes[&pane].0.read(cx).child_pid(),
+            v.focused_text(cx),
+        )
+    });
+    client.flush_layout().unwrap();
+    let service = client.state().unwrap().pid;
+    assert!(
+        std::process::Command::new("/bin/kill")
+            .args(["-STOP", &service.to_string()])
+            .status()
+            .unwrap()
+            .success()
+    );
+    let resume = Resume(service);
+    let started = std::time::Instant::now();
+    // Equalize uses the production save path; sidebar toggle is a second
+    // independent UI action while that checkpoint cannot receive a reply.
+    h.keys("cmd-ctrl-= cmd-b");
+    assert!(!h.read(|v, _| v.sidebar_visible));
+    assert_eq!(
+        h.read(|v, cx| v.focused_text(cx)).trim_end(),
+        before.trim_end()
+    );
+    assert!(
+        started.elapsed() < std::time::Duration::from_millis(500),
+        "UI waited for the paused service"
+    );
+    drop(resume);
+    h.run(
+        "printf '\\nservice-resumed-input\\n'",
+        "\nservice-resumed-input\n",
+    );
+    assert_eq!(h.read(|v, cx| v.panes[&pane].0.read(cx).child_pid()), pid);
+}
+
+#[gpui::test]
 fn unsupported_agent_explains_resume_limits_and_offers_a_separate_new_conversation(
     cx: &mut TestAppContext,
 ) {
@@ -18,6 +70,11 @@ fn unsupported_agent_explains_resume_limits_and_offers_a_separate_new_conversati
         )
         .unwrap();
         std::fs::create_dir_all(&home.bin).unwrap();
+        // This fake CLI never runs its plugin. Keep its declared Node
+        // prerequisite inside the isolated test PATH as well.
+        let node = home.bin.join("node");
+        std::fs::write(&node, "#!/bin/sh\nexit 0\n").unwrap();
+        std::fs::set_permissions(node, std::fs::Permissions::from_mode(0o700)).unwrap();
         let script = home.bin.join("mcode");
         std::fs::write(&script, "#!/bin/sh\nif [ \"$1\" = '--version' ]; then echo 0.6.12; exit; fi\necho fake-mcode\nwhile IFS= read -r line; do [ \"$line\" != fail ] || exit 7; done\n").unwrap();
         std::fs::set_permissions(script, std::fs::Permissions::from_mode(0o700)).unwrap();
@@ -27,7 +84,13 @@ fn unsupported_agent_explains_resume_limits_and_offers_a_separate_new_conversati
     h.type_text("Run MiniMax Code in app");
     h.keys("enter");
     h.wait_for("managed MiniMax", |v, cx| {
-        v.focused_text(cx).contains("fake-mcode")
+        let text = v.focused_text(cx);
+        if let Some(pane) = v.ws.focused_pane().and_then(|p| v.ws.pane(p))
+            && let Some(run) = pane.pane_run.as_ref().filter(|r| r.stopped())
+        {
+            panic!("managed MiniMax stopped before output: {}", run.label());
+        }
+        text.contains("fake-mcode")
     });
     let pane = h.read(|v, _| v.ws.focused_pane().unwrap());
     let client = h.read(|v, _| v.env.session_service.clone().unwrap());
