@@ -35,10 +35,16 @@
     "Report unrun native rendering, signed artifact and public deployment checks as unrun",
     "Preserve live user data and archive raw evidence to verified NAS storage"
   ],
-  "delivery": "Reviewed Ready PR only; no release tag, publication or installed app replacement",
+  "delivery": "Public macOS hotfix release v1.5.1 through the existing signed draft, notarization, immutable promotion, Homebrew and public readback workflow; no installed user app replacement or live-session input.",
   "release": {
-    "requested": false,
-    "markets": []
+    "requested": true,
+    "markets": [
+      "macos-direct"
+    ],
+    "endpoint": "public",
+    "candidateVersion": "1.5.1",
+    "ownerInstruction": "병합하고 앱 릴리즈 빨리 진행해라. 결함이 있는 상태라 빨리 보내야한다.",
+    "nativeValidation": "All incomplete native rounds, full native E2E and signed-archive runtime checks remain blocked; this urgent publication instruction is limited to the current hotfix candidate, never a future release. Signing, notarization, atomic promotion, update signatures and file readback remain required."
   },
-  "approval": "Owner approved implementation and this L1 scope on 2026-10-23: 어서 고쳐. Delivery remains a reviewed PR; public release was not requested."
+  "approval": "Owner approved implementation on 2026-10-23 with 어서 고쳐, then expanded delivery to merge and urgent public release of this hotfix with the instruction recorded in release.ownerInstruction. Prior releases do not supply this authorization."
 }

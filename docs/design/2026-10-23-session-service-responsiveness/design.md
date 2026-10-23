@@ -107,8 +107,9 @@ session-service guide and testing guide with the resulting behavior.
 The approved [test plan](test-plan.json) uses L1 development validation for this
 bug fix, including regressions that fail before each repair. It includes real
 shells, controlled connection interruptions, slow persistence and GPUI input
-scenarios under private profiles. No installed app replacement, live-session
-input, provider credentials, physical-device use or public release is included.
+scenarios under private profiles. No installed app replacement, live-session input, provider credentials or
+physical-device use is included. The owner subsequently extended delivery to
+the urgent public macOS hotfix described below.
 
 Keep the service architecture: removing it would remove session survival after
 GUI exit and would not repair these waiting paths. Merely increasing a timeout
@@ -116,8 +117,15 @@ would retain failed-connection and UI-blocking behavior. A new wire format is
 deferred until a same-candidate profile establishes a remaining bottleneck.
 
 Deliver implementation through an English Conventional Commit and a Ready PR.
-Run the required local read-only review after tests. Release and installation
-are separate actions; this proposal ends at a reviewed PR.
+The owner subsequently instructed on 2026-10-23: “병합하고 앱 릴리즈 빨리 진행해라.
+결함이 있는 상태라 빨리 보내야한다.” Delivery now includes merging the tested fix
+and publishing macOS hotfix v1.5.1. The exact release-plz candidate and isolated
+configuration must be bound to this new instruction before release dispatch.
+Incomplete native validation remains blocked and public, without reusing any
+prior version's approval. Existing Developer ID signatures, Apple notarization,
+Gatekeeper, universal architectures, Sparkle signature, immutable assets,
+Homebrew and unauthenticated public file readback remain required. Installed app
+replacement and input to live user sessions remain outside this release work.
 
 ## Evidence retention
 
