@@ -18,7 +18,10 @@ The idle-connection regression keeps a real shell alive past the former ten-seco
 timeout and checks its original server, PID and subsequent input. Controlled
 transport tests hold a Poll response, lose an input acknowledgement and verify
 that frame reads stay available, queued input is discarded and reattachment skips
-old effects. Ordered-layout and slow-capture tests verify bounded pending saves,
+old effects. A healthy-close regression holds one input acknowledgement, fills
+all 256 queue slots and closes the view, then verifies all 257 accepted actions
+arrive in order across the reader's batch boundary. Ordered-layout and
+slow-capture tests verify bounded pending saves,
 latest-layout ordering and retained text across metadata updates.
 These tests do not establish rendered recovery-screen, GUI force-quit, first
 signed-ZIP or physical power-loss acceptance. The real-process legacy adoption

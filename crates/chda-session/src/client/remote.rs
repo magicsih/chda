@@ -154,10 +154,10 @@ impl Reader {
             Err(mpsc::RecvTimeoutError::Disconnected) => return Ok(false),
             Err(mpsc::RecvTimeoutError::Timeout) => {}
         }
-        // A normal view close still drains input accepted before that close.
-        // A failed transport instead discards it at the reconnect boundary.
+        // A normal close stops polling but drains every accepted batch until
+        // the sender disconnects. Failed transport discards queued input instead.
         if self.signals.stop.load(Ordering::Acquire) {
-            return Ok(false);
+            return Ok(true);
         }
         let current = self.view.lock().unwrap().clone();
         let images = current

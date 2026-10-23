@@ -38,6 +38,101 @@ fn state() -> State {
 }
 
 #[test]
+fn closing_a_healthy_view_drains_every_accepted_input_batch() {
+    let data = std::env::temp_dir().join(format!(
+        "chda-close-input-{}",
+        chda_pty::local::token().unwrap()
+    ));
+    std::fs::create_dir(&data).unwrap();
+    let listener = chda_pty::local::Listener::bind(&crate::socket_path(&data)).unwrap();
+    let connection = Connection::open(&data).unwrap();
+    let mut peer = listener.accept().unwrap();
+    let client = Client {
+        data: data.clone(),
+        connection: Arc::new(Mutex::new(Connection::open(&data).unwrap())),
+        instance: Arc::new(Mutex::new(record().identity.server)),
+        executable: Default::default(),
+        layout: Default::default(),
+        imports: Default::default(),
+        group: String::new(),
+        pending_executable: Default::default(),
+        gui_available: Default::default(),
+    };
+    let _controller = listener.accept().unwrap();
+    let (tx, _events) = mpsc::channel();
+    let remote = client
+        .remote(
+            connection,
+            Response::Attached {
+                record: record(),
+                frame: Box::default(),
+                sequence: 0,
+            },
+            false,
+            tx,
+            || {},
+        )
+        .unwrap();
+    let session = Session::Remote(remote);
+    let (received, input) = mpsc::channel();
+    let (release, held) = mpsc::channel();
+    let server = std::thread::spawn(move || {
+        peer.timeout(Duration::from_secs(3)).unwrap();
+        let mut accepted = Vec::new();
+        loop {
+            let envelope: Envelope = match protocol::read(&mut peer, true) {
+                Ok(request) => request,
+                Err(e) if e.kind() == io::ErrorKind::UnexpectedEof => break,
+                Err(e) => panic!("view did not finish draining accepted input: {e}"),
+            };
+            match envelope.request {
+                Request::Input {
+                    action: Action::Bytes(bytes),
+                    ..
+                } => {
+                    accepted.push(bytes);
+                    if accepted.len() == 1 {
+                        received.send(()).unwrap();
+                        held.recv().unwrap();
+                    }
+                    protocol::write(&mut peer, &Response::Ok).unwrap();
+                }
+                Request::Poll { .. } => protocol::write(
+                    &mut peer,
+                    &Response::Update {
+                        record: record(),
+                        frame: None,
+                        events: vec![],
+                        sequence: 0,
+                    },
+                )
+                .unwrap(),
+                _ => panic!("unexpected request while closing a view"),
+            }
+        }
+        accepted
+    });
+    session.write(b"0\n".to_vec());
+    input.recv_timeout(Duration::from_secs(3)).unwrap();
+    // One action is waiting for its acknowledgement and all 256 queue slots
+    // are occupied. Closing must cross the reader's 256-action batch boundary.
+    for n in 1..=256 {
+        session.write(format!("{n}\n").into_bytes());
+    }
+    assert!(
+        matches!(&session, Session::Remote(remote) if remote.signals.accepting.load(std::sync::atomic::Ordering::Acquire))
+    );
+    drop(session);
+    release.send(()).unwrap();
+    let actual = server.join().unwrap();
+    drop(client);
+    drop(listener);
+    std::fs::remove_dir_all(data).unwrap();
+    let expected: Vec<_> = (0..=256).map(|n| format!("{n}\n").into_bytes()).collect();
+    assert_eq!(actual, expected, "normal close lost accepted input");
+}
+
+#[test]
 fn quit_retries_a_layout_that_fails_while_the_final_save_is_pending() {
     use std::sync::atomic::{AtomicBool, Ordering};
     let data = std::env::temp_dir().join(format!(
