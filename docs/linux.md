@@ -82,7 +82,9 @@ listed separately below.
 | Split right, split down | Ctrl+Shift+D, Ctrl+Shift+E |
 | Commands, add folder | Ctrl+Shift+P, Ctrl+Shift+O |
 | Find | Ctrl+Shift+F |
-| Change tab | Ctrl+PageUp, Ctrl+PageDown, Alt+1 through Alt+9 |
+| Change tab | Ctrl+PageUp, Ctrl+PageDown |
+| Select Sessions rows 1–10 | Alt+1 through Alt+9 and Alt+0 |
+| Reset font size | Ctrl+0 |
 | Focus a split | Ctrl+Shift+arrow |
 | Follow a link or file path | Ctrl+click |
 

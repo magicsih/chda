@@ -43,3 +43,7 @@ mod sidebar_interactions;
 mod starred;
 mod workspace;
 mod worktrees;
+
+mod session_shortcuts;
+
+mod reopen;
