@@ -71,6 +71,8 @@ establish the normal 43-case and 13-area coverage. Signing, notarization,
 universal architectures, update signatures and immutable draft/file checks remain
 required. This approval cannot authorize another candidate or future version.
 
+For v1.5.2 only, the owner approved omitting the three full native review rounds and both full native E2E runs for candidate `3e69a85`. The [bounded approval](releases/v1.5.2-publication-approval.md) keeps `native_result: blocked`. The exact signed archive must still pass signed launch, app-owned session-preserving update, GUI IPC and original shell-PID preservation. Signing, notarization, universal architecture, update signatures and immutable draft checks remain required. No other candidate or future version is covered.
+
 ## 버전 정책
 
 `v0.1.24` 다음 릴리스부터 `v1.0.25`로 전환한다. 마지막 자리 `25`는 기존

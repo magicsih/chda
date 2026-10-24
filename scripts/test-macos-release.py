@@ -505,6 +505,74 @@ class ReducedExceptionTests(unittest.TestCase):
                                       'before-build', now=NOW, exception_record=record)
 
 
+
+def v152_exception_record():
+    record = json.loads(exception_record())
+    record.update(tag='v1.5.2', owner_instruction='이번 1.5.2에 한해 생략 승인',
+                  incomplete_checks=sorted(release.EXCEPTION_CHECKS - release.ARTIFACT_CHECKS))
+    return json.dumps(record, sort_keys=True, ensure_ascii=False) + '\n'
+
+
+def v152_exception_evidence(record, stage='before-build'):
+    data = exception_evidence(record, stage)
+    data['candidate']['tag'] = 'v1.5.2'
+    if stage == 'before-deploy':
+        data['signed_artifact'] = {
+            'sha256': 'a' * 64, 'evidence_sha256': 'b' * 64,
+            'checks': sorted(release.ARTIFACT_CHECKS), 'result': 'passed'}
+    return data
+
+
+class V152ExceptionTests(unittest.TestCase):
+    def verify(self, data, record):
+        return release.validate_evidence(
+            data, 'v1.5.2', SHA, TREE, CONFIG, data['stage'], now=NOW,
+            exception_record=record, built_at=timestamp(1), artifact_sha256='a' * 64)
+
+    def test_only_full_native_rounds_and_e2e_are_waived(self):
+        record = v152_exception_record()
+        for stage in ('before-build', 'before-deploy'):
+            data = v152_exception_evidence(record, stage)
+            self.assertEqual(self.verify(data, record), data)
+            self.assertEqual(data['native_result'], 'blocked')
+
+    def test_signed_archive_acceptance_remains_required(self):
+        record = v152_exception_record()
+        for mutate in (
+            lambda d: d.pop('signed_artifact'),
+            lambda d: d['signed_artifact'].update(result='failed'),
+            lambda d: d['signed_artifact'].update(sha256='d' * 64),
+            lambda d: d['signed_artifact']['checks'].remove('shell-pid-preservation'),
+        ):
+            data = v152_exception_evidence(record, 'before-deploy')
+            mutate(data)
+            with self.subTest(mutate=mutate), self.assertRaises(ValueError):
+                self.verify(data, record)
+        altered = json.loads(record)
+        altered['incomplete_checks'].append('session-preserving-update')
+        other = json.dumps(altered)
+        with self.assertRaises(ValueError):
+            self.verify(v152_exception_evidence(other), other)
+
+    def test_approval_cannot_cover_another_candidate_or_hide_incomplete_checks(self):
+        record = v152_exception_record()
+        for key, value in (('sha', '9' * 40), ('tree', '9' * 40),
+                           ('config_sha256', '9' * 64), ('owner_instruction', 'skip tests')):
+            altered = json.loads(record)
+            altered[key] = value
+            other = json.dumps(altered)
+            with self.subTest(key=key), self.assertRaises(ValueError):
+                self.verify(v152_exception_evidence(other), other)
+        data = v152_exception_evidence(record)
+        data['native_result'] = 'passed'
+        with self.assertRaises(ValueError):
+            self.verify(data, record)
+        data = v152_exception_evidence(record)
+        with self.assertRaises(ValueError):
+            release.validate_evidence(data, 'v1.5.3', SHA, TREE, CONFIG,
+                                      'before-build', now=NOW, exception_record=record)
+
+
 def postbuild_exception_record(original):
     return json.dumps({
         'schema': 1, 'tag': 'v0.1.22', 'sha': SHA, 'tree': TREE,
