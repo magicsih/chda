@@ -94,8 +94,6 @@ impl System for NativeSystem {
 }
 
 pub struct Environment {
-    pub session_service: Option<chda_session::Client>,
-    pub session_service_error: Option<String>,
     pub collect_telemetry: bool,
     pub update_launcher: crate::upgrade::LaunchUpdate,
     pub(crate) windows: Rc<std::cell::RefCell<crate::window_registry::WindowRegistry>>,
@@ -274,19 +272,7 @@ impl Environment {
                         chda_term::shell_path(&shell, Path::new(&home), &[], deadline)
                     })
                 });
-        let service = platform::sessions::connect(data_dir().as_deref());
-        let (session_service, session_service_error) = match service {
-            Ok(client) => (client, None),
-            Err(error) => (None, Some(error.to_string())),
-        };
-        if let Some(client) = &session_service
-            && let Ok(first) = client.reserve_ids()
-        {
-            chda_core::reserve_pane_ids(first);
-        }
         Self {
-            session_service,
-            session_service_error,
             collect_telemetry: true,
             update_launcher: Arc::new(platform::update::start),
             windows: Default::default(),

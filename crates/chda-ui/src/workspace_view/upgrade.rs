@@ -7,15 +7,6 @@ use std::time::Duration;
 
 impl WorkspaceView {
     pub(crate) fn start_update(&mut self, _: &mut Window, cx: &mut Context<Self>) {
-        if let Some(message) = &self.env.session_service_error {
-            self.env.windows.borrow_mut().update.progress = UpdateProgress::Failed {
-                message: format!(
-                    "Session service unavailable: {message}. Existing sessions have been kept running."
-                ),
-            };
-            cx.notify();
-            return;
-        }
         let Some(release) = self.release_notice.clone() else {
             return;
         };
@@ -71,7 +62,6 @@ impl WorkspaceView {
                             .first()
                             .is_some_and(|e| e.view == view.self_weak);
                         if first
-                            && view.env.session_service.is_none()
                             && !view.env.windows.borrow().update.frozen
                             && let Some(dir) = &view.env.data_dir
                             && let Ok(text) = ipc::take_fallback(dir)
@@ -171,26 +161,6 @@ impl WorkspaceView {
             cx.notify();
             return;
         }
-        let service = match self
-            .env
-            .session_service
-            .as_ref()
-            .map(chda_session::Client::state)
-            .transpose()
-        {
-            Ok(state) => state,
-            Err(error) => {
-                let _ = job.signal("cancel");
-                let mut registry = self.env.windows.borrow_mut();
-                registry.update.preparing = false;
-                registry.update.progress = UpdateProgress::Failed {
-                    message: format!(
-                        "The session service could not prepare this update: {error}. Its processes were kept."
-                    ),
-                };
-                return;
-            }
-        };
         let journal = self
             .env
             .windows
@@ -214,11 +184,6 @@ impl WorkspaceView {
         self.env.windows.borrow_mut().update.frozen = true;
         self.env.windows.borrow_mut().update.progress = UpdateProgress::Preparing;
         let mut state = Handoff {
-            service: service.map(|s| chda_core::handoff::SessionService {
-                instance: s.instance,
-                protocol: chda_session::PROTOCOL_VERSION,
-            }),
-            detached: self.env.windows.borrow().detached.clone(),
             started_at,
             children: self.env.windows.borrow().children.clone(),
             update: Some(job.handoff.clone()),
@@ -240,9 +205,7 @@ impl WorkspaceView {
                 state.notifications.push(view.notifications.clone());
                 for tab in view.ws.tabs() {
                     for pane in tab.panes() {
-                        if state.service.is_none()
-                            && let Some((terminal, _)) = view.panes.get(&pane)
-                        {
+                        if let Some((terminal, _)) = view.panes.get(&pane) {
                             let info = view.ws.pane(pane).unwrap();
                             metadata.insert(
                                 pane.raw(),

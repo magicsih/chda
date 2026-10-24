@@ -1,0 +1,31 @@
+{
+  "schema": 1,
+  "level": "L1",
+  "environments": [
+    "dev"
+  ],
+  "approved_by": "owner rollback selection on 2026-10-24",
+  "baseline_tag": "v1.3.0",
+  "release": {
+    "endpoint": "public",
+    "reuse_existing_signed_artifact": true,
+    "withdraw": [
+      "v1.4.0",
+      "v1.5.0",
+      "v1.5.1"
+    ]
+  },
+  "checks": [
+    "source-equivalence",
+    "cargo-metadata",
+    "fmt",
+    "clippy",
+    "workspace-tests",
+    "product-docs",
+    "appcast",
+    "release-policy",
+    "published-artifact-readback"
+  ],
+  "native_input": "passed focused signed-app new-terminal, printf output and prompt return via keyboard",
+  "personal_data_backup": "declined by owner"
+}

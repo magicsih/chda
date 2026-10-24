@@ -9,7 +9,6 @@ use futures::future::LocalBoxFuture;
 
 mod keymap;
 pub(crate) mod release;
-pub(crate) mod sessions;
 mod window;
 #[cfg(test)]
 pub(crate) use keymap::link_modifiers;

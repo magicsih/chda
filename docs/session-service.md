@@ -1,3 +1,5 @@
+> Historical record: the session-service releases were withdrawn on 2026-10-24. Current macOS distribution is v1.3.0. See [the rollback record](https://github.com/magicsih/chda/blob/main/docs/design/2026-10-24-session-service-rollback/design.md).
+
 # Sessions that survive the window
 
 On macOS, closing a window, quitting chda or losing the GUI leaves its terminal

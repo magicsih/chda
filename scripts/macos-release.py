@@ -27,16 +27,10 @@ V023_CASES = CASES | frozenset(f'ISSUE-{n}' for n in (
 V1025_CASES = V023_CASES | frozenset(f'ISSUE-{n}' for n in (
     241, 242, 243, 244, 246, 247, 248, 249, 250, 251, 257))
 
-V140_CASES = V1025_CASES | frozenset((
-    'SERVICE-DETACH', 'SERVICE-RECONNECT', 'SERVICE-RECOVERY', 'SERVICE-EXACT-RESUME',
-    'SERVICE-FAILURES', 'SERVICE-UPDATE', 'SERVICE-DETACHED-IPC'))
-
 
 def cases_for(tag):
     # The candidate validator has already required a stable SemVer tag.
     version = tuple(int(part) for part in tag.removeprefix('v').split('.'))
-    if version >= (1, 4, 0):
-        return V140_CASES
     if version >= (1, 0, 25):
         return V1025_CASES
     return V023_CASES if version >= (0, 1, 23) else CASES
@@ -47,16 +41,6 @@ FEATURES = frozenset(('Terminal', 'Tabs and splits', 'App updates', 'Title bar',
                       'Diff review', 'Agents', 'Status bar', 'Palette', 'Config'))
 ARTIFACT_CHECKS = frozenset(('signed-launch', 'session-preserving-update',
                             'gui-ipc', 'shell-pid-preservation'))
-
-
-def artifact_checks_for(tag):
-    if tuple(map(int, tag.removeprefix('v').split('.'))) >= (1, 4, 0):
-        return ARTIFACT_CHECKS | frozenset((
-            'session-server-launch', 'gui-detach-reconnect',
-            'server-restart-explicit-resume', 'server-upgrade-compatibility'))
-    return ARTIFACT_CHECKS
-
-
 EXCEPTION_CHECKS = ARTIFACT_CHECKS | frozenset((
     'three-native-review-rounds', 'before-build-native-e2e', 'before-deploy-native-e2e'))
 EXCEPTION_PATH = 'docs/releases/v0.1.21-native-input-exception.json'
@@ -67,9 +51,6 @@ EXCEPTION_PATHS = {
     'v0.1.24': 'docs/releases/v0.1.24-publication-approval.json',
     'v1.0.25': 'docs/releases/v1.0.25-publication-approval.json',
     'v1.3.0': 'docs/releases/v1.3.0-publication-approval.json',
-    'v1.4.0': 'docs/releases/v1.4.0-publication-approval.json',
-    'v1.5.0': 'docs/releases/v1.5.0-publication-approval.json',
-    'v1.5.1': 'docs/releases/v1.5.1-publication-approval.json',
 }
 OWNER_INSTRUCTIONS = {
     'v0.1.21': '이제 좀 공개해라 좀',
@@ -79,11 +60,6 @@ OWNER_INSTRUCTIONS = {
     'v1.0.25': 'rhdrogo.',
     'v1.3.0': ('Publish this v1.3.0 candidate with the stated native validation incomplete; '
                'retain signing, notarization and file verification.'),
-    'v1.4.0': ('Publish this v1.4.0 candidate with the stated native validation incomplete; '
-               'retain signing, notarization and file verification.'),
-    'v1.5.0': ('Publish this v1.5.0 candidate with the stated native validation incomplete; '
-               'retain signing, notarization and file verification.'),
-    'v1.5.1': '병합하고 앱 릴리즈 빨리 진행해라. 결함이 있는 상태라 빨리 보내야한다.',
 }
 POSTBUILD_EXCEPTION_PATH = 'docs/releases/v0.1.22-signed-update-exception.json'
 POSTBUILD_CHECKS = {
@@ -186,14 +162,7 @@ def validate_run(run, implementer, now, is_round=False, expected_cases=CASES):
     unique_items(run['cases'], expected_cases)
     unique_items(run['features'], FEATURES)
     env = run['environment']
-    env_names = ('os', 'os_version', 'architecture', 'claude_version', 'codex_version', 'isolated')
-    if 'SERVICE-RECOVERY' in expected_cases:
-        env_names += ('cli_provenance', 'cli_manifest_sha256')
-    fields(env, env_names)
-    if 'SERVICE-RECOVERY' in expected_cases:
-        require(env['cli_provenance'] in ('test-fixtures', 'installed-cli'),
-                'CLI provenance must distinguish test fixtures from installed providers')
-        digest(env['cli_manifest_sha256'])
+    fields(env, ('os', 'os_version', 'architecture', 'claude_version', 'codex_version', 'isolated'))
     require(env['os'] == 'macos' and env['architecture'] in ('arm64', 'x86_64')
             and env['isolated'] is True, 'Isolated macOS execution is required')
     for name in ('os_version', 'claude_version', 'codex_version'):
@@ -226,8 +195,7 @@ def validate_exception(data, record_text, tag, sha, tree, config, stage, now,
             == (tag, sha, tree, config), 'The owner exception identifies another candidate')
     for name in ('blocked_evidence_sha256', 'independent_assessment_sha256'):
         digest(record[name])
-    incomplete = (EXCEPTION_CHECKS - ARTIFACT_CHECKS if reduced else
-                  EXCEPTION_CHECKS | artifact_checks_for(tag))
+    incomplete = EXCEPTION_CHECKS - ARTIFACT_CHECKS if reduced else EXCEPTION_CHECKS
     unique_items(record['incomplete_checks'], incomplete)
     if reduced:
         unique_items(record['observed_failures'], ('CHILD-161',))
@@ -365,7 +333,7 @@ def validate_evidence(data, tag, sha, tree, config, stage, now=None,
         digest(artifact['sha256'])
         digest(artifact['evidence_sha256'])
         require(artifact['result'] == 'passed', 'Signed artifact verification did not pass')
-        unique_items(artifact['checks'], artifact_checks_for(tag))
+        unique_items(artifact['checks'], ARTIFACT_CHECKS)
         require(artifact_sha256 is not None and artifact['sha256'] == artifact_sha256,
                 'Native artifact checks must cover the exact draft archive')
         require(built_at is not None and start >= instant(built_at),
@@ -451,6 +419,8 @@ def gh_release(tag):
 
 
 def check_source(tag, sha, config):
+    require(tag not in {'v1.4.0', 'v1.5.0', 'v1.5.1'},
+            'This release was withdrawn after session-service failures; use v1.3.0')
     digest(sha, 40)
     digest(config)
     require(re.fullmatch(r'v(?:0|[1-9]\d*)\.(?:0|[1-9]\d*)\.(?:0|[1-9]\d*)', tag), 'Invalid stable tag')
@@ -607,28 +577,6 @@ def native_archive(root, tag):
                                  stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True).stderr
         require('Authority=Developer ID Application:' in details and 'TeamIdentifier=' in details
                 and 'Signature=adhoc' not in details, 'A Developer ID signature is required')
-        if tuple(map(int, tag.removeprefix('v').split('.'))) >= (1, 4, 0):
-            helper = app / 'Contents/MacOS/chda-session'
-            require(helper.is_file() and os.access(helper, os.X_OK),
-                    'The session service executable is missing')
-            command('codesign', '--verify', '--strict', str(helper))
-            helper_details = subprocess.run(['codesign', '-d', '--verbose=2', str(helper)],
-                check=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True).stderr
-            team = re.search(r'^TeamIdentifier=(.+)$', details, re.MULTILINE)
-            helper_team = re.search(r'^TeamIdentifier=(.+)$', helper_details, re.MULTILINE)
-            require(team is not None and helper_team is not None and team[1] == helper_team[1],
-                    'The session service must have the application signing identity')
-            require(set(command('lipo', '-archs', str(helper)).split()) == {'arm64', 'x86_64'},
-                    'The session service must be universal')
-            protocol = info.get('CHDASessionProtocol')
-            require(type(protocol) is int and protocol > 0
-                    and command(str(helper), '--protocol').strip() == str(protocol),
-                    'The bundled session protocol does not match the executable')
-            feed = ET.parse(root / 'appcast.xml').getroot()
-            matching = [i for i in feed.findall('./channel/item')
-                        if i.findtext(f'{{{SPARKLE}}}version') == tag[1:]]
-            require(len(matching) == 1 and matching[0].findtext('chdaSessionProtocol') == str(protocol),
-                    'The appcast protocol does not match the signed session service')
         command('xcrun', 'stapler', 'validate', str(app))
         command('spctl', '--assess', '--type', 'execute', str(app))
         architectures = set(command('lipo', '-archs', str(app / 'Contents/MacOS/chda')).split())
@@ -637,32 +585,6 @@ def native_archive(root, tag):
 
 def exception_notes(tag):
     """Per-version validation notices for explicitly approved releases."""
-    if tag == 'v1.5.1':
-        return ('Native UI validation is incomplete. The owner requested this urgent v1.5.1 '
-                'hotfix after the session-service freeze repair and regression checks. Three '
-                'full native review rounds, both full native E2E runs and all eight exact '
-                'signed-ZIP GUI and session-service checks remain unverified. Developer ID '
-                'signing, notarization, universal architectures, checksums and update '
-                'signatures remain required. '
-                '[Validation status](https://github.com/%s/blob/main/docs/releases/'
-                'v1.5.1-publication-approval.md).\n\n' % REPO)
-    if tag == 'v1.5.0':
-        return ('Native UI validation is incomplete. After partial development checks and a '
-                'native-control tool failure, the owner authorized this v1.5.0 candidate '
-                'with the three full native review rounds, both full native E2E runs and all '
-                'eight exact signed-ZIP GUI and session-service checks unverified. Developer ID '
-                'signing of the app and service, notarization, universal architectures, checksums '
-                'and update signatures remain required. '
-                '[Validation status](https://github.com/%s/blob/main/docs/releases/'
-                'v1.5.0-publication-approval.md).\n\n' % REPO)
-    if tag == 'v1.4.0':
-        return ('Native UI validation is incomplete. The owner authorized this v1.4.0 candidate '
-                'with the three full native review rounds, both full native E2E runs and all '
-                'eight exact signed-ZIP GUI and session-service checks unverified. Developer ID '
-                'signing of the app and service, notarization, universal architectures, checksums '
-                'and update signatures remain required. '
-                '[Validation status](https://github.com/%s/blob/main/docs/releases/'
-                'v1.4.0-publication-approval.md).\n\n' % REPO)
     if tag == 'v1.3.0':
         return ('Native UI validation is incomplete. The owner authorized this v1.3.0 candidate '
                 'with the three full native review rounds, both full native E2E runs and exact '

@@ -141,8 +141,7 @@ fn idle_rows_follow_live_panes_and_preserve_mixed_state_attention(cx: &mut TestA
     h.wait_for("the idle pane starts work", |v, cx| {
         idle_rows(v, cx).is_empty()
     });
-    // Three split agents precede the plain terminal in Sessions.
-    h.keys("cmd-4");
+    h.keys("cmd-2");
     emit(&mut h, first, HookKind::Stopped);
     h.wait_for("unread completion", |v, _| {
         v.ws.pane(first)

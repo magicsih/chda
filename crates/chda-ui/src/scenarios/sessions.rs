@@ -406,7 +406,7 @@ fn session_clicks_keep_sessions_still_and_reveal_only_in_project(cx: &mut TestAp
     settle(h);
     let tab_worktree = worktrees[WORKTREES - 3].clone();
     let expected = minimal_offset(h, &tab_worktree);
-    click(h, "tab-2");
+    h.keys("cmd-3");
     settle(h);
     assert_eq!(selected(h).as_ref(), Some(&tab_worktree));
     assert_eq!(offsets(h).0, kept);
@@ -535,7 +535,6 @@ fn status_changes_keep_session_rows_in_place(cx: &mut TestAppContext) {
     ipc::send(
         &ipc::socket_path(&h.home.data),
         &HookEvent {
-            run: None,
             agent: "claude".into(),
             session_id: "a".into(),
             cwd: first_cwd.clone(),
@@ -1083,7 +1082,6 @@ fn session_rows_focus_their_pane_without_scrolling_its_terminal(cx: &mut TestApp
     h.wait_prompt();
     let (_, agent) = focused(&h);
     h.run("seq 1000 1300", "1299");
-    h.wait_prompt();
     h.hook(
         Some(agent.raw()),
         &h.home.home.clone(),

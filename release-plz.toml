@@ -21,7 +21,7 @@ name = "chda"
 version_group = "chda"
 changelog_update = true
 changelog_path = "./CHANGELOG.md"
-changelog_include = ["chda-ui", "chda-core", "chda-term", "chda-pty", "chda-git", "chda-agents", "chda-config", "chda-session"]
+changelog_include = ["chda-ui", "chda-core", "chda-term", "chda-pty", "chda-git", "chda-agents", "chda-config"]
 git_tag_enable = true
 
 [[package]]
@@ -51,15 +51,6 @@ version_group = "chda"
 [[package]]
 name = "chda-config"
 version_group = "chda"
-
-[[package]]
-name = "chda-session"
-version_group = "chda"
-# This member did not exist in older application tags. Its own version marker
-# gives git-only comparisons a valid baseline now and on subsequent releases.
-# Only v* application tags trigger the public Release workflow.
-git_tag_name = "chda-session-v{{ version }}"
-git_tag_enable = true
 
 [changelog]
 header = """# Changelog

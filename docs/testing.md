@@ -4,79 +4,6 @@ Three layers, all run by `cargo test --workspace` (CI: the macOS and Linux jobs)
 Linux installs git, zsh and fish in addition to the GPUI development libraries;
 the scenarios use real shells in temporary homes. Windows currently builds in CI.
 
-The GUI-independent service has process integration tests in
-`crates/chda-session/tests/lifecycle.rs` (`cargo test -p chda-session`). They start
-the built service and `/bin/sh` under private temporary profiles, without opening
-GPUI or using provider accounts. They check reconnect PID/input/output, live
-images, old-effect suppression, explicit termination, server restart without
-automatic execution, independent execution identities, duplicate startup,
-protocol bounds, metadata privacy, detached completion, hooks and MCP queries.
-A real-shell regression verifies that an explicit checkpoint captures visible
-output even before the service drains its dirty notification; terminal
-disconnection captures that attachment independently of the dirty flag.
-The idle-connection regression keeps a real shell alive past the former ten-second
-timeout and checks its original server, PID and subsequent input. Controlled
-transport tests hold a Poll response, lose an input acknowledgement and verify
-that frame reads stay available, queued input is discarded and reattachment skips
-old effects. A healthy-close regression holds one input acknowledgement, fills
-all 256 queue slots and closes the view, then verifies all 257 accepted actions
-arrive in order across the reader's batch boundary. Ordered-layout and
-slow-capture tests verify bounded pending saves,
-latest-layout ordering and retained text across metadata updates.
-These tests do not establish rendered recovery-screen, GUI force-quit, first
-signed-ZIP or physical power-loss acceptance. The real-process legacy adoption
-test does cover prepared rollback and commit across a successor process; it
-does not establish a rendered or signed-app update. The
-[session-service plan](design/2026-10-22-session-service/test-plan.json) retains
-those separate gates.
-
-`scenarios::reopen` calls the production reopen handler after closing the last
-window. It checks a usable new shell on the local backend, reconnecting the
-most recently closed service window with the same split-shell PIDs, output and
-shell variables, repeated close/reopen cycles, no duplicate windows or runs,
-active-window reuse, and no new windows while quitting or updating. These
-scenarios do not exercise native Dock/Finder event delivery or minimization.
-For native acceptance, use an isolated development app and private profile:
-close its last window with the red button, open that same running app again,
-and verify the original GUI PID, shell PID, output and a shell variable. Repeat
-the close/reopen cycle, minimize and reopen, and check that there is still one
-window and one run. Do not replace the installed app or use a provider account.
-
-`scenarios::session_service` runs the macOS service backend in GPUI's test
-platform with real shells: closing a window and reconnecting from Sessions
-preserves PID and input, service restart shows copyable read-only output before
-an explicit double-click-safe Start shell, and missing transcripts never replace
-an exact conversation. Recovery controls support Tab, Shift-Tab, Enter and Space. A focused GPUI
-scenario pauses only its private test service, dispatches the actual split-save
-and sidebar shortcuts, reads the last frame without waiting, then resumes the
-service and verifies input in the original shell. This is development input
-coverage, not a native rendering or physical sleep test.
-Service tests also cover current-screen metadata after late attachment, Codex
-completion without a GUI, simulated ENOSPC, actual checkpoint-path write failure,
-and salvage of valid legacy tabs beside malformed entries. Compact frame cells
-and visible-generation image caching have round-trip and reconnect coverage.
-The service also verifies real legacy broker adoption with rollback, idle
-replacement after all processes and attachments end, retained-binary lifetime
-locks and fallback hooks without a GUI. `cargo run -p chda-session --example
-measure -- /path/to/chda-session` compares the local backend with IPC under a
-private profile and records detached RSS and disk bytes; it does not measure
-native input event delivery. PTY output has one parsed acknowledgment per at-most-4-KiB raw chunk. Real-shell
-regressions pause its consumer, interrupt a burst and close a streaming session;
-ending the owner releases acknowledgments and drains tty teardown without
-queueing unbounded raw output. Startup replacement probes the candidate first,
-excludes only its own connection and preserves GUI availability. These are
-development tests; the three rendered native reviews and signed update
-checks remain separate, with unrun results reported as unrun. The measurement
-keeps its controller lease polled during local comparisons, then drops both the
-poller and connection before sampling genuinely detached output.
-
-After changing release-plz configuration or adding a workspace member, run
-`python3 scripts/test-release-plz.py --binary /path/to/release-plz`. This offline
-integration fixture tags an initial workspace, adds the service and asks the real
-tool to generate the next shared version without editing the application repo.
-It verifies a minor feature increment, a later library-only patch and preserved workspace inheritance, and
-retains its commands and generated manifests on both success and failure.
-
 | Layer | Where | What it covers |
 |---|---|---|
 | Logic | `#[test]` in each crate | Parsing, models, search and link detection, git and shell integration with real `git`, zsh, bash and fish |
@@ -105,17 +32,6 @@ journey, exact-candidate three-round plan and independent visual/IME gates.
   output row itself.
 
 ## Scenarios
-
-`scenarios::session_shortcuts` dispatches the production number bindings against
-real workspaces and shells. Cmd+1 through Cmd+9 select the first nine Sessions
-rows, and Cmd+0 selects the tenth, across repository groups, split agents,
-Git views and terminal tabs. Tests cover all ten positions with an eleventh
-row present, renumbering after close, missing rows preserving focus and font
-size, collapsed-Sessions and hidden-sidebar navigation, retained unfinished input, stable order after
-agent status changes, and reconnecting a detached row without restarting its
-shell. Synthetic agent panes keep a real process running so shell prompt
-redraw after resize cannot end the fixture agents. The font-size scenario checks the relocated Cmd+Alt+0 reset. Linux
-translates the number bindings to Alt+1 through Alt+0 and keeps Ctrl+0 for reset.
 
 | Scenario | Test | Issues |
 |---|---|---|

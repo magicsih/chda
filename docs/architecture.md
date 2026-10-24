@@ -1,13 +1,12 @@
 # Architecture
 
-chda is a Cargo workspace of nine crates. Arrows only point downward; the
+chda is a Cargo workspace of eight crates. Arrows only point downward; the
 direction is enforced by `deny.toml` (`cargo deny check bans`).
 
 | Crate | Role | May depend on |
 |---|---|---|
 | `chda` (bin) | Entry point. GUI, and CLI subcommands such as `chda hook` and `chda note` | `chda-ui`, `chda-core`, `chda-agents`, `chda-config` |
-| `chda-ui` | GPUI views, elements, theme. The only crate that knows GPUI | `chda-core`, `chda-session`, `chda-term`, `chda-config`, `gpui` |
-| `chda-session` (lib, bin) | Local session service, private checkpoints and hook/control routing; no GUI dependency | `chda-core`, `chda-term`, `chda-pty`, `chda-git`, `chda-agents` |
+| `chda-ui` | GPUI views, elements, theme. The only crate that knows GPUI | `chda-core`, `chda-term`, `chda-config`, `gpui` |
 | `chda-core` | Domain hub: workspace, worktrees, agents, event bus | `chda-term`, `chda-git`, `chda-agents`, `chda-config` |
 | `chda-term` | `libghostty-vt` wrapper. PTY bytes in, plain-struct frames out | `chda-pty`, `libghostty-vt` |
 | `chda-pty` | PTY create/read/write/resize over `portable-pty` | `portable-pty` |
@@ -311,26 +310,20 @@ iTerm2-Color-Schemes set `chda-config` embeds (`assets/themes.txt`, packed by
 `scripts/update-themes.sh`). `theme` in `config.toml` replaces the Ghostty
 config's, so picking a theme in chda never edits Ghostty's files.
 
-`chda-core::SavedSession` contains window tabs, split trees, ratios, focus,
-zoom, names, directories and previous activity, plus the active window. On
-macOS, `chda-session` is the only writer of layout and terminal checkpoints.
-The app registry sends one snapshot including detached windows; pane IDs remain
-stable across GUI restarts. Attach restores current title, directory and prompt
-readiness while skipping historical notifications and clipboard effects.
-Codex title-based state changes and provider hooks are processed by the service,
-including when every window is disconnected. See ADR 0024 and
-[session recovery](session-service.md).
+`chda-core::SavedSession` contains every window's tabs, split tree, ratios,
+focus, zoom, tab names, pane directories and previous working activity,
+plus the active window. An app-owned registry writes all windows together
+in `session.json`; it also reads the earlier single-window format. Closing a
+window updates only that entry. Hook events from before this app launch cannot
+restore runtime agent liveness. See ADR 0010.
 
-A cold service restart never executes a saved command. The GUI shows previous
-text and explicit Start shell, exact Resume conversation and separate New
-conversation choices. Exact resume validates the existing adapter's transcript
-and captured executable, directory, options and permission policy. Missing or
-unsupported history cannot silently create a replacement conversation.
-
-Linux and Windows retain app-owned local sessions, `session.json` and the earlier
-single-window reader. Their `restore-agents` setting retains its existing
-startup behavior. On macOS, saved commands always require an explicit choice
-after service loss, regardless of that setting.
+A pane also keeps the agent and session id its hooks last reported (through
+`CHDA_PANE_ID`); a `SessionEnd` or a new shell prompt (the agent exited)
+forgets it. With `restore-agents` on, such a pane comes back running the
+adapter's resume command (`claude --resume <id>`, `codex resume <id>`) with
+chda's hooks, in the saved directory. When the agent is not on `PATH` or
+`AgentAdapter::has_session` finds no transcript, the pane gets a shell and the
+restore note says why.
 
 ## Environment
 

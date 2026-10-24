@@ -2,7 +2,7 @@
 //! terminal thread.
 
 /// Modifier keys held during an input event.
-#[derive(serde::Serialize, serde::Deserialize, Clone, Copy, Debug, Default, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct Modifiers {
     pub shift: bool,
     pub alt: bool,
@@ -11,7 +11,7 @@ pub struct Modifiers {
 }
 
 /// A keyboard key, named after the logical key rather than a scancode.
-#[derive(serde::Serialize, serde::Deserialize, Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum KeyCode {
     /// A printable character as it appears without shift applied
     /// (`a`, `1`, `/`). Shift is reported through [`Modifiers`].
@@ -35,7 +35,7 @@ pub enum KeyCode {
 }
 
 /// Key press, repeat or release.
-#[derive(serde::Serialize, serde::Deserialize, Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum KeyAction {
     Press,
     Repeat,
@@ -43,7 +43,7 @@ pub enum KeyAction {
 }
 
 /// One keyboard event from the UI.
-#[derive(serde::Serialize, serde::Deserialize, Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub struct KeyInput {
     pub action: KeyAction,
     pub key: KeyCode,
@@ -53,7 +53,7 @@ pub struct KeyInput {
 }
 
 /// Mouse button, as the terminal protocol names them.
-#[derive(serde::Serialize, serde::Deserialize, Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum MouseButton {
     Left,
     Middle,
@@ -61,7 +61,7 @@ pub enum MouseButton {
 }
 
 /// What the mouse did.
-#[derive(serde::Serialize, serde::Deserialize, Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum MouseAction {
     /// `click_count` is 1 for a single click, 2 for a double click, 3 for triple.
     Down {
@@ -75,7 +75,7 @@ pub enum MouseAction {
 }
 
 /// One mouse event, positioned relative to the top-left of the cell grid.
-#[derive(serde::Serialize, serde::Deserialize, Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct MouseInput {
     pub action: MouseAction,
     pub button: MouseButton,

@@ -24,20 +24,16 @@ python3 scripts/prepare-ghostty.py
 
 targets=(aarch64-apple-darwin x86_64-apple-darwin)
 for target in "${targets[@]}"; do
-  cargo build --release -p chda -p chda-session --target "$target"
+  cargo build --release -p chda --target "$target"
 done
 rm -rf "$out"
 mkdir -p "$app/Contents/MacOS" "$app/Contents/Resources"
-for name in chda chda-session; do
-  binaries=()
-  for target in "${targets[@]}"; do
-    binaries+=("target/$target/release/$name")
-  done
-  lipo -create -output "$app/Contents/MacOS/$name" "${binaries[@]}"
+binaries=()
+for target in "${targets[@]}"; do
+  binaries+=("target/$target/release/chda")
 done
-protocol=$("$app/Contents/MacOS/chda-session" --protocol)
-[[ "$protocol" =~ ^[1-9][0-9]*$ ]] || { echo "Invalid session protocol" >&2; exit 1; }
-sed -e "s/__VERSION__/$version/g" -e "s/__SESSION_PROTOCOL__/$protocol/g" resources/Info.plist > "$app/Contents/Info.plist"
+lipo -create -output "$app/Contents/MacOS/chda" "${binaries[@]}"
+sed "s/__VERSION__/$version/g" resources/Info.plist > "$app/Contents/Info.plist"
 python3 scripts/make-icon.py "$out/icon" >/dev/null
 # Without alpha the Dock shows the rounded tile on a black square.
 if ! sips -g hasAlpha "$out/icon/chda-1024.png" | grep -q 'hasAlpha: yes'; then
@@ -53,12 +49,10 @@ cp crates/chda-ui/assets/fonts/*.txt crates/chda-config/assets/themes-LICENSE.tx
 scripts/package-macos-updater.sh "$app"
 
 if [[ -n "${CHDA_SIGN_IDENTITY:-}" ]]; then
-  codesign --force --options runtime --timestamp --sign "$CHDA_SIGN_IDENTITY" "$app/Contents/MacOS/chda-session"
   codesign --force --options runtime --timestamp \
     --entitlements resources/entitlements.plist \
     --sign "$CHDA_SIGN_IDENTITY" "$app"
 else
-  codesign --force --sign - "$app/Contents/MacOS/chda-session"
   codesign --force --sign - "$app"
   echo "ad-hoc signed (set CHDA_SIGN_IDENTITY for Developer ID)" >&2
 fi
