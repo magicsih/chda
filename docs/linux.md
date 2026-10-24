@@ -82,9 +82,7 @@ listed separately below.
 | Split right, split down | Ctrl+Shift+D, Ctrl+Shift+E |
 | Commands, add folder | Ctrl+Shift+P, Ctrl+Shift+O |
 | Find | Ctrl+Shift+F |
-| Change tab within the repository | Ctrl+PageUp, Ctrl+PageDown |
-| Select Sessions rows 1 through 10 | Alt+1 through Alt+9, Alt+0 |
-| Reset font size | Ctrl+0 |
+| Change tab | Ctrl+PageUp, Ctrl+PageDown, Alt+1 through Alt+9 |
 | Focus a split | Ctrl+Shift+arrow |
 | Follow a link or file path | Ctrl+click |
 

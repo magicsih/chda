@@ -50,7 +50,7 @@ impl From<libghostty_vt::Error> for Error {
 pub type Result<T> = std::result::Result<T, Error>;
 
 /// Side effects produced while feeding bytes, drained after each feed.
-#[derive(serde::Serialize, serde::Deserialize, Clone, Debug, Default, PartialEq, Eq)]
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct Effects {
     /// Bytes the application must send back to the PTY (query replies).
     pub pty_output: Vec<u8>,
@@ -67,7 +67,7 @@ pub struct Effects {
 }
 
 /// A program's desktop notification request (OSC 9 or OSC 777 `notify`).
-#[derive(serde::Serialize, serde::Deserialize, Clone, Debug, Default, PartialEq, Eq)]
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct Notification {
     /// Empty for OSC 9, which carries only a message.
     pub title: String,

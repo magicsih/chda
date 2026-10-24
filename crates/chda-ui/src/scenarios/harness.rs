@@ -207,7 +207,6 @@ pub struct Harness {
     pub system: Rc<RecordingSystem>,
     pub home: Home,
     app: TestAppContext,
-    _service: Option<ServiceProcess>,
     _root: TempRoot,
 }
 
@@ -300,29 +299,10 @@ pub fn git(dir: &Path, args: &[&str]) {
     );
 }
 
-struct ServiceProcess(std::process::Child);
-impl Drop for ServiceProcess {
-    fn drop(&mut self) {
-        let _ = self.0.kill();
-        let _ = self.0.wait();
-    }
-}
-
 impl Harness {
-    pub fn open_service(cx: &mut TestAppContext, name: &str, setup: impl FnOnce(&Home)) -> Self {
-        Self::open_mode(cx, name, setup, true)
-    }
     /// Open a window over a fresh temporary home; `setup` can write config
     /// files or repositories first.
     pub fn open(cx: &mut TestAppContext, name: &str, setup: impl FnOnce(&Home)) -> Self {
-        Self::open_mode(cx, name, setup, false)
-    }
-    fn open_mode(
-        cx: &mut TestAppContext,
-        name: &str,
-        setup: impl FnOnce(&Home),
-        service: bool,
-    ) -> Self {
         let root = TempRoot::new(name);
         let home = Home {
             home: root.0.join("home"),
@@ -343,112 +323,31 @@ impl Harness {
         )
         .unwrap();
         setup(&home);
-        Self::open_home(cx, root, home, service)
+        Self::open_home(cx, root, home)
     }
 
-    fn open_home(cx: &mut TestAppContext, root: TempRoot, home: Home, service: bool) -> Self {
+    fn open_home(cx: &mut TestAppContext, root: TempRoot, home: Home) -> Self {
         cx.executor().allow_parking();
         cx.update(|cx| cx.bind_keys(crate::key_bindings()));
         let system = Rc::new(RecordingSystem::default());
-        let (client, process) = if service {
-            let binary = std::env::current_exe()
-                .unwrap()
-                .parent()
-                .unwrap()
-                .parent()
-                .unwrap()
-                .join("chda-session");
-            let child = std::process::Command::new(&binary)
-                .arg("serve")
-                .arg(&home.data)
-                .env_clear()
-                .env("HOME", &home.home)
-                .env("PATH", "/usr/bin:/bin")
-                .env("SHELL", "/bin/zsh")
-                .stdin(std::process::Stdio::null())
-                .stdout(std::process::Stdio::null())
-                .stderr(std::process::Stdio::null())
-                .spawn()
-                .expect("build chda-session before running service scenarios");
-            let deadline = std::time::Instant::now() + Duration::from_secs(10);
-            let client = loop {
-                match chda_session::Client::connect(&home.data) {
-                    Ok(c) => break c,
-                    Err(e) if std::time::Instant::now() >= deadline => {
-                        panic!("service startup: {e}")
-                    }
-                    Err(_) => std::thread::sleep(Duration::from_millis(10)),
-                }
-            };
-            (Some(client), Some(ServiceProcess(child)))
-        } else {
-            (None, None)
-        };
-        let (cx2, view) = open_window(cx, &home, system.clone(), None, client);
+        let (cx2, view) = open_window(cx, &home, system.clone(), None);
         Self {
             cx: cx2,
             view,
             system,
             home,
             app: cx.clone(),
-            _service: process,
             _root: root,
-        }
-    }
-
-    pub fn restart_service(&mut self) {
-        let old = self._service.as_mut().expect("service fixture");
-        let _ = old.0.kill();
-        let _ = old.0.wait();
-        let binary = std::env::current_exe()
-            .unwrap()
-            .parent()
-            .unwrap()
-            .parent()
-            .unwrap()
-            .join("chda-session");
-        let child = std::process::Command::new(binary)
-            .arg("serve")
-            .arg(&self.home.data)
-            .env_clear()
-            .env("HOME", &self.home.home)
-            .env("PATH", "/usr/bin:/bin")
-            .env("SHELL", "/bin/zsh")
-            .stdin(std::process::Stdio::null())
-            .stdout(std::process::Stdio::null())
-            .stderr(std::process::Stdio::null())
-            .spawn()
-            .unwrap();
-        self._service = Some(ServiceProcess(child));
-        let deadline = std::time::Instant::now() + Duration::from_secs(10);
-        loop {
-            if chda_session::Client::connect(&self.home.data).is_ok() {
-                break;
-            }
-            assert!(std::time::Instant::now() < deadline);
-            std::thread::sleep(Duration::from_millis(10));
         }
     }
 
     /// Open a second window from the session the first one saved, as the
     /// next launch would (sharing the same home).
     pub fn reopen(&mut self) -> (VisualTestContext, Entity<WorkspaceView>) {
-        let service = self
-            ._service
-            .as_ref()
-            .map(|_| chda_session::Client::connect(&self.home.data).unwrap());
-        let saved = if let Some(client) = &service {
-            client
-                .state()
-                .unwrap()
-                .layout
-                .and_then(|s| s.windows.into_iter().next())
-        } else {
-            SavedWindow::load(&self.home.data)
-        };
+        let saved = SavedWindow::load(&self.home.data);
         assert!(saved.is_some(), "no saved session");
         let system = Rc::new(RecordingSystem::default());
-        open_window(&mut self.app, &self.home, system, saved, service)
+        open_window(&mut self.app, &self.home, system, saved)
     }
 }
 
@@ -457,7 +356,6 @@ fn open_window(
     home: &Home,
     system: Rc<RecordingSystem>,
     saved: Option<SavedWindow>,
-    service: Option<chda_session::Client>,
 ) -> (VisualTestContext, Entity<WorkspaceView>) {
     {
         // Ghostty's file names and order under the temporary home; no theme
@@ -498,8 +396,6 @@ fn open_window(
             Err(_) => crate::environment::ShellPath::start(None),
         };
         let env = Rc::new(Environment {
-            session_service: service,
-            session_service_error: None,
             collect_telemetry: false,
             update_launcher: {
                 let directory = home.data.join("update-fixture");
@@ -683,14 +579,6 @@ impl Harness {
         session: &str,
     ) {
         let event = HookEvent {
-            run: self.read(|v, _| {
-                v.env
-                    .session_service
-                    .as_ref()
-                    .and_then(|c| c.state().ok())
-                    .and_then(|s| s.sessions.into_iter().find(|r| Some(r.pane) == pane))
-                    .map(|r| r.identity.run)
-            }),
             child: None,
             agent: agent.into(),
             session_id: session.into(),

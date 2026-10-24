@@ -20,7 +20,6 @@ use gpui::{
 /// What the user asked for in the sidebar.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum SidebarEvent {
-    ReconnectSession(u64),
     /// Focus a pane in this worktree, or open one.
     OpenWorktree(PathBuf),
     /// Show the context menu for a worktree at a window position.
@@ -237,7 +236,6 @@ fn busy_tooltip(busy: &str) -> String {
 pub(crate) type Focus = (TabId, Option<PaneId>);
 
 pub struct SidebarView {
-    pub(crate) detached_sessions: Vec<(u64, String, String)>,
     pub model: Sidebar,
     pub(crate) child_groups: Vec<ChildGroup>,
     pub active_label: chda_config::ActiveLabel,
@@ -665,7 +663,6 @@ impl SidebarView {
             child_groups: Vec::new(),
             active_label: Default::default(),
             sessions_collapsed: false,
-            detached_sessions: Vec::new(),
             project_collapsed: false,
             width: None,
             sticky_repo: None,
@@ -2127,7 +2124,7 @@ impl Render for SidebarView {
                 key.map(|key| (key, g))
             })
             .collect();
-        let mut sessions: Vec<AnyElement> = if self.sessions_collapsed {
+        let sessions: Vec<AnyElement> = if self.sessions_collapsed {
             Vec::new()
         } else {
             self.model
@@ -2143,31 +2140,6 @@ impl Render for SidebarView {
                 })
                 .collect()
         };
-        if !self.sessions_collapsed {
-            for (pane, title, status) in &self.detached_sessions {
-                let pane = *pane;
-                sessions.push(
-                    div()
-                        .id(("detached-session", pane))
-                        .debug_selector(move || format!("detached-session-{pane}"))
-                        .px_2()
-                        .py_1()
-                        .cursor_pointer()
-                        .hover(|s| s.bg(self.fg.opacity(0.08)))
-                        .child(title.clone())
-                        .child(
-                            div()
-                                .text_xs()
-                                .text_color(self.fg.opacity(0.6))
-                                .child(status.clone()),
-                        )
-                        .on_click(cx.listener(move |_, _, _, cx| {
-                            cx.emit(SidebarEvent::ReconnectSession(pane))
-                        }))
-                        .into_any_element(),
-                );
-            }
-        }
         let starred: Vec<AnyElement> = self
             .model
             .starred

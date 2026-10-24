@@ -13,9 +13,6 @@ pub(crate) struct ReadOnlyText {
     pub(crate) settings: Settings,
 }
 impl ReadOnlyText {
-    pub(crate) fn copy_all(&self, cx: &mut Context<Self>) {
-        cx.write_to_clipboard(ClipboardItem::new_string(self.text.to_string()));
-    }
     pub(crate) fn new(text: String, settings: Settings) -> Self {
         let mut offset = 0;
         let lines = text
@@ -58,7 +55,11 @@ impl Render for ReadOnlyText {
                             .debug_selector(|| "previous-copy".into())
                             .cursor_pointer()
                             .child("Copy all")
-                            .on_click(cx.listener(|this, _, _, cx| this.copy_all(cx))),
+                            .on_click(cx.listener(|this, _, _, cx| {
+                                cx.write_to_clipboard(ClipboardItem::new_string(
+                                    this.text.to_string(),
+                                ))
+                            })),
                     ),
             )
             .child(

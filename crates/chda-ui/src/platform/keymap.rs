@@ -49,8 +49,7 @@ const SHORTCUTS: &[(&str, &str)] = &[
     ("cmd-=", "ctrl-="),
     ("cmd-+", "ctrl-+"),
     ("cmd--", "ctrl--"),
-    ("cmd-0", "alt-0"),
-    ("cmd-alt-0", "ctrl-0"),
+    ("cmd-0", "ctrl-0"),
     ("cmd-,", "ctrl-,"),
 ];
 
@@ -160,8 +159,6 @@ mod tests {
             "ctrl-shift-w",
             "ctrl-shift-p",
             "alt-1",
-            "alt-0",
-            "ctrl-0",
         ] {
             assert!(
                 consumes_terminal_key(&gpui::Keystroke::parse(binding).unwrap()),
@@ -169,9 +166,6 @@ mod tests {
             );
         }
         assert_eq!(shortcut("cmd-t"), "ctrl-shift-t");
-        assert_eq!(shortcut("cmd-0"), "alt-0");
-        assert_eq!(shortcut("cmd-alt-0"), "ctrl-0");
-        assert_eq!(shortcut_hint("cmd-0 / cmd-alt-0"), "alt-0 / ctrl-0");
         assert_eq!(shortcut("cmd-shift-d"), "ctrl-shift-e");
         assert_eq!(shortcut("cmd-a"), "ctrl-a");
         assert_eq!(

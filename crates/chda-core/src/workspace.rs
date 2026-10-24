@@ -7,12 +7,6 @@ use crate::AgentStatus;
 /// Pane and tab ids are unique within the process.
 static NEXT_ID: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(1);
 
-/// Reserve the ID range leased to this GUI by the session service before
-/// opening windows. IDs from retained panes remain reserved across launches.
-pub fn reserve_pane_ids(first: u64) {
-    NEXT_ID.fetch_max(first, std::sync::atomic::Ordering::Relaxed);
-}
-
 /// Identifies a terminal pane across the workspace.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub struct PaneId(u64);

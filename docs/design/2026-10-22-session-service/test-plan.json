@@ -1,13 +1,17 @@
 {
   "version": "1.0",
-  "status": "approved",
+  "status": "withdrawn",
   "design": "design.md",
   "baseline": "ae898b47e93133d90717447b213148f3f4f4f41c",
   "level": "L3",
   "environment": "dev",
   "executor": "independent agents or verified CI",
   "redesign": true,
-  "scope": ["Dedicated macOS session ownership", "Explicit reboot recovery and detached Sessions", "Transactional first update adoption and compatible GUI updates"],
+  "scope": [
+    "Dedicated macOS session ownership",
+    "Explicit reboot recovery and detached Sessions",
+    "Transactional first update adoption and compatible GUI updates"
+  ],
   "dataIsolation": "Temporary HOME, data profiles and local test CLIs; no installed application, live provider state, credentials or physical reboot",
   "checks": [
     "Real shell: normal and forced GUI exit, window close, reattach, same PID, continued output, input and images",
@@ -25,8 +29,24 @@
     "Three planned independent rendered reviews of recovery and detached Sessions, including narrow layout",
     "Normal release gate and exact signed ZIP launch, session server, update, IPC and original PID checks"
   ],
-  "evidenceRules": ["Bind final evidence to the exact candidate SHA or identical Git tree", "Do not count incremental tests as final L3", "Do not mark unrun native, capacity, performance or signed-artifact checks passed", "Do not reuse v1.3.0 publication exceptions"],
+  "evidenceRules": [
+    "Bind final evidence to the exact candidate SHA or identical Git tree",
+    "Do not count incremental tests as final L3",
+    "Do not mark unrun native, capacity, performance or signed-artifact checks passed",
+    "Do not reuse v1.3.0 publication exceptions"
+  ],
   "delivery": "Separate reviewed Ready PRs for service, recovery UI and update integration",
-  "release": {"requested": true, "markets": ["github-macos"], "until": "public", "validationPolicy": "docs/releasing.md", "distributionPolicy": "Linux publication remains separate; Linux and Windows CI remain required"},
-  "approval": "The user supplied the accepted session-server plan and explicitly requested implementation and verification on 2026-10-22."
+  "release": {
+    "requested": true,
+    "markets": [
+      "github-macos"
+    ],
+    "until": "public",
+    "validationPolicy": "docs/releasing.md",
+    "distributionPolicy": "Linux publication remains separate; Linux and Windows CI remain required"
+  },
+  "approval": "The user supplied the accepted session-server plan and explicitly requested implementation and verification on 2026-10-22.",
+  "previousStatus": "approved",
+  "withdrawnOn": "2026-10-24",
+  "supersededBy": "../2026-10-24-session-service-rollback/design.md"
 }

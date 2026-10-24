@@ -47,6 +47,6 @@ fn font_size_shortcuts_apply_to_every_pane(cx: &mut TestAppContext) {
     assert!(sizes(&h).iter().all(|s| *s == px(15.0)), "{:?}", sizes(&h));
     h.keys("cmd--");
     assert!(sizes(&h).iter().all(|s| *s == px(14.0)));
-    h.keys("cmd-alt-0");
+    h.keys("cmd-0");
     assert!(sizes(&h).iter().all(|s| *s == px(13.0)));
 }

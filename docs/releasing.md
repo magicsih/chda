@@ -71,34 +71,6 @@ establish the normal 43-case and 13-area coverage. Signing, notarization,
 universal architectures, update signatures and immutable draft/file checks remain
 required. This approval cannot authorize another candidate or future version.
 
-For v1.4.0 only, after the blocked observation was disclosed, the owner selected
-publication with native checks incomplete. The
-[candidate-specific approval](releases/v1.4.0-publication-approval.md) retains
-`native_result: blocked`, zero full native rounds and all eleven incomplete
-checks, including the four additional session-service artifact checks. App and
-service signing, notarization, universal architectures, checksums, protocol and
-update signatures, immutable draft publication and file readback remain required.
-This new approval does not reuse v1.3.0 or authorize a later candidate.
-
-For v1.5.0 only, after partial native observations and repeated native-control
-tool connection failures were disclosed, the owner approved the
-[candidate-specific proposal](releases/v1.5.0-publication-approval.md).
-It retains `native_result: blocked`, zero complete native rounds, both full
-native E2Es and all eight exact signed-ZIP runtime checks as incomplete.
-App and helper signing, notarization, universal architectures, protocol and
-update signatures, checksums, immutable draft publication and public file
-readback remain required. This approval does not authorize another candidate
-or future release.
-
-For v1.5.1 only, the owner instructed urgent publication of the reviewed
-session-service freeze fix. The [candidate-specific record](releases/v1.5.1-publication-approval.md)
-retains `native_result: blocked`, zero complete native rounds and all eleven
-incomplete checks, including both full native E2Es and the eight exact signed-ZIP
-runtime checks. App and helper signing, notarization, universal architectures,
-protocol and update signatures, checksums, immutable draft publication and
-public file readback remain required. This new instruction does not reuse
-v1.5.0 approval or authorize another candidate or future release.
-
 ## 버전 정책
 
 `v0.1.24` 다음 릴리스부터 `v1.0.25`로 전환한다. 마지막 자리 `25`는 기존
@@ -116,16 +88,6 @@ v1.5.0 approval or authorize another candidate or future release.
 지정한 뒤 실행한다. 실제 빌드와 공개에는 아래 릴리스 절차를 그대로 적용한다.
 
 ## 후보와 실제 검수
-
-The existing crates keep the shared `v{{ version }}` history. Because the
-session service did not exist in older app tags, release-plz maintains a separate
-`chda-session-v{{ version }}` comparison tag for that member. It stays in the same
-version group and does not create another GitHub release; only `v*` tags trigger
-the public Release workflow. Its marker is generated on every release so future
-library-only fixes do not replay the service's entire initial feature history.
-The offline new-member test in `scripts/test-release-plz.py` exercises these
-successive releases with the real tool. See the official
-[git-only and tag settings](https://release-plz.dev/docs/config).
 
 기능 구현과 CI가 통과한 후보를 실제 macOS 개발 실행 환경에서 세 번 검수한다.
 각 회차 시작 전에 계획, 기대 결과, 격리 데이터, 설정, 구현자와 다른 리뷰 에이전트,
@@ -238,33 +200,3 @@ bash -n scripts/update-cask.sh
 
 단위 테스트는 합성 Git 저장소·assets·GitHub/Apple stand-in을 사용한다. 실제 서명,
 공증, macOS 실행, 업데이트, 공개 릴리스를 수행하거나 증명하지 않는다.
-
-## Dedicated session service (1.4.0 and later)
-
-The existing native case list remains required. Add SERVICE-DETACH (normal quit,
-window close and force quit), SERVICE-RECONNECT (same PID, output, input and
-images), SERVICE-RECOVERY (server loss, saved text, no automatic process),
-SERVICE-EXACT-RESUME (options, missing prerequisites and unsupported MiniMax),
-SERVICE-FAILURES (write failure, corruption, stale identities), SERVICE-UPDATE
-(first broker adoption, rollback, compatible GUI attachment and idle service
-replacement), and SERVICE-DETACHED-IPC (hooks, completion and MCP without GUI).
-Three independent rendered rounds cover the same final source tree. Reboot
-recovery uses terminated test servers and children, never a physical reboot.
-
-The exact signed ZIP additionally needs session-server-launch,
-gui-detach-reconnect, server-restart-explicit-resume and
-server-upgrade-compatibility. The artifact validator checks the universal,
-separately signed chda-session executable, matching signing team, executable
-protocol, Info.plist and appcast protocol. These static checks do not substitute
-for actual launch, update, IPC and PID preservation checks. No older version's
-publication exception applies to a new release.
-
-For 1.4.0 and later, every native run's environment also records
-`cli_provenance` (`test-fixtures` or `installed-cli`) and
-`cli_manifest_sha256`. The private manifest binds each executable, version and
-fixture transcript to its hash. Numeric Claude/Codex version fields describe
-that declared environment; test fixtures must never be presented as installed
-or authenticated providers. The approved session-service plan uses isolated test
-CLIs. Published evidence contains the provenance and manifest digest, not
-commands, transcripts, credentials or private paths. Older release evidence
-keeps its original exact schema.

@@ -24,7 +24,6 @@ mod commands;
 mod coordination;
 mod identicon;
 mod moves;
-mod session_service;
 pub(crate) use moves::PaneDestination;
 mod notifications;
 pub(crate) mod preparation;
@@ -59,16 +58,15 @@ actions!(
         CloseSurface,
         NextTab,
         PrevTab,
-        GotoSession1,
-        GotoSession2,
-        GotoSession3,
-        GotoSession4,
-        GotoSession5,
-        GotoSession6,
-        GotoSession7,
-        GotoSession8,
-        GotoSession9,
-        GotoSession10,
+        GotoTab1,
+        GotoTab2,
+        GotoTab3,
+        GotoTab4,
+        GotoTab5,
+        GotoTab6,
+        GotoTab7,
+        GotoTab8,
+        LastTab,
         SplitRight,
         SplitDown,
         FocusLeft,
@@ -309,7 +307,7 @@ struct NoteSheet {
 pub struct WorkspaceView {
     pub(crate) env: std::rc::Rc<Environment>,
     /// Settings new panes start with; `font_size` follows the font size
-    /// actions, while `configured_font_size` is what `cmd-alt-0` returns to.
+    /// actions, while `configured_font_size` is what `cmd-0` returns to.
     pub(crate) settings: Settings,
     configured_font_size: Pixels,
     pub(crate) config: ChdaConfig,
@@ -414,7 +412,6 @@ pub struct WorkspaceView {
     pub(crate) status_bar: crate::status_bar::StatusBar,
     pane_navigation: HashMap<PaneId, u64>,
     initializing_panes: HashSet<PaneId>,
-    recovery_focus: Option<(PaneId, agent_restart::RecoveryAction)>,
     agent_report_at: HashMap<PaneId, u64>,
 }
 
@@ -464,13 +461,10 @@ impl WorkspaceView {
                 sessions: HashMap::new(),
             });
         Self::start_hook_receiver(env.clone(), window, cx);
-        if !env.windows.borrow().watching_window_closes {
-            env.windows.borrow_mut().watching_window_closes = true;
+        if env.windows.borrow().entries.len() == 1 {
             let registry = env.windows.clone();
             let directory = env.data_dir.clone();
             let restore = config.restore_session;
-            let service = env.session_service.clone();
-            let service_failed = env.session_service_error.is_some();
             cx.on_window_closed(move |cx, _| {
                 let mut registry = registry.borrow_mut();
                 let windows = cx.windows();
@@ -481,25 +475,9 @@ impl WorkspaceView {
                     .map(|e| e.view.clone())
                     .collect();
                 if !registry.quitting {
-                    if service.is_some() {
-                        let detached = registry
-                            .entries
-                            .iter()
-                            .filter(|e| !windows.contains(&e.window))
-                            .map(|e| e.saved.clone())
-                            .collect::<Vec<_>>();
-                        registry.detached.extend(detached);
-                    }
                     registry.entries.retain(|e| windows.contains(&e.window));
-                    if let Some(client) = &service {
-                        client.queue_gui_available(!registry.entries.is_empty());
-                    }
                     if restore && let Some(dir) = directory.as_deref() {
-                        if let Some(client) = &service {
-                            client.queue_layout(registry.snapshot());
-                        } else if !service_failed {
-                            let _ = registry.snapshot().save(dir);
-                        }
+                        let _ = registry.snapshot().save(dir);
                     }
                 }
                 drop(registry);
@@ -507,9 +485,6 @@ impl WorkspaceView {
                     for view in closed {
                         let _ = view.update(cx, |v, cx| {
                             v.stop_preparations(cx);
-                            if v.env.session_service.is_some() {
-                                v.panes.clear();
-                            }
                         });
                     }
                 });
@@ -605,7 +580,6 @@ impl WorkspaceView {
             },
             pane_navigation: HashMap::new(),
             initializing_panes: HashSet::new(),
-            recovery_focus: None,
             agent_report_at: HashMap::new(),
             env,
         };
@@ -630,15 +604,7 @@ impl WorkspaceView {
             this.env.windows.borrow_mut().quitting = true;
             let finished = this.stop_preparations(cx);
             let executor = cx.background_executor().clone();
-            let saved = this
-                .env
-                .session_service
-                .clone()
-                .map(|client| executor.spawn(async move { client.flush_layout() }));
             async move {
-                if let Some(saved) = saved {
-                    let _ = saved.await;
-                }
                 while finished
                     .iter()
                     .any(|flag| !flag.load(std::sync::atomic::Ordering::Acquire))
@@ -702,7 +668,6 @@ impl WorkspaceView {
         }
         this.refresh_all(cx);
         this.refresh_sessions(cx);
-        Self::watch_service(this.env.session_service.clone(), window, cx);
         Self::schedule_refreshes(window, cx);
         Self::schedule_activity_ages(cx);
         if this.env.collect_telemetry {
@@ -723,15 +688,15 @@ impl WorkspaceView {
         this
     }
 
-    fn hook_bin(&self) -> std::io::Result<PathBuf> {
-        crate::platform::sessions::helper(self.env.session_service.as_ref())
+    fn hook_bin() -> std::io::Result<PathBuf> {
+        ipc::helper_executable()
     }
 
     fn install_hooks(&mut self) {
         let Some(data_dir) = self.env.data_dir.as_deref() else {
             return;
         };
-        let bin = match self.hook_bin() {
+        let bin = match Self::hook_bin() {
             Ok(bin) => bin,
             Err(error) => {
                 self.notify_error(format!("Agent integration unavailable: {error}"));
@@ -751,9 +716,6 @@ impl WorkspaceView {
     ) {
         // Pane IDs belong to this process. A fallback hook log from an earlier
         // launch must not make a newly restored pane appear to have a live agent.
-        if let Some(client) = &env.session_service {
-            let _ = client.set_gui_available(true);
-        }
         env.windows
             .borrow_mut()
             .started_at
@@ -762,26 +724,6 @@ impl WorkspaceView {
         let wake = env.windows.borrow().wake.clone();
         wake.lock().unwrap().push(wake_tx.clone());
         if env.windows.borrow().events.is_none()
-            && let Some(client) = &env.session_service
-        {
-            let (tx, rx) = mpsc::channel();
-            let wake = wake.clone();
-            let watcher = client.watch(tx, move || {
-                wake.lock()
-                    .unwrap()
-                    .retain(|sender| sender.unbounded_send(()).is_ok());
-            });
-            let mut registry = env.windows.borrow_mut();
-            registry.service_watch = Some(watcher);
-            registry.started_at = Some(0);
-            if let Ok(state) = client.state() {
-                registry.children = state.children;
-            }
-            registry.events = Some(rx);
-        }
-        if env.session_service.is_none()
-            && env.session_service_error.is_none()
-            && env.windows.borrow().events.is_none()
             && let Some(dir) = env.data_dir.as_ref()
         {
             let (tx, rx) = mpsc::channel();
@@ -2531,9 +2473,6 @@ impl WorkspaceView {
 
     /// Whether restoring `p` starts an agent.
     fn restores_agent(&self, p: &chda_core::RestoredPane) -> bool {
-        if self.env.session_service.is_some() || self.env.session_service_error.is_some() {
-            return false;
-        }
         let adopting = self.env.windows.borrow().update.adopting;
         !adopting
             && self.config.restore_agents
@@ -2558,12 +2497,6 @@ impl WorkspaceView {
             self.owned_outputs.borrow_mut().insert(p.pane, file);
         }
         let adopting = self.env.windows.borrow().update.adopting;
-        if (!adopting || self.env.windows.borrow().update.server_owned)
-            && (self.env.session_service.is_some() || self.env.session_service_error.is_some())
-        {
-            self.restore_service_pane(p, window, cx);
-            return;
-        }
         if p.run.as_ref().is_some_and(chda_core::PaneRun::stopped) {
             self.ws.end_agent(p.pane);
             return;
@@ -2747,11 +2680,7 @@ impl WorkspaceView {
         if self.quitting {
             return;
         }
-        let mut saved = if self.env.session_service.is_some() {
-            self.ws.handoff_snapshot()
-        } else {
-            self.ws.snapshot()
-        };
+        let mut saved = self.ws.snapshot();
         saved.bounds = self.bounds;
         let mut registry = self.env.windows.borrow_mut();
         if let Some(entry) = registry
@@ -2793,15 +2722,12 @@ impl WorkspaceView {
                     })
                     .collect();
         }
-        if (self.config.restore_session || self.env.session_service.is_some())
+        if self.config.restore_session
             && !registry.restoring
-            && !registry.update.adopting
             && let Some(dir) = self.env.data_dir.as_deref()
         {
             let snapshot = registry.snapshot();
-            if let Some(client) = &self.env.session_service {
-                client.queue_layout(snapshot);
-            } else if self.env.session_service_error.is_none() && snapshot.save(dir).is_ok() {
+            if snapshot.save(dir).is_ok() {
                 self.prune_owned_outputs(&snapshot, dir);
             }
         }
@@ -2855,7 +2781,6 @@ impl WorkspaceView {
             s.project_collapsed = self.config.project_collapsed;
             cx.notify();
         });
-        self.sync_service_sidebar(cx);
         self.sync_sidebar_selection(false, cx);
         self.sync_children(cx);
         self.resolve_status_waits();
@@ -2911,7 +2836,7 @@ impl WorkspaceView {
                     home: &self.env.home(),
                     cwd: &context.cwd,
                     data_dir,
-                    hook_bin: &self.hook_bin()?,
+                    hook_bin: &Self::hook_bin()?,
                     pane: pane.raw(),
                     executable: &context.executable,
                     search_path: &self.env.search_path(),
@@ -2956,7 +2881,6 @@ impl WorkspaceView {
         cx: &mut Context<Self>,
     ) {
         if !self.env.windows.borrow().update.adopting
-            && !prepared.reattached()
             && let Some(context) = self
                 .ws
                 .pane(pane)
@@ -3005,9 +2929,6 @@ impl WorkspaceView {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        if self.env.session_service.is_some() {
-            return;
-        }
         let Some(info) = self.ws.pane(pane) else {
             return;
         };
@@ -3077,7 +2998,6 @@ impl WorkspaceView {
         };
         self.apply_hook_event(
             HookEvent {
-                run: None,
                 child: None,
                 agent: "codex".into(),
                 session_id: String::new(),
@@ -3116,10 +3036,6 @@ impl WorkspaceView {
                 if self.floating.as_ref().is_some_and(|f| f.pane == pane) =>
             {
                 self.floating_exited(status.as_ref(), window, cx);
-            }
-            TerminalEvent::Disconnected(error) => {
-                self.notify_error(format!("Session connection lost: {error}. Reopen chda to reconnect; input was not replayed."));
-                cx.notify();
             }
             TerminalEvent::Exited { status, output } => {
                 if self.ws.pane(pane).is_some() && self.panes.contains_key(&pane) {
@@ -4090,14 +4006,7 @@ impl WorkspaceView {
             }
         }
         for pane in panes {
-            if let Some((terminal, _)) = self.panes.remove(&pane) {
-                terminal.read(cx).terminate();
-            } else if let Some(client) = &self.env.session_service
-                && let Ok(state) = client.state()
-                && let Some(record) = state.sessions.into_iter().find(|r| r.pane == pane.raw())
-            {
-                let _ = client.terminate(record.identity);
-            }
+            self.panes.remove(&pane);
             if let Some(dir) = &self.env.data_dir {
                 chda_core::agents::minimax::remove_context(dir, pane.raw());
             }
@@ -4227,9 +4136,7 @@ impl WorkspaceView {
         let agents = self.pane_agents(panes);
         for pane in panes {
             self.ws.close_pane(*pane);
-            if let Some((terminal, _)) = self.panes.remove(pane) {
-                terminal.read(cx).terminate();
-            }
+            self.panes.remove(pane);
         }
         self.resync_closed_agents(agents, cx);
         if self.ws.is_empty() {
@@ -4252,26 +4159,6 @@ impl WorkspaceView {
         let group = self.tab_group.clone();
         if self.ws.activate_tab_in(group.as_deref(), index) {
             self.focus_active(window, cx);
-        }
-    }
-
-    fn goto_session(&mut self, index: usize, window: &mut Window, cx: &mut Context<Self>) {
-        let event = {
-            let sidebar = self.sidebar.read(cx);
-            if let Some(row) = sidebar.model.sessions.get(index) {
-                Some(match row.key {
-                    chda_core::SessionKey::Pane(pane) => SidebarEvent::FocusPane(pane),
-                    chda_core::SessionKey::Tab(tab) => SidebarEvent::FocusTab(tab),
-                })
-            } else {
-                sidebar
-                    .detached_sessions
-                    .get(index - sidebar.model.sessions.len())
-                    .map(|(pane, _, _)| SidebarEvent::ReconnectSession(*pane))
-            }
-        };
-        if let Some(event) = event {
-            self.on_sidebar_event(event, window, cx);
         }
     }
 
@@ -4489,9 +4376,6 @@ impl WorkspaceView {
     ) {
         self.context_menu = None;
         match event {
-            SidebarEvent::ReconnectSession(pane) => {
-                self.reconnect_service_session(pane, window, cx)
-            }
             SidebarEvent::SessionMenu(key, position) => {
                 let pane = match key {
                     chda_core::SessionKey::Pane(pane) => Some(pane),
@@ -5036,7 +4920,7 @@ impl WorkspaceView {
         executable: &Path,
     ) -> Option<Vec<String>> {
         let adapter = self.adapters.iter().find(|a| a.id() == agent)?;
-        let hook_bin = self.hook_bin().ok()?;
+        let hook_bin = Self::hook_bin().ok()?;
         let original = adapter.launch_command(cwd, resume, &hook_bin);
         let mut args: Vec<std::ffi::OsString> = original.get_args().map(Into::into).collect();
         if agent == AgentId::Claude
@@ -6150,7 +6034,7 @@ impl WorkspaceView {
             ("Rename tab", "double-click the tab", "rename_tab"),
             ("Increase font size", "cmd-=", "font_bigger"),
             ("Decrease font size", "cmd--", "font_smaller"),
-            ("Reset font size", "cmd-alt-0", "font_reset"),
+            ("Reset font size", "cmd-0", "font_reset"),
             ("Select theme...", "preview with the arrow keys", "theme"),
             (
                 "Select light theme...",
@@ -7627,10 +7511,6 @@ impl Render for WorkspaceView {
                 }
                 if this.agent_launch_key(&event.keystroke, window, cx) {
                     cx.stop_propagation();
-                    return;
-                }
-                if this.recovery_key(&event.keystroke, window, cx) {
-                    cx.stop_propagation();
                 }
             }))
             .on_action(cx.listener(Self::new_tab))
@@ -7675,16 +7555,19 @@ impl Render for WorkspaceView {
                 this.ws.cycle_tab_in_group(false);
                 this.focus_active(w, cx);
             }))
-            .on_action(cx.listener(|this, _: &GotoSession1, w, cx| this.goto_session(0, w, cx)))
-            .on_action(cx.listener(|this, _: &GotoSession2, w, cx| this.goto_session(1, w, cx)))
-            .on_action(cx.listener(|this, _: &GotoSession3, w, cx| this.goto_session(2, w, cx)))
-            .on_action(cx.listener(|this, _: &GotoSession4, w, cx| this.goto_session(3, w, cx)))
-            .on_action(cx.listener(|this, _: &GotoSession5, w, cx| this.goto_session(4, w, cx)))
-            .on_action(cx.listener(|this, _: &GotoSession6, w, cx| this.goto_session(5, w, cx)))
-            .on_action(cx.listener(|this, _: &GotoSession7, w, cx| this.goto_session(6, w, cx)))
-            .on_action(cx.listener(|this, _: &GotoSession8, w, cx| this.goto_session(7, w, cx)))
-            .on_action(cx.listener(|this, _: &GotoSession9, w, cx| this.goto_session(8, w, cx)))
-            .on_action(cx.listener(|this, _: &GotoSession10, w, cx| this.goto_session(9, w, cx)))
+            .on_action(cx.listener(|this, _: &GotoTab1, w, cx| this.goto_tab(0, w, cx)))
+            .on_action(cx.listener(|this, _: &GotoTab2, w, cx| this.goto_tab(1, w, cx)))
+            .on_action(cx.listener(|this, _: &GotoTab3, w, cx| this.goto_tab(2, w, cx)))
+            .on_action(cx.listener(|this, _: &GotoTab4, w, cx| this.goto_tab(3, w, cx)))
+            .on_action(cx.listener(|this, _: &GotoTab5, w, cx| this.goto_tab(4, w, cx)))
+            .on_action(cx.listener(|this, _: &GotoTab6, w, cx| this.goto_tab(5, w, cx)))
+            .on_action(cx.listener(|this, _: &GotoTab7, w, cx| this.goto_tab(6, w, cx)))
+            .on_action(cx.listener(|this, _: &GotoTab8, w, cx| this.goto_tab(7, w, cx)))
+            .on_action(cx.listener(|this, _: &LastTab, w, cx| {
+                let group = this.tab_group.clone();
+                let last = this.ws.tabs_in(group.as_deref()).len().saturating_sub(1);
+                this.goto_tab(last, w, cx)
+            }))
             .on_action(
                 cx.listener(|this, _: &SplitRight, w, cx| this.split(Axis::Horizontal, w, cx)),
             )
@@ -7743,32 +7626,6 @@ impl Render for WorkspaceView {
                 this.restore_focus(w, cx);
             }))
             .child(title_bar)
-            .when_some(
-                self.env.windows.borrow().service_error.clone(),
-                |d, error| {
-                    let last = self
-                        .env
-                        .windows
-                        .borrow()
-                        .service_saved_at
-                        .map(|at| {
-                            format!(
-                                "Last layout save {} ago.",
-                                chda_core::activity_age(now_ms(), at)
-                            )
-                        })
-                        .unwrap_or_else(|| "No layout save has succeeded.".into());
-                    d.child(
-                        div()
-                            .id("session-save-error")
-                            .p_2()
-                            .text_sm()
-                            .bg(blend(bg, fg, 0.12))
-                            .text_color(fg)
-                            .child(format!("Session persistence: {error}. {last}")),
-                    )
-                },
-            )
             .when(window.viewport_size().width < px(700.0), |d| {
                 d.children(self.render_update_controls(cx))
             })

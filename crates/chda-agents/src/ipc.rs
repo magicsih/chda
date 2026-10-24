@@ -304,7 +304,6 @@ mod tests {
         let (tx, rx) = std::sync::mpsc::channel();
         let server = serve(&path, tx, || {}).unwrap();
         let event = HookEvent {
-            run: None,
             child: None,
             agent: "claude".into(),
             session_id: "live".into(),
@@ -381,7 +380,6 @@ mod tests {
         })
         .unwrap();
         let event = HookEvent {
-            run: None,
             child: None,
             agent: "claude".into(),
             session_id: "s1".into(),
@@ -410,7 +408,6 @@ mod tests {
             send(
                 &path,
                 &HookEvent {
-                    run: None,
                     child: None,
                     kind: kinds[i % 3],
                     timestamp: i as u64,

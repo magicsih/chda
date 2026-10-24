@@ -23,8 +23,6 @@
     <string>__VERSION__</string>
     <key>CFBundleVersion</key>
     <string>__VERSION__</string>
-    <key>CHDASessionProtocol</key>
-    <integer>__SESSION_PROTOCOL__</integer>
     <key>LSApplicationCategoryType</key>
     <string>public.app-category.developer-tools</string>
     <key>LSMinimumSystemVersion</key>

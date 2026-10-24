@@ -10,7 +10,7 @@
 use crate::frame::Frame;
 
 /// A diagram found in the viewport.
-#[derive(serde::Serialize, serde::Deserialize, Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Diagram {
     /// First and last viewport rows of the block, fences included.
     pub first_row: u16,

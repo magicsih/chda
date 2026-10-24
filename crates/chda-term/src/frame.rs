@@ -1,32 +1,15 @@
 //! Plain-data snapshot of a terminal for one frame. No libghostty types.
 
 /// RGB color.
-#[derive(
-    serde::Serialize, serde::Deserialize, Clone, Copy, Debug, Default, PartialEq, Eq, Hash,
-)]
-#[serde(into = "[u8;3]", from = "[u8;3]")]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
 pub struct Rgb {
     pub r: u8,
     pub g: u8,
     pub b: u8,
 }
-impl From<Rgb> for [u8; 3] {
-    fn from(c: Rgb) -> Self {
-        [c.r, c.g, c.b]
-    }
-}
-impl From<[u8; 3]> for Rgb {
-    fn from(c: [u8; 3]) -> Self {
-        Self {
-            r: c[0],
-            g: c[1],
-            b: c[2],
-        }
-    }
-}
 
 /// Default colors handed to the terminal at creation.
-#[derive(serde::Serialize, serde::Deserialize, Clone, Debug, Default, PartialEq, Eq)]
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct ColorConfig {
     pub foreground: Option<Rgb>,
     pub background: Option<Rgb>,
@@ -39,14 +22,14 @@ pub struct ColorConfig {
 }
 
 /// Terminal size in cells.
-#[derive(serde::Serialize, serde::Deserialize, Clone, Copy, Debug, Default, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct Size {
     pub cols: u16,
     pub rows: u16,
 }
 
 /// Underline decoration.
-#[derive(serde::Serialize, serde::Deserialize, Clone, Copy, Debug, Default, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub enum Underline {
     #[default]
     None,
@@ -58,7 +41,7 @@ pub enum Underline {
 }
 
 /// How many columns a cell occupies.
-#[derive(serde::Serialize, serde::Deserialize, Clone, Copy, Debug, Default, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub enum CellWidth {
     #[default]
     Narrow,
@@ -71,7 +54,7 @@ pub enum CellWidth {
 }
 
 /// Text attributes of a cell.
-#[derive(serde::Serialize, serde::Deserialize, Clone, Copy, Debug, Default, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct CellStyle {
     pub bold: bool,
     pub italic: bool,
@@ -85,8 +68,7 @@ pub struct CellStyle {
 }
 
 /// One cell of the viewport. Text lives in [`Frame::text`].
-#[derive(serde::Serialize, serde::Deserialize, Clone, Copy, Debug, Default, PartialEq, Eq)]
-#[serde(into = "WireCell", from = "WireCell")]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct Cell {
     pub(crate) text_start: u32,
     pub(crate) text_len: u16,
@@ -103,97 +85,6 @@ pub struct Cell {
     pub search: crate::search::SearchMark,
 }
 
-// Repeated field names and boolean objects dominated frame transfer time.
-// Keep the in-memory model readable, with one compact tuple on the wire.
-type WireCell = (u32, u16, Rgb, Option<Rgb>, Option<Rgb>, u16);
-impl From<Cell> for WireCell {
-    fn from(c: Cell) -> Self {
-        let s = c.style;
-        let mut flags = [
-            s.bold,
-            s.italic,
-            s.faint,
-            s.blink,
-            s.inverse,
-            s.invisible,
-            s.strikethrough,
-            s.overline,
-        ]
-        .into_iter()
-        .enumerate()
-        .fold(0, |bits, (i, on)| bits | ((on as u16) << i));
-        flags |= (match s.underline {
-            Underline::None => 0,
-            Underline::Single => 1,
-            Underline::Double => 2,
-            Underline::Curly => 3,
-            Underline::Dotted => 4,
-            Underline::Dashed => 5,
-        }) << 8;
-        flags |= (match c.width {
-            CellWidth::Narrow => 0,
-            CellWidth::Wide => 1,
-            CellWidth::SpacerTail => 2,
-            CellWidth::SpacerHead => 3,
-        }) << 11;
-        flags |= (c.selected as u16) << 13;
-        flags |= (match c.search {
-            crate::SearchMark::None => 0,
-            crate::SearchMark::Match => 1,
-            crate::SearchMark::Current => 2,
-        }) << 14;
-        (
-            c.text_start,
-            c.text_len,
-            c.fg,
-            c.bg,
-            c.underline_color,
-            flags,
-        )
-    }
-}
-impl From<WireCell> for Cell {
-    fn from((text_start, text_len, fg, bg, underline_color, f): WireCell) -> Self {
-        Self {
-            text_start,
-            text_len,
-            fg,
-            bg,
-            underline_color,
-            width: match (f >> 11) & 3 {
-                1 => CellWidth::Wide,
-                2 => CellWidth::SpacerTail,
-                3 => CellWidth::SpacerHead,
-                _ => CellWidth::Narrow,
-            },
-            selected: f & (1 << 13) != 0,
-            search: match (f >> 14) & 3 {
-                1 => crate::SearchMark::Match,
-                2 => crate::SearchMark::Current,
-                _ => crate::SearchMark::None,
-            },
-            style: CellStyle {
-                bold: f & 1 != 0,
-                italic: f & 2 != 0,
-                faint: f & 4 != 0,
-                blink: f & 8 != 0,
-                inverse: f & 16 != 0,
-                invisible: f & 32 != 0,
-                strikethrough: f & 64 != 0,
-                overline: f & 128 != 0,
-                underline: match (f >> 8) & 7 {
-                    1 => Underline::Single,
-                    2 => Underline::Double,
-                    3 => Underline::Curly,
-                    4 => Underline::Dotted,
-                    5 => Underline::Dashed,
-                    _ => Underline::None,
-                },
-            },
-        }
-    }
-}
-
 impl Cell {
     /// Whether the cell has glyphs to draw.
     pub fn has_text(&self) -> bool {
@@ -202,7 +93,7 @@ impl Cell {
 }
 
 /// Per-row metadata.
-#[derive(serde::Serialize, serde::Deserialize, Clone, Copy, Debug, Default, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct Row {
     /// The row is soft-wrapped into the next one.
     pub wrapped: bool,
@@ -210,7 +101,7 @@ pub struct Row {
 }
 
 /// OSC 133 prompt marking for a row.
-#[derive(serde::Serialize, serde::Deserialize, Clone, Copy, Debug, Default, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub enum SemanticPrompt {
     #[default]
     None,
@@ -219,7 +110,7 @@ pub enum SemanticPrompt {
 }
 
 /// Cursor shape.
-#[derive(serde::Serialize, serde::Deserialize, Clone, Copy, Debug, Default, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub enum CursorShape {
     Bar,
     #[default]
@@ -229,7 +120,7 @@ pub enum CursorShape {
 }
 
 /// Cursor state in viewport coordinates.
-#[derive(serde::Serialize, serde::Deserialize, Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Cursor {
     pub x: u16,
     pub y: u16,
@@ -242,7 +133,7 @@ pub struct Cursor {
 }
 
 /// Scrollback position of the viewport, counted in rows.
-#[derive(serde::Serialize, serde::Deserialize, Clone, Copy, Debug, Default, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct Scrollbar {
     pub total: u64,
     pub offset: u64,
@@ -250,7 +141,7 @@ pub struct Scrollbar {
 }
 
 /// Everything a renderer needs to draw one frame.
-#[derive(serde::Serialize, serde::Deserialize, Clone, Debug, Default, PartialEq, Eq)]
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct Frame {
     pub size: Size,
     /// `size.rows * size.cols` cells, row-major.
@@ -335,79 +226,5 @@ impl Frame {
     pub(crate) fn set_cell_text(cell: &mut Cell, start: u32, len: u16) {
         cell.text_start = start;
         cell.text_len = len;
-    }
-}
-
-#[cfg(test)]
-mod wire_tests {
-    use super::*;
-
-    #[test]
-    fn wire_cells_preserve_glyph_ranges_colors_and_every_attribute() {
-        for underline in [
-            Underline::None,
-            Underline::Single,
-            Underline::Double,
-            Underline::Curly,
-            Underline::Dotted,
-            Underline::Dashed,
-        ] {
-            for width in [
-                CellWidth::Narrow,
-                CellWidth::Wide,
-                CellWidth::SpacerTail,
-                CellWidth::SpacerHead,
-            ] {
-                for search in [
-                    crate::SearchMark::None,
-                    crate::SearchMark::Match,
-                    crate::SearchMark::Current,
-                ] {
-                    for bits in 0..512 {
-                        let cell = Cell {
-                            text_start: 1234,
-                            text_len: 9,
-                            width,
-                            fg: Rgb {
-                                r: 23,
-                                g: 45,
-                                b: 67,
-                            },
-                            bg: Some(Rgb {
-                                r: 89,
-                                g: 1,
-                                b: 255,
-                            }),
-                            underline_color: Some(Rgb {
-                                r: 11,
-                                g: 22,
-                                b: 33,
-                            }),
-                            style: CellStyle {
-                                bold: bits & 1 != 0,
-                                italic: bits & 2 != 0,
-                                faint: bits & 4 != 0,
-                                blink: bits & 8 != 0,
-                                inverse: bits & 16 != 0,
-                                invisible: bits & 32 != 0,
-                                strikethrough: bits & 64 != 0,
-                                overline: bits & 128 != 0,
-                                underline,
-                            },
-                            selected: bits & 256 != 0,
-                            search,
-                        };
-                        let bytes = serde_json::to_vec(&cell).unwrap();
-                        assert!(bytes.len() < 80);
-                        assert_eq!(serde_json::from_slice::<Cell>(&bytes).unwrap(), cell);
-                    }
-                }
-            }
-        }
-        let cell = Cell::default();
-        assert_eq!(
-            serde_json::from_slice::<Cell>(&serde_json::to_vec(&cell).unwrap()).unwrap(),
-            cell
-        );
     }
 }

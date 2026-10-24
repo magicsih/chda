@@ -25,17 +25,17 @@ fn click(h: &mut Harness, selector: &'static str, count: usize) {
     h.cx.run_until_parked();
 }
 
-fn read_pid(path: &std::path::Path) -> Option<u32> {
-    std::fs::read_to_string(path).ok()?.trim().parse().ok()
-}
-
 fn shell_pid(h: &mut Harness, name: &str) -> u32 {
     h.wait_prompt();
     let path = h.home.home.join(format!("{name}.pid"));
     h.type_text(&format!("echo $$ > '{}'", path.display()));
     h.keys("enter");
-    h.wait_for("complete shell pid", |_, _| read_pid(&path).is_some());
-    read_pid(&path).unwrap()
+    h.wait_for("shell pid", |_, _| path.exists());
+    std::fs::read_to_string(path)
+        .unwrap()
+        .trim()
+        .parse()
+        .unwrap()
 }
 
 fn alive(pid: u32) -> bool {
@@ -66,10 +66,12 @@ fn tab_close_confirms_inactive_working_splits_and_preserves_cancelled_processes(
         child_file.display()
     ));
     h.keys("enter");
-    h.wait_for("complete foreground child pid", |_, _| {
-        read_pid(&child_file).is_some()
-    });
-    let child_pid = read_pid(&child_file).unwrap();
+    h.wait_for("foreground child", |_, _| child_file.exists());
+    let child_pid: u32 = std::fs::read_to_string(child_file)
+        .unwrap()
+        .trim()
+        .parse()
+        .unwrap();
     h.keys("cmd-d");
     let waiting = focused(&h);
     let second_pid = shell_pid(&mut h, "second");

@@ -1,8 +1,6 @@
 # Session connection recovery and responsiveness
 
-Status: approved by the owner on 2026-10-23 with “어서 고쳐”. This change repairs the
-existing dedicated-service behavior. It keeps the ownership decision in
-[ADR 0024](../../decisions/0024-dedicated-session-service.md).
+Status: withdrawn on 2026-10-24 and superseded by the [rollback](../2026-10-24-session-service-rollback/design.md). The owner originally approved this repair on 2026-10-23 with “어서 고쳐”. The historical implementation retained the service ownership decision in [ADR 0024](../../decisions/0024-dedicated-session-service.md).
 
 ## Observed problem
 

@@ -69,34 +69,6 @@ class EvidenceTests(unittest.TestCase):
         return release.validate_evidence(data, 'v0.1.21', SHA, TREE, CONFIG,
                                          data['stage'], now=now, **kwargs)
 
-    def test_session_release_requires_new_cases_and_signed_service_checks(self):
-        data = evidence('before-deploy')
-        tag = 'v1.4.0'
-        data['candidate']['tag'] = tag
-        for run in [*data['rounds'], data['run']]:
-            run['cases'] = sorted(release.V1025_CASES)
-            run['environment'].update(cli_provenance='test-fixtures', cli_manifest_sha256='f' * 64)
-        args = dict(now=NOW, built_at=timestamp(2), artifact_sha256='a' * 64)
-        def verify():
-            return release.validate_evidence(data, tag, SHA, TREE, CONFIG, 'before-deploy', **args)
-        with self.assertRaises(ValueError):
-            verify()
-        for run in [*data['rounds'], data['run']]:
-            run['cases'] = sorted(release.cases_for(tag))
-        with self.assertRaises(ValueError):
-            verify()
-        data['signed_artifact']['checks'] = sorted(release.artifact_checks_for(tag))
-        verify()
-        data['run']['environment']['cli_provenance'] = 'unknown'
-        with self.assertRaises(ValueError):
-            verify()
-        data['run']['environment']['cli_provenance'] = 'test-fixtures'
-        del data['run']['environment']['cli_manifest_sha256']
-        with self.assertRaises(ValueError):
-            verify()
-        self.assertEqual(release.cases_for('v1.3.0'), release.V1025_CASES)
-        self.assertEqual(release.artifact_checks_for('v1.3.0'), release.ARTIFACT_CHECKS)
-
     def test_valid_native_evidence_and_distinct_after_build_run(self):
         before = evidence()
         self.verify(before)
@@ -242,9 +214,8 @@ class V1025CoverageTests(unittest.TestCase):
     def test_prior_contracts_remain_exact_and_later_versions_retain_recent_cases(self):
         for tag in ('v0.1.23', 'v0.1.24', 'v0.2.0'):
             self.assertEqual(release.cases_for(tag), release.V023_CASES)
-        for tag in ('v1.0.25', 'v1.0.26', 'v1.1.0', 'v1.3.0', 'v1.3.1'):
+        for tag in ('v1.0.25', 'v1.0.26', 'v1.1.0', 'v1.3.0', 'v1.3.1', 'v2.0.0'):
             self.assertEqual(release.cases_for(tag), release.V023_CASES | self.NEW_CASES)
-        self.assertTrue((release.V023_CASES | self.NEW_CASES) < release.cases_for('v2.0.0'))
 
 
 def exception_record(sha=SHA, tree=TREE):
@@ -428,55 +399,6 @@ class V130PublicationApprovalTests(V1025PublicationApprovalTests):
             self.verify(self.evidence(self.approval()), previous)
 
 
-class V140PublicationApprovalTests(V130PublicationApprovalTests):
-    TAG = 'v1.4.0'
-    INSTRUCTION = ('Publish this v1.4.0 candidate with the stated native validation incomplete; '
-                   'retain signing, notarization and file verification.')
-    NEXT = 'v1.4.1'
-
-    def approval(self):
-        value = json.loads(super().approval())
-        value['incomplete_checks'] = sorted(
-            release.EXCEPTION_CHECKS | release.artifact_checks_for(self.TAG))
-        return json.dumps(value, sort_keys=True)
-
-    def test_v130_approval_cannot_authorize_v140(self):
-        previous = V130PublicationApprovalTests().approval()
-        with self.assertRaises(ValueError):
-            self.verify(self.evidence(self.approval()), previous)
-
-    def test_each_new_service_artifact_check_must_remain_incomplete(self):
-        for check in release.artifact_checks_for(self.TAG) - release.ARTIFACT_CHECKS:
-            value = json.loads(self.approval())
-            value['incomplete_checks'].remove(check)
-            record = json.dumps(value, sort_keys=True)
-            with self.subTest(check=check), self.assertRaises(ValueError):
-                self.verify(self.evidence(record), record)
-
-
-class V150PublicationApprovalTests(V140PublicationApprovalTests):
-    TAG = 'v1.5.0'
-    INSTRUCTION = ('Publish this v1.5.0 candidate with the stated native validation incomplete; '
-                   'retain signing, notarization and file verification.')
-    NEXT = 'v1.5.1'
-
-    def test_v140_approval_cannot_authorize_v150(self):
-        previous = V140PublicationApprovalTests().approval()
-        with self.assertRaises(ValueError):
-            self.verify(self.evidence(self.approval()), previous)
-
-
-class V151PublicationApprovalTests(V150PublicationApprovalTests):
-    TAG = 'v1.5.1'
-    INSTRUCTION = '병합하고 앱 릴리즈 빨리 진행해라. 결함이 있는 상태라 빨리 보내야한다.'
-    NEXT = 'v1.5.2'
-
-    def test_v150_approval_cannot_authorize_v151(self):
-        previous = V150PublicationApprovalTests().approval()
-        with self.assertRaises(ValueError):
-            self.verify(self.evidence(self.approval()), previous)
-
-
 class ReleaseNotesTests(unittest.TestCase):
     def test_historical_exception_notes_remain_unchanged(self):
         for tag in ('v0.1.21', 'v0.1.22', 'v0.1.23'):
@@ -496,28 +418,6 @@ class ReleaseNotesTests(unittest.TestCase):
         self.assertIn('incomplete', notes)
         self.assertIn('v1.3.0-publication-approval.md', notes)
         self.assertEqual(release.exception_notes('v1.3.1'), '')
-
-    def test_v140_discloses_service_checks_and_does_not_authorize_next_version(self):
-        notes = release.exception_notes('v1.4.0')
-        self.assertIn('incomplete', notes)
-        self.assertIn('session-service', notes)
-        self.assertIn('v1.4.0-publication-approval.md', notes)
-        self.assertEqual(release.exception_notes('v1.4.1'), '')
-
-    def test_v150_discloses_its_own_incomplete_native_and_service_checks(self):
-        notes = release.exception_notes('v1.5.0')
-        self.assertIn('incomplete', notes)
-        self.assertIn('session-service', notes)
-        self.assertIn('v1.5.0-publication-approval.md', notes)
-        self.assertEqual(release.exception_notes('v1.5.2'), '')
-
-    def test_v151_emergency_notes_keep_native_and_service_checks_incomplete(self):
-        notes = release.exception_notes('v1.5.1')
-        self.assertIn('incomplete', notes)
-        self.assertIn('session-service', notes)
-        self.assertIn('v1.5.1-publication-approval.md', notes)
-        self.assertEqual(release.exception_notes('v1.5.2'), '')
-
 
 def reduced_exception_record():
     record = json.loads(exception_record())
@@ -715,6 +615,16 @@ class ArtifactTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as folder:
             with self.assertRaises(ValueError):
                 release.validate_assets(Path(folder), manifest, 'v0.1.21', SHA, TREE, CONFIG)
+
+
+class WithdrawnReleaseTests(unittest.TestCase):
+    def test_withdrawn_tags_cannot_enter_any_release_stage(self):
+        for tag in ('v1.4.0', 'v1.5.0', 'v1.5.1'):
+            with self.subTest(tag=tag), \
+                    patch.object(release, 'command') as command, \
+                    self.assertRaisesRegex(ValueError, 'withdrawn'):
+                release.check_source(tag, SHA, CONFIG)
+            command.assert_not_called()
 
 
 class PromotionTests(unittest.TestCase):

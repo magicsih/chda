@@ -971,21 +971,6 @@ version = "1.5.1"
 dependencies = [
  "libc",
  "portable-pty",
- "serde",
-]
-
-[[package]]
-name = "chda-session"
-version = "1.5.1"
-dependencies = [
- "chda-agents",
- "chda-core",
- "chda-git",
- "chda-pty",
- "chda-term",
- "serde",
- "serde_json",
- "sha2",
 ]
 
 [[package]]
@@ -997,7 +982,6 @@ dependencies = [
  "libghostty-vt",
  "png 0.18.1",
  "regex",
- "serde",
  "serde_json",
  "sha2",
 ]
@@ -1009,7 +993,6 @@ dependencies = [
  "block2 0.6.2",
  "chda-config",
  "chda-core",
- "chda-session",
  "chda-term",
  "freedesktop-desktop-entry",
  "futures",
@@ -1023,7 +1006,6 @@ dependencies = [
  "objc2-user-notifications",
  "pulldown-cmark",
  "serde_json",
- "sha2",
  "skrifa 0.40.0",
  "sysinfo",
  "time",

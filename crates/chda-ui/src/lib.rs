@@ -55,16 +55,15 @@ fn key_bindings() -> Vec<KeyBinding> {
         KeyBinding::new(platform::shortcut("ctrl-tab"), NextTab, None),
         KeyBinding::new(platform::shortcut("cmd-shift-["), PrevTab, None),
         KeyBinding::new(platform::shortcut("ctrl-shift-tab"), PrevTab, None),
-        KeyBinding::new(platform::shortcut("cmd-1"), GotoSession1, None),
-        KeyBinding::new(platform::shortcut("cmd-2"), GotoSession2, None),
-        KeyBinding::new(platform::shortcut("cmd-3"), GotoSession3, None),
-        KeyBinding::new(platform::shortcut("cmd-4"), GotoSession4, None),
-        KeyBinding::new(platform::shortcut("cmd-5"), GotoSession5, None),
-        KeyBinding::new(platform::shortcut("cmd-6"), GotoSession6, None),
-        KeyBinding::new(platform::shortcut("cmd-7"), GotoSession7, None),
-        KeyBinding::new(platform::shortcut("cmd-8"), GotoSession8, None),
-        KeyBinding::new(platform::shortcut("cmd-9"), GotoSession9, None),
-        KeyBinding::new(platform::shortcut("cmd-0"), GotoSession10, None),
+        KeyBinding::new(platform::shortcut("cmd-1"), GotoTab1, None),
+        KeyBinding::new(platform::shortcut("cmd-2"), GotoTab2, None),
+        KeyBinding::new(platform::shortcut("cmd-3"), GotoTab3, None),
+        KeyBinding::new(platform::shortcut("cmd-4"), GotoTab4, None),
+        KeyBinding::new(platform::shortcut("cmd-5"), GotoTab5, None),
+        KeyBinding::new(platform::shortcut("cmd-6"), GotoTab6, None),
+        KeyBinding::new(platform::shortcut("cmd-7"), GotoTab7, None),
+        KeyBinding::new(platform::shortcut("cmd-8"), GotoTab8, None),
+        KeyBinding::new(platform::shortcut("cmd-9"), LastTab, None),
         KeyBinding::new(platform::shortcut("cmd-d"), SplitRight, None),
         KeyBinding::new(platform::shortcut("cmd-shift-d"), SplitDown, None),
         KeyBinding::new(platform::shortcut("cmd-alt-left"), FocusLeft, None),
@@ -88,7 +87,7 @@ fn key_bindings() -> Vec<KeyBinding> {
         KeyBinding::new(platform::shortcut("cmd-="), IncreaseFontSize, None),
         KeyBinding::new(platform::shortcut("cmd-+"), IncreaseFontSize, None),
         KeyBinding::new(platform::shortcut("cmd--"), DecreaseFontSize, None),
-        KeyBinding::new(platform::shortcut("cmd-alt-0"), ResetFontSize, None),
+        KeyBinding::new(platform::shortcut("cmd-0"), ResetFontSize, None),
         KeyBinding::new(platform::shortcut("cmd-shift-a"), GoToWaitingAgent, None),
         KeyBinding::new(platform::shortcut("cmd-,"), OpenConfig, None),
         KeyBinding::new(platform::shortcut("cmd-shift-,"), ReloadConfig, None),
@@ -160,8 +159,6 @@ fn run_inner(inherited: Option<(chda_core::handoff::Handoff, chda_term::handoff:
         let mut registry = env.windows.borrow_mut();
         registry.started_at = Some(state.started_at);
         registry.update.adopting = true;
-        registry.update.server_owned = state.service.is_some();
-        registry.detached = state.detached;
         registry.inherited_notifications = state.notifications.into_iter().collect();
         registry.children = state.children;
         registry.update.frozen = true;
@@ -203,10 +200,7 @@ fn run_inner(inherited: Option<(chda_core::handoff::Handoff, chda_term::handoff:
         handoff_session = Some(state.session);
         reply = Some(inherited.reply);
     }
-    let app = gpui_platform::application();
-    let reopen_env = env.clone();
-    app.on_reopen(move |cx| reopen_workspace(reopen_env.clone(), cx));
-    app.run(move |cx: &mut App| {
+    gpui_platform::application().run(move |cx: &mut App| {
         cx.set_app_identity("com.magicsih.chda", "chda");
         fonts::register(cx);
         cx.bind_keys(key_bindings());
@@ -223,13 +217,9 @@ fn run_inner(inherited: Option<(chda_core::handoff::Handoff, chda_term::handoff:
             config
                 .restore_session
                 .then(|| {
-                    if let Some(client) = &env.session_service {
-                        client.state().ok().and_then(|s| s.layout)
-                    } else {
-                        env.data_dir
-                            .as_deref()
-                            .and_then(chda_core::SavedSession::load)
-                    }
+                    env.data_dir
+                        .as_deref()
+                        .and_then(chda_core::SavedSession::load)
                 })
                 .flatten()
         });
@@ -277,23 +267,10 @@ fn run_inner(inherited: Option<(chda_core::handoff::Handoff, chda_term::handoff:
                         .timer(std::time::Duration::from_millis(10))
                         .await;
                 }
-                let (client, layout, children) = cx.update(|_| {
-                    let registry = env.windows.borrow();
-                    (
-                        env.session_service
-                            .clone()
-                            .filter(chda_session::Client::has_imports),
-                        registry.snapshot(),
-                        registry.children.clone(),
-                    )
-                });
                 let committed = cx
-                    .background_spawn(async move {
-                        match client {
-                            Some(client) => client.commit_imports(reply, layout, children),
-                            None => reply.prepared(std::time::Duration::from_secs(30)),
-                        }
-                    })
+                    .background_spawn(
+                        async move { reply.prepared(std::time::Duration::from_secs(30)) },
+                    )
                     .await;
                 if committed.is_err() {
                     std::process::exit(1);
@@ -330,36 +307,6 @@ fn run_inner(inherited: Option<(chda_core::handoff::Handoff, chda_term::handoff:
             .detach();
         }
     });
-}
-
-fn reopen_workspace(env: std::rc::Rc<environment::Environment>, cx: &mut App) {
-    let existing = {
-        let registry = env.windows.borrow();
-        if registry.quitting || registry.update.frozen {
-            return;
-        }
-        registry
-            .entries
-            .iter()
-            .find(|entry| Some(entry.window.window_id()) == registry.active)
-            .or_else(|| registry.entries.first())
-            .cloned()
-    };
-    env.system.restore_windows();
-    if let Some(entry) = existing {
-        let _ = entry.window.update(cx, |_, window, cx| {
-            window.activate_window();
-            let _ = entry.view.update(cx, |view, cx| view.focus(window, cx));
-        });
-    } else {
-        let saved = env.windows.borrow_mut().detached.pop();
-        let window = open_workspace_window(saved, env, cx);
-        let _ = window.update(cx, |view, window, cx| {
-            window.activate_window();
-            view.focus(window, cx);
-        });
-    }
-    cx.activate(true);
 }
 
 pub(crate) fn open_workspace_window(
