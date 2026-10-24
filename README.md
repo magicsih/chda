@@ -22,6 +22,8 @@ Claude Code, Codex, Gemini CLI, GitHub Copilot CLI, OpenCode and MiniMax Code.</
 
 macOS distribution has returned to **1.3.0**. Versions 1.4.0, 1.5.0 and 1.5.1 were withdrawn after session-service failures. [Download the current release](https://github.com/magicsih/chda/releases/latest).
 
+If you are using 1.4.0, 1.5.0 or 1.5.1, download the signed ZIP from the current release, quit the GUI and replace `chda.app`. The built-in updater cannot downgrade to 1.3.0. Keep the existing profile files; 1.3.0 starts its own terminals and cannot reattach to service-owned runs.
+
 One worktree, one task, one agent. Coding agents such as Claude Code and Codex are
 most productive when each runs in its own git worktree, but a normal terminal leaves
 you mapping tabs to worktrees in your head. chda puts that map in a sidebar: which

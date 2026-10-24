@@ -1,6 +1,6 @@
 {
   "version": "1.0",
-  "status": "approved",
+  "status": "withdrawn",
   "design": "design.md",
   "baseline": "cb4eec84a66bd19545000ca1fa0023e161e84618",
   "level": "L1",
@@ -46,5 +46,8 @@
     "ownerInstruction": "병합하고 앱 릴리즈 빨리 진행해라. 결함이 있는 상태라 빨리 보내야한다.",
     "nativeValidation": "All incomplete native rounds, full native E2E and signed-archive runtime checks remain blocked; this urgent publication instruction is limited to the current hotfix candidate, never a future release. Signing, notarization, atomic promotion, update signatures and file readback remain required."
   },
-  "approval": "Owner approved implementation on 2026-10-23 with 어서 고쳐, then expanded delivery to merge and urgent public release of this hotfix with the instruction recorded in release.ownerInstruction. Prior releases do not supply this authorization."
+  "approval": "Owner approved implementation on 2026-10-23 with 어서 고쳐, then expanded delivery to merge and urgent public release of this hotfix with the instruction recorded in release.ownerInstruction. Prior releases do not supply this authorization.",
+  "previousStatus": "approved",
+  "withdrawnOn": "2026-10-24",
+  "supersededBy": "../2026-10-24-session-service-rollback/design.md"
 }
