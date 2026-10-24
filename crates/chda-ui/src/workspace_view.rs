@@ -4167,14 +4167,10 @@ impl WorkspaceView {
     fn goto_session(&mut self, index: usize, window: &mut Window, cx: &mut Context<Self>) {
         let event = {
             let sidebar = self.sidebar.read(cx);
-            if let Some(row) = sidebar.model.sessions.get(index) {
-                Some(match row.key {
-                    chda_core::SessionKey::Pane(pane) => SidebarEvent::FocusPane(pane),
-                    chda_core::SessionKey::Tab(tab) => SidebarEvent::FocusTab(tab),
-                })
-            } else {
-                None
-            }
+            sidebar.model.sessions.get(index).map(|row| match row.key {
+                chda_core::SessionKey::Pane(pane) => SidebarEvent::FocusPane(pane),
+                chda_core::SessionKey::Tab(tab) => SidebarEvent::FocusTab(tab),
+            })
         };
         if let Some(event) = event {
             self.on_sidebar_event(event, window, cx);
