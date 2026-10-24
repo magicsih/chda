@@ -51,9 +51,11 @@ EXCEPTION_PATHS = {
     'v0.1.24': 'docs/releases/v0.1.24-publication-approval.json',
     'v1.0.25': 'docs/releases/v1.0.25-publication-approval.json',
     'v1.3.0': 'docs/releases/v1.3.0-publication-approval.json',
+    'v1.5.2': 'docs/releases/v1.5.2-publication-approval.json',
 }
 OWNER_INSTRUCTIONS = {
     'v0.1.21': '이제 좀 공개해라 좀',
+    'v1.5.2': '이번 1.5.2에 한해 생략 승인',
     'v0.1.22': '예외 출시: 반복 검수 생략 (권장)',
     'v0.1.23': 'PR 병합하고 공개해 빨리. 아무도 쓰는 사람도 없는데 뭘 자꾸 뜸을드려 빨리 빨리 좀 해 그냥',
     'v0.1.24': '공개 하자',
@@ -178,6 +180,7 @@ def validate_exception(data, record_text, tag, sha, tree, config, stage, now,
     require(tag in EXCEPTION_PATHS and record_text is not None,
             'This release has no recorded owner exception')
     reduced = tag == 'v0.1.22'
+    requires_artifact = reduced or tag == 'v1.5.2'
     record = read_json_text(record_text)
     record_names = ('schema', 'tag', 'sha', 'tree', 'config_sha256', 'owner',
                     'owner_instruction', 'accepted_interpretation', 'accepted_at',
@@ -195,7 +198,7 @@ def validate_exception(data, record_text, tag, sha, tree, config, stage, now,
             == (tag, sha, tree, config), 'The owner exception identifies another candidate')
     for name in ('blocked_evidence_sha256', 'independent_assessment_sha256'):
         digest(record[name])
-    incomplete = EXCEPTION_CHECKS - ARTIFACT_CHECKS if reduced else EXCEPTION_CHECKS
+    incomplete = EXCEPTION_CHECKS - ARTIFACT_CHECKS if requires_artifact else EXCEPTION_CHECKS
     unique_items(record['incomplete_checks'], incomplete)
     if reduced:
         unique_items(record['observed_failures'], ('CHILD-161',))
@@ -206,7 +209,7 @@ def validate_exception(data, record_text, tag, sha, tree, config, stage, now,
              'incomplete_checks', 'exception_sha256', 'checked_at')
     if stage == 'before-deploy':
         names += ('artifact_sha256',)
-        if reduced:
+        if requires_artifact:
             names += ('signed_artifact',)
     if reduced:
         names += ('observed_failures',)
@@ -239,7 +242,7 @@ def validate_exception(data, record_text, tag, sha, tree, config, stage, now,
                 'Exception readback must identify the exact immutable draft archive')
         require(built_at is not None and checked >= instant(built_at),
                 'Deploy readback must occur after the signed draft build')
-        if reduced:
+        if requires_artifact:
             artifact = data['signed_artifact']
             fields(artifact, ('sha256', 'evidence_sha256', 'checks', 'result'))
             digest(artifact['sha256'])
@@ -585,6 +588,14 @@ def native_archive(root, tag):
 
 def exception_notes(tag):
     """Per-version validation notices for explicitly approved releases."""
+    if tag == 'v1.5.2':
+        return ('Full native UI validation is incomplete. For this candidate only, the owner '
+                'approved omitting three full native review rounds and both full native E2E runs. '
+                'CI, Developer ID signing, notarization, universal architectures, update signatures '
+                'and actual signed-archive launch, app-owned session-preserving update, GUI IPC '
+                'and shell PID checks remain required. '
+                '[Validation status](https://github.com/%s/blob/main/docs/releases/'
+                'v1.5.2-publication-approval.md).\n\n' % REPO)
     if tag == 'v1.3.0':
         return ('Native UI validation is incomplete. The owner authorized this v1.3.0 candidate '
                 'with the three full native review rounds, both full native E2E runs and exact '
