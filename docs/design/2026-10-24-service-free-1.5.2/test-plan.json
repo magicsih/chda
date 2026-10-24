@@ -1,0 +1,27 @@
+{
+  "schema": 1,
+  "level": "L1",
+  "environments": [
+    "dev"
+  ],
+  "approved_by": "owner delegated version choice and publication on 2026-10-24",
+  "baseline_tag": "v1.3.0",
+  "release": {
+    "version": "1.5.2",
+    "platform": "macos",
+    "endpoint": "public"
+  },
+  "checks": [
+    "red-digit-scenarios",
+    "restored-scenarios",
+    "fmt",
+    "clippy",
+    "workspace-tests",
+    "product-docs",
+    "release-policy",
+    "CI",
+    "isolated-native-input",
+    "macos-release-native-gate"
+  ],
+  "personal_data_backup": "declined by owner"
+}

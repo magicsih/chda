@@ -322,3 +322,7 @@ Direct termination forwards to the helper process group before cleanup. Private
 metadata stays non-executable. Native package acceptance separately executes frozen
 pre-restart hook commands after removing the stopped runtime's isolated temp
 directory and relaunching under a different TMPDIR.
+
+## Service-free 1.5.2 restoration
+
+`reopen::*` covers a usable new shell after the last window closes, repeat opens, active-window selection and quit/update guards. `session_shortcuts::*` covers displayed row order across split agents and repositories, all ten digits, missing rows, collapsed/hidden Sessions and retained terminal input. These scenarios use app-owned terminals only. Signed updater adoption and native release acceptance remain separate checks.

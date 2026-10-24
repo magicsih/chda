@@ -406,7 +406,7 @@ fn session_clicks_keep_sessions_still_and_reveal_only_in_project(cx: &mut TestAp
     settle(h);
     let tab_worktree = worktrees[WORKTREES - 3].clone();
     let expected = minimal_offset(h, &tab_worktree);
-    h.keys("cmd-3");
+    click(h, "tab-2");
     settle(h);
     assert_eq!(selected(h).as_ref(), Some(&tab_worktree));
     assert_eq!(offsets(h).0, kept);
