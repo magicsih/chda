@@ -4,6 +4,13 @@ All notable changes to chda. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); entries are
 generated from conventional commit messages by release-plz.
 
+## [1.5.2](https://github.com/magicsih/chda/compare/v1.5.1...v1.5.2) - 2026-10-24
+
+### Fixed
+
+- *(window)* restore reopen and Sessions shortcuts without a service ([#301](https://github.com/magicsih/chda/pull/301))
+- *(sessions)* restore app-owned terminals from v1.3.0 ([#299](https://github.com/magicsih/chda/pull/299))
+
 ## [1.5.1](https://github.com/magicsih/chda/compare/v1.5.0...v1.5.1) - 2026-10-23
 
 ### Fixed
