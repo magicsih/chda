@@ -1,5 +1,6 @@
 #!/bin/sh
 set -eu
+python3 -B /driver/test_native_visual.py
 if [ -f /opt/chda-qa-mesa/manifest.json ]; then
     set -- /opt/chda-qa-mesa/share/vulkan/icd.d/lvp_icd*.json
     [ "$#" = 1 ] && [ -f "$1" ]

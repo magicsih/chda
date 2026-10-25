@@ -180,6 +180,17 @@ tests cover bash 3.2, installed newer bash, zsh and fish, including user aliases
 or functions and nonzero CLI exit codes. These do not execute a paid model
 request or prove the layout emitted by every Codex version.
 
+### Linux readiness segmentation regression
+
+A full-frame Tesseract sparse-text pass can return no words even while the
+startup prompt is visible. Readiness retains its original PNG and OCR result,
+then reads an unscaled crop of the current terminal's connected background.
+It still requires the exact normalized rendered marker, and retains crop
+bounds, OCR words and the source SHA-256. A process or window alone never
+counts as ready. `tests/linux-native/test_native_visual.py` runs inside every
+native package test container and covers empty full-frame segmentation,
+missing markers and missing terminal pixels.
+
 ## Project sections and status waves
 
 `project_sections::*` drives section creation, rename, collapse, project and

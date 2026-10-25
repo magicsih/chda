@@ -167,6 +167,10 @@ chda's built-in browser preview remains available for quick checks. Leaflit is a
 <p align="center">
   <img src="docs/media/sessions.png" alt="The Atlas API demo in a light theme: sample Claude Code and Codex sessions in split panes, compact child counts on the parent row, and worktrees labeled by their task notes" width="880">
 </p>
+
+<p align="center">
+  <img src="docs/media/sidebar-sections.png" alt="A native dark sidebar with Starred, Work and Experiments sections, Uncategorized projects, and a plain folder" width="280">
+</p>
 <!-- END GENERATED FEATURES -->
 
 **Sessions** keeps its rows in tab and pane order, so concurrent output and

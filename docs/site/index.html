@@ -136,6 +136,7 @@
   .shots { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
   .shots img { width: 100%; height: auto; border: 1px solid var(--line); border-radius: 10px; }
   .shots a { display: block; }
+  .shots a span { display: block; }
   .wide { display: block; width: 100%; height: auto; margin-bottom: 16px; border: 1px solid var(--line); border-radius: 10px; }
   .lead { color: var(--muted); margin: 0 0 16px; }
   pre { background: var(--code-bg); color: var(--code-fg); padding: 14px 16px; border-radius: 8px; overflow-x: auto; font-size: 14px; }
@@ -185,8 +186,9 @@
     </div>
     <h3 class="gallery-title">Git history and live sessions</h3>
     <div class="shots">
-      <a href="git-graph.jpg"><img src="git-graph.jpg" loading="lazy" decoding="async" alt="A read-only Git tree tab with commit connections, branch labels, subjects and short hashes" width="1920" height="990"><span>View full-size Git tree screenshot</span></a>
-      <a href="sessions.png"><img src="sessions.png" loading="lazy" decoding="async" alt="The Atlas API demo in a light theme: sample Claude Code and Codex sessions in split panes, compact child counts on the parent row, and worktrees labeled by their task notes" width="1200" height="705"><span>View full-size Sessions screenshot</span></a>
+      <a href="git-graph.jpg"><img src="git-graph.jpg" loading="lazy" decoding="async" alt="A read-only Git tree tab with commit connections, branch labels, subjects and short hashes" width="1920" height="990" style="max-width: 1920px"><span>View full-size Git tree screenshot</span></a>
+      <a href="sessions.png"><img src="sessions.png" loading="lazy" decoding="async" alt="The Atlas API demo in a light theme: sample Claude Code and Codex sessions in split panes, compact child counts on the parent row, and worktrees labeled by their task notes" width="1200" height="705" style="max-width: 1200px"><span>View full-size Sessions screenshot</span></a>
+      <a href="sidebar-sections.png"><img src="sidebar-sections.png" loading="lazy" decoding="async" alt="A native dark sidebar with Starred, Work and Experiments sections, Uncategorized projects, and a plain folder" width="280" height="424" style="max-width: 280px"><span>View project sections screenshot</span></a>
     </div>
 <!-- END GENERATED FEATURES -->
   </section>

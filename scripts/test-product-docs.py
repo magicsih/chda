@@ -75,6 +75,13 @@ class ProductDocsTests(unittest.TestCase):
         docs.sync(self.root)
         self.assertEqual((self.root / "docs/site/graph.png").read_bytes(), self.png)
 
+    def test_small_sidebar_capture_is_not_enlarged(self):
+        small = (docs.ROOT / "docs/media/sidebar-sections.png").read_bytes()
+        (self.root / "docs/media/graph.png").write_bytes(small)
+        docs.sync(self.root)
+        self.assertIn('width="280"', (self.root / "README.md").read_text())
+        self.assertIn('max-width: 280px', (self.root / "docs/site/index.html").read_text())
+
     def test_png_and_jpeg_dimensions(self):
         self.assertEqual(docs.image_size(self.png), (1200, 750))
         jpeg = (docs.ROOT / "docs/media/git-graph.jpg").read_bytes()

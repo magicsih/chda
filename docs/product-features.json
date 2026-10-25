@@ -95,6 +95,11 @@
       "file": "sessions.png",
       "alt": "The Atlas API demo in a light theme: sample Claude Code and Codex sessions in split panes, compact child counts on the parent row, and worktrees labeled by their task notes",
       "label": "View full-size Sessions screenshot"
+    },
+    {
+      "file": "sidebar-sections.png",
+      "alt": "A native dark sidebar with Starred, Work and Experiments sections, Uncategorized projects, and a plain folder",
+      "label": "View project sections screenshot"
     }
   ]
 }
