@@ -80,3 +80,19 @@ fn minimum_contrast_changes_apply_without_restarting_the_pane(cx: &mut TestAppCo
     assert_eq!(h.read(|v, _| v.ws.focused_pane()), pane);
     assert!(h.read(|v, cx| v.focused_text(cx).contains("still editing")));
 }
+
+#[gpui::test]
+fn reduce_motion_applies_live_without_changing_sessions(cx: &mut TestAppContext) {
+    use super::harness::Harness;
+    let mut h = Harness::open(cx, "reduce-motion", |_| {});
+    h.wait_prompt();
+    let before = h.read(|v, _| v.ws.focused_pane());
+    let mut config = chda_config::ChdaConfig::load(&h.home.config).unwrap();
+    config.reduce_motion = true;
+    config.save(&h.home.config).unwrap();
+    h.wait_for("reduced motion", |_, cx| cx.reduce_motion());
+    assert_eq!(h.read(|v, _| v.ws.focused_pane()), before);
+    config.reduce_motion = false;
+    config.save(&h.home.config).unwrap();
+    h.wait_for("animation enabled", |_, cx| !cx.reduce_motion());
+}

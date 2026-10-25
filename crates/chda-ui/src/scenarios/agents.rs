@@ -445,59 +445,43 @@ done
 }
 
 #[gpui::test]
-fn working_spinner_turns_only_while_an_agent_works(cx: &mut TestAppContext) {
-    use crate::status_icon::SPIN_STEP;
-    use futures::{FutureExt, StreamExt};
-
-    let mut h = Harness::open(cx, "spinner", |_| {});
+fn working_wave_keeps_status_slot_and_row_metrics_across_states(cx: &mut TestAppContext) {
+    use super::sidebar::draw_sidebar_frame;
+    let mut h = Harness::open(cx, "working-wave", |_| {});
     h.wait_prompt();
-    let pane = h.read(|v, _| v.ws.tabs()[0].panes()[0]);
+    let pane = h.read(|v, _| v.ws.focused_pane().unwrap());
     let home = h.home.home.clone();
-    let sidebar = h.read(|v, _| v.sidebar.clone());
-    let spin = |h: &Harness| h.read(|v, cx| v.sidebar.read(cx).spin);
-
     h.hook(Some(pane.raw()), &home, HookKind::PromptSubmitted);
-    h.wait_for("the agent to work", move |v, _| {
+    h.wait_for("working", move |v, _| {
         v.ws.pane(pane)
             .and_then(|p| p.agent.as_ref())
             .is_some_and(|a| a.status == AgentStatus::Working)
     });
-    let start = spin(&h);
-    let mut notices = h.cx.cx.notifications(&sidebar);
-    for _ in 0..3 {
-        h.cx.executor().advance_clock(SPIN_STEP);
-        h.cx.run_until_parked();
+    draw_sidebar_frame(&mut h);
+    let row: &'static str = Box::leak(format!("session-pane-{}", pane.raw()).into_boxed_str());
+    let status: &'static str =
+        Box::leak(format!("session-status-pane-{}", pane.raw()).into_boxed_str());
+    let row_size = h.cx.debug_bounds(row).unwrap().size;
+    let slot = h.cx.debug_bounds(status).unwrap().size;
+    assert!(h.cx.debug_bounds("working-wave").is_some());
+    h.cx.update(|_, cx| cx.set_reduce_motion(true));
+    draw_sidebar_frame(&mut h);
+    assert_eq!(h.cx.debug_bounds(row).unwrap().size, row_size);
+    for (event, expected) in [
+        (HookKind::WaitingInput, AgentStatus::WaitingInput),
+        (HookKind::Stopped, AgentStatus::Review),
+    ] {
+        h.hook(Some(pane.raw()), &home, event);
+        h.wait_for("next status", move |v, _| {
+            v.ws.pane(pane)
+                .and_then(|p| p.agent.as_ref())
+                .is_some_and(|a| a.status == expected)
+        });
+        draw_sidebar_frame(&mut h);
+        assert_eq!(h.cx.debug_bounds(row).unwrap().size, row_size);
+        assert_eq!(h.cx.debug_bounds(status).unwrap().size, slot);
+        assert!(h.cx.debug_bounds("working-wave").is_none());
     }
-    assert_eq!(spin(&h), start + 3, "the sidebar spinner turns each step");
-    assert!(notices.next().now_or_never().is_some());
-
-    // Waiting for input is a still icon: the timer stops with the work.
-    h.hook(Some(pane.raw()), &home, HookKind::WaitingInput);
-    h.wait_for("the agent to wait", move |v, _| {
-        v.ws.pane(pane)
-            .and_then(|p| p.agent.as_ref())
-            .is_some_and(|a| a.status == AgentStatus::WaitingInput)
-    });
-    h.cx.executor().advance_clock(SPIN_STEP);
-    h.cx.run_until_parked();
-    assert!(
-        !h.read(|v, _| v.spinning),
-        "no timer without a working agent"
-    );
-    // Only the once-a-second Sessions age tick repaints the sidebar now.
-    while notices.next().now_or_never().is_some() {}
-    let mut repaints = 0;
-    for _ in 0..16 {
-        h.cx.executor().advance_clock(SPIN_STEP);
-        h.cx.run_until_parked();
-        while notices.next().now_or_never().is_some() {
-            repaints += 1;
-        }
-    }
-    assert!(
-        repaints <= 3,
-        "a waiting agent repainted the sidebar {repaints} times in two seconds"
-    );
 }
 
 /// A new conversation's first turn in a managed Codex launch. Codex 0.162

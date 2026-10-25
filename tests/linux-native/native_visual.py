@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """Read current PNG pixels before choosing native pointer coordinates."""
 import csv
+import hashlib
 import io
 import json
 import re
@@ -95,7 +96,31 @@ def wait_for_rendered(driver, target, prefix, timeout=40):
     while time.monotonic() < deadline:
         attempt += 1
         image = driver.screenshot(f"{prefix}-{attempt:02d}")
-        letters = "".join(char for word in ocr_words(image) for char in word["text"] if char.isalpha()).upper()
+        words = ocr_words(image)
+        Path(image).with_suffix(".ocr.json").write_text(json.dumps(words, indent=2) + "\n")
+        letters = "".join(char for word in words for char in word["text"] if char.isalpha()).upper()
+        if target in letters:
+            return image
+        # Sparse full-frame segmentation can return no words even with a
+        # clearly rendered prompt. Read the current terminal's actual pixels,
+        # located by its connected background, without changing any glyphs or
+        # accepting process/window presence as readiness.
+        try:
+            bounds = background_bounds(image)
+        except AssertionError:
+            continue
+        source = Path(image)
+        cropped = source.with_suffix(".terminal.png")
+        x, y, width, height = (bounds[key] for key in ("x", "y", "width", "height"))
+        with Image.open(source) as frame:
+            frame.crop((x, y, x + width, y + height)).save(cropped)
+        words = ocr_words(cropped)
+        source.with_suffix(".terminal.json").write_text(json.dumps({
+            "sourceSha256": hashlib.sha256(source.read_bytes()).hexdigest(),
+            "bounds": bounds, "words": words,
+            "processing": "unscaled crop of the current connected terminal background",
+        }, indent=2) + "\n")
+        letters = "".join(char for word in words for char in word["text"] if char.isalpha()).upper()
         if target in letters:
             return image
     raise AssertionError("Timed out waiting for rendered text: " + target)

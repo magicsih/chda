@@ -326,3 +326,47 @@ fn a_conversation_keeps_its_picture_and_a_narrow_sidebar_its_label(cx: &mut Test
         );
     }
 }
+
+#[gpui::test]
+fn an_unconfirmed_identity_is_neutral_until_the_provider_reports_its_id(cx: &mut TestAppContext) {
+    let mut h = Harness::open(cx, "identity-pending", |home| home.fake_claude());
+    h.wait_prompt();
+    h.cx.dispatch_action(crate::workspace_view::RunClaude);
+    h.confirm_agent_launch();
+    h.wait_for("managed agent started", |v, cx| {
+        v.focused_text(cx).contains("fake-claude")
+    });
+    let pane = focused(&h);
+    let cwd = h.home.home.clone();
+    h.wait_for("agent without an id", |v, cx| {
+        v.sidebar
+            .read(cx)
+            .model
+            .sessions
+            .iter()
+            .any(|r| r.key == SessionKey::Pane(pane) && r.identity.is_none())
+    });
+    h.keys("cmd-t");
+    h.wait_prompt();
+    let before = focused(&h);
+    let pending = format!("session-identity-pending-pane-{}", pane.raw());
+    let initial = bounds(&mut h, &pending).expect("neutral icon");
+    let row_before = bounds(&mut h, &row(pane)).unwrap();
+    click(&mut h, &pending);
+    assert_eq!(focused(&h), before, "neutral icon never navigates");
+    assert!(preview(&h).is_none());
+    h.hook_session(Some(pane.raw()), &cwd, HookKind::SessionStart, CLAUDE_A);
+    h.wait_for("real conversation id", |v, cx| {
+        v.sidebar.read(cx).model.sessions.iter().any(|r| {
+            r.key == SessionKey::Pane(pane) && r.identity.as_ref().is_some_and(|i| i.id == CLAUDE_A)
+        })
+    });
+    assert_eq!(bounds(&mut h, &icon(pane)).unwrap(), initial);
+    assert_eq!(bounds(&mut h, &row(pane)).unwrap(), row_before);
+    assert!(bounds(&mut h, &pending).is_none());
+    h.view.update(&mut h.cx, |v, cx| {
+        v.config.sidebar_width = 199;
+        cx.notify();
+    });
+    assert!(bounds(&mut h, &icon(pane)).is_none());
+}

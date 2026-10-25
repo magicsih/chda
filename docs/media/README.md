@@ -11,3 +11,11 @@ The 1.0.25 media refresh uses the actual macOS development app and a disposable 
 Native originals were captured at 1440 × 880. Workspace exports remove the top 34 pixels containing the OS window-sharing controls, then scale to 1200 × 705. The hero and GIF add a separate 45-pixel caption band. The Git tree image crops unused lower space and keeps its established 1920 × 990 export size. Pages also uses sidebar and palette close-ups and a social preview derived from the same originals.
 
 Marketing media and demo events are separate from native release acceptance evidence. Regenerate feature sections and the catalog screenshot copies with `python3 scripts/sync-product-docs.py`.
+
+The project-sections capture uses implementation candidate `829bfa0` in an
+isolated native macOS development app. `sidebar-sections.png` is a 280 × 424
+rectangular crop of its 960 × 640 native frame, with no inserted text or
+compositing. Work, Experiments, Starred and Uncategorized use disposable sample
+projects; archive-notes is a plain folder. The original native frame and crop
+manifest are retained with the development verification artifacts. The
+generator preserves small captures at their intrinsic width.

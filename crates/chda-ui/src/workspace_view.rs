@@ -139,8 +139,6 @@ fn clamp_sidebar(width: f32, window_width: f32) -> f32 {
     width.clamp(SIDEBAR_MIN, max)
 }
 
-const ICON_SIDEBAR: &str = "\u{f10aa}"; // nf-md-dock_left
-
 /// Answers when an added folder is not a git repository.
 const INIT_GIT: &str = "Initialize git";
 const ADD_AS_FOLDER: &str = "Add as folder";
@@ -171,6 +169,10 @@ pub(crate) struct CloseFocus {
 #[derive(Clone, Debug)]
 pub(crate) enum MenuAction {
     CopySelection(PaneId),
+    EditProjectSection(Option<String>),
+    DeleteProjectSection(String),
+    PickRepoSection(PathBuf),
+    AssignRepoSection(PathBuf, Option<String>),
     /// Focus a child agent's exact pane, or show its details.
     ChildDetails(chda_core::agents::ChildActivity),
     /// Run a `[[commands]]` entry in this worktree.
@@ -399,9 +401,6 @@ pub struct WorkspaceView {
     config_problem: Option<String>,
     /// The theme palette shows a theme that is not the configured one yet.
     previewing_theme: bool,
-    /// Frame of the "working" spinner, and whether its timer runs.
-    spin: u32,
-    pub(crate) spinning: bool,
     /// The pane "go to waiting agent" jumped to last, to cycle onwards.
     last_jump: Option<PaneId>,
     /// Window frame, kept for session restore.
@@ -424,6 +423,7 @@ impl WorkspaceView {
         cx: &mut Context<Self>,
     ) -> Self {
         let config = env.load_config();
+        cx.set_reduce_motion(config.reduce_motion || env.system.reduce_motion());
         let appearance = appearance_of(window.appearance());
         let ghostty = chda_config::load(&env.ghostty, config.theme.as_deref(), appearance);
         let settings = Settings::from_ghostty(&ghostty);
@@ -570,8 +570,6 @@ impl WorkspaceView {
             config_watcher: None,
             config_problem: None,
             previewing_theme: false,
-            spin: 0,
-            spinning: false,
             last_jump: None,
             bounds: None,
             quitting: false,
@@ -651,6 +649,7 @@ impl WorkspaceView {
             this.watch_repo(&repo);
         }
         this.sync_starred(cx);
+        this.sync_project_sections(cx);
         this.install_hooks();
         // Command shortcuts are app-wide; entries that cannot run are
         // reported once, as a config reload would.
@@ -978,6 +977,7 @@ impl WorkspaceView {
         let sidebar_was_visible = self.sidebar_visible;
         self.sidebar_visible = config.sidebar_visible;
         self.config = config;
+        cx.set_reduce_motion(self.config.reduce_motion || self.env.system.reduce_motion());
         for repo in added {
             self.sidebar.update(cx, |s, _| {
                 s.model.add_repo(repo.clone());
@@ -988,12 +988,45 @@ impl WorkspaceView {
         let order = self.config.repos.clone();
         self.sidebar.update(cx, |s, _| s.model.order_repos(&order));
         self.sync_starred(cx);
+        self.sync_project_sections(cx);
         if self.sidebar_visible && !sidebar_was_visible {
             self.refresh_all(cx);
         }
         self.sync_panes(cx);
         self.sync_title(window, cx);
         self.sidebar.update(cx, |_, cx| cx.notify());
+    }
+
+    fn sync_project_sections(&mut self, cx: &mut Context<Self>) {
+        self.sidebar
+            .update(cx, |s, cx| s.sync_sections(&self.config, cx));
+    }
+
+    fn assign_repo_section(
+        &mut self,
+        repo: &Path,
+        section: Option<&str>,
+        append: bool,
+        cx: &mut Context<Self>,
+    ) {
+        if self.config.assign_repo_section(repo, section) {
+            if append {
+                self.config.repos.retain(|r| r != repo);
+                let index = self
+                    .config
+                    .repos
+                    .iter()
+                    .rposition(|r| self.config.repo_section(r) == section)
+                    .map_or(self.config.repos.len(), |i| i + 1);
+                self.config.repos.insert(index, repo.to_path_buf());
+            }
+            self.save_config();
+            self.sync_project_sections(cx);
+            self.sidebar.update(cx, |s, cx| {
+                s.model.order_repos(&self.config.repos);
+                cx.notify();
+            });
+        }
     }
 
     /// Show the config's STARRED list in the sidebar.
@@ -1113,7 +1146,7 @@ impl WorkspaceView {
                 {
                     if let Some(session) = report.session.clone() {
                         self.capture_launch_session(pane, &report.provider, &session);
-                        self.ws.set_agent_session(
+                        let identity_changed = self.ws.set_agent_session(
                             pane,
                             Some(AgentSessionRef {
                                 agent: report.provider.clone(),
@@ -1122,6 +1155,9 @@ impl WorkspaceView {
                             }),
                         );
                         self.initializing_panes.remove(&pane);
+                        if identity_changed {
+                            self.sync_panes(cx);
+                        }
                     }
                     let usage = !report.windows.is_empty();
                     let mut quotas = self.status_bar.quotas.borrow_mut();
@@ -1441,6 +1477,7 @@ impl WorkspaceView {
                 }),
             ) {
                 self.save_session();
+                self.sync_panes(cx);
             }
             return;
         }
@@ -1470,7 +1507,7 @@ impl WorkspaceView {
         });
         let pane = self.pane_for_event(&ev, cx);
         // Only a pane the hook named itself is sure to hold the conversation.
-        if let Some(p) = ev.pane.and_then(|raw| self.ws.pane_by_raw(raw))
+        let identity_changed = if let Some(p) = ev.pane.and_then(|raw| self.ws.pane_by_raw(raw))
             && (!ev.session_id.is_empty() || event == AgentEvent::SessionEnd)
         {
             let conversation = (event != AgentEvent::SessionEnd).then(|| AgentSessionRef {
@@ -1478,10 +1515,14 @@ impl WorkspaceView {
                 session: ev.session_id.clone(),
                 cwd: Some(ev.cwd.clone()),
             });
-            if self.ws.set_agent_session(p, conversation) {
+            let changed = self.ws.set_agent_session(p, conversation);
+            if changed {
                 self.save_session();
             }
-        }
+            changed
+        } else {
+            false
+        };
         let pane_changed = pane.is_some_and(|p| {
             if continuing_session {
                 return false;
@@ -1523,6 +1564,9 @@ impl WorkspaceView {
             }
         });
         if worktree_changed.is_none() && !pane_changed {
+            if identity_changed {
+                self.sync_panes(cx);
+            }
             return;
         }
         let worktree = worktree_changed
@@ -1701,59 +1745,11 @@ impl WorkspaceView {
     }
 
     /// After agent status or focus changes: refresh the activity list, the
-    /// Dock badge and the spinner timer.
+    /// Dock badge.
     fn sync_attention(&mut self, cx: &mut Context<Self>) {
         self.sync_panes(cx);
         self.env.system.set_badge(self.ws.unseen_waiting());
-        self.ensure_spin(cx);
         cx.notify();
-    }
-
-    fn any_working(&self) -> bool {
-        self.ws
-            .tabs()
-            .iter()
-            .flat_map(|t| t.panes())
-            .filter_map(|p| self.ws.pane(p)?.agent.as_ref())
-            .any(|a| a.status == AgentStatus::Working)
-    }
-
-    /// Run the spinner timer while some agent works; it stops by itself.
-    /// The tab bar and the sidebar redraw on each frame, nothing else does.
-    fn ensure_spin(&mut self, cx: &mut Context<Self>) {
-        if self.spinning || cx.reduce_motion() || !self.any_working() {
-            return;
-        }
-        self.spinning = true;
-        cx.spawn(async move |this, cx| {
-            loop {
-                cx.background_executor()
-                    .timer(crate::status_icon::SPIN_STEP)
-                    .await;
-                let keep = this.update(cx, |view, cx| {
-                    let working = view.any_working() && !cx.reduce_motion();
-                    view.spin = if working {
-                        view.spin.wrapping_add(1)
-                    } else {
-                        0
-                    };
-                    let (spin, visible) = (view.spin, view.sidebar_visible);
-                    view.sidebar.update(cx, |s, cx| {
-                        s.spin = spin;
-                        if visible {
-                            cx.notify();
-                        }
-                    });
-                    cx.notify();
-                    view.spinning = working;
-                    working
-                });
-                if !keep.unwrap_or(false) {
-                    break;
-                }
-            }
-        })
-        .detach();
     }
 
     /// Cycle through panes whose agent waits for input, then those with a
@@ -1795,7 +1791,6 @@ impl WorkspaceView {
     /// The sidebar's status dot for a worktree: jump to the pane that needs
     /// attention there, else any of its panes, else open one.
     fn jump_to_worktree_agent(&mut self, path: &Path, window: &mut Window, cx: &mut Context<Self>) {
-        self.expand_project(cx);
         let panes: Vec<PaneId> = self
             .sidebar
             .read(cx)
@@ -1909,7 +1904,6 @@ impl WorkspaceView {
                 if !self.sidebar_visible {
                     self.toggle_sidebar(&ToggleSidebar, window, cx);
                 }
-                self.expand_project(cx);
                 self.sidebar
                     .update(cx, |s, cx| s.select(&target.worktree, cx));
             }
@@ -2073,6 +2067,11 @@ impl WorkspaceView {
                 cx.background_executor().timer(Duration::from_secs(1)).await;
                 if this
                     .update(cx, |view, cx| {
+                        // Reuse the activity clock to follow OS accessibility changes.
+                        // Animation frames themselves never notify the workspace.
+                        cx.set_reduce_motion(
+                            view.config.reduce_motion || view.env.system.reduce_motion(),
+                        );
                         if view.env.collect_telemetry {
                             cx.notify();
                         }
@@ -3459,12 +3458,10 @@ impl WorkspaceView {
                         this.toggle_sidebar(&ToggleSidebar, window, cx);
                         cx.notify();
                     }))
-                    .child(
-                        div()
-                            .font_family(crate::fonts::SYMBOLS_FAMILY)
-                            .text_base()
-                            .child(optical(ICON_SIDEBAR)),
-                    ),
+                    .child(crate::ui_icon::icon(
+                        crate::ui_icon::Icon::Sidebar,
+                        fg.opacity(if self.sidebar_visible { 0.8 } else { 0.55 }),
+                    )),
             )
             .child(
                 div()
@@ -3668,9 +3665,8 @@ impl WorkspaceView {
         });
     }
 
-    /// Explicit PROJECT navigation (a worktree, its status dot, STARRED, Go to
-    /// worktree, a new worktree's tab, a notification without its pane) shows
-    /// a collapsed PROJECT section again. Session clicks and tab switches never do.
+    /// Adding a project or editing a section shows the Projects container.
+    /// Navigation and background refreshes preserve its disclosure.
     fn expand_project(&mut self, cx: &mut Context<Self>) {
         if self.agent_request || !self.config.project_collapsed {
             return;
@@ -4275,9 +4271,25 @@ impl WorkspaceView {
     /// Add a folder the user picked or dropped: its repository, or, when it
     /// is in none, ask whether to run `git init` or add it as it is.
     fn register_repo(&mut self, path: PathBuf, window: &mut Window, cx: &mut Context<Self>) {
+        self.register_repo_in_section(path, None, window, cx);
+    }
+
+    fn register_repo_in_section(
+        &mut self,
+        path: PathBuf,
+        section: Option<Option<String>>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
         match chda_core::repo_of(&path) {
-            Ok(repo) => self.add_and_reveal(repo, cx),
-            Err(_) if path.is_dir() => self.ask_about_folder(path, window, cx),
+            Ok(repo) => {
+                self.add_to_sidebar(repo.clone(), cx);
+                if let Some(section) = section {
+                    self.assign_repo_section(&repo, section.as_deref(), false, cx);
+                }
+                self.reveal_added(&repo, cx);
+            }
+            Err(_) if path.is_dir() => self.ask_about_folder(path, section, window, cx),
             Err(e) => {
                 self.notify_error(format!("{}: {e}", path.display()));
                 cx.notify();
@@ -4285,7 +4297,13 @@ impl WorkspaceView {
         }
     }
 
-    fn ask_about_folder(&mut self, path: PathBuf, window: &mut Window, cx: &mut Context<Self>) {
+    fn ask_about_folder(
+        &mut self,
+        path: PathBuf,
+        section: Option<Option<String>>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
         let name = path
             .file_name()
             .map(|n| n.to_string_lossy().into_owned())
@@ -4307,8 +4325,14 @@ impl WorkspaceView {
                 return;
             };
             let _ = this.update(cx, |view, cx| match choice {
-                0 => view.init_git(path, cx),
-                1 => view.add_and_reveal(path, cx),
+                0 => view.init_git_in_section(path, section, cx),
+                1 => {
+                    view.add_to_sidebar(path.clone(), cx);
+                    if let Some(section) = section {
+                        view.assign_repo_section(&path, section.as_deref(), false, cx);
+                    }
+                    view.reveal_added(&path, cx);
+                }
                 _ => {}
             });
         })
@@ -4318,6 +4342,16 @@ impl WorkspaceView {
     /// `git init` in a folder, then show it as a repository: added to the
     /// sidebar if it is not there yet, refreshed if it was a plain folder.
     fn init_git(&mut self, path: PathBuf, cx: &mut Context<Self>) {
+        let section = Some(self.config.repo_section(&path).map(str::to_owned));
+        self.init_git_in_section(path, section, cx);
+    }
+
+    fn init_git_in_section(
+        &mut self,
+        path: PathBuf,
+        section: Option<Option<String>>,
+        cx: &mut Context<Self>,
+    ) {
         let operation = self.env.windows.borrow().update.operation();
         let task = cx.background_spawn({
             let path = path.clone();
@@ -4329,10 +4363,17 @@ impl WorkspaceView {
             let _ = this.update(cx, |view, cx| match result {
                 Ok(()) => {
                     if view.sidebar.read(cx).model.is_folder(&path) {
+                        if let Some(section) = section {
+                            view.assign_repo_section(&path, section.as_deref(), false, cx);
+                        }
                         view.refresh_repo(path.clone(), cx);
                         view.reveal_added(&path, cx);
                     } else {
-                        view.add_and_reveal(path, cx);
+                        view.add_to_sidebar(path.clone(), cx);
+                        if let Some(section) = section {
+                            view.assign_repo_section(&path, section.as_deref(), false, cx);
+                        }
+                        view.reveal_added(&path, cx);
                     }
                 }
                 Err(e) => {
@@ -4352,11 +4393,6 @@ impl WorkspaceView {
     /// Add a folder the user chose, then make it the sidebar's selection.
     /// Repositories an agent's request registers for itself go through
     /// [`Self::add_to_sidebar`] alone and never take the selection.
-    fn add_and_reveal(&mut self, repo: PathBuf, cx: &mut Context<Self>) {
-        self.add_to_sidebar(repo.clone(), cx);
-        self.reveal_added(&repo, cx);
-    }
-
     /// Select a folder the user just added, whether or not it was already
     /// listed, and bring it into view in PROJECT: the section and the
     /// folder's group open if collapsed, and PROJECT scrolls only as far as
@@ -4375,6 +4411,7 @@ impl WorkspaceView {
             added
         });
         if added {
+            self.config.repo_sections.remove(&repo);
             self.config.repos.push(repo.clone());
             self.save_config();
             self.watch_repo(&repo);
@@ -4576,6 +4613,10 @@ impl WorkspaceView {
                         items: vec![
                             (INIT_GIT.into(), MenuAction::InitGit(repo.clone())),
                             ("Refresh".into(), MenuAction::RefreshRepo(repo.clone())),
+                            (
+                                "Move to section…".into(),
+                                MenuAction::PickRepoSection(repo.clone()),
+                            ),
                             ("Remove from sidebar".into(), MenuAction::RemoveRepo(repo)),
                         ],
                     });
@@ -4606,12 +4647,81 @@ impl WorkspaceView {
                             MenuAction::ViewGitTree(repo.clone()),
                         ),
                         ("Refresh".into(), MenuAction::RefreshRepo(repo.clone())),
+                        (
+                            "Move to section…".into(),
+                            MenuAction::PickRepoSection(repo.clone()),
+                        ),
                         ("Remove from sidebar".into(), MenuAction::RemoveRepo(repo)),
                     ],
                 });
             }
             SidebarEvent::NewWorktree(repo) => self.open_sheet(repo, window, cx),
             SidebarEvent::ResumeSessions(picks) => self.resume_sessions(picks, window, cx),
+            SidebarEvent::EditSection(id) => {
+                self.expand_project(cx);
+                self.sidebar
+                    .update(cx, |s, cx| s.edit_section(id, window, cx));
+            }
+            SidebarEvent::SaveSection { id, name } => {
+                if let Some(id) = id {
+                    if let Some(section) =
+                        self.config.project_sections.iter_mut().find(|s| s.id == id)
+                    {
+                        section.name = name;
+                    }
+                } else {
+                    self.config.add_project_section(&name);
+                }
+                self.save_config();
+                self.sync_project_sections(cx);
+            }
+            SidebarEvent::SectionCollapsed { id, collapsed } => {
+                if let Some(id) = id {
+                    if let Some(section) =
+                        self.config.project_sections.iter_mut().find(|s| s.id == id)
+                    {
+                        section.collapsed = collapsed;
+                    }
+                } else {
+                    self.config.uncategorized_collapsed = collapsed;
+                }
+                self.save_config();
+                self.refocus_terminal(window, cx);
+            }
+            SidebarEvent::SectionMenu(id, position) => {
+                let mut items = vec![("New section…".into(), MenuAction::EditProjectSection(None))];
+                if let Some(id) = id {
+                    items.push((
+                        "Rename section…".into(),
+                        MenuAction::EditProjectSection(Some(id.clone())),
+                    ));
+                    items.push((
+                        "Delete section (move projects to Uncategorized)".into(),
+                        MenuAction::DeleteProjectSection(id),
+                    ));
+                }
+                self.context_menu = Some(ContextMenu { position, items });
+            }
+            SidebarEvent::MoveSection { from, to } => {
+                let sections = &mut self.config.project_sections;
+                if let (Some(a), Some(b)) = (
+                    sections.iter().position(|s| s.id == from),
+                    sections.iter().position(|s| s.id == to),
+                ) {
+                    let section = sections.remove(a);
+                    sections.insert(b, section);
+                    self.save_config();
+                    self.sync_project_sections(cx);
+                }
+            }
+            SidebarEvent::AssignRepoSection { repo, section } => {
+                self.assign_repo_section(&repo, section.as_deref(), true, cx)
+            }
+            SidebarEvent::AddReposToSection(paths, section) => {
+                for path in paths {
+                    self.register_repo_in_section(path, Some(section.clone()), window, cx);
+                }
+            }
             SidebarEvent::AddRepo => self.add_repo(&AddRepo, window, cx),
             SidebarEvent::ShowIdenticon(identity, position) => {
                 self.open_identicon(identity, position, window, cx)
@@ -4646,6 +4756,8 @@ impl WorkspaceView {
             }
             SidebarEvent::Unstar { repo, branch } => self.set_starred(&repo, &branch, false, cx),
             SidebarEvent::MoveRepo { from, to } => {
+                let section = self.config.repo_section(&to).map(str::to_owned);
+                self.assign_repo_section(&from, section.as_deref(), false, cx);
                 let order = self.sidebar.update(cx, |s, cx| {
                     let moved = s.model.move_repo(&from, &to);
                     cx.notify();
@@ -4744,7 +4856,6 @@ impl WorkspaceView {
             cx.notify();
             return;
         }
-        self.expand_project(cx);
         let wanted = self
             .sidebar
             .read(cx)
@@ -4798,7 +4909,6 @@ impl WorkspaceView {
                                 return false;
                             }
                             other_window.activate_window();
-                            view.expand_project(cx);
                             view.focus_active(other_window, cx);
                             true
                         })
@@ -5248,6 +5358,37 @@ impl WorkspaceView {
         }
         self.context_menu = None;
         match action {
+            MenuAction::EditProjectSection(id) => {
+                self.expand_project(cx);
+                self.sidebar
+                    .update(cx, |s, cx| s.edit_section(id, window, cx));
+            }
+            MenuAction::DeleteProjectSection(id) => {
+                if self.config.remove_project_section(&id) {
+                    self.save_config();
+                    self.sync_project_sections(cx);
+                }
+            }
+            MenuAction::AssignRepoSection(repo, section) => {
+                self.assign_repo_section(&repo, section.as_deref(), true, cx)
+            }
+            MenuAction::PickRepoSection(repo) => {
+                let mut items = vec![(
+                    "Uncategorized".into(),
+                    MenuAction::AssignRepoSection(repo.clone(), None),
+                )];
+                items.extend(self.config.project_sections.iter().map(|s| {
+                    (
+                        s.name.clone(),
+                        MenuAction::AssignRepoSection(repo.clone(), Some(s.id.clone())),
+                    )
+                }));
+                items.push(("New section…".into(), MenuAction::EditProjectSection(None)));
+                self.context_menu = Some(ContextMenu {
+                    position: window.mouse_position(),
+                    items,
+                });
+            }
             MenuAction::ChildDetails(child) => self.open_child_details(child, window, cx),
             MenuAction::MovePane { pane, to } => self.move_pane(pane, to, window, cx),
             MenuAction::RunCommand(path, name) => {
@@ -5669,6 +5810,8 @@ impl WorkspaceView {
                     cx.notify();
                 });
                 self.config.repos.retain(|r| *r != repo);
+                self.config.repo_sections.remove(&repo);
+                self.sync_project_sections(cx);
                 self.save_config();
             }
             MenuAction::Unavailable(_) => {}
@@ -6037,12 +6180,12 @@ impl WorkspaceView {
             ("Toggle sidebar", "cmd-b", "sidebar"),
             (
                 "Expand all repositories",
-                "every worktree list in PROJECT",
+                "every worktree list in Projects",
                 "expand_repos",
             ),
             (
                 "Collapse all repositories",
-                "every worktree list in PROJECT",
+                "every worktree list in Projects",
                 "collapse_repos",
             ),
             ("Add repository...", "cmd-shift-o", "add_repo"),
@@ -6756,9 +6899,8 @@ impl WorkspaceView {
                 });
                 // Tab icons are measured against the bar; the active tab's
                 // own background lies further from the text color.
-                let dot = agent.map(|a| {
-                    crate::status_icon::status_icon(Some(a.status), self.spin, fg, bar_bg)
-                });
+                let dot =
+                    agent.map(|a| crate::status_icon::status_icon(Some(a.status), fg, bar_bg));
                 let drag = moves::TabDrag {
                     tab: tab_id,
                     title: title.clone(),

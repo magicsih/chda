@@ -82,10 +82,10 @@ def generated_files(root):
         alt = html.escape(shot["alt"], quote=True)
         label = html.escape(shot["label"])
         readme += ["", '<p align="center">',
-                   f'  <img src="docs/media/{name}" alt="{alt}" width="880">', "</p>"]
+                   f'  <img src="docs/media/{name}" alt="{alt}" width="{min(width, 880)}">', "</p>"]
         escaped_name = html.escape(name, quote=True)
         site += [f'      <a href="{escaped_name}"><img src="{escaped_name}" loading="lazy" '
-                 f'decoding="async" alt="{alt}" width="{width}" height="{height}">'
+                 f'decoding="async" alt="{alt}" width="{width}" height="{height}" style="max-width: {width}px">'
                  f'<span>{label}</span></a>']
         files[root / "docs/site" / name] = data
     site += ["    </div>"]

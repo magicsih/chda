@@ -1,0 +1,23 @@
+{
+  "schema": 1,
+  "level": "L3",
+  "redesign": true,
+  "environments": ["dev"],
+  "baseline_sha": "8512a802c5c3eaffba1c2c1179c8aa58646ec3a3",
+  "approved_by": "Owner implementation request incorporating the supplied plan, 2026-10-25",
+  "release": {"markets": [], "endpoint": "merged-pr", "deploy": false},
+  "checks": [
+    "Config round-trip, legacy flat lists, stable section ids, missing ids, deletion",
+    "Input-driven creation, rename, project and section drag, menu move, collapse, delete and restart",
+    "Empty sections, plain-folder choice, section drops, repeated default addition, editor visibility",
+    "Navigation reveal, collapsed Projects, background disclosure and scroll retention",
+    "Unknown and 59s/60s ages, Working hiding, output resumption, fixed row metrics",
+    "Pending identity to confirmed identity, neutral click isolation, 199px and 200px widths",
+    "Three independent native review rounds: dark, light/narrow/many projects, animation and reduced motion",
+    "cargo fmt --all --check",
+    "cargo clippy --workspace --all-targets -- -D warnings",
+    "cargo test --workspace",
+    "Product docs generation and desktop/narrow Pages rendering",
+    "CI macOS and Linux tests, Windows build and required PR checks"
+  ]
+}

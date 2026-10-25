@@ -98,6 +98,16 @@ pub struct StarredBranch {
     pub branch: String,
 }
 
+/// One user-owned level beneath Projects. Its id survives renaming.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub struct ProjectSection {
+    pub id: String,
+    pub name: String,
+    #[serde(default)]
+    pub collapsed: bool,
+}
+
 /// A `[[commands]]` entry: a command line run through the login shell in a
 /// worktree, e.g. `name = "lazygit"`, `run = "lazygit"`, `open = "floating"`,
 /// `key = "cmd-shift-g"`. Every field is optional here so one broken entry
@@ -142,6 +152,11 @@ pub struct ChdaConfig {
     pub repo_preparation: BTreeMap<PathBuf, PreparationPlan>,
     /// Registered repositories (main worktree paths).
     pub repos: Vec<PathBuf>,
+    /// Section order. `repos` remains the registration and project-order list.
+    pub project_sections: Vec<ProjectSection>,
+    /// Main repository path to section id; missing ids mean Uncategorized.
+    pub repo_sections: BTreeMap<PathBuf, String>,
+    pub uncategorized_collapsed: bool,
     /// Template with `{repo_parent}`, `{repo_name}` and `{branch}`.
     pub worktree_path_template: String,
     pub default_action: DefaultAction,
@@ -159,6 +174,8 @@ pub struct ChdaConfig {
     pub sidebar_width: u32,
     pub sidebar_visible: bool,
     pub notifications: bool,
+    /// Keep non-essential animations still; macOS also follows the OS setting.
+    pub reduce_motion: bool,
     /// Command that opens a cmd-clicked file path, with `{file}`, `{line}`
     /// and `{column}` placeholders, e.g. `zed {file}:{line}:{column}`.
     /// Unset opens the file with the system's default application.
@@ -194,6 +211,9 @@ impl Default for ChdaConfig {
         Self {
             repo_preparation: BTreeMap::new(),
             repos: Vec::new(),
+            project_sections: Vec::new(),
+            repo_sections: BTreeMap::new(),
+            uncategorized_collapsed: false,
             worktree_path_template: DEFAULT_WORKTREE_TEMPLATE.into(),
             default_action: DefaultAction::Terminal,
             tab_title: TabTitle::Branch,
@@ -207,6 +227,7 @@ impl Default for ChdaConfig {
             sidebar_width: 280,
             sidebar_visible: true,
             notifications: true,
+            reduce_motion: false,
             editor: None,
             restore_session: true,
             restore_agents: true,
@@ -280,6 +301,64 @@ impl ChdaConfig {
         }
         let text = toml::to_string_pretty(self).map_err(io::Error::other)?;
         fs::write(path, text)
+    }
+
+    pub fn repo_section(&self, repo: &Path) -> Option<&str> {
+        let id = self.repo_sections.get(repo)?;
+        self.project_sections
+            .iter()
+            .any(|s| s.id == *id)
+            .then_some(id.as_str())
+    }
+
+    pub fn add_project_section(&mut self, name: &str) -> Option<String> {
+        let name = name.trim();
+        if name.is_empty() {
+            return None;
+        }
+        // No external ids or paths: a locally unique, persistent identity.
+        let stamp = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_nanos();
+        let mut suffix = 0;
+        let id = loop {
+            let id = format!("section-{stamp:x}-{suffix}");
+            if self.project_sections.iter().all(|s| s.id != id) {
+                break id;
+            }
+            suffix += 1;
+        };
+        self.project_sections.push(ProjectSection {
+            id: id.clone(),
+            name: name.into(),
+            collapsed: false,
+        });
+        Some(id)
+    }
+
+    pub fn assign_repo_section(&mut self, repo: &Path, section: Option<&str>) -> bool {
+        if !self.repos.iter().any(|r| r == repo)
+            || section.is_some_and(|id| !self.project_sections.iter().any(|s| s.id == id))
+        {
+            return false;
+        }
+        match section {
+            Some(id) => {
+                self.repo_sections
+                    .insert(repo.to_path_buf(), id.into())
+                    .as_deref()
+                    != Some(id)
+            }
+            None => self.repo_sections.remove(repo).is_some(),
+        }
+    }
+
+    pub fn remove_project_section(&mut self, id: &str) -> bool {
+        let before = self.project_sections.len();
+        self.project_sections.retain(|s| s.id != id);
+        self.repo_sections.retain(|_, section| section != id);
+        before != self.project_sections.len()
     }
 
     /// The `[[commands]]` that can run, and one problem per entry that
@@ -381,6 +460,35 @@ pub fn editor_command(
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn project_sections_keep_identity_order_and_unclassified_projects() {
+        let mut c = super::ChdaConfig::parse("repos = ['/a', '/b', '/folder']").unwrap();
+        assert!(c.project_sections.is_empty());
+        let first = c.add_project_section(" Work ").unwrap();
+        let second = c.add_project_section("Personal").unwrap();
+        assert!(c.add_project_section("  ").is_none());
+        assert_ne!(first, second);
+        assert!(c.assign_repo_section(std::path::Path::new("/b"), Some(&first)));
+        assert!(c.assign_repo_section(std::path::Path::new("/folder"), Some(&first)));
+        assert!(!c.assign_repo_section(std::path::Path::new("/missing"), Some(&first)));
+        assert!(!c.assign_repo_section(std::path::Path::new("/a"), Some("missing")));
+        c.project_sections[0].name = "Renamed".into();
+        c.project_sections[0].collapsed = true;
+        assert_eq!(
+            c.repo_section(std::path::Path::new("/b")),
+            Some(first.as_str())
+        );
+        c.project_sections.swap(0, 1);
+        let serialized = toml::to_string(&c).unwrap();
+        let mut again = super::ChdaConfig::parse(&serialized).unwrap();
+        assert_eq!(c, again);
+        assert!(again.remove_project_section(&first));
+        assert_eq!(again.repo_section(std::path::Path::new("/b")), None);
+        assert_eq!(again.repos, c.repos);
+        again.repo_sections.insert("/a".into(), "deleted-id".into());
+        assert_eq!(again.repo_section(std::path::Path::new("/a")), None);
+        assert!(!again.assign_repo_section(std::path::Path::new("/folder"), None));
+    }
     use super::*;
 
     #[test]

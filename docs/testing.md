@@ -49,19 +49,19 @@ journey, exact-candidate three-round plan and independent visual/IME gates.
 | S3 Resuming several sessions side by side, newest message first | `worktrees::picked_sessions_resume_in_one_tab` | #30 |
 | S4 Finishing: merge into main and clean up | `worktrees::merge_into_main_and_clean_up` | |
 | Split agent rows keep their own branch labels and focus their exact pane; worktree navigation reveals clipped rows with minimal movement and repository context | `sidebar::split_agent_rows_keep_their_own_labels_and_follow_pane_focus`, `sidebar::navigation_reveals_only_clipped_rows_and_keeps_repository_context` | #149 |
-| The repository name pinned at PROJECT's top acts like its header: a click collapses it and keeps the header in view, a right-click opens its menu and hover shows its path; the worktree row underneath gets no click, menu or tooltip, and the wheel still scrolls PROJECT | `sidebar::sticky_repository_header_acts_on_its_repository` | #149 |
-| Sessions and PROJECT scroll independently with both overflowing, the 40% cap and a 180px sidebar; session clicks and tab switches (split-pane agents included) never scroll Sessions and reveal the branch only inside PROJECT, leaving a collapsed PROJECT collapsed; status changes, output and child updates keep rows and offsets; PROJECT navigation (row, Go to worktree, STARRED, notification fallback, collapsed section) leaves Sessions alone; closing a background terminal or idle pane keeps both offsets; a reveal scheduled while PROJECT is collapsed is dropped once the highlight moves; a row click keeps the pane's terminal scroll position; startup restore reveals the focused worktree only inside PROJECT; `sessions-collapsed` persists and migrates the earlier keys | `sessions::*`, `chda-core` `sessions::tests::*`, `chda-config` `legacy_session_collapse_keys_migrate` | #182 |
+| The repository name pinned at Projects's top acts like its header: a click collapses it and keeps the header in view, a right-click opens its menu and hover shows its path; the worktree row underneath gets no click, menu or tooltip, and the wheel still scrolls Projects | `sidebar::sticky_repository_header_acts_on_its_repository` | #149 |
+| Sessions and Projects scroll independently with both overflowing, the 40% cap and a 180px sidebar; session clicks and tab switches (split-pane agents included) never scroll Sessions and reveal the branch only inside Projects, leaving a collapsed Projects collapsed; status changes, output and child updates keep rows and offsets; Projects navigation (row, Go to worktree, Starred, notification fallback, collapsed section) leaves Sessions alone; closing a background terminal or idle pane keeps both offsets; a reveal scheduled while Projects is collapsed is dropped once the highlight moves; a row click keeps the pane's terminal scroll position; startup restore reveals the focused worktree only inside Projects; `sessions-collapsed` persists and migrates the earlier keys | `sessions::*`, `chda-core` `sessions::tests::*`, `chda-config` `legacy_session_collapse_keys_migrate` | #182 |
 | Reports without a pane for a live agent's worktree, before or after its own events, keep its Sessions row, place, life and status; the worktree's attention still follows them | `sessions::reports_without_a_pane_after_the_live_agents_own_keep_its_row`, `sessions::reports_without_a_pane_before_the_live_agents_own_keep_its_row` | #205 |
-| PROJECT groups repositories, folders and starred entries, with independent persisted collapse; plain terminal rows follow live agents and close the exact tab | `sidebar::project_is_a_peer_section_and_collapses_without_hiding_sessions`, `sidebar::plain_terminal_rows_follow_agents_and_close_the_exact_background_tab` | #151, #152, #154, #182 |
+| Projects groups repositories, folders and starred entries, with independent persisted collapse; plain terminal rows follow live agents and close the exact tab | `sidebar::project_is_a_peer_section_and_collapses_without_hiding_sessions`, `sidebar::plain_terminal_rows_follow_agents_and_close_the_exact_background_tab` | #151, #152, #154, #182 |
 | Header buttons, `+ repo` and Alias / Branch, show their own tooltips and never the section toggle's, also when the pointer arrives from the toggle with its tooltip showing | `sidebar::header_buttons_show_their_own_tooltips` | #152, #182 |
-| One PROJECT button collapses every repository while any is open and expands them all otherwise; mixed states, the hint after each click, the menu action, retained per-repository toggles, a separate section toggle, terminal focus and restart | `sidebar::one_button_collapses_or_expands_every_repository` | #242 |
+| One Projects button collapses every repository while any is open and expands them all otherwise; mixed states, the hint after each click, the menu action, retained per-repository toggles, a separate section toggle, terminal focus and restart | `sidebar::one_button_collapses_or_expands_every_repository` | #242 |
 | Status icons keep their hues and at least 3:1 contrast on the sidebar, selected and waiting rows, the tab bar and the active tab in light and dark themes | `sidebar_view::tests::status_icons_stand_out_three_to_one_in_light_and_dark_themes` | #182 |
-| Session rows stay in tab order, activity ages and saved alias/branch toggle | `sidebar::session_rows_stay_in_place_and_labels_toggle_persistently`, `sidebar::activity_ages_refresh_without_output_or_session_writes` | #100 |
-| Session identicons: Claude Code and Codex rows with one display name get different pictures made from the provider and the full id (the same id under two providers, ids differing only in the last character), whole inside rows as tall as a row without one; at 200px the label gives up only the picture's room and stays on one line, and at the 180px minimum there are no pictures and rows are exactly as before; a picture survives status changes, focus changes and resuming under the same id | `identicons::same_named_sessions_get_their_own_picture_in_rows_as_tall_as_before`, `identicons::a_conversation_keeps_its_picture_and_a_narrow_sidebar_its_label`, `sidebar_view::tests::identicons_stand_out_three_to_one_in_light_and_dark_themes` (every hue, four themes, 3:1 on plain, selected, waiting and hovered rows), `chda-core` `identicon::tests::*`, `sessions::tests::claude_and_codex_rows_keep_their_conversation_through_every_change` | #272 |
+| Session rows stay in tab order, quiet minute-granularity activity ages and saved alias/branch toggle | `sidebar::session_rows_stay_in_place_and_labels_toggle_persistently`, `sidebar::activity_ages_refresh_without_output_or_session_writes` | #100 |
+| Session identicons: pending ids use noninteractive neutral slots until confirmed; Claude Code and Codex rows with one display name get different pictures made from the provider and the full id (the same id under two providers, ids differing only in the last character), whole inside rows as tall as a row without one; at 200px the label gives up only the picture's room and stays on one line, and at the 180px minimum there are no pictures and rows are exactly as before; a picture survives status changes, focus changes and resuming under the same id | `identicons::an_unconfirmed_identity_is_neutral_until_the_provider_reports_its_id`, `identicons::same_named_sessions_get_their_own_picture_in_rows_as_tall_as_before`, `identicons::a_conversation_keeps_its_picture_and_a_narrow_sidebar_its_label`, `sidebar_view::tests::identicons_stand_out_three_to_one_in_light_and_dark_themes` (every hue, four themes, 3:1 on plain, selected, waiting and hovered rows), `chda-core` `identicon::tests::*`, `sessions::tests::claude_and_codex_rows_keep_their_conversation_through_every_change` | #272 |
 | Clicking a picture opens a 160px preview with the provider and full id, activates no session and moves no row or scroll offset; Escape, Close and a click outside close it, reach nothing underneath and return typing to the pane that had it; the row's name still focuses its session | `identicons::clicking_a_picture_enlarges_it_and_activates_nothing` | #272 |
 | The palette's Show session icon opens the focused session's preview from the keyboard, is absent for a session without a picture, and Escape returns typing to the same pane | `identicons::the_palette_shows_the_focused_sessions_picture_from_the_keyboard` | #272 |
-| Repository drag reordering: down/up, collapsed groups, no click on drag, drops outside or on itself, external folder drop afterwards, refresh and restart; dragging near PROJECT's edges scrolls only PROJECT | `reorder::dragging_repository_headers_reorders_and_persists`, `reorder::dragging_near_project_edges_scrolls_only_project` | #130, #182 |
-| STARRED branches: menu starring without duplicates, same branch name in two repositories, navigation and tab reuse, one-click unstar, missing worktree, restart | `starred::starred_branches_navigate_unstar_in_one_click_and_persist` | #129 |
+| Repository drag reordering: down/up, collapsed groups, no click on drag, drops outside or on itself, external folder drop afterwards, refresh and restart; dragging near Projects's edges scrolls only Projects | `reorder::dragging_repository_headers_reorders_and_persists`, `reorder::dragging_near_project_edges_scrolls_only_project` | #130, #182 |
+| Starred branches: menu starring without duplicates, same branch name in two repositories, navigation and tab reuse, one-click unstar, missing worktree, restart | `starred::starred_branches_navigate_unstar_in_one_click_and_persist` | #129 |
 | Background panes: agent title spinners and output redraw neither the workspace nor the sidebar; status changes still do | `redraw::background_title_spinners_and_output_do_not_redraw_the_window` | #134 |
 | Live idle agents: pane focus, mixed-state splits, targeted process cleanup, exit and restored-history exclusion | `idle_agents::*`, `agents::directly_typed_codex_tracks_each_turn_and_exits` | #112 |
 | S5 Plain terminal: tabs, splits, focus | `workspace::new_tab_split_and_close` | |
@@ -107,9 +107,9 @@ journey, exact-candidate three-round plan and independent visual/IME gates.
 | Drop files on a pane: quoted paths pasted, even right after typing | `paths::dropped_files_paste_as_quoted_paths` | #17 |
 | Drop a folder on the sidebar: added as a repository | `paths::dropped_folder_on_the_sidebar_becomes_a_repository` | #17 |
 | Add repository when the system cannot open the folder picker: one error, unchanged typed input, config and tabs; silent cancel; retry from the shortcut, palette and menu, several folders at once | `folders::add_repository_survives_an_unavailable_picker_and_retries`, `platform::tests::path_prompt_results_map_to_folder_picks`, `platform::macos::tests::*` | #181 |
-| The folder just added, from the picker (several at once: the last is selected) or a drop on the sidebar, is the selected row and fully in PROJECT's view even far below it, the terminal keeps its tab, pane and directory, and a later refresh keeps the selection | `folders::an_added_folder_is_selected_and_in_view_at_once` | #264 |
-| A collapsed PROJECT section and a collapsed group open for a folder added again, and the change is saved | `folders::adding_a_folder_opens_a_collapsed_project_and_group` | #264 |
-| A cancelled picker, a picker that cannot open and a declined plain folder keep the selection and PROJECT's scroll position | `folders::a_cancelled_or_failed_add_keeps_the_selection_and_scroll` | #264 |
+| The folder just added, from the picker (several at once: the last is selected) or a drop on the sidebar, is the selected row and fully in Projects's view even far below it, the terminal keeps its tab, pane and directory, and a later refresh keeps the selection | `folders::an_added_folder_is_selected_and_in_view_at_once` | #264 |
+| A collapsed Projects section and a collapsed group open for a folder added again, and the change is saved | `folders::adding_a_folder_opens_a_collapsed_project_and_group` | #264 |
+| A cancelled picker, a picker that cannot open and a declined plain folder keep the selection and Projects's scroll position | `folders::a_cancelled_or_failed_add_keeps_the_selection_and_scroll` | #264 |
 | Palette arrow keys choose a later entry | `palette::arrow_keys_choose_a_later_entry` | |
 | Theme picker: preview, restore on escape, save on enter | `palette::theme_picker_previews_restores_and_saves` | |
 | A light and dark theme pair follows the window's appearance in every pane without a restart; the dark picker previews and saves only its half | `palette::a_theme_pair_follows_the_appearance_and_each_picker_keeps_the_other_half`, `chda-config` `tests::theme_pairs_follow_the_appearance_and_keep_the_other_half` | #247 |
@@ -135,7 +135,7 @@ journey, exact-candidate three-round plan and independent visual/IME gates.
 | An Unknown report, a child missing from one poll or a failed Codex poll never replaces Turn complete or Ended, and a failed poll keeps Working too; the summary counts unknown and waiting children on their own instead of claiming 0 working | `children::codex_poll_failure_keeps_child_states`, `chda-agents` `children::tests::unknown_observation_keeps_turn_completion`, `children::tests::unknown_observation_keeps_ended`, `sidebar_view::tests::child_counts_never_claim_zero_working_and_keep_waiting_apart` | #161, #246 |
 | Close buttons on single/inactive tabs; working/waiting splits, Cancel/Esc focus, real process shutdown and surviving tabs | `closing::tab_close_confirms_inactive_working_splits_and_preserves_cancelled_processes` | #108 |
 | `exit` closes the tab and shows the nearest tab of the same branch, else no tab with the branch still selected; + opens a terminal there; cmd-w follows the same rule, an emptied window stays and cmd-w then closes it | `closing::exit_closes_the_tab_and_the_window_stays_on_its_branch` | |
-| Stop and close from the pane shortcut or a tab's close button, and a pane whose process ends, clear the Working status a Claude Code (hooks) or Codex (titles) agent gave its worktree in PROJECT and Update branch; another working pane in the branch keeps it | `closing::stop_and_close_clears_the_worktree_working_status` | #154 |
+| Stop and close from the pane shortcut or a tab's close button, and a pane whose process ends, clear the Working status a Claude Code (hooks) or Codex (titles) agent gave its worktree in Projects and Update branch; another working pane in the branch keeps it | `closing::stop_and_close_clears_the_worktree_working_status` | #154 |
 | Pane-only shortcut, completed/idle/shell immediate close, graph close, stable target ids and final restore cleanup | `closing::shortcut_closes_only_the_focused_pane_and_review_does_not_confirm`, `closing::immediate_tab_close_covers_shell_review_idle_and_graphs`, `closing::confirmed_close_never_targets_a_replacement_tab`, `closing::last_graph_shortcut_removes_restore_data` | #108 |
 
 Not covered by scenarios: anything visual (colors, layout, rendering), since
@@ -179,6 +179,35 @@ clearing and return to the shell. Shell-level
 tests cover bash 3.2, installed newer bash, zsh and fish, including user aliases
 or functions and nonzero CLI exit codes. These do not execute a paid model
 request or prove the layout emitted by every Codex version.
+
+### Linux readiness segmentation regression
+
+A full-frame Tesseract sparse-text pass can return no words even while the
+startup prompt is visible. Readiness retains its original PNG and OCR result,
+then reads an unscaled crop of the current terminal's connected background.
+It still requires the exact normalized rendered marker, and retains crop
+bounds, OCR words and the source SHA-256. A process or window alone never
+counts as ready. `tests/linux-native/test_native_visual.py` runs inside every
+native package test container and covers empty full-frame segmentation,
+missing markers and missing terminal pixels.
+
+## Project sections and status waves
+
+`project_sections::*` drives section creation, rename, collapse, project and
+section dragging, context-menu moves, deletion and restart through actual
+GPUI input. It includes empty targets, default and section folder drops, plain
+folder confirmation, preserving an existing classification, editor visibility,
+legacy flat config, navigation disclosure and background scroll retention.
+`chda-config` tests persistent ids, orphan references and round-trips.
+`session_activity_age` tests unknown and future timestamps, 59s/60s, minute and
+hour boundaries, and Working. `config::reduce_motion_applies_live_without_changing_sessions`
+checks live settings; native review checks the actual still/animated pixels.
+
+`status_icon` tests sequential brightness and a full-strength dot on every
+phase. GPUI schedules those frames directly; the workspace has no spinner-frame
+timer. The existing activity tick follows macOS Reduce Motion read-only.
+Application control and child-state marks are vectors. The notification bell
+retains its history behavior and unread count without requiring a font glyph.
 
 ## Measurements
 
@@ -300,7 +329,7 @@ require the final macOS candidate check.
 
 ### Stable sidebar activation and split identification
 
-`scenarios::sidebar_interactions` dispatches actual mouse down/up events for PROJECT and STARRED one-click activation, double- and triple-click deduplication, right-click dismissal and Open terminal, existing-pane reuse and agent-default launch gating. Background hook delivery keeps the row under the pointer and a captured menu target unchanged. Two synthetic agents run in real PTYs at 18pt and 640×600; #1/#2 bounds are checked at 280px and 180px. Shell prompt redraw is excluded from this synthetic agent fixture by running a process before the hooks. Native visual acceptance remains separate. Core tests cover main/name/path order and detached rows; color tests preserve hues and enforce 3:1 for marks and 4.5:1 for diff text across normal/selected/waiting/hovered light and dark surfaces. Existing PR palette tests remain unchanged.
+`scenarios::sidebar_interactions` dispatches actual mouse down/up events for Projects and Starred one-click activation, double- and triple-click deduplication, right-click dismissal and Open terminal, existing-pane reuse and agent-default launch gating. Background hook delivery keeps the row under the pointer and a captured menu target unchanged. Two synthetic agents run in real PTYs at 18pt and 640×600; #1/#2 bounds are checked at 280px and 180px. Shell prompt redraw is excluded from this synthetic agent fixture by running a process before the hooks. Native visual acceptance remains separate. Core tests cover main/name/path order and detached rows; color tests preserve hues and enforce 3:1 for marks and 4.5:1 for diff text across normal/selected/waiting/hovered light and dark surfaces. Existing PR palette tests remain unchanged.
 
 
 ## 0.1.23 selection-scoped sharing

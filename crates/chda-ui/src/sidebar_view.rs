@@ -1,6 +1,9 @@
 //! The repository / worktree / session tree with git and agent badges.
 
 use std::cell::Cell;
+
+mod project_sections;
+use project_sections::{DropTargets, SectionEditor};
 use std::path::{Path, PathBuf};
 use std::rc::Rc;
 
@@ -10,7 +13,7 @@ use crate::workspace_view::blend;
 use chda_core::{
     AgentStatus, CheckState, DiffSummary, GitBadges, Identicon, PaneId, PrInfo, PrState, RepoEntry,
     SessionEntry, SessionIdentity, SessionKey, SessionKind, SessionRow, Sidebar, TabId,
-    WorktreeEntry, activity_age, relative_age,
+    WorktreeEntry, activity_age, relative_age, session_activity_age,
 };
 use gpui::{
     AnyElement, App, ClickEvent, Context, ElementId, EventEmitter, FocusHandle, Focusable, Hsla,
@@ -31,6 +34,25 @@ pub enum SidebarEvent {
     /// pane each.
     ResumeSessions(Vec<SessionPick>),
     AddRepo,
+    EditSection(Option<String>),
+    SaveSection {
+        id: Option<String>,
+        name: String,
+    },
+    SectionMenu(Option<String>, Point<Pixels>),
+    SectionCollapsed {
+        id: Option<String>,
+        collapsed: bool,
+    },
+    MoveSection {
+        from: String,
+        to: String,
+    },
+    AssignRepoSection {
+        repo: PathBuf,
+        section: Option<String>,
+    },
+    AddReposToSection(Vec<PathBuf>, Option<String>),
     /// Enlarge a conversation's identicon in a popover at a window position.
     ShowIdenticon(SessionIdentity, Point<Pixels>),
     /// Restore typing focus after a repository disclosure changes.
@@ -38,7 +60,7 @@ pub enum SidebarEvent {
     /// Repositories were collapsed or expanded: save the state and restore
     /// typing focus.
     ReposCollapsed,
-    /// Folders were dropped on the sidebar: add them as repositories.
+    /// Folders dropped outside a section use the default destination.
     AddRepos(Vec<PathBuf>),
     /// Open a URL (a pull request badge was clicked).
     OpenUrl(String),
@@ -160,20 +182,7 @@ impl AgentLabel {
     }
 }
 
-/// Badge icons, from the bundled Symbols Nerd Font Mono. Each badge's
-/// tooltip says what it means.
-const ICON_MERGED: &str = "\u{f062d}"; // nf-md-source_merge
-const ICON_MISSING: &str = "\u{f0dcc}"; // nf-md-folder_alert
-const ICON_PANES: &str = "\u{f04e9}"; // nf-md-tab
-const ICON_DELETING: &str = "\u{f0a7a}"; // nf-md-trash_can_outline
-const ICON_BUSY: &str = "\u{eb19}"; // nf-cod-loading
-const ICON_COLLAPSE_ALL: &str = "\u{f054e}"; // nf-md-unfold_less_horizontal
-const ICON_EXPAND_ALL: &str = "\u{f054f}"; // nf-md-unfold_more_horizontal
-
-/// A badge icon in the icon font.
-fn icon_text(icon: &'static str) -> gpui::Div {
-    div().font_family(crate::fonts::SYMBOLS_FAMILY).child(icon)
-}
+use crate::ui_icon::{Icon, icon as vector_icon};
 
 /// A session's usage for its tooltip: the token breakdown, the cost at API
 /// list prices, and the plan limit when the agent reports one. Empty when
@@ -237,6 +246,11 @@ pub(crate) type Focus = (TabId, Option<PaneId>);
 
 pub struct SidebarView {
     pub model: Sidebar,
+    pub(crate) project_sections: Vec<chda_config::ProjectSection>,
+    repo_sections: std::collections::BTreeMap<PathBuf, String>,
+    uncategorized_collapsed: bool,
+    section_editor: Option<SectionEditor>,
+    section_drop_targets: DropTargets,
     pub(crate) child_groups: Vec<ChildGroup>,
     pub active_label: chda_config::ActiveLabel,
     pub(crate) sessions_collapsed: bool,
@@ -264,8 +278,6 @@ pub struct SidebarView {
     selection_from_row: bool,
     /// The active tab and its focused pane; Sessions highlights their row.
     pub(crate) focus: Option<Focus>,
-    /// Frame of the "working" spinner, advanced by the workspace.
-    pub(crate) spin: u32,
     /// Sessions scrolls only when the user scrolls it.
     pub(crate) sessions_scroll: gpui::ScrollHandle,
     /// PROJECT, which navigation reveals worktrees in.
@@ -483,10 +495,6 @@ impl ChildCounts {
 
 /// Below this Sessions width a child summary keeps one icon.
 const NARROW_SESSIONS: f32 = 240.0;
-const ICON_CHILD_WORKING: &str = "\u{f040a}"; // nf-md-play
-const ICON_CHILD_WAITING: &str = "\u{f03e4}"; // nf-md-pause
-const ICON_CHILD_UNKNOWN: &str = "\u{f0625}"; // nf-md-help_circle_outline
-const ICON_CHILDREN: &str = "\u{f04c1}"; // nf-md-source_fork
 
 impl SidebarView {
     /// `color` deepened or lightened within its hue to stand out 3:1 on the
@@ -542,14 +550,14 @@ impl SidebarView {
             .iter()
             .find(|a| a.id == group.agent)
             .map_or_else(|| group.agent.clone(), |a| a.name.clone());
-        let count = |icon: &'static str, n: usize, color: Hsla| {
+        let count = |icon: Icon, n: usize, color: Hsla| {
             div()
                 .flex()
                 .flex_shrink_0()
                 .items_center()
                 .gap_0p5()
                 .text_color(color)
-                .child(icon_text(icon))
+                .child(vector_icon(icon, color))
                 .child(n.to_string())
         };
         let waiting = status_color(Some(AgentStatus::WaitingInput), self.fg, self.bg);
@@ -577,27 +585,27 @@ impl SidebarView {
                 // It stands in for the agent's badge, in the agent's color
                 // unless a child waits.
                 let (icon, color) = if counts.waiting > 0 {
-                    (ICON_CHILD_WAITING, waiting)
+                    (Icon::Waiting, waiting)
                 } else if counts.working > 0 {
-                    (ICON_CHILD_WORKING, agent_color)
+                    (Icon::Working, agent_color)
                 } else if counts.unknown > 0 {
-                    (ICON_CHILD_UNKNOWN, agent_color)
+                    (Icon::Unknown, agent_color)
                 } else {
-                    (ICON_CHILDREN, agent_color)
+                    (Icon::Children, agent_color)
                 };
-                d.flex_shrink_0().child(icon_text(icon).text_color(color))
+                d.flex_shrink_0().child(vector_icon(icon, color))
             })
             .when(!narrow && counts.waiting > 0, |d| {
-                d.child(count(ICON_CHILD_WAITING, counts.waiting, waiting))
+                d.child(count(Icon::Waiting, counts.waiting, waiting))
             })
             .when(!narrow && counts.show_working(), |d| {
-                d.child(count(ICON_CHILD_WORKING, counts.working, fg.opacity(0.7)))
+                d.child(count(Icon::Working, counts.working, fg.opacity(0.7)))
             })
             .when(!narrow && counts.unknown > 0, |d| {
-                d.child(count(ICON_CHILD_UNKNOWN, counts.unknown, fg.opacity(0.7)))
+                d.child(count(Icon::Unknown, counts.unknown, fg.opacity(0.7)))
             })
             .when(!narrow, |d| {
-                d.child(count(ICON_CHILDREN, counts.total, fg.opacity(0.5)))
+                d.child(count(Icon::Children, counts.total, fg.opacity(0.5)))
             })
             .into_any_element()
     }
@@ -615,7 +623,14 @@ impl SidebarView {
         cx: &mut Context<Self>,
     ) -> gpui::Div {
         let fg = self.fg;
-        let selector = format!("{}-section-toggle", name.to_lowercase());
+        let selector = format!(
+            "{}-section-toggle",
+            if name == "Projects" {
+                "project".into()
+            } else {
+                name.to_lowercase()
+            }
+        );
         div()
             .flex_none()
             .flex()
@@ -643,8 +658,30 @@ impl SidebarView {
                     }))
                     .on_click(cx.listener(move |_, _, _, cx| cx.emit(toggle.clone())))
                     .child(div().w_3().child(if collapsed { "▸" } else { "▾" }))
-                    .child(div().flex_1().child(name))
-                    .child(div().px_1().child(count.to_string())),
+                    .child(
+                        div()
+                            .flex_1()
+                            .min_w_0()
+                            .overflow_hidden()
+                            .whitespace_nowrap()
+                            .text_ellipsis()
+                            .child(name),
+                    )
+                    .child(
+                        div()
+                            .id(ElementId::Name(
+                                format!("{}-count", name.to_lowercase()).into(),
+                            ))
+                            .rounded_sm()
+                            .px_1()
+                            .ml_1()
+                            .bg(fg.opacity(0.1))
+                            .tooltip(crate::tooltip::text(format!(
+                                "{count} {}",
+                                name.to_lowercase()
+                            )))
+                            .child(count.to_string()),
+                    ),
             )
             .child(
                 div()
@@ -660,6 +697,11 @@ impl SidebarView {
     pub fn new(fg: Hsla, bg: Hsla, agents: Vec<AgentLabel>, cx: &mut Context<Self>) -> Self {
         Self {
             model: Sidebar::new(),
+            project_sections: Vec::new(),
+            repo_sections: Default::default(),
+            uncategorized_collapsed: false,
+            section_editor: None,
+            section_drop_targets: Default::default(),
             child_groups: Vec::new(),
             active_label: Default::default(),
             sessions_collapsed: false,
@@ -675,7 +717,6 @@ impl SidebarView {
             selected_starred: None,
             selection_from_row: false,
             focus: None,
-            spin: 0,
             sessions_scroll: gpui::ScrollHandle::new(),
             project_scroll: gpui::ScrollHandle::new(),
             reveal: None,
@@ -743,6 +784,7 @@ impl SidebarView {
             if let Some(r) = self.model.repo_mut(&repo) {
                 r.collapsed = false;
             }
+            self.reveal_project_section(&repo, cx);
             self.reveal = Some(path);
         }
         cx.notify();
@@ -773,6 +815,7 @@ impl SidebarView {
             .model
             .repo_mut(path)
             .is_some_and(|r| std::mem::take(&mut r.collapsed));
+        self.reveal_project_section(path, cx);
         self.select_row(Some(path.to_path_buf()), None, cx);
         self.reveal = Some(path.to_path_buf());
         if reopened {
@@ -797,14 +840,22 @@ impl SidebarView {
     /// bottom edge, so a target outside the visible part can be reached.
     /// Sessions never scrolls for a drag.
     fn scroll_while_dragging(&mut self, e: &gpui::DragMoveEvent<RepoDrag>, cx: &mut Context<Self>) {
-        let position = e.event.position;
-        if position.x < e.bounds.left() || position.x > e.bounds.right() {
+        self.scroll_project_drag(e.event.position, e.bounds, cx);
+    }
+
+    fn scroll_project_drag(
+        &mut self,
+        position: Point<Pixels>,
+        bounds: gpui::Bounds<Pixels>,
+        cx: &mut Context<Self>,
+    ) {
+        if position.x < bounds.left() || position.x > bounds.right() {
             return;
         }
         let edge = gpui::px(DRAG_SCROLL_EDGE);
-        let step = if position.y < e.bounds.top() + edge {
+        let step = if position.y < bounds.top() + edge {
             gpui::px(12.0)
-        } else if position.y > e.bounds.bottom() - edge {
+        } else if position.y > bounds.bottom() - edge {
             gpui::px(-12.0)
         } else {
             return;
@@ -1116,7 +1167,7 @@ impl SidebarView {
                     }))
                     .child("\u{2605}"),
             )
-            .child(status_icon(dot, self.spin, self.fg, self.bg))
+            .child(status_icon(dot, self.fg, self.bg))
             .child(
                 div()
                     .flex_1()
@@ -1280,16 +1331,16 @@ impl SidebarView {
         }
         if let Some(busy) = &wt.busy {
             let icon = if busy == "deleting" {
-                ICON_DELETING
+                Icon::Trash
             } else {
-                ICON_BUSY
+                Icon::Busy
             };
             badges.push(
                 div()
                     .id(badge_id("busy"))
                     .text_color(fg.opacity(0.6))
                     .tooltip(crate::tooltip::text(busy_tooltip(busy)))
-                    .child(icon_text(icon))
+                    .child(vector_icon(icon, fg.opacity(0.6)))
                     .into_any_element(),
             );
         }
@@ -1301,7 +1352,7 @@ impl SidebarView {
                     .tooltip(crate::tooltip::text(
                         "Folder missing: the worktree's folder was deleted outside git. Right-click to prune it.",
                     ))
-                    .child(icon_text(ICON_MISSING))
+                    .child(vector_icon(Icon::Missing, sidebar_mark_color(gpui::rgb(0xf38ba8).into(), fg, self.bg, 3.0)))
                     .into_any_element(),
             );
         }
@@ -1318,7 +1369,10 @@ impl SidebarView {
                     .tooltip(crate::tooltip::text(
                         "Merged: the branch's commits are in the default branch.",
                     ))
-                    .child(icon_text(ICON_MERGED))
+                    .child(vector_icon(
+                        Icon::Merged,
+                        sidebar_mark_color(gpui::rgb(0xa6e3a1).into(), fg, self.bg, 3.0),
+                    ))
                     .into_any_element(),
             );
         }
@@ -1336,7 +1390,7 @@ impl SidebarView {
                         "{} in this worktree.",
                         plural(n, "open pane", "open panes")
                     )))
-                    .child(icon_text(ICON_PANES))
+                    .child(vector_icon(Icon::Panes, fg.opacity(0.6)))
                     .child(n.to_string())
                     .into_any_element(),
             );
@@ -1421,7 +1475,7 @@ impl SidebarView {
                             cx.emit(SidebarEvent::JumpToAgent(path.clone()));
                         })
                     })
-                    .child(status_icon(dot, self.spin, self.fg, self.bg)),
+                    .child(status_icon(dot, self.fg, self.bg)),
             )
             .child({
                 let label = match wt.note_title() {
@@ -1883,6 +1937,11 @@ impl SidebarView {
         let key = row.key;
         let id = session_id(key);
         let picture = row.identity.clone().filter(|_| self.pictures_fit());
+        let picture_slot = self.pictures_fit()
+            && row
+                .agent
+                .as_deref()
+                .is_some_and(|a| ["claude", "codex"].contains(&a));
         let agent_label = row
             .agent
             .as_ref()
@@ -1980,10 +2039,20 @@ impl SidebarView {
                     })
                     .flex_shrink_0()
                     .tooltip(crate::tooltip::text(row.status_label()))
-                    .child(status_icon(row.status, self.spin, self.fg, self.bg)),
+                    .child(status_icon(row.status, self.fg, self.bg)),
             )
             .when_some(picture.clone(), |d, identity| {
                 d.child(self.render_row_identicon(&id, identity, cx))
+            })
+            .when(picture_slot && picture.is_none(), |d| {
+                d.child(div().id(ElementId::Name(format!("session-identity-pending:{id}").into()))
+                    .debug_selector({ let id = id.clone(); move || format!("session-identity-pending-{id}") })
+                    .flex_shrink_0().size(gpui::px(ROW_IDENTICON_CELL * 5.0))
+                    .flex().items_center().justify_center()
+                    .tooltip(crate::tooltip::text("Session ID not yet available. Claude Code and Codex pictures appear once the provider reports a session ID."))
+                    .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
+                    .on_click(|_, _, cx| cx.stop_propagation())
+                    .child(crate::ui_icon::icon(crate::ui_icon::Icon::Session, fg.opacity(0.5))))
             })
             // The label keeps a readable width; what the row is gives way first.
             .child(
@@ -1993,7 +2062,7 @@ impl SidebarView {
                         move || format!("session-label-{id}")
                     })
                     .flex_1()
-                    .min_w(gpui::px(if picture.is_some() {
+                    .min_w(gpui::px(if picture_slot {
                         SESSION_LABEL_MIN - ROW_IDENTICON_SLOT
                     } else {
                         SESSION_LABEL_MIN
@@ -2048,6 +2117,7 @@ impl SidebarView {
             .child(
                 div()
                     .id(ElementId::Name(format!("activity-age:{id}").into()))
+                    .debug_selector({ let id = id.clone(); move || format!("activity-age-{id}") })
                     .w(gpui::px(34.0))
                     .flex_shrink_0()
                     .text_right()
@@ -2067,7 +2137,7 @@ impl SidebarView {
                         }
                         text
                     }))
-                    .child(activity_age(now, row.last_activity)),
+                    .child(session_activity_age(row.status, now, row.last_activity)),
             )
             .when_some(close, |d, (selector, tip, event)| {
                 d.child(
@@ -2095,13 +2165,6 @@ impl SidebarView {
 impl Render for SidebarView {
     fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let fg = self.fg;
-        let repos: Vec<AnyElement> = self
-            .model
-            .repos
-            .iter()
-            .enumerate()
-            .map(|(i, r)| self.render_repo(i, r, cx))
-            .collect();
         let empty = self.model.repos.is_empty();
         let now = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
@@ -2213,16 +2276,20 @@ impl Render for SidebarView {
                 cx.stop_propagation();
                 cx.emit(SidebarEvent::AddRepo);
             }))
-            .child("+ repo");
+            .child(if self.width.is_some_and(|w| w < 240.0) {
+                "+"
+            } else {
+                "+ repo"
+            });
         // One bulk disclosure for every repository; with fewer than two
         // the repository's own header does the same.
         let collapse = self.any_repo_expanded();
         let sidebar = cx.entity().downgrade();
         let bulk = (self.model.repos.len() >= 2).then(|| {
             let icon = if collapse {
-                ICON_COLLAPSE_ALL
+                Icon::CollapseAll
             } else {
-                ICON_EXPAND_ALL
+                Icon::ExpandAll
             };
             // GPUI may build a hint from the frame before a click, so its
             // text comes from the state at that moment.
@@ -2250,17 +2317,32 @@ impl Render for SidebarView {
                     crate::tooltip::dismiss(window, cx);
                     s.set_all_repos_collapsed(collapse, cx);
                 }))
-                .child(icon_text(icon))
+                .child(vector_icon(icon, fg.opacity(0.6)))
         });
         let project_buttons = div()
             .flex()
             .items_center()
             .gap_1()
             .children(bulk)
+            .child(
+                div()
+                    .id("add-section")
+                    .debug_selector(|| "add-section".into())
+                    .px_1()
+                    .rounded_sm()
+                    .cursor_pointer()
+                    .hover(|s| s.bg(fg.opacity(0.15)))
+                    .tooltip(crate::tooltip::text("Create a project section"))
+                    .on_click(cx.listener(|_, _, _, cx| {
+                        cx.stop_propagation();
+                        cx.emit(SidebarEvent::EditSection(None));
+                    }))
+                    .child(vector_icon(Icon::SectionAdd, fg.opacity(0.7))),
+            )
             .child(add_repo);
         let project_header = self
             .section_header(
-                "PROJECT",
+                "Projects",
                 self.project_collapsed,
                 self.model.repos.len(),
                 SidebarEvent::ToggleProject,
@@ -2270,47 +2352,7 @@ impl Render for SidebarView {
             .mt_1()
             .border_t_1()
             .border_color(fg.opacity(0.1));
-        let paths: Vec<_> = self
-            .model
-            .repos
-            .iter()
-            .map(|r| (r.path.clone(), r.collapsed))
-            .collect();
-        let scroll = self.project_scroll.clone();
-        let current = self.sticky_repo.clone();
-        let overhang = self.sticky_overhang.clone();
-        let this = cx.entity().downgrade();
-        let repo_groups = div()
-            .flex()
-            .flex_col()
-            .children(repos)
-            .on_children_prepainted(move |bounds, window, _| {
-                let viewport = scroll.bounds();
-                let next = paths
-                    .iter()
-                    .zip(bounds)
-                    .find_map(|((path, collapsed), bounds)| {
-                        (!collapsed
-                            && bounds.top() < viewport.top()
-                            && bounds.bottom() > viewport.top() + gpui::px(REPO_CONTEXT_HEIGHT))
-                        .then(|| {
-                            overhang.set(viewport.top() - bounds.top());
-                            path.clone()
-                        })
-                    });
-                if next == current {
-                    return;
-                }
-                let this = this.clone();
-                window.on_next_frame(move |_, cx| {
-                    let _ = this.update(cx, |s, cx| {
-                        if s.sticky_repo != next {
-                            s.sticky_repo = next;
-                            cx.notify();
-                        }
-                    });
-                });
-            });
+        let repo_groups = self.render_project_groups(cx);
         let project = div().flex().flex_col().pl_2()
             .when(!starred.is_empty(), |d| {
                 d.child(
@@ -2320,7 +2362,7 @@ impl Render for SidebarView {
                         .pb_1()
                         .text_xs()
                         .text_color(fg.opacity(0.6))
-                        .child("STARRED"),
+                        .child("Starred"),
                 )
                 .children(starred)
                 .child(div().h(gpui::px(6.0)))
@@ -2419,6 +2461,7 @@ impl Render for SidebarView {
                             this.scroll_while_dragging(e, cx)
                         }),
                     )
+                    .on_drag_move(cx.listener(|this, e, _, cx| this.scroll_section_drag(e, cx)))
                     .child(project),
             )
             .when_some(sticky, |d, repo| {
@@ -2485,14 +2528,31 @@ impl Render for SidebarView {
             .child(sessions_header)
             .when(!self.sessions_collapsed, |d| d.child(sessions_list))
             .child(project_header)
+            .children(self.render_section_editor())
             .when(!self.project_collapsed, |d| d.child(project_region))
             .child(crate::external_drop::catcher(
                 cx.entity(),
                 |v: &mut Self| &mut v.dragged,
-                |_, paths, _, cx| {
+                |this, paths, window, cx| {
                     let folders: Vec<PathBuf> = paths.into_iter().filter(|p| p.is_dir()).collect();
                     if !folders.is_empty() {
-                        cx.emit(SidebarEvent::AddRepos(folders));
+                        let position = window.mouse_position();
+                        let target = if this.project_collapsed
+                            || !this.project_scroll.bounds().contains(&position)
+                        {
+                            None
+                        } else {
+                            this.section_drop_targets
+                                .borrow()
+                                .iter()
+                                .find(|(_, bounds)| bounds.contains(&position))
+                                .map(|(id, _)| id.clone())
+                        };
+                        if let Some(section) = target {
+                            cx.emit(SidebarEvent::AddReposToSection(folders, section));
+                        } else {
+                            cx.emit(SidebarEvent::AddRepos(folders));
+                        }
                     }
                 },
             ))
