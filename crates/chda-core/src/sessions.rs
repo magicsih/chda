@@ -189,7 +189,10 @@ pub fn session_rows(
                 identity: info
                     .agent_session
                     .as_ref()
-                    .filter(|s| IDENTICON_PROVIDERS.contains(&s.agent.as_str()))
+                    .filter(|s| {
+                        IDENTICON_PROVIDERS.contains(&s.agent.as_str())
+                            && !s.session.trim().is_empty()
+                    })
                     .map(|s| SessionIdentity {
                         provider: s.agent.clone(),
                         id: s.session.clone(),
@@ -359,13 +362,15 @@ mod tests {
         };
         let rows = |ws: &Workspace, label| session_rows(ws, &Sidebar::new(), label);
 
-        // Until the provider reports a session id there is nothing to draw.
+        // Until the provider reports a session id there is no picture identity.
         assert!(
             rows(&ws, ActiveLabel::Branch)
                 .iter()
                 .all(|r| r.identity.is_none())
         );
 
+        ws.set_agent_session(panes[1], Some(session("claude", "")));
+        assert!(rows(&ws, ActiveLabel::Branch)[0].identity.is_none());
         ws.set_agent_session(panes[1], Some(session("claude", "claude-session-1")));
         ws.set_agent_session(panes[2], Some(session("codex", "codex-session-1")));
         let first = rows(&ws, ActiveLabel::Branch);

@@ -836,17 +836,17 @@ fn project_navigation_does_not_scroll_sessions(cx: &mut TestAppContext) {
     });
     check(h, &target, expected, "a notification for a closed pane");
 
-    // Explicit PROJECT navigation expands a collapsed PROJECT section.
+    // Navigation retains a collapsed Projects container.
     click(h, "project-section-toggle");
     assert!(bounds(h, "repo-0").is_none());
     let target = worktrees[20].clone();
     navigate(h, SidebarEvent::OpenWorktree(target.clone()));
     settle(h);
     assert!(
-        bounds(h, "repo-0").is_some(),
-        "PROJECT opens for its own navigation"
+        bounds(h, "repo-0").is_none(),
+        "Projects stays collapsed during navigation"
     );
-    assert!(!h.read(|v, _| v.config.project_collapsed));
+    assert!(h.read(|v, _| v.config.project_collapsed));
     assert_eq!(offsets(h).0, kept);
     assert_eq!(selected(h).as_ref(), Some(&target));
 

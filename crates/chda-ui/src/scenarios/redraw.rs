@@ -84,3 +84,87 @@ fn background_title_spinners_and_output_do_not_redraw_the_window(cx: &mut TestAp
     emit(&mut h, TerminalEvent::Title("codex | Ready".into()));
     assert!(workspace.get() > before, "a finished turn shows");
 }
+
+#[gpui::test]
+fn session_age_waits_a_minute_hides_work_and_clears_when_output_resumes(cx: &mut TestAppContext) {
+    use super::sidebar::draw_sidebar_frame;
+    use chda_core::agents::HookKind;
+    use chda_core::{AgentStatus, SessionKey, session_activity_age};
+    let mut h = Harness::open(cx, "quiet-session-age", |_| {});
+    h.wait_prompt();
+    h.run(
+        "stty -echo; printf '\nquiet-age-ready\n'; exec cat",
+        "\nquiet-age-ready\n",
+    );
+    let terminal = h.focused_terminal();
+    let pane = h.read(|v, _| v.ws.focused_pane().unwrap());
+    let home = h.home.home.clone();
+    h.hook(Some(pane.raw()), &home, HookKind::WaitingInput);
+    h.wait_for("waiting row", |v, cx| {
+        v.sidebar
+            .read(cx)
+            .model
+            .sessions
+            .iter()
+            .any(|r| r.key == SessionKey::Pane(pane) && r.status == Some(AgentStatus::WaitingInput))
+    });
+    let now = now_ms();
+    let age = |h: &Harness| {
+        h.read(|v, cx| {
+            let row = v
+                .sidebar
+                .read(cx)
+                .model
+                .sessions
+                .iter()
+                .find(|r| r.key == SessionKey::Pane(pane))
+                .unwrap();
+            session_activity_age(row.status, now, row.last_activity)
+        })
+    };
+    let slot: &'static str =
+        Box::leak(format!("activity-age-pane-{}", pane.raw()).into_boxed_str());
+    draw_sidebar_frame(&mut h);
+    let size = h.cx.debug_bounds(slot).unwrap().size;
+    for (at, expected) in [
+        (0, ""),
+        (now - 59_999, ""),
+        (now - 60_000, "1m"),
+        (now - 120_000, "2m"),
+        (now - 3_600_000, "1h"),
+    ] {
+        h.cx.update(|_, cx| terminal.update(cx, |_, cx| cx.emit(TerminalEvent::Activity(at))));
+        h.cx.run_until_parked();
+        assert_eq!(age(&h), expected);
+        draw_sidebar_frame(&mut h);
+        assert_eq!(h.cx.debug_bounds(slot).unwrap().size, size);
+    }
+    h.hook(Some(pane.raw()), &home, HookKind::PromptSubmitted);
+    h.wait_for("working row", |v, cx| {
+        v.sidebar
+            .read(cx)
+            .model
+            .sessions
+            .iter()
+            .any(|r| r.key == SessionKey::Pane(pane) && r.status == Some(AgentStatus::Working))
+    });
+    assert_eq!(age(&h), "");
+    h.hook(Some(pane.raw()), &home, HookKind::WaitingInput);
+    h.wait_for("waiting again", |v, cx| {
+        v.sidebar
+            .read(cx)
+            .model
+            .sessions
+            .iter()
+            .any(|r| r.key == SessionKey::Pane(pane) && r.status == Some(AgentStatus::WaitingInput))
+    });
+    h.type_text("output-resumed");
+    h.keys("enter");
+    h.wait_for("actual resumed output", |v, cx| {
+        v.focused_text(cx).contains("output-resumed")
+            && v.ws.pane(pane).unwrap().last_activity >= now
+    });
+    assert_eq!(age(&h), "");
+    draw_sidebar_frame(&mut h);
+    assert_eq!(h.cx.debug_bounds(slot).unwrap().size, size);
+}

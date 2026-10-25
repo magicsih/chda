@@ -270,7 +270,7 @@ fn context_menu_removes_an_existing_tooltip_and_hover_recovers(cx: &mut TestAppC
     let header = h.cx.debug_bounds("project-section-toggle").unwrap();
     let at = gpui::point(header.left() + gpui::px(24.), header.center().y);
     hover(&mut h, at);
-    assert!(tip(&mut h, "tooltip: Collapse PROJECT"));
+    assert!(tip(&mut h, "tooltip: Collapse Projects"));
     // A menu opened by any source must also remove already rendered hints.
     h.cx.update(|window, cx| {
         h.view.update(cx, |v, cx| {
@@ -280,12 +280,12 @@ fn context_menu_removes_an_existing_tooltip_and_hover_recovers(cx: &mut TestAppC
     h.cx.run_until_parked();
     assert!(h.cx.debug_bounds("menu-item-0").is_some());
     assert!(
-        !tip(&mut h, "tooltip: Collapse PROJECT"),
+        !tip(&mut h, "tooltip: Collapse Projects"),
         "a stale tooltip covers the menu"
     );
     hover(&mut h, at);
     assert!(
-        !tip(&mut h, "tooltip: Collapse PROJECT"),
+        !tip(&mut h, "tooltip: Collapse Projects"),
         "hover during the menu is suppressed"
     );
     h.keys("escape");
@@ -298,7 +298,7 @@ fn context_menu_removes_an_existing_tooltip_and_hover_recovers(cx: &mut TestAppC
     );
     hover(&mut h, at);
     assert!(
-        tip(&mut h, "tooltip: Collapse PROJECT"),
+        tip(&mut h, "tooltip: Collapse Projects"),
         "normal hover recovers after dismissal"
     );
 }
@@ -315,8 +315,8 @@ fn section_toggle_dismisses_old_caption_before_the_next_hover(cx: &mut TestAppCo
         ),
         (
             "project-section-toggle",
-            "tooltip: Collapse PROJECT",
-            "tooltip: Expand PROJECT",
+            "tooltip: Collapse Projects",
+            "tooltip: Expand Projects",
         ),
     ] {
         let b = h.cx.debug_bounds(selector).unwrap();

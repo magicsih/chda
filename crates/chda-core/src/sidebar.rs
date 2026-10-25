@@ -128,6 +128,16 @@ pub fn activity_age(now: u64, then: u64) -> String {
     }
 }
 
+/// A quiet Sessions age: recent or unknown activity and working agents
+/// leave the fixed-width age slot empty.
+pub fn session_activity_age(status: Option<AgentStatus>, now: u64, then: u64) -> String {
+    if status == Some(AgentStatus::Working) || then == 0 || now.saturating_sub(then) < 60_000 {
+        String::new()
+    } else {
+        activity_age(now, then)
+    }
+}
+
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct WorktreeEntry {
     pub path: PathBuf,
@@ -517,6 +527,32 @@ pub enum AgentEvent {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn session_ages_wait_a_minute_and_hide_while_working() {
+        for status in [
+            None,
+            Some(AgentStatus::Idle),
+            Some(AgentStatus::Review),
+            Some(AgentStatus::WaitingInput),
+        ] {
+            for (delta, expected) in [
+                (0, ""),
+                (59_999, ""),
+                (60_000, "1m"),
+                (120_000, "2m"),
+                (3_600_000, "1h"),
+            ] {
+                assert_eq!(session_activity_age(status, 1_000 + delta, 1_000), expected);
+            }
+            assert_eq!(session_activity_age(status, 100_000, 0), "");
+            assert_eq!(session_activity_age(status, 100_000, 200_000), "");
+        }
+        assert_eq!(
+            session_activity_age(Some(AgentStatus::Working), 3_601_000, 1_000),
+            ""
+        );
+    }
 
     #[test]
     fn terminal_activity_ages_cover_boundaries_and_unknown_times() {

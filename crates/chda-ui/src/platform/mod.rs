@@ -27,6 +27,18 @@ pub(crate) fn init_graphics_diagnostics() {
     linux::init_graphics_diagnostics();
 }
 
+/// Read only: never changes the user's accessibility preferences.
+pub(crate) fn reduce_motion() -> bool {
+    #[cfg(target_os = "macos")]
+    {
+        macos::reduce_motion()
+    }
+    #[cfg(not(target_os = "macos"))]
+    {
+        false
+    }
+}
+
 /// The outcome of [`pick_folders`].
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum FolderPick {

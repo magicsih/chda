@@ -298,6 +298,11 @@ pub fn app_icon_png(path: &str, size: isize) -> Option<Vec<u8>> {
     Some(data.to_vec())
 }
 
+/// AppKit's Reduce Motion preference, read on the UI thread.
+pub(super) fn reduce_motion() -> bool {
+    NSWorkspace::sharedWorkspace().accessibilityDisplayShouldReduceMotion()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

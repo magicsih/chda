@@ -34,6 +34,7 @@ objc2.workspace = true
 objc2-app-kit = { workspace = true, features = [
     "block2",
     "NSApplication",
+    "NSAccessibility",
     "NSBitmapImageRep",
     "NSDockTile",
     "NSGraphics",

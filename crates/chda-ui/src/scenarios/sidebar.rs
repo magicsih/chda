@@ -943,7 +943,7 @@ fn header_buttons_show_their_own_tooltips(cx: &mut TestAppContext) {
     for (toggle, toggle_tip, button, button_tip) in [
         (
             "project-section-toggle",
-            "Collapse PROJECT",
+            "Collapse Projects",
             "add-repo",
             add_repo_tip.as_str(),
         ),

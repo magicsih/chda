@@ -184,16 +184,7 @@ impl WorkspaceView {
                     cx.notify();
                 }
             }))
-            .child(
-                div()
-                    .font(gpui::Font {
-                        family: crate::fonts::DEFAULT_FAMILY.into(),
-                        fallbacks: Some(crate::fonts::fallbacks()),
-                        ..Default::default()
-                    })
-                    .text_base()
-                    .child(optical("\u{f0f3}")),
-            )
+            .child(crate::ui_icon::icon(crate::ui_icon::Icon::Bell, fg))
             .when(unread > 0, |d| {
                 d.child(
                     div()

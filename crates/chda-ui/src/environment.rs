@@ -18,6 +18,9 @@ use crate::platform::{self, FolderApp, FolderPick, NotificationTarget};
 
 /// Side effects outside the window.
 pub trait System {
+    fn reduce_motion(&self) -> bool {
+        false
+    }
     fn can_install_updates(&self) -> bool;
     fn notify(&self, title: &str, body: &str, target: &NotificationTarget, cx: &gpui::App);
     /// Show `count` on the Dock icon; zero clears it.
@@ -45,6 +48,9 @@ pub trait System {
 pub struct NativeSystem;
 
 impl System for NativeSystem {
+    fn reduce_motion(&self) -> bool {
+        platform::reduce_motion()
+    }
     fn can_install_updates(&self) -> bool {
         platform::release::can_install()
     }
