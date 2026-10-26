@@ -181,7 +181,8 @@ ISSUE-231의 `v1.0.25` 이후 기대 결과는 사용자가 승인한
 그대로 보존하되 이후 승인으로 대체된 성공 종료 동작을 회귀 실패로 판정하지 않는다.
 
 
-For the `v1.6.0` candidate at `0857c4b`, the owner approved replacing COPY-158's
+For the pending sidebar release, initially prepared as `v1.6.0` at `0857c4b`,
+the owner approved replacing COPY-158's
 Slack composer check with actual clipboard pastes into both a new TextEdit
 plain-text document and an independent browser input. The
 [release-specific validation amendment](releases/sidebar-release-clipboard-validation.md)
