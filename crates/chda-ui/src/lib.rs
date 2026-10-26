@@ -23,6 +23,7 @@ mod terminal_images;
 mod terminal_view;
 mod text_input;
 mod tooltip;
+mod ui_color;
 mod ui_icon;
 mod upgrade;
 mod window_registry;
