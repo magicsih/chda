@@ -39,6 +39,11 @@ Startup waits for the candidate's rendered shell prompt before typing and checks
 the rendered command afterward. A mapped window and a writable PTY alone cannot
 pass. Readiness captures use unique filenames, preserving every attempt.
 
+Selection waits for exactly one rendered sentinel with usable OCR bounds before
+dragging. Its command uses separate printf arguments so a delayed input echo
+cannot supply the complete marker. Every readiness PNG and its OCR are retained,
+and the copied clipboard text must still equal the sentinel exactly.
+
 The restart journey freezes the installed hook commands, stops the app, removes
 only that launch's owned temporary runtime directory, then starts with a new
 TMPDIR. It runs the same saved commands, concurrent helper CLI and MCP requests,

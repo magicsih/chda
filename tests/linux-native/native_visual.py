@@ -126,6 +126,21 @@ def wait_for_rendered(driver, target, prefix, timeout=40):
     raise AssertionError("Timed out waiting for rendered text: " + target)
 
 
+def wait_for_sentinel(driver, sentinel, prefix, timeout=10):
+    """Keep raw frames/OCR until one exact, selectable output marker is painted."""
+    deadline = time.monotonic() + timeout
+    attempt = 0
+    last_error = None
+    while time.monotonic() < deadline:
+        attempt += 1
+        image = driver.screenshot(f"{prefix}-{attempt:02d}")
+        try:
+            return sentinel_bounds(image, sentinel)
+        except AssertionError as error:
+            last_error = str(error)
+    raise AssertionError(f"Timed out waiting for rendered sentinel {sentinel}: {last_error}")
+
+
 def sentinel_bounds(path, sentinel):
     words = ocr_words(path)
     Path(path).with_suffix(".ocr.json").write_text(json.dumps(words, indent=2) + "\n")

@@ -268,14 +268,14 @@ class Driver:
         self.record("terminal-core-checks-passed")
 
     def copy_selection(self):
-        from native_visual import sentinel_bounds
+        from native_visual import wait_for_sentinel
         sentinel = "CHDACOPYSENTINEL"
         # Keep the target text inside the terminal, away from the sidebar's
         # resize hit area at the first column.
-        self.command("printf '\\033[2J\\033[H    " + sentinel + "\\n'")
-        time.sleep(.5)
-        image = self.screenshot("copy-before-selection")
-        coordinates = sentinel_bounds(image, sentinel)
+        # The complete marker appears only in output, never the typed command.
+        # A queued input echo is not evidence that the output has been painted.
+        self.command("printf '\\033[2J\\033[H    %s%s%s\\n' CHDA COPY SENTINEL")
+        coordinates = wait_for_sentinel(self, sentinel, "copy-before-selection")
         self.drag(*coordinates)
         self.screenshot("copy-selection")
         self.key("ctrl+shift+c")
