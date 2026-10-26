@@ -153,11 +153,14 @@ fn parenthesized_space_paths_hover_open_and_reveal_across_wraps(cx: &mut gpui::T
     let cols = h.read(|_, cx| term.read(cx).frame().size.cols as usize);
     // An existing shorter prefix of every fixture path.
     std::fs::create_dir_all(h.home.home.join("Notes")).unwrap();
-    for (name, prose, suffix, line, column) in [
+    for (index, (name, prose, suffix, line, column)) in [
         ("workflow.html", "", "", None, None),
         ("작업 문서/설계안.md", "", "", None, None),
         ("작업 문서/details.md", "see ", ":5:2", Some(5), Some(2)),
-    ] {
+    ]
+    .into_iter()
+    .enumerate()
+    {
         let full = h
             .home
             .home
@@ -174,10 +177,10 @@ fn parenthesized_space_paths_hover_open_and_reveal_across_wraps(cx: &mut gpui::T
         // path, so hovering cannot race a partially received wrapped row.
         h.run(
             &format!(
-                "clear; printf '\\nPlan ({prose}%s{suffix})\\n%s%s\\n' '{}' CHDA PATHREADY",
+                "clear; printf '\\nPlan ({prose}%s{suffix})\\n%s%s\\n' '{}' CHDA PATHREADY{index}",
                 full.display()
             ),
-            "CHDAPATHREADY",
+            &format!("CHDAPATHREADY{index}"),
         );
         h.wait_for("the parenthesized output row after clearing the command", {
             let term = term.clone();
