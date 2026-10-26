@@ -170,12 +170,14 @@ fn parenthesized_space_paths_hover_open_and_reveal_across_wraps(cx: &mut gpui::T
             column,
             is_dir: false,
         };
+        // The split marker cannot match command echo and follows the entire
+        // path, so hovering cannot race a partially received wrapped row.
         h.run(
             &format!(
-                "clear; printf '\\nPlan ({prose}%s{suffix})\\n' '{}'",
+                "clear; printf '\\nPlan ({prose}%s{suffix})\\n%s%s\\n' '{}' CHDA PATHREADY",
                 full.display()
             ),
-            name,
+            "CHDAPATHREADY",
         );
         h.wait_for("the parenthesized output row after clearing the command", {
             let term = term.clone();

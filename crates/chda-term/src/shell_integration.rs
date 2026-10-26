@@ -551,9 +551,9 @@ mod tests {
             .unwrap()
             .status
             .success();
-        // Native: fish 4 writes the marks itself (ST-terminated) and the
-        // script must stay out of the way. Fallback: with fish's own marks
-        // off, as in fish 3, the script writes them (BEL-terminated).
+        // Native fish owns its marks; older native releases (including
+        // 4.2) omit B and terminate D with BEL. The fallback writes all
+        // four BEL-terminated marks when native marks are disabled.
         for native in [true, false] {
             let home = temp_home(if native { "fish-native" } else { "fish-own" });
             let config = home.join(".config/fish");
@@ -590,7 +590,6 @@ mod tests {
                 "clean-var",
                 "clean-xdg",
                 "\x1b]133;A",
-                "\x1b]133;B",
                 "\x1b]133;C",
                 &format!("\x1b]7;file://{host}{home_str}"),
             ] {
@@ -603,12 +602,19 @@ mod tests {
                 "\x1b]133;D;1\x07",
             ];
             for needle in own {
+                // Native fish can write the same D sequence as our script.
+                // Count command completions below to catch duplicate marks.
+                if native && has_native_marks && needle == "\x1b]133;D;1\x07" {
+                    continue;
+                }
                 assert_eq!(
                     out.contains(needle),
                     !(native && has_native_marks),
                     "native={native} {needle:?} in {out:?}"
                 );
             }
+            // false, the cleanup probe and exit each complete exactly once.
+            assert_eq!(out.matches("\x1b]133;D;").count(), 3, "{out:?}");
             fs::remove_dir_all(&home).unwrap();
         }
     }
