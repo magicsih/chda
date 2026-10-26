@@ -184,7 +184,7 @@ ISSUE-231의 `v1.0.25` 이후 기대 결과는 사용자가 승인한
 For the `v1.6.0` candidate at `0857c4b`, the owner approved replacing COPY-158's
 Slack composer check with actual clipboard pastes into both a new TextEdit
 plain-text document and an independent browser input. The
-[candidate-specific validation amendment](releases/v1.6.0-clipboard-validation.md)
+[release-specific validation amendment](releases/sidebar-release-clipboard-validation.md)
 preserves every other clipboard check and all 43 cases, 13 areas, three native
 rounds, both full E2E runs and signed-artifact gates. Record Slack as untested.
 

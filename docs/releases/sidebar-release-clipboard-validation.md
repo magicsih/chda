@@ -1,10 +1,14 @@
-# v1.6.0 clipboard validation amendment
+# Sidebar release clipboard validation amendment
 
 Status: owner-approved on 2026-10-26; execution results remain separate.
 
-This record applies only to `v1.6.0`, commit
-`0857c4b2e5636af9447bfbbb89157485e2835563`, tree
-`3aa326abd728d7e192da13178538aae075837a3a`.
+This record applies to the pending sidebar release, initially prepared as
+`v1.6.0`, commit `0857c4b2e5636af9447bfbbb89157485e2835563`, tree
+`3aa326abd728d7e192da13178538aae075837a3a`. Native review found a light-theme
+diff contrast defect before a signed build or publication. Preserve that failed
+review and bind fresh validation to the corrected release candidate. The
+clipboard destination substitution remains the same; this approval does not
+cover subsequent, unrelated releases.
 
 The owner reported that Slack is not used and explicitly approved replacing
 its composer check with TextEdit and a browser input:
