@@ -40,3 +40,13 @@ rounds and both separate full E2E runs. All 43 case IDs and 13 feature areas,
 source and configuration identity, signing, notarization, exact signed archive
 checks and immutable draft publication remain required. This amendment grants
 no native-validation or signed-artifact waiver.
+
+After the initial contrast failure, the owner also approved one additional
+independent native review attempt and one additional appearance cycle:
+
+> 추가 검수와 외형 전환 허용
+
+The limits are four native review attempts in total, including the failed
+initial attempt, and six temporary macOS appearance cycles, restoring the
+original setting each time. Three complete reviews of the corrected source
+and both separate full E2E runs remain required.
