@@ -130,6 +130,33 @@ fn batch(h: &mut Harness, r: &Entity<crate::diff_review::DiffReviewView>) {
 }
 
 #[gpui::test]
+fn review_keeps_its_tab_and_notes_when_the_theme_changes(cx: &mut TestAppContext) {
+    let (mut h, wt) = fixture(cx, "review-theme");
+    let review = open(&mut h, &wt);
+    add_note(&mut h, &review, "Keep this note across theme changes");
+    let tab = h.read(|v, _| v.ws.active_tab().unwrap().id);
+    for (background, foreground) in [(0xeff1f5, 0x4c4f69), (0x1e1e2e, 0xcdd6f4)] {
+        std::fs::write(
+            &h.home.ghostty,
+            format!("background = #{background:06x}\nforeground = #{foreground:06x}\n"),
+        )
+        .unwrap();
+        h.wait_for("the existing review follows the active theme", |v, cx| {
+            let r = review.read(cx);
+            r.background == gpui::Hsla::from(gpui::rgb(background))
+                && r.foreground == gpui::Hsla::from(gpui::rgb(foreground))
+                && v.ws.active_tab().unwrap().id == tab
+        });
+        assert_eq!(
+            review.read_with(&h.cx, |r, _| {
+                r.notes.as_ref().unwrap().notebook.notes.len()
+            }),
+            1
+        );
+    }
+}
+
+#[gpui::test]
 fn review_range_notes_survive_refresh_edit_and_session_restore(cx: &mut TestAppContext) {
     let (mut h, wt) = fixture(cx, "review-persist");
     let panes = h.read(|v, _| v.panes.len());

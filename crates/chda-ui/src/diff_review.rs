@@ -89,6 +89,26 @@ fn control(id: &'static str, label: impl Into<gpui::SharedString>) -> Stateful<D
         .rounded_sm()
         .child(label.into())
 }
+
+fn line_colors(
+    kind: DiffLineKind,
+    foreground: Hsla,
+    background: Hsla,
+    selected: bool,
+) -> (Hsla, Hsla) {
+    let color: Hsla = match kind {
+        DiffLineKind::Added => gpui::rgb(0xa6e3a1).into(),
+        DiffLineKind::Removed => gpui::rgb(0xf38ba8).into(),
+        _ => foreground,
+    };
+    let surface = crate::workspace_view::blend(
+        background,
+        if selected { foreground } else { color },
+        if selected { 0.15 } else { 0.03 },
+    );
+    (crate::ui_color::fit_color(color, &[surface], 4.5), surface)
+}
+
 impl DiffReviewView {
     pub fn new(
         worktree: PathBuf,
@@ -598,11 +618,7 @@ impl DiffReviewView {
         let selected = self
             .selection
             .is_some_and(|(a, b, _)| index >= a && index <= b);
-        let color = match line.kind {
-            DiffLineKind::Added => gpui::rgb(0xa6e3a1),
-            DiffLineKind::Removed => gpui::rgb(0xf38ba8),
-            _ => gpui::rgb(0xcdd6f4),
-        };
+        let (color, surface) = line_colors(line.kind, self.foreground, self.background, selected);
         let mut row = div()
             .id(index)
             .h(self.font_size * 1.6 + px(2.0))
@@ -614,11 +630,7 @@ impl DiffReviewView {
             .gap_2()
             .px_2()
             .text_color(color)
-            .bg(if selected {
-                self.foreground.opacity(0.15)
-            } else {
-                Hsla::from(color).opacity(0.03)
-            });
+            .bg(surface);
         for (side, number) in [(ReviewSide::Old, line.old), (ReviewSide::New, line.new)] {
             let cell = div()
                 .id(if side == ReviewSide::Old {
@@ -822,7 +834,11 @@ impl Render for DiffReviewView {
             body = body.child(
                 div()
                     .p_2()
-                    .text_color(gpui::rgb(0xf38ba8))
+                    .text_color(crate::ui_color::fit_color(
+                        gpui::rgb(0xf38ba8).into(),
+                        &[self.background],
+                        4.5,
+                    ))
                     .child(error.clone()),
             );
         }
@@ -1097,5 +1113,49 @@ impl Render for DiffReviewView {
             );
         }
         body.into_any_element()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn luminance(color: Hsla) -> f32 {
+        let c = color.to_rgb();
+        let linear = |v: f32| {
+            if v <= 0.04045 {
+                v / 12.92
+            } else {
+                ((v + 0.055) / 1.055).powf(2.4)
+            }
+        };
+        0.2126 * linear(c.r) + 0.7152 * linear(c.g) + 0.0722 * linear(c.b)
+    }
+
+    #[test]
+    fn diff_text_is_readable_on_light_dark_and_selected_surfaces() {
+        for (background, foreground) in [(0xeff1f5, 0x4c4f69), (0x1e1e2e, 0xcdd6f4)] {
+            for kind in [
+                DiffLineKind::Added,
+                DiffLineKind::Removed,
+                DiffLineKind::Context,
+                DiffLineKind::Header,
+            ] {
+                for selected in [false, true] {
+                    let (color, surface) = line_colors(
+                        kind,
+                        gpui::rgb(foreground).into(),
+                        gpui::rgb(background).into(),
+                        selected,
+                    );
+                    let (a, b) = (luminance(color), luminance(surface));
+                    let contrast = (a.max(b) + 0.05) / (a.min(b) + 0.05);
+                    assert!(
+                        contrast >= 4.5,
+                        "{kind:?}, selected={selected}, background={background:x}: {contrast}"
+                    );
+                }
+            }
+        }
     }
 }

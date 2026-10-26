@@ -1,0 +1,52 @@
+# Sidebar release clipboard validation amendment
+
+Status: owner-approved on 2026-10-26; execution results remain separate.
+
+This record applies to the pending sidebar release, initially prepared as
+`v1.6.0`, commit `0857c4b2e5636af9447bfbbb89157485e2835563`, tree
+`3aa326abd728d7e192da13178538aae075837a3a`. Native review found a light-theme
+diff contrast defect before a signed build or publication. Preserve that failed
+review and bind fresh validation to the corrected release candidate. The
+clipboard destination substitution remains the same; this approval does not
+cover subsequent, unrelated releases.
+
+The owner reported that Slack is not used and explicitly approved replacing
+its composer check with TextEdit and a browser input:
+
+> TextEdit과 웹 입력으로 대체
+
+The [approved design](../design/2026-10-08-macos-next-release/design.md) defines
+plain-text clipboard output and excludes rich Slack-format conversion. For
+COPY-158, verify the external clipboard transfer in both destinations:
+
+1. Paste the actual chda clipboard into a new disposable TextEdit plain-text
+   document and compare the saved UTF-8 text with the expected selection.
+2. Paste the actual chda clipboard into a textarea on a local test page in an
+   independent browser and compare its value with the expected selection.
+
+Both checks use the clipboard produced by Copy for sharing. Preserve code
+indentation, lists, tables, pipes, quotes, CJK, emoji, partial selections and
+soft wraps. Filling an expected string or replacing the clipboard with test
+text does not verify the transfer.
+
+All other COPY-158 checks remain required: actual Claude Code and Codex output,
+exact conversation identity, canonical matching, safe VT fallback, preview
+editing, unchanged clipboard before confirmation and ordinary Copy behavior.
+Use disposable documents and inputs, keep existing drafts intact and send no
+messages. Record that Slack itself was not tested.
+
+Apply these two destination checks in each of the three independent native
+rounds and both separate full E2E runs. All 43 case IDs and 13 feature areas,
+source and configuration identity, signing, notarization, exact signed archive
+checks and immutable draft publication remain required. This amendment grants
+no native-validation or signed-artifact waiver.
+
+After the initial contrast failure, the owner also approved one additional
+independent native review attempt and one additional appearance cycle:
+
+> 추가 검수와 외형 전환 허용
+
+The limits are four native review attempts in total, including the failed
+initial attempt, and six temporary macOS appearance cycles, restoring the
+original setting each time. Three complete reviews of the corrected source
+and both separate full E2E runs remain required.

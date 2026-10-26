@@ -180,6 +180,15 @@ ISSUE-231의 `v1.0.25` 이후 기대 결과는 사용자가 승인한
 살아 있는 셸로 돌아온 에이전트의 동작은 계속 확인한다. 과거 0.1.23의 인수조건 문서는
 그대로 보존하되 이후 승인으로 대체된 성공 종료 동작을 회귀 실패로 판정하지 않는다.
 
+
+For the pending sidebar release, initially prepared as `v1.6.0` at `0857c4b`,
+the owner approved replacing COPY-158's
+Slack composer check with actual clipboard pastes into both a new TextEdit
+plain-text document and an independent browser input. The
+[release-specific validation amendment](releases/sidebar-release-clipboard-validation.md)
+preserves every other clipboard check and all 43 cases, 13 areas, three native
+rounds, both full E2E runs and signed-artifact gates. Record Slack as untested.
+
 ## 실패와 재시도
 
 증거가 오래되면 새로운 E2E 뒤 해당 단계를 다시 요청한다. 공개 단계는 빌드를 실행하지
