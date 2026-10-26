@@ -916,7 +916,7 @@ dependencies = [
 
 [[package]]
 name = "chda"
-version = "1.6.0"
+version = "1.6.1"
 dependencies = [
  "chda-agents",
  "chda-config",
@@ -927,7 +927,7 @@ dependencies = [
 
 [[package]]
 name = "chda-agents"
-version = "1.6.0"
+version = "1.6.1"
 dependencies = [
  "libc",
  "memchr",
@@ -938,7 +938,7 @@ dependencies = [
 
 [[package]]
 name = "chda-config"
-version = "1.6.0"
+version = "1.6.1"
 dependencies = [
  "serde",
  "toml 1.1.6+spec-1.1.0",
@@ -946,7 +946,7 @@ dependencies = [
 
 [[package]]
 name = "chda-core"
-version = "1.6.0"
+version = "1.6.1"
 dependencies = [
  "cap-fs-ext",
  "cap-std",
@@ -960,14 +960,14 @@ dependencies = [
 
 [[package]]
 name = "chda-git"
-version = "1.6.0"
+version = "1.6.1"
 dependencies = [
  "gix",
 ]
 
 [[package]]
 name = "chda-pty"
-version = "1.6.0"
+version = "1.6.1"
 dependencies = [
  "libc",
  "portable-pty",
@@ -975,7 +975,7 @@ dependencies = [
 
 [[package]]
 name = "chda-term"
-version = "1.6.0"
+version = "1.6.1"
 dependencies = [
  "base64",
  "chda-pty",
@@ -988,7 +988,7 @@ dependencies = [
 
 [[package]]
 name = "chda-ui"
-version = "1.6.0"
+version = "1.6.1"
 dependencies = [
  "block2 0.6.2",
  "chda-config",
