@@ -399,6 +399,25 @@ class V130PublicationApprovalTests(V1025PublicationApprovalTests):
             self.verify(self.evidence(self.approval()), previous)
 
 
+class V161PublicationApprovalTests(V1025PublicationApprovalTests):
+    TAG = 'v1.6.1'
+    INSTRUCTION = '이번 v1.6.1에 한해 생략 승인'
+    NEXT = 'v1.6.2'
+
+    def test_previous_approvals_cannot_authorize_v161(self):
+        for previous in (V130PublicationApprovalTests().approval(), v152_exception_record()):
+            with self.subTest(record=previous), self.assertRaises(ValueError):
+                self.verify(self.evidence(self.approval()), previous)
+
+    def test_all_seven_omissions_remain_explicit_without_signed_gui_pass(self):
+        record = self.approval()
+        after = self.evidence(record, 'before-deploy')
+        self.assertEqual(set(after['incomplete_checks']), release.EXCEPTION_CHECKS)
+        self.assertNotIn('signed_artifact', after)
+        self.assertEqual(self.verify(after, record, built_at=timestamp(1),
+                                     artifact_sha256='a' * 64)['native_result'], 'blocked')
+
+
 class ReleaseNotesTests(unittest.TestCase):
     def test_historical_exception_notes_remain_unchanged(self):
         for tag in ('v0.1.21', 'v0.1.22', 'v0.1.23'):
@@ -418,6 +437,15 @@ class ReleaseNotesTests(unittest.TestCase):
         self.assertIn('incomplete', notes)
         self.assertIn('v1.3.0-publication-approval.md', notes)
         self.assertEqual(release.exception_notes('v1.3.1'), '')
+
+    def test_v161_discloses_its_own_full_and_signed_gui_omissions(self):
+        notes = release.exception_notes('v1.6.1')
+        for text in ('incomplete', 'three full native review rounds', 'both full native E2E',
+                     'GUI launch', 'session-preserving update', 'GUI IPC', 'shell PID',
+                     'notarization', 'immutable', 'v1.6.1-publication-approval.md'):
+            self.assertIn(text, notes)
+        self.assertEqual(release.exception_notes('v1.6.0'), '')
+        self.assertEqual(release.exception_notes('v1.6.2'), '')
 
 def reduced_exception_record():
     record = json.loads(exception_record())
