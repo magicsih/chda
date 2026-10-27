@@ -45,7 +45,7 @@ png = "0.18.1"
 # Pixel buffers for GPUI images; GPUI's own version.
 image = { version = "0.25.1", default-features = false }
 
-gix = { version = "0.88.0", default-features = false, features = ["status", "revision", "parallel", "sha1"] }
+gix = { version = "0.90.0", default-features = false, features = ["status", "revision", "parallel", "sha1"] }
 
 # PTY (ADR-0004). Only chda-pty may depend on it.
 portable-pty = "0.9.0"
