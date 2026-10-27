@@ -73,6 +73,12 @@ required. This approval cannot authorize another candidate or future version.
 
 For v1.5.2 only, the owner approved omitting the three full native review rounds and both full native E2E runs for candidate `3e69a85`. The [bounded approval](releases/v1.5.2-publication-approval.md) keeps `native_result: blocked`. The exact signed archive must still pass signed launch, app-owned session-preserving update, GUI IPC and original shell-PID preservation. Signing, notarization, universal architecture, update signatures and immutable draft checks remain required. No other candidate or future version is covered.
 
+v1.6.1의 `443d00f` 후보에 한해 사용자가 전체 native 검수 3회, 전체 E2E 2회와
+정확한 signed ZIP의 GUI 실행, 업데이트 뒤 세션 보존, GUI IPC와 shell PID 검사를
+미검수로 공개하는 데 동의했다. [이번 승인 기록](releases/v1.6.1-publication-approval.md)은
+`native_result: blocked`를 유지한다. CI, 서명, 공증, Gatekeeper, 두 CPU 구조,
+업데이트 서명, checksum과 동일 draft 공개는 유지하며 다른 후보에는 적용하지 않는다.
+
 ## 버전 정책
 
 `v0.1.24` 다음 릴리스부터 `v1.0.25`로 전환한다. 마지막 자리 `25`는 기존
