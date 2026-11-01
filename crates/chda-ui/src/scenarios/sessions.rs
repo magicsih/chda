@@ -757,12 +757,7 @@ fn visible_worktree(h: &mut Harness, worktrees: &[PathBuf]) -> PathBuf {
 
 #[gpui::test]
 fn project_navigation_does_not_scroll_sessions(cx: &mut TestAppContext) {
-    let mut f = open(
-        cx,
-        "sessions-project",
-        9,
-        "starred = [{ repo = \"{repo}\", branch = \"task-12\" }]\n",
-    );
+    let mut f = open(cx, "sessions-project", 9, "");
     let worktrees = f.worktrees.clone();
     let h = &mut f.h;
     scroll_sessions(h, px(-24.0));
@@ -801,16 +796,6 @@ fn project_navigation_does_not_scroll_sessions(cx: &mut TestAppContext) {
     h.keys("enter");
     h.wait_prompt();
     check(h, &target, expected, "Go to worktree");
-
-    // STARRED, for a branch below PROJECT's viewport.
-    scroll_project(h, px(0.0));
-    settle(h);
-    let target = worktrees[12].clone();
-    let expected = minimal_offset(h, &target);
-    click(h, "starred-0");
-    settle(h);
-    h.wait_prompt();
-    check(h, &target, expected, "STARRED");
 
     // A notification whose pane is gone, for a branch above the viewport.
     let target = worktrees[0].clone();

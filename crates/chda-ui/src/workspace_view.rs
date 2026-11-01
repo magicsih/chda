@@ -211,12 +211,6 @@ pub(crate) enum MenuAction {
         repo: PathBuf,
         branch: String,
     },
-    /// Add the branch to the sidebar's STARRED list, or take it out.
-    Star {
-        repo: PathBuf,
-        branch: String,
-        starred: bool,
-    },
     /// Merge into the default branch, remove the worktree and branch.
     MergeAndClean {
         repo: PathBuf,
@@ -648,7 +642,6 @@ impl WorkspaceView {
             });
             this.watch_repo(&repo);
         }
-        this.sync_starred(cx);
         this.sync_project_sections(cx);
         this.install_hooks();
         // Command shortcuts are app-wide; entries that cannot run are
@@ -987,7 +980,6 @@ impl WorkspaceView {
         }
         let order = self.config.repos.clone();
         self.sidebar.update(cx, |s, _| s.model.order_repos(&order));
-        self.sync_starred(cx);
         self.sync_project_sections(cx);
         if self.sidebar_visible && !sidebar_was_visible {
             self.refresh_all(cx);
@@ -1026,30 +1018,6 @@ impl WorkspaceView {
                 s.model.order_repos(&self.config.repos);
                 cx.notify();
             });
-        }
-    }
-
-    /// Show the config's STARRED list in the sidebar.
-    fn sync_starred(&mut self, cx: &mut Context<Self>) {
-        let starred = self.config.starred.clone();
-        self.sidebar.update(cx, |s, cx| {
-            if s.model.starred != starred {
-                s.model.starred = starred;
-                cx.notify();
-            }
-        });
-    }
-
-    /// Add a branch to STARRED or take it out, and save the config.
-    fn set_starred(&mut self, repo: &Path, branch: &str, starred: bool, cx: &mut Context<Self>) {
-        let changed = if starred {
-            self.config.star(repo, branch)
-        } else {
-            self.config.unstar(repo, branch)
-        };
-        if changed {
-            self.save_config();
-            self.sync_starred(cx);
         }
     }
 
@@ -4554,20 +4522,6 @@ impl WorkspaceView {
                             branch: branch.clone(),
                         },
                     ));
-                    let starred = self.config.is_starred(&repo, &branch);
-                    items.push((
-                        if starred {
-                            "Remove from Starred"
-                        } else {
-                            "Add to Starred"
-                        }
-                        .into(),
-                        MenuAction::Star {
-                            repo: repo.clone(),
-                            branch,
-                            starred: !starred,
-                        },
-                    ));
                 }
                 items.push(match chda_core::update_blocker(&entry) {
                     None => (
@@ -4734,27 +4688,6 @@ impl WorkspaceView {
             SidebarEvent::OpenUrl(url) => cx.open_url(&url),
             SidebarEvent::JumpToAgent(path) => self.jump_to_worktree_agent(&path, window, cx),
             SidebarEvent::OpenDiff(path) => self.open_diff(&path, window, cx),
-            SidebarEvent::OpenStarred { repo, branch } => {
-                let target = self
-                    .sidebar
-                    .read(cx)
-                    .model
-                    .branch_worktree(&repo, &branch)
-                    .map(|(_, w)| w.path.clone());
-                match target {
-                    Some(path) => self.open_worktree(&path, window, cx),
-                    None => {
-                        let name = repo
-                            .file_name()
-                            .map(|n| n.to_string_lossy().into_owned())
-                            .unwrap_or_else(|| repo.display().to_string());
-                        self.notify_repo(format!(
-                            "No worktree has {branch} checked out in {name}. Right-click {name} for \"New worktree from branch...\"."
-                        ), Severity::Info, &repo, None);
-                    }
-                }
-            }
-            SidebarEvent::Unstar { repo, branch } => self.set_starred(&repo, &branch, false, cx),
             SidebarEvent::MoveRepo { from, to } => {
                 let section = self.config.repo_section(&to).map(str::to_owned);
                 self.assign_repo_section(&from, section.as_deref(), false, cx);
@@ -5796,11 +5729,6 @@ impl WorkspaceView {
                 })
                 .detach();
             }
-            MenuAction::Star {
-                repo,
-                branch,
-                starred,
-            } => self.set_starred(&repo, &branch, starred, cx),
             MenuAction::RemoveRepo(repo) => {
                 if let Some(w) = &mut self.watcher {
                     w.unwatch(&repo);

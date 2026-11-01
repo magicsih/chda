@@ -89,15 +89,6 @@ pub struct AgentPreset {
     pub args: Vec<String>,
 }
 
-/// A branch pinned to the sidebar's STARRED list. The repository's main
-/// worktree path keeps equal branch names in different repositories apart.
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "kebab-case")]
-pub struct StarredBranch {
-    pub repo: PathBuf,
-    pub branch: String,
-}
-
 /// One user-owned level beneath Projects. Its id survives renaming.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "kebab-case")]
@@ -202,8 +193,6 @@ pub struct ChdaConfig {
     pub open_in: Option<String>,
     /// Ask GitHub once a day whether a newer release is out.
     pub update_check: bool,
-    /// Branches in the sidebar's STARRED list, in the order they were added.
-    pub starred: Vec<StarredBranch>,
 }
 
 impl Default for ChdaConfig {
@@ -238,7 +227,6 @@ impl Default for ChdaConfig {
             commands: Vec::new(),
             open_in: None,
             update_check: true,
-            starred: Vec::new(),
         }
     }
 }
@@ -392,32 +380,6 @@ impl ChdaConfig {
         (valid, problems)
     }
 
-    /// Add a branch to STARRED; false when it is already there.
-    pub fn star(&mut self, repo: &Path, branch: &str) -> bool {
-        if self.is_starred(repo, branch) {
-            return false;
-        }
-        self.starred.push(StarredBranch {
-            repo: repo.to_path_buf(),
-            branch: branch.to_owned(),
-        });
-        true
-    }
-
-    /// Take a branch out of STARRED; false when it was not there.
-    pub fn unstar(&mut self, repo: &Path, branch: &str) -> bool {
-        let before = self.starred.len();
-        self.starred
-            .retain(|s| !(s.repo == repo && s.branch == branch));
-        self.starred.len() != before
-    }
-
-    pub fn is_starred(&self, repo: &Path, branch: &str) -> bool {
-        self.starred
-            .iter()
-            .any(|s| s.repo == repo && s.branch == branch)
-    }
-
     /// Resolve the worktree path for `branch` of the repository at `repo`.
     /// Slashes in the branch become dashes so the path stays flat.
     pub fn worktree_path(&self, repo: &Path, branch: &str) -> PathBuf {
@@ -557,32 +519,40 @@ mod tests {
     }
 
     #[test]
-    fn starred_branches_are_unique_per_repository_and_persist() {
-        let dir = std::env::temp_dir().join(format!("chda-starred-{}", std::process::id()));
+    fn existing_config_with_starred_entries_loads_and_drops_obsolete_entries_on_save() {
+        let dir = std::env::temp_dir().join(format!("chda-starred-retired-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&dir);
+        fs::create_dir_all(&dir).unwrap();
         let path = dir.join("config.toml");
-        let mut c = ChdaConfig::default();
-        assert!(c.star(Path::new("/src/a"), "main"));
-        assert!(!c.star(Path::new("/src/a"), "main"), "no duplicates");
-        assert!(c.star(Path::new("/src/b"), "main"), "same name, other repo");
-        assert!(c.star(Path::new("/src/a"), "feat/x"));
-        c.repos.push("/src/a".into());
-        c.save(&path).unwrap();
+        fs::write(
+            &path,
+            r#"repos = ["/src/a", "/src/b"]
+sidebar-width = 320
+
+[[starred]]
+repo = "/src/a"
+branch = "main"
+
+[[starred]]
+repo = "/src/a"
+branch = "feat/x"
+"#,
+        )
+        .unwrap();
         let loaded = ChdaConfig::load(&path).unwrap();
-        assert_eq!(loaded, c);
-        let text = fs::read_to_string(&path).unwrap();
-        assert!(text.contains("[[starred]]"), "{text}");
-        let mut c = loaded;
-        assert!(c.unstar(Path::new("/src/a"), "main"));
-        assert!(!c.unstar(Path::new("/src/a"), "main"));
-        assert!(c.is_starred(Path::new("/src/b"), "main"));
         assert_eq!(
-            c.starred
-                .iter()
-                .map(|s| s.branch.as_str())
-                .collect::<Vec<_>>(),
-            ["main", "feat/x"]
+            loaded.repos,
+            vec![PathBuf::from("/src/a"), PathBuf::from("/src/b")]
         );
-        fs::remove_dir_all(&dir).unwrap();
+        assert_eq!(loaded.sidebar_width, 320);
+        loaded.save(&path).unwrap();
+        let text = fs::read_to_string(&path).unwrap();
+        assert!(
+            !text.contains("starred"),
+            "retired starred entries are dropped on save: {text}"
+        );
+        assert!(text.contains("/src/a"));
+        let _ = fs::remove_dir_all(&dir);
     }
 
     #[test]

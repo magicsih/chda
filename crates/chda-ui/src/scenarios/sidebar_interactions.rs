@@ -63,10 +63,6 @@ fn fixture(
         if agent {
             config.default_action = chda_config::DefaultAction::Claude;
         }
-        config.starred.push(chda_config::StarredBranch {
-            repo: repo.clone(),
-            branch: "feature/a".into(),
-        });
         config.save(&home.config).unwrap();
     });
     h.wait_prompt();
@@ -134,33 +130,38 @@ fn project_click_opens_once_and_reuses_the_pane(cx: &mut TestAppContext) {
 }
 
 #[gpui::test]
-fn starred_click_opens_and_right_click_opens_only_the_captured_menu(cx: &mut TestAppContext) {
-    let (mut h, _, a, z) = fixture(cx, "starred-menu", false);
+fn worktree_click_opens_and_right_click_opens_only_the_captured_menu(cx: &mut TestAppContext) {
+    let (mut h, _, a, z) = fixture(cx, "worktree-menu", false);
     let focused = h.read(|v, _| v.ws.focused_pane());
     let tabs = h.read(|v, _| v.ws.tabs().len());
-    for target in ["starred-0".to_owned(), row(&a)] {
-        click(&mut h, &target, MouseButton::Right, 1);
-        assert_eq!(h.read(|v, _| v.ws.tabs().len()), tabs);
-        assert!(h.read(|v, _| v.context_menu.is_some()));
-        h.hook(None, &z, HookKind::PromptSubmitted);
-        h.wait_for("background report", |v, cx| {
-            v.sidebar
-                .read(cx)
-                .model
-                .worktree_for_path(&z)
-                .unwrap()
-                .1
-                .last_activity
-                > 0
-        });
-        h.read(|v, _| {
-            let menu = v.context_menu.as_ref().unwrap();
-            assert!(menu.items.iter().any(|(_, action)| matches!(action, crate::workspace_view::MenuAction::OpenTerminal(p) if p == &a)), "menu target changed");
-        });
-        h.keys("escape");
-        assert!(h.read(|v, _| v.context_menu.is_none()));
-    }
-    click(&mut h, "starred-0", MouseButton::Right, 1);
+    let target = row(&a);
+    click(&mut h, &target, MouseButton::Right, 1);
+    assert_eq!(h.read(|v, _| v.ws.tabs().len()), tabs);
+    assert!(h.read(|v, _| v.context_menu.is_some()));
+    h.hook(None, &z, HookKind::PromptSubmitted);
+    h.wait_for("background report", |v, cx| {
+        v.sidebar
+            .read(cx)
+            .model
+            .worktree_for_path(&z)
+            .unwrap()
+            .1
+            .last_activity
+            > 0
+    });
+    h.read(|v, _| {
+        let menu = v.context_menu.as_ref().unwrap();
+        assert!(
+            menu.items.iter().any(|(_, action)| {
+                matches!(action, crate::workspace_view::MenuAction::OpenTerminal(p) if p == &a)
+            }),
+            "menu target changed"
+        );
+    });
+    h.keys("escape");
+    assert!(h.read(|v, _| v.context_menu.is_none()));
+
+    click(&mut h, &target, MouseButton::Right, 1);
     let selector = h.read(|v, _| {
         let index = v
             .context_menu
@@ -188,8 +189,8 @@ fn starred_click_opens_and_right_click_opens_only_the_captured_menu(cx: &mut Tes
         1,
     );
     assert_eq!(h.read(|v, _| v.ws.focused_pane()), focused);
-    click(&mut h, "starred-0", MouseButton::Left, 1);
-    click(&mut h, "starred-0", MouseButton::Left, 2);
+    click(&mut h, &target, MouseButton::Left, 1);
+    click(&mut h, &target, MouseButton::Left, 2);
     assert_eq!(
         h.read(|v, _| v.ws.focused_pane()),
         opened,
@@ -199,9 +200,6 @@ fn starred_click_opens_and_right_click_opens_only_the_captured_menu(cx: &mut Tes
         h.read(|v, cx| v.sidebar.read(cx).selected.clone()),
         Some(a.clone())
     );
-    assert_eq!(h.read(|v, _| v.ws.tabs().len()), tabs + 1);
-    click(&mut h, "unstar-0", MouseButton::Left, 1);
-    assert!(h.read(|v, cx| v.sidebar.read(cx).model.starred.is_empty()));
     assert_eq!(h.read(|v, _| v.ws.tabs().len()), tabs + 1);
 }
 
