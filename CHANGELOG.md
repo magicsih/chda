@@ -4,6 +4,15 @@ All notable changes to chda. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); entries are
 generated from conventional commit messages by release-plz.
 
+## [1.7.0](https://github.com/magicsih/chda/compare/v1.6.1...v1.7.0) - 2026-11-01
+
+### Added
+
+- *(notifications)* play an alert sound on agent handoff ([#318](https://github.com/magicsih/chda/pull/318))
+- *(sidebar)* distinguish parent and child agent status indicators ([#317](https://github.com/magicsih/chda/pull/317))
+- *(sidebar)* add alphabetical and custom project sorting with sessions-first toggle ([#316](https://github.com/magicsih/chda/pull/316))
+- *(sidebar)* remove Starred branches from Projects ([#314](https://github.com/magicsih/chda/pull/314))
+
 ## [1.6.1](https://github.com/magicsih/chda/compare/v1.6.0...v1.6.1) - 2026-10-26
 
 ### Fixed
