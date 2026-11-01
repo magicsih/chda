@@ -86,16 +86,6 @@ pub enum SidebarEvent {
     JumpToAgent(PathBuf),
     /// Open a read-only tab with the worktree's diff against its base.
     OpenDiff(PathBuf),
-    /// Go to a STARRED branch's worktree.
-    OpenStarred {
-        repo: PathBuf,
-        branch: String,
-    },
-    /// The star of a STARRED row was clicked: take the branch out.
-    Unstar {
-        repo: PathBuf,
-        branch: String,
-    },
     /// A repository header was dropped on another repository: show `from`
     /// where `to` is.
     MoveRepo {
@@ -276,8 +266,6 @@ pub struct SidebarView {
     /// Highlighted PROJECT worktree: the focused pane's, or a notification's
     /// whose pane is gone.
     pub(crate) selected: Option<PathBuf>,
-    /// Explicit STARRED selection, including branches without a worktree.
-    selected_starred: Option<(PathBuf, String)>,
     selection_from_row: bool,
     /// The active tab and its focused pane; Sessions highlights their row.
     pub(crate) focus: Option<Focus>,
@@ -676,7 +664,6 @@ impl SidebarView {
             picked: Vec::new(),
             expanded: Vec::new(),
             selected: None,
-            selected_starred: None,
             selection_from_row: false,
             focus: None,
             sessions_scroll: gpui::ScrollHandle::new(),
@@ -722,7 +709,6 @@ impl SidebarView {
             return;
         }
         self.held = None;
-        self.selected_starred = None;
         self.selection_from_row = false;
         if navigation {
             self.pending_reveal = cwd.map(std::path::Path::to_path_buf);
@@ -753,14 +739,8 @@ impl SidebarView {
     }
 
     /// Select a branch row without navigating or changing terminal focus.
-    fn select_row(
-        &mut self,
-        path: Option<PathBuf>,
-        starred: Option<(PathBuf, String)>,
-        cx: &mut Context<Self>,
-    ) {
+    fn select_row(&mut self, path: Option<PathBuf>, cx: &mut Context<Self>) {
         self.selected = path;
-        self.selected_starred = starred;
         self.selection_from_row = true;
         self.held = Some((self.focus, self.focus_cwd.clone()));
         self.pending_reveal = None;
@@ -778,7 +758,7 @@ impl SidebarView {
             .repo_mut(path)
             .is_some_and(|r| std::mem::take(&mut r.collapsed));
         self.reveal_project_section(path, cx);
-        self.select_row(Some(path.to_path_buf()), None, cx);
+        self.select_row(Some(path.to_path_buf()), cx);
         self.reveal = Some(path.to_path_buf());
         if reopened {
             cx.emit(SidebarEvent::ReposCollapsed);
@@ -1022,138 +1002,6 @@ impl SidebarView {
         }
     }
 
-    /// One STARRED row: the star (click to unstar), status dot, alias or
-    /// branch name and repository. A branch without a worktree stays listed,
-    /// dimmed, and does not navigate.
-    fn render_starred(
-        &self,
-        index: usize,
-        starred: &chda_config::StarredBranch,
-        cx: &mut Context<Self>,
-    ) -> AnyElement {
-        let fg = self.fg;
-        let found = self.model.branch_worktree(&starred.repo, &starred.branch);
-        let repo_name = found.map(|(r, _)| r.name.clone()).unwrap_or_else(|| {
-            starred
-                .repo
-                .file_name()
-                .map(|n| n.to_string_lossy().into_owned())
-                .unwrap_or_else(|| starred.repo.display().to_string())
-        });
-        let worktree = found.map(|(_, w)| w).filter(|w| !w.missing);
-        let label = worktree
-            .and_then(|w| match self.active_label {
-                chda_config::ActiveLabel::Alias => w.note_title(),
-                chda_config::ActiveLabel::Branch => None,
-            })
-            .unwrap_or(&starred.branch)
-            .to_owned();
-        let (dot, mut tip) = match worktree {
-            Some(w) => self.status_dot(w),
-            None => (None, "No worktree has this branch checked out.".to_owned()),
-        };
-        tip = format!("{}\n{repo_name} \u{2022} {}\n{tip}", label, starred.branch);
-        let (repo, branch) = (starred.repo.clone(), starred.branch.clone());
-        let target = worktree.map(|w| w.path.clone());
-        div()
-            .id(ElementId::Name(format!("starred:{index}").into()))
-            .debug_selector(move || format!("starred-{index}"))
-            .flex()
-            .flex_row()
-            .items_center()
-            .gap_1()
-            .px_2()
-            .py_0p5()
-            .cursor_pointer()
-            .when(dot == Some(AgentStatus::WaitingInput), |d| {
-                d.bg(waiting_tint(self.fg, self.bg))
-            })
-            .when(
-                self.selected_starred.as_ref() == Some(&(repo.clone(), branch.clone()))
-                    || worktree.is_some_and(|w| self.selected.as_ref() == Some(&w.path)),
-                |d| d.bg(fg.opacity(SELECTED_ROW)),
-            )
-            .hover(|s| s.bg(fg.opacity(0.08)))
-            .tooltip(crate::tooltip::text(tip))
-            .on_click({
-                let (repo, branch) = (repo.clone(), branch.clone());
-                let target = target.clone();
-                cx.listener(move |this, event: &ClickEvent, _, cx| {
-                    if matches!(event, ClickEvent::Mouse(e) if e.up.button != MouseButton::Left) {
-                        return;
-                    }
-                    this.select_row(target.clone(), Some((repo.clone(), branch.clone())), cx);
-                    // The rest of a double or triple click belongs to the
-                    // same open.
-                    if event.click_count() == 1 {
-                        cx.emit(SidebarEvent::OpenStarred {
-                            repo: repo.clone(),
-                            branch: branch.clone(),
-                        });
-                    } else {
-                        cx.emit(SidebarEvent::RefocusTerminal);
-                    }
-                })
-            })
-            .on_mouse_down(
-                MouseButton::Right,
-                cx.listener(move |_, e: &MouseDownEvent, _, cx| {
-                    cx.stop_propagation();
-                    if let Some(path) = &target {
-                        cx.emit(SidebarEvent::WorktreeMenu(path.clone(), e.position));
-                    }
-                }),
-            )
-            .child(
-                div()
-                    .id(ElementId::Name(format!("unstar:{index}").into()))
-                    .debug_selector(move || format!("unstar-{index}"))
-                    .flex_shrink_0()
-                    .px_0p5()
-                    .rounded_sm()
-                    .text_color(sidebar_mark_color(
-                        gpui::rgb(0xf9e2af).into(),
-                        fg,
-                        self.bg,
-                        3.0,
-                    ))
-                    .hover(|s| s.bg(fg.opacity(0.15)))
-                    .tooltip(crate::tooltip::text("Unstar branch"))
-                    .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
-                    .on_click(cx.listener(move |_, _, _, cx| {
-                        cx.stop_propagation();
-                        cx.emit(SidebarEvent::Unstar {
-                            repo: repo.clone(),
-                            branch: branch.clone(),
-                        });
-                    }))
-                    .child("\u{2605}"),
-            )
-            .child(status_icon(dot, self.fg, self.bg))
-            .child(
-                div()
-                    .flex_1()
-                    .min_w_0()
-                    .overflow_hidden()
-                    .whitespace_nowrap()
-                    .text_ellipsis()
-                    .when(worktree.is_none(), |d| d.opacity(0.55))
-                    .child(label),
-            )
-            .child(
-                div()
-                    .text_xs()
-                    .flex_shrink_0()
-                    .max_w(gpui::px(70.0))
-                    .overflow_hidden()
-                    .whitespace_nowrap()
-                    .text_ellipsis()
-                    .text_color(fg.opacity(0.5))
-                    .child(repo_name),
-            )
-            .into_any_element()
-    }
-
     /// A worktree's row; `folder` for the one row of a plain folder.
     fn render_worktree(
         &self,
@@ -1384,7 +1232,7 @@ impl SidebarView {
                     if matches!(event, ClickEvent::Mouse(e) if e.up.button != MouseButton::Left) {
                         return;
                     }
-                    this.select_row(Some(path.clone()), None, cx);
+                    this.select_row(Some(path.clone()), cx);
                     // The rest of a double or triple click belongs to the
                     // same open.
                     if event.click_count() == 1 {
@@ -2165,13 +2013,6 @@ impl Render for SidebarView {
                 })
                 .collect()
         };
-        let starred: Vec<AnyElement> = self
-            .model
-            .starred
-            .iter()
-            .enumerate()
-            .map(|(i, s)| self.render_starred(i, s, cx))
-            .collect();
         let label_toggle = div()
             .id("sessions-label-toggle")
             .debug_selector(|| "sessions-label-toggle".into())
@@ -2316,19 +2157,6 @@ impl Render for SidebarView {
             .border_color(fg.opacity(0.1));
         let repo_groups = self.render_project_groups(cx);
         let project = div().flex().flex_col().pl_2()
-            .when(!starred.is_empty(), |d| {
-                d.child(
-                    div()
-                        .px_2()
-                        .pt_2()
-                        .pb_1()
-                        .text_xs()
-                        .text_color(fg.opacity(0.6))
-                        .child("Starred"),
-                )
-                .children(starred)
-                .child(div().h(gpui::px(6.0)))
-            })
             .when(!self.picked.is_empty(), |d| {
                 let count = self.picked.len();
                 let accent = status_color(Some(AgentStatus::Working), fg, self.bg);

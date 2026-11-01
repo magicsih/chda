@@ -232,8 +232,6 @@ pub struct Sidebar {
     pub visible: bool,
     /// The Sessions list: agent panes and other tabs, see [`crate::session_rows`].
     pub sessions: Vec<crate::SessionRow>,
-    /// The STARRED list, as saved in the config.
-    pub starred: Vec<chda_config::StarredBranch>,
 }
 
 impl Sidebar {
@@ -812,7 +810,7 @@ mod tests {
     }
 
     #[test]
-    fn starred_branches_resolve_within_their_own_repository() {
+    fn branch_worktrees_resolve_within_their_own_repository() {
         let mut s = Sidebar::new();
         s.add_repo("/src/a".into());
         s.add_repo("/src/b".into());

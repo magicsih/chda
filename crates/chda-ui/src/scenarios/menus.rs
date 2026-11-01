@@ -435,9 +435,9 @@ fn nonnavigation_menus_return_input_and_new_terminal_keeps_its_destination(
     });
     let origin = h.read(|v, _| v.ws.focused_pane());
     worktree_menu(&mut h, &repo);
-    click_menu(&mut h, "Add to Starred");
+    h.keys("escape");
     assert_eq!(h.read(|v, _| v.ws.focused_pane()), origin);
-    h.run("printf 'star-menu-input\\n'", "star-menu-input\n");
+    h.run("printf 'worktree-menu-input\\n'", "worktree-menu-input\n");
     h.cx.update(|window, cx| {
         h.view.update(cx, |v, cx| {
             v.on_sidebar_event(
