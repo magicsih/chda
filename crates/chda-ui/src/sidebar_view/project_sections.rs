@@ -33,6 +33,8 @@ impl SidebarView {
         self.project_sections = config.project_sections.clone();
         self.repo_sections = config.repo_sections.clone();
         self.uncategorized_collapsed = config.uncategorized_collapsed;
+        self.project_sort = config.project_sort;
+        self.project_sessions_first = config.project_sessions_first;
         cx.notify();
     }
 
@@ -254,32 +256,62 @@ impl SidebarView {
     pub(super) fn render_project_groups(&self, cx: &mut Context<Self>) -> gpui::Div {
         let mut rows = Vec::new();
         let mut layout = Vec::new();
-        let mut append =
-            |section: Option<&ProjectSection>, index: usize, grouped: bool| {
-                let id = section.map(|s| s.id.clone());
-                if grouped {
-                    rows.push(self.render_project_section(section, index, cx));
+        let mut append = |section: Option<&ProjectSection>, index: usize, grouped: bool| {
+            let id = section.map(|s| s.id.clone());
+            if grouped {
+                rows.push(self.render_project_section(section, index, cx));
+                layout.push(ProjectLayout {
+                    repo: None,
+                    section: id.clone(),
+                });
+            }
+            let collapsed =
+                grouped && section.map_or(self.uncategorized_collapsed, |s| s.collapsed);
+            if !collapsed {
+                let mut section_repos: Vec<(usize, &chda_core::RepoEntry)> = self
+                    .model
+                    .repos
+                    .iter()
+                    .enumerate()
+                    .filter(|(_, r)| !grouped || self.repo_section(&r.path) == id.as_deref())
+                    .collect();
+
+                let open_repos = self.active_open_session_repos();
+                let has_session = |r: &chda_core::RepoEntry| open_repos.contains(&r.path);
+
+                if !self.project_sessions_first {
+                    if self.project_sort == chda_config::ProjectSortMode::Alphabetical {
+                        section_repos.sort_by(|(_, a), (_, b)| {
+                            chda_core::Sidebar::compare_projects_alphabetical(a, b)
+                        });
+                    }
+                } else {
+                    let (mut with_sessions, mut without_sessions): (Vec<_>, Vec<_>) =
+                        section_repos.into_iter().partition(|(_, r)| has_session(r));
+
+                    with_sessions.sort_by(|(_, a), (_, b)| {
+                        chda_core::Sidebar::compare_projects_alphabetical(a, b)
+                    });
+
+                    if self.project_sort == chda_config::ProjectSortMode::Alphabetical {
+                        without_sessions.sort_by(|(_, a), (_, b)| {
+                            chda_core::Sidebar::compare_projects_alphabetical(a, b)
+                        });
+                    }
+
+                    with_sessions.extend(without_sessions);
+                    section_repos = with_sessions;
+                }
+
+                for (i, repo) in section_repos {
+                    rows.push(self.render_repo(i, repo, cx));
                     layout.push(ProjectLayout {
-                        repo: None,
+                        repo: Some((repo.path.clone(), repo.collapsed)),
                         section: id.clone(),
                     });
                 }
-                let collapsed =
-                    grouped && section.map_or(self.uncategorized_collapsed, |s| s.collapsed);
-                if !collapsed {
-                    for (i, repo) in
-                        self.model.repos.iter().enumerate().filter(|(_, r)| {
-                            !grouped || self.repo_section(&r.path) == id.as_deref()
-                        })
-                    {
-                        rows.push(self.render_repo(i, repo, cx));
-                        layout.push(ProjectLayout {
-                            repo: Some((repo.path.clone(), repo.collapsed)),
-                            section: id.clone(),
-                        });
-                    }
-                }
-            };
+            }
+        };
         if self.project_sections.is_empty() {
             append(None, 0, false);
         } else {

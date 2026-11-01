@@ -30,6 +30,7 @@ mod palette;
 mod paths;
 mod preparation;
 mod project_sections;
+mod project_sorting;
 mod pull_requests;
 mod quota;
 mod redraw;

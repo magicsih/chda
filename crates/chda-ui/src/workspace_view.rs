@@ -2702,7 +2702,7 @@ impl WorkspaceView {
         }
     }
 
-    fn sync_panes(&mut self, cx: &mut Context<Self>) {
+    pub(crate) fn sync_panes(&mut self, cx: &mut Context<Self>) {
         self.agent_report_at
             .retain(|pane, _| self.ws.pane(*pane).is_some());
         self.previous_runs
@@ -2742,12 +2742,39 @@ impl WorkspaceView {
             &self.sidebar.read(cx).model,
             self.config.active_label,
         );
+        let mut open_cwds: Vec<PathBuf> = panes.iter().map(|(_, cwd)| cwd.clone()).collect();
+        if let Ok(registry) = self.env.windows.try_borrow() {
+            for entry in &registry.entries {
+                for (cwd, _) in entry.panes.values() {
+                    open_cwds.push(cwd.clone());
+                }
+            }
+        }
+        let sidebar_model = &self.sidebar.read(cx).model;
+        let mut open_session_repos = std::collections::HashSet::new();
+        for repo in &sidebar_model.repos {
+            let has_session = open_cwds.iter().any(|cwd| {
+                cwd == &repo.path
+                    || cwd.starts_with(&repo.path)
+                    || repo
+                        .worktrees
+                        .iter()
+                        .any(|w| cwd == &w.path || cwd.starts_with(&w.path))
+            });
+            if has_session {
+                open_session_repos.insert(repo.path.clone());
+            }
+        }
         self.sidebar.update(cx, |s, cx| {
             s.model.set_panes(&panes);
             s.model.sessions = sessions;
             s.active_label = self.config.active_label;
             s.sessions_collapsed = self.config.sessions_collapsed;
             s.project_collapsed = self.config.project_collapsed;
+            s.project_sort = self.config.project_sort;
+            s.project_sessions_first = self.config.project_sessions_first;
+            s.open_session_repos = open_session_repos;
+            s.context_menu_open = self.context_menu.is_some();
             cx.notify();
         });
         self.sync_sidebar_selection(false, cx);
@@ -4029,8 +4056,23 @@ impl WorkspaceView {
             pane: self.ws.focused_pane(),
         })
     }
+    fn open_context_menu(&mut self, menu: ContextMenu, cx: &mut Context<Self>) {
+        self.context_menu = Some(menu);
+        self.sidebar.update(cx, |s, cx| {
+            s.context_menu_open = true;
+            s.sync_interaction_safety(cx.has_active_drag());
+            cx.notify();
+        });
+        cx.notify();
+    }
+
     fn dismiss_context_menu(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         self.context_menu = None;
+        self.sidebar.update(cx, |s, cx| {
+            s.context_menu_open = false;
+            s.sync_interaction_safety(cx.has_active_drag());
+            cx.notify();
+        });
         crate::tooltip::block(window, false, cx);
         if let Some(focus) = self.menu_focus.take() {
             self.restore_close_focus(focus, window, cx);
@@ -4432,8 +4474,7 @@ impl WorkspaceView {
                         )
                     })
                     .collect();
-                self.context_menu = Some(ContextMenu { position, items });
-                cx.notify();
+                self.open_context_menu(ContextMenu { position, items }, cx);
             }
             SidebarEvent::RefocusTerminal => self.refocus_terminal(window, cx),
             SidebarEvent::ReposCollapsed => {
@@ -4453,27 +4494,29 @@ impl WorkspaceView {
                     return;
                 };
                 if missing {
-                    self.context_menu = Some(ContextMenu {
-                        position,
-                        items: vec![
-                            (
-                                "Remove missing worktree (keep branch)".into(),
-                                MenuAction::PruneMissing {
-                                    repo: repo.clone(),
-                                    worktree: path.clone(),
-                                },
-                            ),
-                            (
-                                "Remove missing worktree and branch...".into(),
-                                MenuAction::DeleteWorktreeAndBranch {
-                                    repo,
-                                    worktree: path,
-                                    force: false,
-                                },
-                            ),
-                        ],
-                    });
-                    cx.notify();
+                    self.open_context_menu(
+                        ContextMenu {
+                            position,
+                            items: vec![
+                                (
+                                    "Remove missing worktree (keep branch)".into(),
+                                    MenuAction::PruneMissing {
+                                        repo: repo.clone(),
+                                        worktree: path.clone(),
+                                    },
+                                ),
+                                (
+                                    "Remove missing worktree and branch...".into(),
+                                    MenuAction::DeleteWorktreeAndBranch {
+                                        repo,
+                                        worktree: path,
+                                        force: false,
+                                    },
+                                ),
+                            ],
+                        },
+                        cx,
+                    );
                     return;
                 }
                 let mut items = vec![(
@@ -4484,8 +4527,7 @@ impl WorkspaceView {
                     items.extend(self.agent_launch_items(&path));
                     items.push((INIT_GIT.into(), MenuAction::InitGit(repo.clone())));
                     items.push(("Remove from sidebar".into(), MenuAction::RemoveRepo(repo)));
-                    self.context_menu = Some(ContextMenu { position, items });
-                    cx.notify();
+                    self.open_context_menu(ContextMenu { position, items }, cx);
                     return;
                 }
                 if let Some(base) = self
@@ -4558,14 +4600,51 @@ impl WorkspaceView {
                         },
                     ));
                 }
-                self.context_menu = Some(ContextMenu { position, items });
+                self.open_context_menu(ContextMenu { position, items }, cx);
             }
             SidebarEvent::RepoMenu(repo, position) => {
                 if self.sidebar.read(cx).model.is_folder(&repo) {
-                    self.context_menu = Some(ContextMenu {
+                    self.open_context_menu(
+                        ContextMenu {
+                            position,
+                            items: vec![
+                                (INIT_GIT.into(), MenuAction::InitGit(repo.clone())),
+                                ("Refresh".into(), MenuAction::RefreshRepo(repo.clone())),
+                                (
+                                    "Move to section…".into(),
+                                    MenuAction::PickRepoSection(repo.clone()),
+                                ),
+                                ("Remove from sidebar".into(), MenuAction::RemoveRepo(repo)),
+                            ],
+                        },
+                        cx,
+                    );
+                    return;
+                }
+                self.open_context_menu(
+                    ContextMenu {
                         position,
                         items: vec![
-                            (INIT_GIT.into(), MenuAction::InitGit(repo.clone())),
+                            (
+                                "New worktree...".into(),
+                                MenuAction::NewWorktree(repo.clone()),
+                            ),
+                            (
+                                "New worktree from branch...".into(),
+                                MenuAction::PickBranch(repo.clone()),
+                            ),
+                            (
+                                "Worktree preparation…".into(),
+                                MenuAction::EditPreparation(repo.clone()),
+                            ),
+                            (
+                                "Clean up merged worktrees...".into(),
+                                MenuAction::CleanStale(repo.clone()),
+                            ),
+                            (
+                                "View Git tree".into(),
+                                MenuAction::ViewGitTree(repo.clone()),
+                            ),
                             ("Refresh".into(), MenuAction::RefreshRepo(repo.clone())),
                             (
                                 "Move to section…".into(),
@@ -4573,41 +4652,9 @@ impl WorkspaceView {
                             ),
                             ("Remove from sidebar".into(), MenuAction::RemoveRepo(repo)),
                         ],
-                    });
-                    cx.notify();
-                    return;
-                }
-                self.context_menu = Some(ContextMenu {
-                    position,
-                    items: vec![
-                        (
-                            "New worktree...".into(),
-                            MenuAction::NewWorktree(repo.clone()),
-                        ),
-                        (
-                            "New worktree from branch...".into(),
-                            MenuAction::PickBranch(repo.clone()),
-                        ),
-                        (
-                            "Worktree preparation…".into(),
-                            MenuAction::EditPreparation(repo.clone()),
-                        ),
-                        (
-                            "Clean up merged worktrees...".into(),
-                            MenuAction::CleanStale(repo.clone()),
-                        ),
-                        (
-                            "View Git tree".into(),
-                            MenuAction::ViewGitTree(repo.clone()),
-                        ),
-                        ("Refresh".into(), MenuAction::RefreshRepo(repo.clone())),
-                        (
-                            "Move to section…".into(),
-                            MenuAction::PickRepoSection(repo.clone()),
-                        ),
-                        ("Remove from sidebar".into(), MenuAction::RemoveRepo(repo)),
-                    ],
-                });
+                    },
+                    cx,
+                );
             }
             SidebarEvent::NewWorktree(repo) => self.open_sheet(repo, window, cx),
             SidebarEvent::ResumeSessions(picks) => self.resume_sessions(picks, window, cx),
@@ -4718,6 +4765,27 @@ impl WorkspaceView {
             SidebarEvent::ToggleProject => {
                 crate::tooltip::dismiss(window, cx);
                 self.config.project_collapsed = !self.config.project_collapsed;
+                self.save_config();
+                self.sync_panes(cx);
+                self.refocus_terminal(window, cx);
+            }
+            SidebarEvent::ToggleProjectSort => {
+                crate::tooltip::dismiss(window, cx);
+                self.config.project_sort = match self.config.project_sort {
+                    chda_config::ProjectSortMode::Custom => {
+                        chda_config::ProjectSortMode::Alphabetical
+                    }
+                    chda_config::ProjectSortMode::Alphabetical => {
+                        chda_config::ProjectSortMode::Custom
+                    }
+                };
+                self.save_config();
+                self.sync_panes(cx);
+                self.refocus_terminal(window, cx);
+            }
+            SidebarEvent::ToggleProjectSessionsFirst => {
+                crate::tooltip::dismiss(window, cx);
+                self.config.project_sessions_first = !self.config.project_sessions_first;
                 self.save_config();
                 self.sync_panes(cx);
                 self.refocus_terminal(window, cx);

@@ -89,6 +89,17 @@ pub struct AgentPreset {
     pub args: Vec<String>,
 }
 
+/// How projects are sorted beneath Projects.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum ProjectSortMode {
+    /// Saved drag-and-drop order.
+    #[default]
+    Custom,
+    /// Sorted alphabetically by displayed project name.
+    Alphabetical,
+}
+
 /// One user-owned level beneath Projects. Its id survives renaming.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "kebab-case")]
@@ -157,6 +168,10 @@ pub struct ChdaConfig {
     pub sessions_collapsed: bool,
     /// Hide registered folders and starred branches beneath PROJECT.
     pub project_collapsed: bool,
+    /// How projects are ordered beneath Projects: `custom` or `alphabetical`.
+    pub project_sort: ProjectSortMode,
+    /// Bring projects with open sessions to the top.
+    pub project_sessions_first: bool,
     /// Repositories whose worktree lists are collapsed in PROJECT.
     pub collapsed_repos: Vec<PathBuf>,
     /// Agents offered in the sidebar and the palette, by id (`claude`,
@@ -209,6 +224,8 @@ impl Default for ChdaConfig {
             active_label: ActiveLabel::Alias,
             sessions_collapsed: false,
             project_collapsed: false,
+            project_sort: ProjectSortMode::Custom,
+            project_sessions_first: false,
             collapsed_repos: Vec::new(),
             agents: ["claude", "codex", "gemini", "minimax"]
                 .map(String::from)
@@ -668,6 +685,22 @@ open = "split"
         let text = toml::to_string_pretty(&c).unwrap();
         assert!(!ChdaConfig::parse(&text).unwrap().sessions_collapsed);
         assert!(ChdaConfig::parse("active-collapsed = 3\n").is_err());
+    }
+
+    #[test]
+    fn project_sort_and_sessions_first_roundtrip() {
+        let text = "project-sort = \"alphabetical\"\nproject-sessions-first = true\n";
+        let config = ChdaConfig::parse(text).unwrap();
+        assert_eq!(config.project_sort, ProjectSortMode::Alphabetical);
+        assert!(config.project_sessions_first);
+
+        let serialized = toml::to_string_pretty(&config).unwrap();
+        assert!(serialized.contains("project-sort = \"alphabetical\""));
+        assert!(serialized.contains("project-sessions-first = true"));
+
+        let default_config = ChdaConfig::default();
+        assert_eq!(default_config.project_sort, ProjectSortMode::Custom);
+        assert!(!default_config.project_sessions_first);
     }
 
     #[test]
