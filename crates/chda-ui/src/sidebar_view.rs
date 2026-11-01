@@ -82,6 +82,10 @@ pub enum SidebarEvent {
     ToggleActiveLabel,
     ToggleSessions,
     ToggleProject,
+    /// Switch project sorting between Alphabetical and Custom.
+    ToggleProjectSort,
+    /// Toggle bringing projects with open sessions to the top.
+    ToggleProjectSessionsFirst,
     /// The status dot of a worktree was clicked: go to its agent's pane.
     JumpToAgent(PathBuf),
     /// Open a read-only tab with the worktree's diff against its base.
@@ -248,6 +252,15 @@ pub struct SidebarView {
     pub active_label: chda_config::ActiveLabel,
     pub(crate) sessions_collapsed: bool,
     pub(crate) project_collapsed: bool,
+    pub project_sort: chda_config::ProjectSortMode,
+    pub project_sessions_first: bool,
+    /// Set of repository paths that currently have at least one open session
+    /// (including sessions in worktrees and other open windows).
+    pub open_session_repos: std::collections::HashSet<PathBuf>,
+    /// When true (e.g. context menu is open), defer reordering so items don't slip.
+    pub context_menu_open: bool,
+    /// Frozen open-session repos while context menu or drag is active.
+    pub(crate) frozen_session_repos: Option<std::collections::HashSet<PathBuf>>,
     /// The width the window gives the sidebar, as of its last render; `None`
     /// until the window has said.
     width: Option<f32>,
@@ -656,6 +669,11 @@ impl SidebarView {
             active_label: Default::default(),
             sessions_collapsed: false,
             project_collapsed: false,
+            project_sort: chda_config::ProjectSortMode::Custom,
+            project_sessions_first: false,
+            open_session_repos: std::collections::HashSet::new(),
+            context_menu_open: false,
+            frozen_session_repos: None,
             width: None,
             sticky_repo: None,
             sticky_overhang: Rc::default(),
@@ -676,6 +694,25 @@ impl SidebarView {
             fg,
             bg,
             dragged: Default::default(),
+        }
+    }
+
+    pub(crate) fn active_open_session_repos(&self) -> &std::collections::HashSet<PathBuf> {
+        if let Some(frozen) = &self.frozen_session_repos {
+            frozen
+        } else {
+            &self.open_session_repos
+        }
+    }
+
+    pub(crate) fn sync_interaction_safety(&mut self, is_dragging: bool) {
+        let interacting = self.context_menu_open || is_dragging;
+        if interacting {
+            if self.frozen_session_repos.is_none() {
+                self.frozen_session_repos = Some(self.open_session_repos.clone());
+            }
+        } else {
+            self.frozen_session_repos = None;
         }
     }
 
@@ -1974,6 +2011,7 @@ impl SidebarView {
 
 impl Render for SidebarView {
     fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        self.sync_interaction_safety(cx.has_active_drag());
         let fg = self.fg;
         let empty = self.model.repos.is_empty();
         let now = std::time::SystemTime::now()
@@ -2122,10 +2160,63 @@ impl Render for SidebarView {
                 }))
                 .child(vector_icon(icon, fg.opacity(0.6)))
         });
+        let sort_label = match self.project_sort {
+            chda_config::ProjectSortMode::Alphabetical => "A–Z",
+            chda_config::ProjectSortMode::Custom => "Custom",
+        };
+        let sort_toggle = div()
+            .id("project-sort-toggle")
+            .debug_selector(|| "project-sort-toggle".into())
+            .px_1()
+            .rounded_sm()
+            .cursor_pointer()
+            .hover(|s| s.bg(fg.opacity(0.15)))
+            .tooltip(crate::tooltip::text(
+                "Switch project sorting between Alphabetical (A–Z) and Custom order",
+            ))
+            .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
+            .on_click(cx.listener(|_, _, _, cx| {
+                cx.stop_propagation();
+                cx.emit(SidebarEvent::ToggleProjectSort);
+            }))
+            .child(sort_label);
+        let sessions_first_active = self.project_sessions_first;
+        let sessions_first_toggle = div()
+            .id("project-sessions-first-toggle")
+            .debug_selector(|| "project-sessions-first-toggle".into())
+            .px_1()
+            .rounded_sm()
+            .cursor_pointer()
+            .when(sessions_first_active, |d| {
+                d.bg(fg.opacity(0.18)).text_color(fg)
+            })
+            .when(!sessions_first_active, |d| {
+                d.hover(|s| s.bg(fg.opacity(0.15)))
+            })
+            .tooltip(crate::tooltip::text(if sessions_first_active {
+                "Projects with open sessions first: on"
+            } else {
+                "Projects with open sessions first: off"
+            }))
+            .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
+            .on_click(cx.listener(|_, _, _, cx| {
+                cx.stop_propagation();
+                cx.emit(SidebarEvent::ToggleProjectSessionsFirst);
+            }))
+            .child(vector_icon(
+                Icon::Session,
+                if sessions_first_active {
+                    fg
+                } else {
+                    fg.opacity(0.5)
+                },
+            ));
         let project_buttons = div()
             .flex()
             .items_center()
             .gap_1()
+            .child(sort_toggle)
+            .child(sessions_first_toggle)
             .children(bulk)
             .child(
                 div()

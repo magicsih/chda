@@ -296,6 +296,61 @@ impl Sidebar {
         self.repos.iter_mut().find(|r| r.path == path)
     }
 
+    /// Compare two projects alphabetically by displayed name deterministically:
+    /// case-insensitive name first, then case-sensitive name, then path.
+    pub fn compare_projects_alphabetical(a: &RepoEntry, b: &RepoEntry) -> std::cmp::Ordering {
+        a.name
+            .to_lowercase()
+            .cmp(&b.name.to_lowercase())
+            .then_with(|| a.name.cmp(&b.name))
+            .then_with(|| a.path.cmp(&b.path))
+    }
+
+    /// Order indices into `repos` according to sort mode and the sessions-first toggle:
+    /// - If `sessions_first`: projects with open sessions are placed first, sorted alphabetically.
+    ///   The remaining projects follow `mode` (`Alphabetical` or `Custom`).
+    /// - If not `sessions_first`: all projects follow `mode`.
+    ///
+    /// In `Custom` mode, the base order is the given order (preserving saved drag-and-drop order).
+    pub fn order_project_indices<F>(
+        repos: &[RepoEntry],
+        mode: chda_config::ProjectSortMode,
+        sessions_first: bool,
+        has_open_sessions: F,
+    ) -> Vec<usize>
+    where
+        F: Fn(&RepoEntry) -> bool,
+    {
+        let indices: Vec<usize> = (0..repos.len()).collect();
+        if !sessions_first {
+            match mode {
+                chda_config::ProjectSortMode::Custom => indices,
+                chda_config::ProjectSortMode::Alphabetical => {
+                    let mut sorted = indices;
+                    sorted.sort_by(|&i, &j| {
+                        Self::compare_projects_alphabetical(&repos[i], &repos[j])
+                    });
+                    sorted
+                }
+            }
+        } else {
+            let (mut with_sessions, mut without_sessions): (Vec<usize>, Vec<usize>) = indices
+                .into_iter()
+                .partition(|&i| has_open_sessions(&repos[i]));
+
+            with_sessions
+                .sort_by(|&i, &j| Self::compare_projects_alphabetical(&repos[i], &repos[j]));
+
+            if mode == chda_config::ProjectSortMode::Alphabetical {
+                without_sessions
+                    .sort_by(|&i, &j| Self::compare_projects_alphabetical(&repos[i], &repos[j]));
+            }
+
+            with_sessions.extend(without_sessions);
+            with_sessions
+        }
+    }
+
     /// Replace a repository's worktree list, keeping agent and session state
     /// for worktrees that still exist.
     pub fn set_worktrees(&mut self, repo: &Path, worktrees: Vec<WorktreeEntry>) {
@@ -857,5 +912,85 @@ mod tests {
         assert!(!s.move_repo(Path::new("/gone"), Path::new("/d")));
         s.order_repos(&["/c".into(), "/a".into()]);
         assert_eq!(order(&s), ["c", "a", "d", "b"]);
+    }
+
+    #[test]
+    fn project_sorting_modes_and_sessions_first() {
+        let mut s = Sidebar::new();
+        // Setup projects in a custom order: Zebra, alpha, Alpha (different path), beta
+        s.repos = vec![
+            RepoEntry {
+                path: PathBuf::from("/work/zebra"),
+                name: "Zebra".into(),
+                ..Default::default()
+            },
+            RepoEntry {
+                path: PathBuf::from("/work/alpha-lower"),
+                name: "alpha".into(),
+                ..Default::default()
+            },
+            RepoEntry {
+                path: PathBuf::from("/work/alpha-upper"),
+                name: "Alpha".into(),
+                ..Default::default()
+            },
+            RepoEntry {
+                path: PathBuf::from("/work/beta"),
+                name: "beta".into(),
+                ..Default::default()
+            },
+        ];
+
+        // 1. Custom mode without sessions first
+        let custom_order = Sidebar::order_project_indices(
+            &s.repos,
+            chda_config::ProjectSortMode::Custom,
+            false,
+            |_| false,
+        );
+        assert_eq!(custom_order, vec![0, 1, 2, 3]);
+
+        // 2. Alphabetical mode without sessions first (deterministic equal name handling)
+        let alpha_order = Sidebar::order_project_indices(
+            &s.repos,
+            chda_config::ProjectSortMode::Alphabetical,
+            false,
+            |_| false,
+        );
+        // "alpha" and "Alpha" are lowercased to "alpha", then compared case-sensitively ('A' < 'a') -> index 2 (Alpha) before index 1 (alpha)
+        // followed by beta (3), Zebra (0)
+        assert_eq!(alpha_order, vec![2, 1, 3, 0]);
+
+        // 3. Sessions first with Custom mode: say "beta" and "Zebra" have sessions
+        let has_sessions = |r: &RepoEntry| r.name == "beta" || r.name == "Zebra";
+        let sessions_custom = Sidebar::order_project_indices(
+            &s.repos,
+            chda_config::ProjectSortMode::Custom,
+            true,
+            has_sessions,
+        );
+        // Promoted: beta (3) and Zebra (0) sorted alphabetically -> [3, 0]
+        // Remaining: alpha (1) and Alpha (2) in original custom order -> [1, 2]
+        assert_eq!(sessions_custom, vec![3, 0, 1, 2]);
+
+        // 4. Sessions first with Alphabetical mode
+        let sessions_alpha = Sidebar::order_project_indices(
+            &s.repos,
+            chda_config::ProjectSortMode::Alphabetical,
+            true,
+            has_sessions,
+        );
+        // Promoted: beta (3), Zebra (0) -> [3, 0]
+        // Remaining: Alpha (2), alpha (1) -> [2, 1]
+        assert_eq!(sessions_alpha, vec![3, 0, 2, 1]);
+
+        // 5. Switching back to Custom mode restores original custom order
+        let restored = Sidebar::order_project_indices(
+            &s.repos,
+            chda_config::ProjectSortMode::Custom,
+            false,
+            |_| false,
+        );
+        assert_eq!(restored, vec![0, 1, 2, 3]);
     }
 }
