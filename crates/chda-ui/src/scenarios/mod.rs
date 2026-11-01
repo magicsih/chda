@@ -13,6 +13,7 @@ mod config;
 mod diagrams;
 mod diff;
 mod diff_review;
+mod distinct_parent_child_status;
 mod folders;
 mod git_graph;
 mod harness;

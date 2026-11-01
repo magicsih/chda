@@ -548,24 +548,24 @@ impl SidebarView {
                 // It stands in for the agent's badge, in the agent's color
                 // unless a child waits.
                 let (icon, color) = if counts.waiting > 0 {
-                    (Icon::Waiting, waiting)
+                    (Icon::ChildWaiting, waiting)
                 } else if counts.working > 0 {
-                    (Icon::Working, agent_color)
+                    (Icon::ChildWorking, agent_color)
                 } else if counts.unknown > 0 {
-                    (Icon::Unknown, agent_color)
+                    (Icon::ChildUnknown, agent_color)
                 } else {
                     (Icon::Children, agent_color)
                 };
                 d.flex_shrink_0().child(vector_icon(icon, color))
             })
             .when(!narrow && counts.waiting > 0, |d| {
-                d.child(count(Icon::Waiting, counts.waiting, waiting))
+                d.child(count(Icon::ChildWaiting, counts.waiting, waiting))
             })
             .when(!narrow && counts.show_working(), |d| {
-                d.child(count(Icon::Working, counts.working, fg.opacity(0.7)))
+                d.child(count(Icon::ChildWorking, counts.working, fg.opacity(0.7)))
             })
             .when(!narrow && counts.unknown > 0, |d| {
-                d.child(count(Icon::Unknown, counts.unknown, fg.opacity(0.7)))
+                d.child(count(Icon::ChildUnknown, counts.unknown, fg.opacity(0.7)))
             })
             .when(!narrow, |d| {
                 d.child(count(Icon::Children, counts.total, fg.opacity(0.5)))
@@ -1822,11 +1822,25 @@ impl SidebarView {
             }
             _ => row.tab_title.clone(),
         };
-        let tooltip = format!(
+        let mut tooltip = format!(
             "{label}\n{}\n{place}\n{}",
             row.location(),
-            row.status_label()
+            if !children.is_empty() {
+                format!("Parent: {}", row.status_label())
+            } else {
+                row.status_label().to_string()
+            }
         );
+        for group in &children {
+            let counts = ChildCounts::of(&group.children);
+            let name = self
+                .agents
+                .iter()
+                .find(|a| a.id == group.agent)
+                .map_or_else(|| group.agent.clone(), |a| a.name.clone());
+            tooltip.push('\n');
+            tooltip.push_str(&counts.describe(&name));
+        }
         let idle_for = (row.live_idle() && row.since > 0).then(|| activity_age(now, row.since));
         let close = match row.kind {
             SessionKind::Terminal => Some((
@@ -1885,7 +1899,11 @@ impl SidebarView {
                         move || format!("session-status-{id}")
                     })
                     .flex_shrink_0()
-                    .tooltip(crate::tooltip::text(row.status_label()))
+                    .tooltip(crate::tooltip::text(if !children.is_empty() {
+                        format!("Parent: {}", row.status_label())
+                    } else {
+                        row.status_label().to_string()
+                    }))
                     .child(status_icon(row.status, self.fg, self.bg)),
             )
             .when_some(picture.clone(), |d, identity| {
