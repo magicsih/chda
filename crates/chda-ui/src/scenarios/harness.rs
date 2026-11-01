@@ -23,6 +23,8 @@ use crate::workspace_view::WorkspaceView;
 #[derive(Default)]
 pub struct Recorded {
     pub notifications: Vec<(String, String, NotificationTarget)>,
+    pub notification_sounds: Vec<bool>,
+    pub notification_plays_sound: bool,
     pub badge: usize,
     pub beeps: usize,
     pub click: Option<Box<dyn Fn(NotificationTarget)>>,
@@ -44,11 +46,14 @@ impl System for RecordingSystem {
     fn can_install_updates(&self) -> bool {
         !self.0.borrow().manual_updates
     }
-    fn notify(&self, title: &str, body: &str, target: &NotificationTarget, _: &App) {
-        self.0
-            .borrow_mut()
-            .notifications
+    fn notification_plays_sound(&self) -> bool {
+        self.0.borrow().notification_plays_sound
+    }
+    fn notify(&self, title: &str, body: &str, target: &NotificationTarget, sound: bool, _: &App) {
+        let mut r = self.0.borrow_mut();
+        r.notifications
             .push((title.into(), body.into(), target.clone()));
+        r.notification_sounds.push(sound);
     }
 
     fn set_badge(&self, count: usize) {

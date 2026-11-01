@@ -180,6 +180,8 @@ pub struct ChdaConfig {
     pub sidebar_width: u32,
     pub sidebar_visible: bool,
     pub notifications: bool,
+    /// Play a brief alert sound when an agent hands control back to the user.
+    pub handoff_sound: bool,
     /// Keep non-essential animations still; macOS also follows the OS setting.
     pub reduce_motion: bool,
     /// Command that opens a cmd-clicked file path, with `{file}`, `{line}`
@@ -233,6 +235,7 @@ impl Default for ChdaConfig {
             sidebar_width: 280,
             sidebar_visible: true,
             notifications: true,
+            handoff_sound: true,
             reduce_motion: false,
             editor: None,
             restore_session: true,
@@ -701,6 +704,19 @@ open = "split"
         let default_config = ChdaConfig::default();
         assert_eq!(default_config.project_sort, ProjectSortMode::Custom);
         assert!(!default_config.project_sessions_first);
+    }
+
+    #[test]
+    fn handoff_sound_defaults_and_roundtrips() {
+        let default_config = ChdaConfig::default();
+        assert!(default_config.handoff_sound);
+
+        let parsed = ChdaConfig::parse("handoff-sound = false\n").unwrap();
+        assert!(!parsed.handoff_sound);
+
+        let serialized = toml::to_string_pretty(&parsed).unwrap();
+        assert!(serialized.contains("handoff-sound = false"));
+        assert_eq!(ChdaConfig::parse(&serialized).unwrap(), parsed);
     }
 
     #[test]

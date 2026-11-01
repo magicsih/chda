@@ -320,15 +320,16 @@ pub fn init_notifications(on_click: impl Fn(NotificationTarget) + 'static, cx: &
 }
 
 /// Show a user notification; clicking it reports `target`.
-pub fn notify(title: &str, body: &str, target: &NotificationTarget, cx: &gpui::App) {
+pub fn notify(title: &str, body: &str, target: &NotificationTarget, sound: bool, cx: &gpui::App) {
     #[cfg(any(target_os = "macos", target_os = "linux"))]
     {
         use std::sync::atomic::{AtomicU64, Ordering};
         static NONCE: AtomicU64 = AtomicU64::new(0);
         let id = target.encode(NONCE.fetch_add(1, Ordering::Relaxed));
         #[cfg(target_os = "macos")]
-        macos::notify(title, body, &id);
+        macos::notify(title, body, &id, sound);
         #[cfg(target_os = "linux")]
+        let _ = sound;
         cx.show_system_notification(gpui::SystemNotification {
             tag: id.into(),
             title: title.to_owned().into(),
@@ -342,7 +343,19 @@ pub fn notify(title: &str, body: &str, target: &NotificationTarget, cx: &gpui::A
     #[cfg(not(target_os = "linux"))]
     let _ = cx;
     #[cfg(not(any(target_os = "macos", target_os = "linux")))]
-    let _ = (title, body, target);
+    let _ = (title, body, target, sound);
+}
+
+/// Whether system desktop notifications supply an audible alert.
+pub fn notification_plays_sound() -> bool {
+    #[cfg(target_os = "macos")]
+    {
+        macos::notification_plays_sound()
+    }
+    #[cfg(not(target_os = "macos"))]
+    {
+        false
+    }
 }
 
 /// Show the standard About panel: name, version and icon from the bundle.
@@ -459,7 +472,7 @@ mod tests {
                 },
                 cx,
             );
-            notify("Agent is waiting", "in main", &target, cx);
+            notify("Agent is waiting", "in main", &target, true, cx);
         });
         let notifications = cx.delivered_system_notifications();
         assert_eq!(notifications.len(), 1);

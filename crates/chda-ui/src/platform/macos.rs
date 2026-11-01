@@ -116,7 +116,7 @@ pub fn init_notifications(on_click: impl Fn(String) + 'static) {
     );
 }
 
-pub fn notify(title: &str, body: &str, id: &str) {
+pub fn notify(title: &str, body: &str, id: &str, sound: bool) {
     if !bundled() {
         // Unbundled development builds: no click handling.
         let esc = |s: &str| s.replace('\\', "\\\\").replace('"', "\\\"");
@@ -135,7 +135,9 @@ pub fn notify(title: &str, body: &str, id: &str) {
     let content = UNMutableNotificationContent::new();
     content.setTitle(&NSString::from_str(title));
     content.setBody(&NSString::from_str(body));
-    content.setSound(Some(&UNNotificationSound::defaultSound()));
+    if sound {
+        content.setSound(Some(&UNNotificationSound::defaultSound()));
+    }
     let request = UNNotificationRequest::requestWithIdentifier_content_trigger(
         &NSString::from_str(id),
         &content,
@@ -143,6 +145,10 @@ pub fn notify(title: &str, body: &str, id: &str) {
     );
     UNUserNotificationCenter::currentNotificationCenter()
         .addNotificationRequest_withCompletionHandler(&request, None);
+}
+
+pub fn notification_plays_sound() -> bool {
+    bundled()
 }
 
 /// The user's locale, e.g. `ko_KR`.

@@ -22,7 +22,18 @@ pub trait System {
         false
     }
     fn can_install_updates(&self) -> bool;
-    fn notify(&self, title: &str, body: &str, target: &NotificationTarget, cx: &gpui::App);
+    fn notify(
+        &self,
+        title: &str,
+        body: &str,
+        target: &NotificationTarget,
+        sound: bool,
+        cx: &gpui::App,
+    );
+    /// Whether system desktop notifications supply an audible alert.
+    fn notification_plays_sound(&self) -> bool {
+        false
+    }
     /// Show `count` on the Dock icon; zero clears it.
     fn set_badge(&self, count: usize);
     fn beep(&self);
@@ -54,8 +65,19 @@ impl System for NativeSystem {
     fn can_install_updates(&self) -> bool {
         platform::release::can_install()
     }
-    fn notify(&self, title: &str, body: &str, target: &NotificationTarget, cx: &gpui::App) {
-        platform::notify(title, body, target, cx);
+    fn notify(
+        &self,
+        title: &str,
+        body: &str,
+        target: &NotificationTarget,
+        sound: bool,
+        cx: &gpui::App,
+    ) {
+        platform::notify(title, body, target, sound, cx);
+    }
+
+    fn notification_plays_sound(&self) -> bool {
+        platform::notification_plays_sound()
     }
 
     fn set_badge(&self, count: usize) {
