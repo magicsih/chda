@@ -16,6 +16,7 @@ mod diff_review;
 mod distinct_parent_child_status;
 mod folders;
 mod git_graph;
+mod handoff_sound;
 mod harness;
 mod identicons;
 mod idle_agents;

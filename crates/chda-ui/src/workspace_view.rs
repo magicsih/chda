@@ -1491,6 +1491,10 @@ impl WorkspaceView {
         } else {
             false
         };
+        let prior_status = pane
+            .and_then(|p| self.ws.pane(p))
+            .and_then(|i| i.agent.as_ref())
+            .map(|a| a.status);
         let pane_changed = pane.is_some_and(|p| {
             if continuing_session {
                 return false;
@@ -1581,24 +1585,29 @@ impl WorkspaceView {
             self.notifications
                 .record_once(key, ev.timestamp, severity, message, context);
         }
-        match status {
-            AgentStatus::WaitingInput if self.config.notifications => {
-                self.env.system.notify(
-                    &format!("{agent} is waiting"),
-                    &format!("in {name}"),
-                    &target,
-                    cx,
-                );
+        let is_new_handoff = matches!(status, AgentStatus::WaitingInput | AgentStatus::Review)
+            && (pane.is_none() || prior_status != Some(status));
+        let sends_notification = self.config.notifications
+            && match status {
+                AgentStatus::WaitingInput => true,
+                AgentStatus::Review => !looking,
+                _ => false,
+            };
+        if sends_notification {
+            let (title, body) = match status {
+                AgentStatus::WaitingInput => (format!("{agent} is waiting"), format!("in {name}")),
+                _ => (format!("{agent} finished"), format!("in {name}")),
+            };
+            self.env
+                .system
+                .notify(&title, &body, &target, self.config.handoff_sound, cx);
+        }
+        if is_new_handoff && self.config.handoff_sound {
+            let notification_sounded =
+                sends_notification && self.env.system.notification_plays_sound();
+            if !notification_sounded {
+                self.env.system.beep();
             }
-            AgentStatus::Review if self.config.notifications && !looking => {
-                self.env.system.notify(
-                    &format!("{agent} finished"),
-                    &format!("in {name}"),
-                    &target,
-                    cx,
-                );
-            }
-            _ => {}
         }
         if looking {
             self.reviewed_focused(cx);
