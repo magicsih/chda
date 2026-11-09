@@ -35,6 +35,9 @@ impl SidebarView {
         self.uncategorized_collapsed = config.uncategorized_collapsed;
         self.project_sort = config.project_sort;
         self.project_sessions_first = config.project_sessions_first;
+        self.session_sort = config.session_sort;
+        self.archived_repos = config.archived_repos.clone();
+        self.archived_collapsed = config.archived_collapsed;
         cx.notify();
     }
 
@@ -273,7 +276,12 @@ impl SidebarView {
                     .repos
                     .iter()
                     .enumerate()
-                    .filter(|(_, r)| !grouped || self.repo_section(&r.path) == id.as_deref())
+                    .filter(|(_, r)| {
+                        if self.archived_repos.contains(&r.path) {
+                            return false;
+                        }
+                        !grouped || self.repo_section(&r.path) == id.as_deref()
+                    })
                     .collect();
 
                 let open_repos = self.active_open_session_repos();

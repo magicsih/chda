@@ -217,6 +217,13 @@ impl Node {
     }
 }
 
+fn now_millis() -> u64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_millis() as u64)
+        .unwrap_or(0)
+}
+
 /// A terminal split tree, repository history or local diff review.
 #[derive(Clone, Debug, PartialEq)]
 pub struct Tab {
@@ -224,6 +231,8 @@ pub struct Tab {
     pub content: TabContent,
     /// Title the user typed; overrides the automatic one.
     pub custom_title: Option<String>,
+    /// Milliseconds since the epoch when this tab was created.
+    pub created_at: u64,
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -311,7 +320,7 @@ impl Tab {
 }
 
 /// Per-pane state the UI reports back.
-#[derive(Clone, Debug, Default, PartialEq)]
+#[derive(Clone, Debug, PartialEq)]
 pub struct PaneInfo {
     /// Title from OSC 0/2, if any.
     pub title: String,
@@ -340,6 +349,29 @@ pub struct PaneInfo {
     pub pane_run: Option<crate::PaneRun>,
     /// App-owned basename of the previous run's private, read-only output.
     pub previous_run: Option<String>,
+    /// Milliseconds since the epoch when this pane was created.
+    pub created_at: u64,
+}
+
+impl Default for PaneInfo {
+    fn default() -> Self {
+        Self {
+            title: String::new(),
+            cwd: None,
+            branch: None,
+            repo: None,
+            bell: false,
+            last_activity: 0,
+            previous_activity: None,
+            agent: None,
+            agent_live: false,
+            agent_session: None,
+            agent_launch: None,
+            pane_run: None,
+            previous_run: None,
+            created_at: now_millis(),
+        }
+    }
 }
 
 /// An agent conversation: which agent and its session id.
@@ -400,6 +432,10 @@ impl Workspace {
 
     pub fn active_tab(&self) -> Option<&Tab> {
         self.tabs.iter().find(|t| Some(t.id) == self.active)
+    }
+
+    pub fn tab_mut(&mut self, id: TabId) -> Option<&mut Tab> {
+        self.tabs.iter_mut().find(|t| t.id == id)
     }
 
     fn active_tab_mut(&mut self) -> Option<&mut Tab> {
@@ -652,6 +688,7 @@ impl Workspace {
                     zoomed: None,
                 }),
                 custom_title: None,
+                created_at: now_millis(),
             },
         );
         self.active = Some(tab);
@@ -680,6 +717,7 @@ impl Workspace {
                 id,
                 content: TabContent::GitGraph { repo },
                 custom_title: None,
+                created_at: now_millis(),
             },
         );
         self.active = Some(id);
@@ -717,6 +755,7 @@ impl Workspace {
                     base,
                 },
                 custom_title: None,
+                created_at: now_millis(),
             },
         );
         self.active = Some(id);
@@ -774,6 +813,7 @@ impl Workspace {
                 zoomed,
             }),
             custom_title,
+            created_at: now_millis(),
         });
         self.active.get_or_insert(id);
         id
@@ -916,6 +956,7 @@ impl Workspace {
                     zoomed: None,
                 }),
                 custom_title: None,
+                created_at: now_millis(),
             },
         );
         self.active = Some(tab);

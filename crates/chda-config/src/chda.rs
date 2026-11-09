@@ -100,6 +100,19 @@ pub enum ProjectSortMode {
     Alphabetical,
 }
 
+/// How sessions are sorted in the Sessions list.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum SessionSortMode {
+    /// Workspace tab and pane order.
+    #[default]
+    Custom,
+    /// Sorted alphabetically by session title.
+    Alphabetical,
+    /// Sorted by creation time (newest first).
+    Creation,
+}
+
 /// One user-owned level beneath Projects. Its id survives renaming.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "kebab-case")]
@@ -166,12 +179,18 @@ pub struct ChdaConfig {
     pub active_label: ActiveLabel,
     /// Hide Sessions rows while keeping the header and count visible.
     pub sessions_collapsed: bool,
+    /// How sessions are ordered in the Sessions list: `custom`, `alphabetical`, or `creation`.
+    pub session_sort: SessionSortMode,
     /// Hide registered folders and starred branches beneath PROJECT.
     pub project_collapsed: bool,
     /// How projects are ordered beneath Projects: `custom` or `alphabetical`.
     pub project_sort: ProjectSortMode,
     /// Bring projects with open sessions to the top.
     pub project_sessions_first: bool,
+    /// Repositories that have been archived.
+    pub archived_repos: Vec<PathBuf>,
+    /// Whether the archived projects section in the sidebar is collapsed.
+    pub archived_collapsed: bool,
     /// Repositories whose worktree lists are collapsed in PROJECT.
     pub collapsed_repos: Vec<PathBuf>,
     /// Agents offered in the sidebar and the palette, by id (`claude`,
@@ -225,9 +244,12 @@ impl Default for ChdaConfig {
             tab_title: TabTitle::Branch,
             active_label: ActiveLabel::Alias,
             sessions_collapsed: false,
+            session_sort: SessionSortMode::Custom,
             project_collapsed: false,
             project_sort: ProjectSortMode::Custom,
             project_sessions_first: false,
+            archived_repos: Vec::new(),
+            archived_collapsed: true,
             collapsed_repos: Vec::new(),
             agents: ["claude", "codex", "gemini", "minimax"]
                 .map(String::from)
@@ -359,6 +381,28 @@ impl ChdaConfig {
                     != Some(id)
             }
             None => self.repo_sections.remove(repo).is_some(),
+        }
+    }
+
+    pub fn is_archived(&self, repo: &Path) -> bool {
+        self.archived_repos.iter().any(|r| r == repo)
+    }
+
+    pub fn archive_repo(&mut self, repo: PathBuf) -> bool {
+        if !self.is_archived(&repo) {
+            self.archived_repos.push(repo);
+            true
+        } else {
+            false
+        }
+    }
+
+    pub fn unarchive_repo(&mut self, repo: &Path) -> bool {
+        if let Some(pos) = self.archived_repos.iter().position(|r| r == repo) {
+            self.archived_repos.remove(pos);
+            true
+        } else {
+            false
         }
     }
 
@@ -704,6 +748,36 @@ open = "split"
         let default_config = ChdaConfig::default();
         assert_eq!(default_config.project_sort, ProjectSortMode::Custom);
         assert!(!default_config.project_sessions_first);
+    }
+
+    #[test]
+    fn session_sort_and_archived_repos_roundtrip() {
+        let text = "session-sort = \"creation\"\narchived-repos = [\"/path/to/repo\"]\narchived-collapsed = false\n";
+        let mut config = ChdaConfig::parse(text).unwrap();
+        assert_eq!(config.session_sort, SessionSortMode::Creation);
+        assert_eq!(config.archived_repos, vec![PathBuf::from("/path/to/repo")]);
+        assert!(!config.archived_collapsed);
+        assert!(config.is_archived(Path::new("/path/to/repo")));
+
+        // Archive another repo
+        assert!(config.archive_repo(PathBuf::from("/path/to/other")));
+        assert!(!config.archive_repo(PathBuf::from("/path/to/other"))); // already archived
+        assert!(config.is_archived(Path::new("/path/to/other")));
+
+        // Unarchive
+        assert!(config.unarchive_repo(Path::new("/path/to/repo")));
+        assert!(!config.unarchive_repo(Path::new("/path/to/repo"))); // already removed
+        assert!(!config.is_archived(Path::new("/path/to/repo")));
+
+        let serialized = toml::to_string_pretty(&config).unwrap();
+        assert!(serialized.contains("session-sort = \"creation\""));
+        assert!(serialized.contains("archived-repos = [\"/path/to/other\"]"));
+        assert!(serialized.contains("archived-collapsed = false"));
+
+        let default_config = ChdaConfig::default();
+        assert_eq!(default_config.session_sort, SessionSortMode::Custom);
+        assert!(default_config.archived_repos.is_empty());
+        assert!(default_config.archived_collapsed);
     }
 
     #[test]

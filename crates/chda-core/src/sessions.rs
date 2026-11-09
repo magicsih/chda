@@ -7,7 +7,7 @@ use std::path::PathBuf;
 use crate::{AgentStatus, PaneId, Sidebar, Tab, TabContent, TabId, Workspace};
 
 /// What a row stands for. Status changes never change it.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub enum SessionKey {
     /// A pane running, or launched with, a coding agent.
     Pane(PaneId),
@@ -80,6 +80,7 @@ pub struct SessionRow {
     pub shares_tab: bool,
     pub last_activity: u64,
     pub previous_activity: Option<u64>,
+    pub created_at: u64,
 }
 
 impl SessionRow {
@@ -209,6 +210,7 @@ pub fn session_rows(
                 shares_tab: agents.len() > 1,
                 last_activity: info.last_activity,
                 previous_activity: info.previous_activity,
+                created_at: info.created_at,
             });
         }
         if !agents.is_empty() {
@@ -251,6 +253,7 @@ pub fn session_rows(
             shares_tab: false,
             last_activity,
             previous_activity,
+            created_at: tab.created_at,
         };
         if kind == SessionKind::Terminal {
             terminals.push(row);
@@ -615,5 +618,44 @@ mod tests {
             update_session_activity(&mut fresh, &ws);
             fresh
         });
+    }
+
+    #[test]
+    fn session_sorting_modes() {
+        let mut ws = Workspace::new();
+        let (tab1, pane1) = ws.new_tab();
+        let (tab2, pane2) = ws.new_tab();
+        let (tab3, pane3) = ws.new_tab();
+
+        ws.pane_mut(pane1).unwrap().title = "Zebra".into();
+        ws.pane_mut(pane1).unwrap().created_at = 1000;
+        ws.tab_mut(tab1).unwrap().created_at = 1000;
+
+        ws.pane_mut(pane2).unwrap().title = "Alpha".into();
+        ws.pane_mut(pane2).unwrap().created_at = 3000;
+        ws.tab_mut(tab2).unwrap().created_at = 3000;
+
+        ws.pane_mut(pane3).unwrap().title = "Beta".into();
+        ws.pane_mut(pane3).unwrap().created_at = 2000;
+        ws.tab_mut(tab3).unwrap().created_at = 2000;
+
+        let base_rows = session_rows(&ws, &Sidebar::new(), ActiveLabel::Branch);
+        let titles =
+            |r: &[SessionRow]| -> Vec<String> { r.iter().map(|s| s.title.clone()).collect() };
+
+        // Custom mode preserves the workspace tab order (Zebra, Alpha, Beta)
+        let mut rows = base_rows.clone();
+        Sidebar::sort_sessions(&mut rows, chda_config::SessionSortMode::Custom);
+        assert_eq!(titles(&rows), ["Zebra", "Alpha", "Beta"]);
+
+        // Alphabetical mode sorts case-insensitively (Alpha, Beta, Zebra)
+        let mut rows = base_rows.clone();
+        Sidebar::sort_sessions(&mut rows, chda_config::SessionSortMode::Alphabetical);
+        assert_eq!(titles(&rows), ["Alpha", "Beta", "Zebra"]);
+
+        // Creation mode sorts newest first (Alpha at 3000, Beta at 2000, Zebra at 1000)
+        let mut rows = base_rows.clone();
+        Sidebar::sort_sessions(&mut rows, chda_config::SessionSortMode::Creation);
+        assert_eq!(titles(&rows), ["Alpha", "Beta", "Zebra"]);
     }
 }

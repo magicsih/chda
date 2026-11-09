@@ -224,6 +224,8 @@ pub struct RepoEntry {
     /// A plain folder, not a git repository: one row for the folder itself
     /// and no git actions.
     pub folder: bool,
+    /// Archived repository: hidden from the main Projects list and shown in the Archived section.
+    pub archived: bool,
 }
 
 #[derive(Clone, Debug, Default)]
@@ -304,6 +306,44 @@ impl Sidebar {
             .cmp(&b.name.to_lowercase())
             .then_with(|| a.name.cmp(&b.name))
             .then_with(|| a.path.cmp(&b.path))
+    }
+
+    /// Compare two sessions alphabetically by displayed title deterministically:
+    /// case-insensitive title first, then case-sensitive title, then pane index, then key.
+    pub fn compare_sessions_alphabetical(
+        a: &crate::SessionRow,
+        b: &crate::SessionRow,
+    ) -> std::cmp::Ordering {
+        a.title
+            .to_lowercase()
+            .cmp(&b.title.to_lowercase())
+            .then_with(|| a.title.cmp(&b.title))
+            .then_with(|| a.pane_index.cmp(&b.pane_index))
+            .then_with(|| a.key.cmp(&b.key))
+    }
+
+    /// Compare two sessions by creation time (newest first).
+    pub fn compare_sessions_creation(
+        a: &crate::SessionRow,
+        b: &crate::SessionRow,
+    ) -> std::cmp::Ordering {
+        b.created_at
+            .cmp(&a.created_at)
+            .then_with(|| a.title.to_lowercase().cmp(&b.title.to_lowercase()))
+            .then_with(|| a.key.cmp(&b.key))
+    }
+
+    /// Sort sessions in place according to the given mode.
+    pub fn sort_sessions(sessions: &mut [crate::SessionRow], mode: chda_config::SessionSortMode) {
+        match mode {
+            chda_config::SessionSortMode::Custom => {}
+            chda_config::SessionSortMode::Alphabetical => {
+                sessions.sort_by(Self::compare_sessions_alphabetical);
+            }
+            chda_config::SessionSortMode::Creation => {
+                sessions.sort_by(Self::compare_sessions_creation);
+            }
+        }
     }
 
     /// Order indices into `repos` according to sort mode and the sessions-first toggle:
