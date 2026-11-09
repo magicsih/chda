@@ -85,6 +85,12 @@ v1.7.0의 `d82f602` 후보에 한해 사용자가 전체 native 검수 3회, 전
 `native_result: blocked`를 유지한다. CI, 서명, 공증, Gatekeeper, 두 CPU 구조,
 업데이트 서명, checksum과 동일 draft 공개는 유지하며 다른 후보에는 적용하지 않는다.
 
+v1.8.0의 `4fbe9b5` 후보에 한해 사용자가 전체 native 검수 3회, 전체 E2E 2회와
+정확한 signed ZIP의 GUI 실행, 업데이트 뒤 세션 보존, GUI IPC와 shell PID 검사를
+미검수로 공개하는 데 동의했다. [이번 승인 기록](releases/v1.8.0-publication-approval.md)은
+`native_result: blocked`를 유지한다. CI, 서명, 공증, Gatekeeper, 두 CPU 구조,
+업데이트 서명, checksum과 동일 draft 공개는 유지하며 다른 후보에는 적용하지 않는다.
+
 ## 버전 정책
 
 `v0.1.24` 다음 릴리스부터 `v1.0.25`로 전환한다. 마지막 자리 `25`는 기존

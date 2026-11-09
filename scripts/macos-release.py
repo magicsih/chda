@@ -54,12 +54,14 @@ EXCEPTION_PATHS = {
     'v1.5.2': 'docs/releases/v1.5.2-publication-approval.json',
     'v1.6.1': 'docs/releases/v1.6.1-publication-approval.json',
     'v1.7.0': 'docs/releases/v1.7.0-publication-approval.json',
+    'v1.8.0': 'docs/releases/v1.8.0-publication-approval.json',
 }
 OWNER_INSTRUCTIONS = {
     'v0.1.21': '이제 좀 공개해라 좀',
     'v1.5.2': '이번 1.5.2에 한해 생략 승인',
     'v1.6.1': '이번 v1.6.1에 한해 생략 승인',
     'v1.7.0': '승인',
+    'v1.8.0': '다음 버전으로 출시까지 진행해',
     'v0.1.22': '예외 출시: 반복 검수 생략 (권장)',
     'v0.1.23': 'PR 병합하고 공개해 빨리. 아무도 쓰는 사람도 없는데 뭘 자꾸 뜸을드려 빨리 빨리 좀 해 그냥',
     'v0.1.24': '공개 하자',
@@ -592,6 +594,16 @@ def native_archive(root, tag):
 
 def exception_notes(tag):
     """Per-version validation notices for explicitly approved releases."""
+    if tag == 'v1.8.0':
+        return ('Native UI validation is incomplete. For this v1.8.0 candidate only, the owner '
+                'approved omitting three full native review rounds, both full native E2E runs '
+                'and the exact signed ZIP\'s GUI launch, session-preserving update, GUI IPC '
+                'and shell PID checks. Terminal preservation after an actual update remains '
+                'unverified. CI, Developer ID signing, notarization, Gatekeeper, universal '
+                'architectures, update signatures, checksums and immutable draft publication '
+                'remain required. '
+                '[Validation status](https://github.com/%s/blob/main/docs/releases/'
+                'v1.8.0-publication-approval.md).\n\n' % REPO)
     if tag == 'v1.7.0':
         return ('Native UI validation is incomplete. For this v1.7.0 candidate only, the owner '
                 'approved omitting three full native review rounds, both full native E2E runs '
