@@ -11,5 +11,6 @@ AGENTS.local.md
 .claude/settings.local.json
 
 # Pinned native source stays outside Cargo caches.
+/.ghostty-source
 /.ghostty-source/
 .serena/

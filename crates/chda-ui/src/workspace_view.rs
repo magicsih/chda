@@ -233,6 +233,8 @@ pub(crate) enum MenuAction {
     /// Pick an existing branch to check out as a new worktree.
     PickBranch(PathBuf),
     RemoveRepo(PathBuf),
+    ArchiveRepo(PathBuf),
+    UnarchiveRepo(PathBuf),
     RefreshRepo(PathBuf),
     /// Bring the worktree's upstream in; `None`: the configured strategy.
     UpdateBranch {
@@ -2746,11 +2748,12 @@ impl WorkspaceView {
         if let Some(active) = self.ws.active_tab() {
             self.tab_group = self.ws.tab_repo(active);
         }
-        let sessions = chda_core::session_rows(
+        let mut sessions = chda_core::session_rows(
             &self.ws,
             &self.sidebar.read(cx).model,
             self.config.active_label,
         );
+        chda_core::Sidebar::sort_sessions(&mut sessions, self.config.session_sort);
         let mut open_cwds: Vec<PathBuf> = panes.iter().map(|(_, cwd)| cwd.clone()).collect();
         if let Ok(registry) = self.env.windows.try_borrow() {
             for entry in &registry.entries {
@@ -2779,9 +2782,12 @@ impl WorkspaceView {
             s.model.sessions = sessions;
             s.active_label = self.config.active_label;
             s.sessions_collapsed = self.config.sessions_collapsed;
+            s.session_sort = self.config.session_sort;
             s.project_collapsed = self.config.project_collapsed;
             s.project_sort = self.config.project_sort;
             s.project_sessions_first = self.config.project_sessions_first;
+            s.archived_repos = self.config.archived_repos.clone();
+            s.archived_collapsed = self.config.archived_collapsed;
             s.open_session_repos = open_session_repos;
             s.context_menu_open = self.context_menu.is_some();
             cx.notify();
@@ -4612,7 +4618,35 @@ impl WorkspaceView {
                 self.open_context_menu(ContextMenu { position, items }, cx);
             }
             SidebarEvent::RepoMenu(repo, position) => {
-                if self.sidebar.read(cx).model.is_folder(&repo) {
+                let is_folder = self.sidebar.read(cx).model.is_folder(&repo);
+                let is_archived = self.config.is_archived(&repo);
+                if is_archived {
+                    let unarchive_label = if is_folder {
+                        "Unarchive folder"
+                    } else {
+                        "Unarchive project"
+                    };
+                    self.open_context_menu(
+                        ContextMenu {
+                            position,
+                            items: vec![
+                                (
+                                    unarchive_label.into(),
+                                    MenuAction::UnarchiveRepo(repo.clone()),
+                                ),
+                                ("Remove from sidebar".into(), MenuAction::RemoveRepo(repo)),
+                            ],
+                        },
+                        cx,
+                    );
+                    return;
+                }
+                let archive_label = if is_folder {
+                    "Archive folder"
+                } else {
+                    "Archive project"
+                };
+                if is_folder {
                     self.open_context_menu(
                         ContextMenu {
                             position,
@@ -4623,6 +4657,7 @@ impl WorkspaceView {
                                     "Move to section…".into(),
                                     MenuAction::PickRepoSection(repo.clone()),
                                 ),
+                                (archive_label.into(), MenuAction::ArchiveRepo(repo.clone())),
                                 ("Remove from sidebar".into(), MenuAction::RemoveRepo(repo)),
                             ],
                         },
@@ -4659,6 +4694,7 @@ impl WorkspaceView {
                                 "Move to section…".into(),
                                 MenuAction::PickRepoSection(repo.clone()),
                             ),
+                            (archive_label.into(), MenuAction::ArchiveRepo(repo.clone())),
                             ("Remove from sidebar".into(), MenuAction::RemoveRepo(repo)),
                         ],
                     },
@@ -4765,6 +4801,21 @@ impl WorkspaceView {
                 self.save_config();
                 self.sync_panes(cx);
             }
+            SidebarEvent::ToggleSessionSort => {
+                crate::tooltip::dismiss(window, cx);
+                self.config.session_sort = match self.config.session_sort {
+                    chda_config::SessionSortMode::Custom => {
+                        chda_config::SessionSortMode::Alphabetical
+                    }
+                    chda_config::SessionSortMode::Alphabetical => {
+                        chda_config::SessionSortMode::Creation
+                    }
+                    chda_config::SessionSortMode::Creation => chda_config::SessionSortMode::Custom,
+                };
+                self.save_config();
+                self.sync_panes(cx);
+                self.refocus_terminal(window, cx);
+            }
             SidebarEvent::ToggleSessions => {
                 crate::tooltip::dismiss(window, cx);
                 self.config.sessions_collapsed = !self.config.sessions_collapsed;
@@ -4795,6 +4846,19 @@ impl WorkspaceView {
             SidebarEvent::ToggleProjectSessionsFirst => {
                 crate::tooltip::dismiss(window, cx);
                 self.config.project_sessions_first = !self.config.project_sessions_first;
+                self.save_config();
+                self.sync_panes(cx);
+                self.refocus_terminal(window, cx);
+            }
+            SidebarEvent::ToggleArchived => {
+                crate::tooltip::dismiss(window, cx);
+                self.config.archived_collapsed = !self.config.archived_collapsed;
+                self.save_config();
+                self.sync_panes(cx);
+                self.refocus_terminal(window, cx);
+            }
+            SidebarEvent::UnarchiveRepo(repo) => {
+                self.config.unarchive_repo(&repo);
                 self.save_config();
                 self.sync_panes(cx);
                 self.refocus_terminal(window, cx);
@@ -5816,8 +5880,19 @@ impl WorkspaceView {
                 });
                 self.config.repos.retain(|r| *r != repo);
                 self.config.repo_sections.remove(&repo);
+                self.config.archived_repos.retain(|r| *r != repo);
                 self.sync_project_sections(cx);
                 self.save_config();
+            }
+            MenuAction::ArchiveRepo(repo) => {
+                self.config.archive_repo(repo);
+                self.save_config();
+                self.sync_panes(cx);
+            }
+            MenuAction::UnarchiveRepo(repo) => {
+                self.config.unarchive_repo(&repo);
+                self.save_config();
+                self.sync_panes(cx);
             }
             MenuAction::Unavailable(_) => {}
             MenuAction::UpdateBranch {

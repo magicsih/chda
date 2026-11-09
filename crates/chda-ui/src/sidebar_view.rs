@@ -80,12 +80,18 @@ pub enum SidebarEvent {
     SessionMenu(SessionKey, Point<Pixels>),
     /// Switch Sessions labels between branch aliases and branch names.
     ToggleActiveLabel,
+    /// Switch Sessions sorting between Custom, Alphabetical, and Creation.
+    ToggleSessionSort,
     ToggleSessions,
     ToggleProject,
     /// Switch project sorting between Alphabetical and Custom.
     ToggleProjectSort,
     /// Toggle bringing projects with open sessions to the top.
     ToggleProjectSessionsFirst,
+    /// Unarchive a repository/folder back to the Projects list.
+    UnarchiveRepo(PathBuf),
+    /// Toggle collapsing the Archived projects section.
+    ToggleArchived,
     /// The status dot of a worktree was clicked: go to its agent's pane.
     JumpToAgent(PathBuf),
     /// Open a read-only tab with the worktree's diff against its base.
@@ -251,9 +257,12 @@ pub struct SidebarView {
     pub(crate) child_groups: Vec<ChildGroup>,
     pub active_label: chda_config::ActiveLabel,
     pub(crate) sessions_collapsed: bool,
+    pub session_sort: chda_config::SessionSortMode,
     pub(crate) project_collapsed: bool,
     pub project_sort: chda_config::ProjectSortMode,
     pub project_sessions_first: bool,
+    pub(crate) archived_repos: Vec<PathBuf>,
+    pub(crate) archived_collapsed: bool,
     /// Set of repository paths that currently have at least one open session
     /// (including sessions in worktrees and other open windows).
     pub open_session_repos: std::collections::HashSet<PathBuf>,
@@ -668,9 +677,12 @@ impl SidebarView {
             child_groups: Vec::new(),
             active_label: Default::default(),
             sessions_collapsed: false,
+            session_sort: chda_config::SessionSortMode::Custom,
             project_collapsed: false,
             project_sort: chda_config::ProjectSortMode::Custom,
             project_sessions_first: false,
+            archived_repos: Vec::new(),
+            archived_collapsed: true,
             open_session_repos: std::collections::HashSet::new(),
             context_menu_open: false,
             frozen_session_repos: None,
@@ -1015,6 +1027,110 @@ impl SidebarView {
             }
         }
         col.into_any_element()
+    }
+
+    fn render_archived_repo(
+        &self,
+        index: usize,
+        repo: &RepoEntry,
+        cx: &mut Context<Self>,
+    ) -> AnyElement {
+        let fg = self.fg;
+        let path = repo.path.clone();
+        let unarchive_sel = format!("unarchive:{}", repo.path.display());
+        let unarchive_btn = div()
+            .id(ElementId::Name(
+                format!("unarchive:{}", repo.path.display()).into(),
+            ))
+            .debug_selector(move || unarchive_sel.clone())
+            .px_1()
+            .rounded_sm()
+            .text_xs()
+            .text_color(fg.opacity(0.7))
+            .hover(|s| s.bg(fg.opacity(0.15)).text_color(fg))
+            .tooltip(crate::tooltip::text("Unarchive project"))
+            .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
+            .on_click({
+                let path = path.clone();
+                cx.listener(move |_, _, _, cx| {
+                    cx.stop_propagation();
+                    cx.emit(SidebarEvent::UnarchiveRepo(path.clone()));
+                })
+            })
+            .child("Unarchive");
+
+        div()
+            .id(ElementId::Name(
+                format!("archived-repo:{}", repo.path.display()).into(),
+            ))
+            .debug_selector(move || format!("archived-repo-{index}"))
+            .flex()
+            .flex_row()
+            .items_center()
+            .gap_1()
+            .px_2()
+            .py_1()
+            .cursor_pointer()
+            .hover(|s| s.bg(fg.opacity(0.08)))
+            .on_mouse_down(MouseButton::Right, repo_menu(path.clone(), cx))
+            .child(
+                div()
+                    .flex_1()
+                    .min_w_0()
+                    .overflow_hidden()
+                    .whitespace_nowrap()
+                    .text_ellipsis()
+                    .font_weight(gpui::FontWeight::BOLD)
+                    .child(repo.name.clone()),
+            )
+            .child(unarchive_btn)
+            .into_any_element()
+    }
+
+    fn render_archived_section(&self, cx: &mut Context<Self>) -> Option<AnyElement> {
+        let archived_repos: Vec<(usize, &RepoEntry)> = self
+            .model
+            .repos
+            .iter()
+            .enumerate()
+            .filter(|(_, r)| self.archived_repos.contains(&r.path))
+            .collect();
+        if archived_repos.is_empty() {
+            return None;
+        }
+        let count = archived_repos.len();
+        let header = self
+            .section_header(
+                "Archived",
+                self.archived_collapsed,
+                count,
+                SidebarEvent::ToggleArchived,
+                div(),
+                cx,
+            )
+            .mt_1()
+            .border_t_1()
+            .border_color(self.fg.opacity(0.1));
+
+        let rows: Vec<AnyElement> = if self.archived_collapsed {
+            Vec::new()
+        } else {
+            archived_repos
+                .into_iter()
+                .map(|(i, repo)| self.render_archived_repo(i, repo, cx))
+                .collect()
+        };
+
+        Some(
+            div()
+                .id("archived-section")
+                .debug_selector(|| "archived-section".into())
+                .flex()
+                .flex_col()
+                .child(header)
+                .when(!self.archived_collapsed, |d| d.children(rows))
+                .into_any_element(),
+        )
     }
 
     /// A worktree's status icon and tooltip: `None` (gray) when no agent
@@ -2069,6 +2185,27 @@ impl Render for SidebarView {
                 })
                 .collect()
         };
+        let sort_label = match self.session_sort {
+            chda_config::SessionSortMode::Custom => "Custom",
+            chda_config::SessionSortMode::Alphabetical => "A–Z",
+            chda_config::SessionSortMode::Creation => "Recent",
+        };
+        let session_sort_toggle = div()
+            .id("session-sort-toggle")
+            .debug_selector(|| "session-sort-toggle".into())
+            .px_1()
+            .rounded_sm()
+            .cursor_pointer()
+            .hover(|s| s.bg(fg.opacity(0.15)))
+            .tooltip(crate::tooltip::text(
+                "Switch Sessions sorting between Custom, Alphabetical (A–Z), and Creation time (Recent)",
+            ))
+            .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
+            .on_click(cx.listener(|_, _, _, cx| {
+                cx.stop_propagation();
+                cx.emit(SidebarEvent::ToggleSessionSort);
+            }))
+            .child(sort_label);
         let label_toggle = div()
             .id("sessions-label-toggle")
             .debug_selector(|| "sessions-label-toggle".into())
@@ -2087,12 +2224,18 @@ impl Render for SidebarView {
                 chda_config::ActiveLabel::Alias => "Alias",
                 chda_config::ActiveLabel::Branch => "Branch",
             });
+        let sessions_actions = div()
+            .flex()
+            .items_center()
+            .gap_1()
+            .child(session_sort_toggle)
+            .child(label_toggle);
         let sessions_header = self.section_header(
             "Sessions",
             self.sessions_collapsed,
             self.model.sessions.len(),
             SidebarEvent::ToggleSessions,
-            label_toggle,
+            sessions_actions,
             cx,
         );
         // Sessions takes what it needs up to 40% of the sidebar, or the
@@ -2252,11 +2395,17 @@ impl Render for SidebarView {
                     .child(vector_icon(Icon::SectionAdd, fg.opacity(0.7))),
             )
             .child(add_repo);
+        let active_repos_count = self
+            .model
+            .repos
+            .iter()
+            .filter(|r| !self.archived_repos.contains(&r.path))
+            .count();
         let project_header = self
             .section_header(
                 "Projects",
                 self.project_collapsed,
-                self.model.repos.len(),
+                active_repos_count,
                 SidebarEvent::ToggleProject,
                 project_buttons,
                 cx,
@@ -2429,6 +2578,7 @@ impl Render for SidebarView {
             .child(project_header)
             .children(self.render_section_editor())
             .when(!self.project_collapsed, |d| d.child(project_region))
+            .children(self.render_archived_section(cx))
             .child(crate::external_drop::catcher(
                 cx.entity(),
                 |v: &mut Self| &mut v.dragged,
