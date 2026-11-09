@@ -4,6 +4,12 @@ All notable changes to chda. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); entries are
 generated from conventional commit messages by release-plz.
 
+## [1.8.0](https://github.com/magicsih/chda/compare/v1.7.0...v1.8.0) - 2026-11-09
+
+### Added
+
+- *(sidebar)* sort sessions and archive project folders
+
 ## [1.7.0](https://github.com/magicsih/chda/compare/v1.6.1...v1.7.0) - 2026-11-01
 
 ### Added
