@@ -438,6 +438,35 @@ impl ChildCounts {
         }
     }
 
+    /// The most urgent active child state for the concentric status ring, if any.
+    pub(crate) fn ring_status(&self) -> Option<AgentStatus> {
+        if self.waiting > 0 {
+            Some(AgentStatus::WaitingInput)
+        } else if self.working > 0 {
+            Some(AgentStatus::Working)
+        } else {
+            None
+        }
+    }
+
+    /// Summary of active (working or waiting) children for tab and worktree tooltips.
+    pub(crate) fn describe_active(&self, agent: &str) -> Option<String> {
+        let mut parts = Vec::new();
+        if self.waiting > 0 {
+            parts.push(match self.waiting {
+                1 => "1 child waiting for input".to_owned(),
+                n => format!("{n} children waiting for input"),
+            });
+        }
+        if self.working > 0 {
+            parts.push(match self.working {
+                1 => "1 child working".to_owned(),
+                n => format!("{n} children working"),
+            });
+        }
+        (!parts.is_empty()).then(|| format!("{agent}: {}.", parts.join(", ")))
+    }
+
     /// Show the working count, even zero, unless waiting or unknown
     /// children make a zero misleading.
     fn show_working(&self) -> bool {
@@ -463,6 +492,18 @@ impl ChildCounts {
         parts.push(children);
         format!("{agent}: {}. Right-click for details.", parts.join(", "))
     }
+}
+
+pub(crate) fn child_ring_status(groups: &[&ChildGroup]) -> Option<AgentStatus> {
+    let mut has_working = false;
+    for group in groups {
+        match ChildCounts::of(&group.children).ring_status() {
+            Some(AgentStatus::WaitingInput) => return Some(AgentStatus::WaitingInput),
+            Some(AgentStatus::Working) => has_working = true,
+            _ => {}
+        }
+    }
+    has_working.then_some(AgentStatus::Working)
 }
 
 /// Below this Sessions width a child summary keeps one icon.
@@ -517,11 +558,7 @@ impl SidebarView {
             .map_or(fg.opacity(0.7), |a| self.readable(a.color));
         let pane = group.pane.raw();
         let counts = ChildCounts::of(&group.children);
-        let name = self
-            .agents
-            .iter()
-            .find(|a| a.id == group.agent)
-            .map_or_else(|| group.agent.clone(), |a| a.name.clone());
+        let name = self.agent_display_name(&group.agent);
         let count = |icon: Icon, n: usize, color: Hsla| {
             div()
                 .flex()
@@ -1133,9 +1170,21 @@ impl SidebarView {
         )
     }
 
-    /// A worktree's status icon and tooltip: `None` (gray) when no agent
-    /// runs there, `Idle` (yellow) for a live idle agent.
-    fn status_dot(&self, wt: &WorktreeEntry) -> (Option<AgentStatus>, String) {
+    fn agent_display_name(&self, id: &str) -> String {
+        self.agents
+            .iter()
+            .find(|a| a.id == id)
+            .map_or_else(|| id.to_owned(), |a| a.name.clone())
+    }
+
+    /// A worktree's status icon, active child ring, and tooltip: `None`
+    /// (gray) when no agent runs there, `Idle` (yellow) for a live idle
+    /// agent, and an outer ring when any child in the worktree is working or
+    /// waiting for input.
+    pub(crate) fn status_dot(
+        &self,
+        wt: &WorktreeEntry,
+    ) -> (Option<AgentStatus>, Option<AgentStatus>, String) {
         let status = wt.status();
         let live_idle = self.model.sessions.iter().any(|row| {
             row.live_idle()
@@ -1145,14 +1194,42 @@ impl SidebarView {
                     .and_then(|cwd| self.model.worktree_for_path(cwd))
                     .is_some_and(|(_, w)| w.path == wt.path)
         });
-        match status {
+        let wt_groups: Vec<&ChildGroup> = self
+            .child_groups
+            .iter()
+            .filter(|g| wt.panes.contains(&g.pane))
+            .collect();
+        let child_ring = child_ring_status(&wt_groups);
+        let child_lines: Vec<String> = wt_groups
+            .iter()
+            .filter_map(|g| {
+                let name = self.agent_display_name(&g.agent);
+                ChildCounts::of(&g.children).describe_active(&name)
+            })
+            .collect();
+        let (dot, mut tip) = match status {
             AgentStatus::Idle if live_idle => (
                 Some(status),
-                "A live agent is idle here, ready for another task. Click to go there.".into(),
+                if child_lines.is_empty() {
+                    "A live agent is idle here, ready for another task. Click to go there.".into()
+                } else {
+                    "A live agent is idle here.\nClick to go there.".into()
+                },
             ),
             AgentStatus::Idle => (None, status_tooltip(wt, &self.agents)),
             _ => (Some(status), status_tooltip(wt, &self.agents)),
+        };
+        if !child_lines.is_empty() {
+            let extra = child_lines.join("\n");
+            if dot.is_none() {
+                tip = format!("{extra}\nClick to go there.");
+            } else if let Some(prefix) = tip.strip_suffix("\nClick to go there.") {
+                tip = format!("{prefix}\n{extra}\nClick to go there.");
+            } else {
+                tip = format!("{tip}\n{extra}");
+            }
         }
+        (dot, child_ring, tip)
     }
 
     /// A worktree's row; `folder` for the one row of a plain folder.
@@ -1165,7 +1242,7 @@ impl SidebarView {
         let fg = self.fg;
         let path = wt.path.clone();
         let expanded = self.expanded.contains(&wt.path);
-        let (dot, status_tip) = self.status_dot(wt);
+        let (dot, child_ring, status_tip) = self.status_dot(wt);
         let name = match &wt.branch {
             _ if folder => "(no git)".to_owned(),
             Some(branch) => branch.clone(),
@@ -1438,7 +1515,7 @@ impl SidebarView {
                             cx.emit(SidebarEvent::JumpToAgent(path.clone()));
                         })
                     })
-                    .child(status_icon(dot, self.fg, self.bg)),
+                    .child(status_icon(dot, child_ring, self.fg, self.bg)),
             )
             .child({
                 let label = match wt.note_title() {
@@ -1938,26 +2015,21 @@ impl SidebarView {
             }
             _ => row.tab_title.clone(),
         };
-        let mut tooltip = format!(
-            "{label}\n{}\n{place}\n{}",
-            row.location(),
-            if !children.is_empty() {
-                format!("Parent: {}", row.status_label())
-            } else {
-                row.status_label().to_string()
-            }
-        );
+        let child_ring = child_ring_status(&children);
+        let mut status_tip = if !children.is_empty() {
+            format!("Parent: {}", row.status_label())
+        } else {
+            row.status_label().to_string()
+        };
         for group in &children {
             let counts = ChildCounts::of(&group.children);
-            let name = self
-                .agents
-                .iter()
-                .find(|a| a.id == group.agent)
-                .map_or_else(|| group.agent.clone(), |a| a.name.clone());
-            tooltip.push('\n');
-            tooltip.push_str(&counts.describe(&name));
+            let name = self.agent_display_name(&group.agent);
+            status_tip.push('\n');
+            status_tip.push_str(&counts.describe(&name));
         }
-        let idle_for = (row.live_idle() && row.since > 0).then(|| activity_age(now, row.since));
+        let tooltip = format!("{label}\n{}\n{place}\n{status_tip}", row.location());
+        let idle_for = (row.live_idle() && row.since > 0 && child_ring.is_none())
+            .then(|| activity_age(now, row.since));
         let close = match row.kind {
             SessionKind::Terminal => Some((
                 format!("session-close-tab-{:?}", row.tab),
@@ -2015,12 +2087,8 @@ impl SidebarView {
                         move || format!("session-status-{id}")
                     })
                     .flex_shrink_0()
-                    .tooltip(crate::tooltip::text(if !children.is_empty() {
-                        format!("Parent: {}", row.status_label())
-                    } else {
-                        row.status_label().to_string()
-                    }))
-                    .child(status_icon(row.status, self.fg, self.bg)),
+                    .tooltip(crate::tooltip::text(status_tip))
+                    .child(status_icon(row.status, child_ring, self.fg, self.bg)),
             )
             .when_some(picture.clone(), |d, identity| {
                 d.child(self.render_row_identicon(&id, identity, cx))
@@ -2118,7 +2186,15 @@ impl SidebarView {
                         }
                         text
                     }))
-                    .child(session_activity_age(row.status, now, row.last_activity)),
+                    .child(session_activity_age(
+                        if child_ring == Some(AgentStatus::Working) {
+                            Some(AgentStatus::Working)
+                        } else {
+                            row.status
+                        },
+                        now,
+                        row.last_activity,
+                    )),
             )
             .when_some(close, |d, (selector, tip, event)| {
                 d.child(
@@ -3024,5 +3100,46 @@ mod tests {
             status_tooltip(&wt, &names),
             "Claude Code is waiting for input.\nCodex is working.\nClick to go there."
         );
+    }
+
+    #[test]
+    fn child_ring_status_prioritizes_waiting_over_working_and_ignores_settled() {
+        use chda_core::agents::{ChildActivity, ChildEvent, ChildState};
+        let child = |id: &str, state| ChildActivity {
+            agent: "claude".into(),
+            parent: "p1".into(),
+            child: ChildEvent {
+                id: id.into(),
+                label: None,
+                state,
+                started: state == ChildState::Working,
+            },
+            observed_at: 10,
+        };
+        let working = ChildCounts::of(&[child("c1", ChildState::Working)]);
+        assert_eq!(working.ring_status(), Some(AgentStatus::Working));
+        assert_eq!(
+            working.describe_active("Claude Code").as_deref(),
+            Some("Claude Code: 1 child working.")
+        );
+
+        let mixed = ChildCounts::of(&[
+            child("c1", ChildState::Working),
+            child("c2", ChildState::WaitingInput),
+            child("c3", ChildState::Unknown),
+        ]);
+        assert_eq!(mixed.ring_status(), Some(AgentStatus::WaitingInput));
+        assert_eq!(
+            mixed.describe_active("Claude Code").as_deref(),
+            Some("Claude Code: 1 child waiting for input, 1 child working.")
+        );
+
+        let settled = ChildCounts::of(&[
+            child("c1", ChildState::TurnComplete),
+            child("c2", ChildState::Ended),
+            child("c3", ChildState::Unknown),
+        ]);
+        assert_eq!(settled.ring_status(), None);
+        assert_eq!(settled.describe_active("Claude Code"), None);
     }
 }

@@ -276,3 +276,177 @@ fn multiple_parents_in_same_worktree_maintain_isolated_child_indicators(cx: &mut
     assert_eq!(counts_p2.working, 0);
     assert_eq!(counts_p2.waiting, 1);
 }
+
+#[gpui::test]
+fn concentric_status_reflects_working_and_waiting_children_across_sessions_tabs_and_worktrees(
+    cx: &mut TestAppContext,
+) {
+    let mut repo = std::path::PathBuf::new();
+    let mut h = Harness::open(cx, "concentric-child-status", |home| {
+        repo = home.repo("app");
+        std::fs::write(
+            &home.config,
+            format!("repos = [{}]\n", serde_json::to_string(&repo).unwrap()),
+        )
+        .unwrap();
+    });
+    h.wait_prompt();
+    h.run(
+        &format!("cd {}", chda_term::shell_quote(&repo.to_string_lossy())),
+        "test%",
+    );
+    let repo_ready = repo.clone();
+    h.wait_for("pane cwd enters repo", move |v, _| {
+        v.ws.focused_pane()
+            .and_then(|p| v.ws.pane(p))
+            .and_then(|p| p.cwd.as_ref())
+            == Some(&repo_ready)
+    });
+    let pane = h.read(|v, _| v.ws.focused_pane().unwrap());
+    let pane_raw = pane.raw();
+
+    h.hook_session(Some(pane_raw), &repo, HookKind::SessionStart, "p1");
+    h.wait_for("parent idle in repo", |v, cx| {
+        v.sidebar
+            .read(cx)
+            .model
+            .sessions
+            .first()
+            .is_some_and(|r| r.status == Some(AgentStatus::Idle))
+    });
+    super::sidebar::draw_sidebar_frame(&mut h);
+    assert!(h.cx.debug_bounds("concentric-child-working").is_none());
+    assert!(h.cx.debug_bounds("concentric-child-waiting").is_none());
+    let status_selector: &'static str =
+        Box::leak(format!("session-status-pane-{pane_raw}").into_boxed_str());
+    let row_selector: &'static str = Box::leak(format!("session-pane-{pane_raw}").into_boxed_str());
+    let slot_size = h.cx.debug_bounds(status_selector).unwrap().size;
+    let row_size = h.cx.debug_bounds(row_selector).unwrap().size;
+
+    // 1. Child starts working while parent is Idle: concentric working ring appears
+    // across Sessions row, tab bar, and worktree dot without changing slot/row size.
+    let at = crate::terminal_view::now_ms();
+    send_child(&h, "claude", pane_raw, "p1", "c1", ChildState::Working, at);
+    h.wait_for("child working registered", |v, cx| {
+        v.sidebar
+            .read(cx)
+            .child_groups
+            .first()
+            .is_some_and(|g| g.children.len() == 1)
+    });
+    super::sidebar::draw_sidebar_frame(&mut h);
+    assert!(h.cx.debug_bounds("concentric-child-working").is_some());
+    assert!(h.cx.debug_bounds("concentric-parent-dot").is_some());
+    assert_eq!(h.cx.debug_bounds(status_selector).unwrap().size, slot_size);
+    assert_eq!(h.cx.debug_bounds(row_selector).unwrap().size, row_size);
+    h.read(|v, cx| {
+        let (tab_ring, tab_lines) = v.tab_child_status(&v.ws.tabs()[0]);
+        assert_eq!(tab_ring, Some(AgentStatus::Working));
+        assert_eq!(tab_lines, vec!["Claude Code: 1 child working.".to_owned()]);
+
+        let wt = &v.sidebar.read(cx).model.repos[0].worktrees[0];
+        let (wt_dot, wt_ring, wt_tip) = v.sidebar.read(cx).status_dot(wt);
+        assert_eq!(wt_dot, Some(AgentStatus::Idle));
+        assert_eq!(wt_ring, Some(AgentStatus::Working));
+        assert!(wt_tip.contains("Claude Code: 1 child working."), "{wt_tip}");
+        assert!(!wt_tip.contains("ready for another task"), "{wt_tip}");
+    });
+
+    // 2. Parent finishes turn (Review) while child still works: outer ring remains Working.
+    h.hook_session(Some(pane_raw), &repo, HookKind::Stopped, "p1");
+    h.wait_for("parent turn complete", |v, cx| {
+        v.sidebar
+            .read(cx)
+            .model
+            .sessions
+            .first()
+            .is_some_and(|r| r.status == Some(AgentStatus::Review))
+    });
+    super::sidebar::draw_sidebar_frame(&mut h);
+    assert!(h.cx.debug_bounds("concentric-child-working").is_some());
+    h.read(|v, cx| {
+        let wt = &v.sidebar.read(cx).model.repos[0].worktrees[0];
+        let (wt_dot, wt_ring, wt_tip) = v.sidebar.read(cx).status_dot(wt);
+        assert_eq!(wt_dot, Some(AgentStatus::Review));
+        assert_eq!(wt_ring, Some(AgentStatus::Working));
+        assert!(wt_tip.contains("Claude Code: 1 child working."), "{wt_tip}");
+    });
+
+    // 3. Parent also works while child works: concentric ring stays instead of wave.
+    h.hook_session(Some(pane_raw), &repo, HookKind::PromptSubmitted, "p1");
+    h.wait_for("parent working", |v, cx| {
+        v.sidebar
+            .read(cx)
+            .model
+            .sessions
+            .first()
+            .is_some_and(|r| r.status == Some(AgentStatus::Working))
+    });
+    super::sidebar::draw_sidebar_frame(&mut h);
+    assert!(h.cx.debug_bounds("concentric-child-working").is_some());
+    assert!(h.cx.debug_bounds("working-wave").is_none());
+
+    // 4. Another child waits for input: outer ring upgrades to WaitingInput.
+    send_child(
+        &h,
+        "claude",
+        pane_raw,
+        "p1",
+        "c2",
+        ChildState::WaitingInput,
+        at + 1,
+    );
+    h.wait_for("waiting child present", |v, cx| {
+        v.sidebar
+            .read(cx)
+            .child_groups
+            .first()
+            .is_some_and(|g| g.children.len() == 2)
+    });
+    super::sidebar::draw_sidebar_frame(&mut h);
+    assert!(h.cx.debug_bounds("concentric-child-waiting").is_some());
+    assert!(h.cx.debug_bounds("concentric-child-working").is_none());
+    h.read(|v, cx| {
+        let (tab_ring, _) = v.tab_child_status(&v.ws.tabs()[0]);
+        assert_eq!(tab_ring, Some(AgentStatus::WaitingInput));
+        let wt = &v.sidebar.read(cx).model.repos[0].worktrees[0];
+        let (_, wt_ring, _) = v.sidebar.read(cx).status_dot(wt);
+        assert_eq!(wt_ring, Some(AgentStatus::WaitingInput));
+    });
+
+    // 5. Both children finish: concentric ring clears and parent's working wave returns.
+    send_child(
+        &h,
+        "claude",
+        pane_raw,
+        "p1",
+        "c1",
+        ChildState::Ended,
+        at + 2,
+    );
+    send_child(
+        &h,
+        "claude",
+        pane_raw,
+        "p1",
+        "c2",
+        ChildState::Ended,
+        at + 3,
+    );
+    h.wait_for("all children ended", |v, cx| {
+        let counts =
+            crate::sidebar_view::ChildCounts::of(&v.sidebar.read(cx).child_groups[0].children);
+        counts.working == 0 && counts.waiting == 0
+    });
+    super::sidebar::draw_sidebar_frame(&mut h);
+    assert!(h.cx.debug_bounds("concentric-child-working").is_none());
+    assert!(h.cx.debug_bounds("concentric-child-waiting").is_none());
+    assert!(h.cx.debug_bounds("working-wave").is_some());
+    h.read(|v, cx| {
+        assert_eq!(v.tab_child_status(&v.ws.tabs()[0]), (None, Vec::new()));
+        let wt = &v.sidebar.read(cx).model.repos[0].worktrees[0];
+        let (wt_dot, wt_ring, _) = v.sidebar.read(cx).status_dot(wt);
+        assert_eq!(wt_dot, Some(AgentStatus::Working));
+        assert_eq!(wt_ring, None);
+    });
+}
