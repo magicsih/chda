@@ -7,6 +7,7 @@ import importlib.util
 import io
 import json
 import os
+import plistlib
 from pathlib import Path
 import shutil
 import subprocess
@@ -61,6 +62,24 @@ def evidence(stage='before-build'):
             'sha256': 'a' * 64, 'evidence_sha256': 'b' * 64,
             'checks': sorted(release.ARTIFACT_CHECKS), 'result': 'passed'}
     return data
+
+
+class MacAutomationManifestTests(unittest.TestCase):
+    def test_terminal_explains_child_process_apple_events(self):
+        info = plistlib.loads((SCRIPT.parent.parent / 'resources/Info.plist').read_bytes())
+        purpose = info.get('NSAppleEventsUsageDescription', '')
+        self.assertTrue(purpose.strip(), 'macOS needs a purpose string before asking for Automation access')
+        self.assertTrue(any(word in purpose.lower() for word in ('command', 'agent')),
+                        'Explain why a terminal requests access on behalf of its child processes')
+
+    def test_hardened_terminal_can_request_automation_without_jit_exceptions(self):
+        entitlements = plistlib.loads((SCRIPT.parent.parent / 'resources/entitlements.plist').read_bytes())
+        self.assertIs(entitlements.get('com.apple.security.automation.apple-events'), True,
+                      'The hardened runtime otherwise rejects child-process Apple Events before a prompt')
+        self.assertIs(entitlements.get('com.apple.security.cs.allow-jit'), False)
+        for exception in ('disable-library-validation', 'allow-unsigned-executable-memory',
+                          'disable-executable-page-protection'):
+            self.assertIsNot(entitlements.get('com.apple.security.cs.' + exception), True)
 
 
 class EvidenceTests(unittest.TestCase):

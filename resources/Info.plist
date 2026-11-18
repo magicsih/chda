@@ -29,6 +29,8 @@
     <string>14.0</string>
     <key>NSHighResolutionCapable</key>
     <true/>
+    <key>NSAppleEventsUsageDescription</key>
+    <string>Commands and coding agents running in this terminal may ask to automate other apps. You choose which apps to allow in macOS Automation settings.</string>
     <key>NSSupportsAutomaticGraphicsSwitching</key>
     <true/>
 </dict>
