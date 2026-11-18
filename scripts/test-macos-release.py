@@ -456,6 +456,25 @@ class V180PublicationApprovalTests(V1025PublicationApprovalTests):
                                      artifact_sha256='a' * 64)['native_result'], 'blocked')
 
 
+class V190PublicationApprovalTests(V1025PublicationApprovalTests):
+    TAG = 'v1.9.0'
+    INSTRUCTION = 'CI 통과·머지·v1.9.0 태그 후, 미완료 네이티브 검수(독립 3회 검수·전체 E2E·서명 ZIP 업데이트 확인)를 생략하는 한정 공개 승인(v1.9.0-publication-approval)으로 Release 빌드·공개·Homebrew 반영까지 진행'
+    NEXT = 'v1.9.1'
+
+    def test_previous_approvals_cannot_authorize_v190(self):
+        for previous in (V130PublicationApprovalTests().approval(), V161PublicationApprovalTests().approval(), V170PublicationApprovalTests().approval(), V180PublicationApprovalTests().approval(), v152_exception_record()):
+            with self.subTest(record=previous), self.assertRaises(ValueError):
+                self.verify(self.evidence(self.approval()), previous)
+
+    def test_all_seven_omissions_remain_explicit_without_signed_gui_pass(self):
+        record = self.approval()
+        after = self.evidence(record, 'before-deploy')
+        self.assertEqual(set(after['incomplete_checks']), release.EXCEPTION_CHECKS)
+        self.assertNotIn('signed_artifact', after)
+        self.assertEqual(self.verify(after, record, built_at=timestamp(1),
+                                     artifact_sha256='a' * 64)['native_result'], 'blocked')
+
+
 class ReleaseNotesTests(unittest.TestCase):
     def test_historical_exception_notes_remain_unchanged(self):
         for tag in ('v0.1.21', 'v0.1.22', 'v0.1.23'):
@@ -500,6 +519,14 @@ class ReleaseNotesTests(unittest.TestCase):
                      'notarization', 'immutable', 'v1.8.0-publication-approval.md'):
             self.assertIn(text, notes)
         self.assertEqual(release.exception_notes('v1.8.1'), '')
+
+    def test_v190_discloses_its_own_full_and_signed_gui_omissions(self):
+        notes = release.exception_notes('v1.9.0')
+        for text in ('incomplete', 'three full native review rounds', 'both full native E2E',
+                     'GUI launch', 'session-preserving update', 'GUI IPC', 'shell PID',
+                     'notarization', 'immutable', 'v1.9.0-publication-approval.md'):
+            self.assertIn(text, notes)
+        self.assertEqual(release.exception_notes('v1.9.1'), '')
 
 def reduced_exception_record():
     record = json.loads(exception_record())
