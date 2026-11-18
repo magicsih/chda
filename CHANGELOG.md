@@ -4,6 +4,12 @@ All notable changes to chda. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); entries are
 generated from conventional commit messages by release-plz.
 
+## [1.9.0](https://github.com/magicsih/chda/compare/v1.8.0...v1.9.0) - 2026-11-18
+
+### Added
+
+- *(sidebar)* show concentric parent and child agent status ([#324](https://github.com/magicsih/chda/pull/324))
+
 ## [1.8.0](https://github.com/magicsih/chda/compare/v1.7.0...v1.8.0) - 2026-11-09
 
 ### Added
