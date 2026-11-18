@@ -45,12 +45,63 @@ impl WorkspaceView {
                 });
             }
         }
-        self.sidebar.update(cx, |s, cx| {
+        let changed = self.sidebar.update(cx, |s, cx| {
             if s.child_groups != groups {
                 s.child_groups = groups;
                 cx.notify();
+                true
+            } else {
+                false
             }
         });
+        if changed {
+            cx.notify();
+        }
+    }
+
+    /// Active child status ring and tooltip summaries across all live panes in `tab`.
+    pub(crate) fn tab_child_status(
+        &self,
+        tab: &chda_core::Tab,
+    ) -> (Option<AgentStatus>, Vec<String>) {
+        let board = &self.env.windows.borrow().children;
+        let mut has_working = false;
+        let mut has_waiting = false;
+        let mut lines = Vec::new();
+        for pane in tab.panes() {
+            if self
+                .ws
+                .pane(pane)
+                .and_then(|p| p.pane_run.as_ref())
+                .is_some_and(chda_core::PaneRun::stopped)
+            {
+                continue;
+            }
+            let Some((agent, session)) = self.parent_identity(pane) else {
+                continue;
+            };
+            let children = board.children(&agent, &session);
+            if children.is_empty() {
+                continue;
+            }
+            let counts = crate::sidebar_view::ChildCounts::of(&children);
+            match counts.ring_status() {
+                Some(AgentStatus::WaitingInput) => has_waiting = true,
+                Some(AgentStatus::Working) => has_working = true,
+                _ => {}
+            }
+            if let Some(line) = counts.describe_active(&self.agent_name(&agent)) {
+                lines.push(line);
+            }
+        }
+        let ring = if has_waiting {
+            Some(AgentStatus::WaitingInput)
+        } else if has_working {
+            Some(AgentStatus::Working)
+        } else {
+            None
+        };
+        (ring, lines)
     }
     pub(super) fn apply_child_activity(&mut self, event: ChildActivity, cx: &mut Context<Self>) {
         let parent = self.ws.tabs().iter().flat_map(|t| t.panes()).find(|p| {

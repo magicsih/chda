@@ -6968,19 +6968,24 @@ impl WorkspaceView {
                         .child(close);
                 }
                 let agent = self.ws.tab_agent(tab).cloned();
-                let tip = agent.as_ref().map(|a| {
+                let (child_ring, child_lines) = self.tab_child_status(tab);
+                let mut tip_lines = Vec::new();
+                if let Some(a) = agent.as_ref() {
                     let name = self.agent_name(&a.agent);
-                    match a.status {
+                    tip_lines.push(match a.status {
                         AgentStatus::Working => format!("{name} is working"),
                         AgentStatus::WaitingInput => format!("{name} is waiting for input"),
                         AgentStatus::Review => format!("{name} finished; not looked at yet"),
                         AgentStatus::Idle => format!("{name} is idle; ready for another task"),
-                    }
-                });
+                    });
+                }
+                tip_lines.extend(child_lines);
+                let tip = (!tip_lines.is_empty()).then(|| tip_lines.join("\n"));
                 // Tab icons are measured against the bar; the active tab's
                 // own background lies further from the text color.
-                let dot =
-                    agent.map(|a| crate::status_icon::status_icon(Some(a.status), fg, bar_bg));
+                let dot = (agent.is_some() || child_ring.is_some()).then(|| {
+                    crate::status_icon::status_icon(agent.map(|a| a.status), child_ring, fg, bar_bg)
+                });
                 let drag = moves::TabDrag {
                     tab: tab_id,
                     title: title.clone(),

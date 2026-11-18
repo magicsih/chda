@@ -10,45 +10,80 @@ use std::time::Duration;
 
 const BOX: f32 = 12.0;
 
-/// Three dots brighten in sequence without moving or changing row metrics.
-/// GPUI's animation wrapper uses its clock, shares phase across rows and
-/// automatically stops scheduling frames when Reduce Motion is enabled.
-pub fn status_icon(status: Option<AgentStatus>, fg: Hsla, bg: Hsla) -> AnyElement {
-    let color = status_color(status, fg, bg);
-    let icon = match status {
-        Some(AgentStatus::Working) => div()
-            .debug_selector(|| "working-wave".into())
-            .flex()
-            .items_center()
-            .gap(px(1.5))
-            .children((0..3_usize).map(move |dot| {
-                div().size(px(3.0)).rounded_full().bg(color).with_animation(
-                    ("working-dot", dot),
-                    Animation::new(Duration::from_millis(1200))
-                        .repeat_synced()
-                        .with_max_fps(24.0),
-                    move |d, phase| d.opacity(wave_brightness(phase, dot)),
-                )
-            }))
-            .into_any_element(),
-        Some(AgentStatus::WaitingInput) => div()
+/// Three dots brighten in sequence without moving or changing row metrics,
+/// or a concentric circle when a child agent is active (center dot carries
+/// the parent session's status and the outer ring carries the most urgent
+/// active child's status). GPUI's animation wrapper uses its clock, shares
+/// phase across rows and automatically stops scheduling frames when Reduce
+/// Motion is enabled.
+pub fn status_icon(
+    status: Option<AgentStatus>,
+    child: Option<AgentStatus>,
+    fg: Hsla,
+    bg: Hsla,
+) -> AnyElement {
+    let icon = if let Some(child_status) = child {
+        let outer = status_color(Some(child_status), fg, bg);
+        let inner = status_color(status, fg, bg);
+        let selector = match child_status {
+            AgentStatus::WaitingInput => "concentric-child-waiting",
+            AgentStatus::Working => "concentric-child-working",
+            _ => "concentric-child",
+        };
+        div()
+            .debug_selector(move || selector.into())
             .size(px(BOX))
             .rounded_full()
-            .bg(color)
+            .border(px(1.5))
+            .border_color(outer)
             .flex()
             .items_center()
             .justify_center()
-            .text_size(px(9.0))
-            .line_height(px(BOX))
-            .font_weight(FontWeight::BOLD)
-            .text_color(bg)
-            .child("!")
-            .into_any_element(),
-        _ => div()
-            .size(px(6.0))
-            .rounded_full()
-            .bg(color)
-            .into_any_element(),
+            .child(
+                div()
+                    .debug_selector(|| "concentric-parent-dot".into())
+                    .size(px(6.0))
+                    .rounded_full()
+                    .bg(inner),
+            )
+            .into_any_element()
+    } else {
+        let color = status_color(status, fg, bg);
+        match status {
+            Some(AgentStatus::Working) => div()
+                .debug_selector(|| "working-wave".into())
+                .flex()
+                .items_center()
+                .gap(px(1.5))
+                .children((0..3_usize).map(move |dot| {
+                    div().size(px(3.0)).rounded_full().bg(color).with_animation(
+                        ("working-dot", dot),
+                        Animation::new(Duration::from_millis(1200))
+                            .repeat_synced()
+                            .with_max_fps(24.0),
+                        move |d, phase| d.opacity(wave_brightness(phase, dot)),
+                    )
+                }))
+                .into_any_element(),
+            Some(AgentStatus::WaitingInput) => div()
+                .size(px(BOX))
+                .rounded_full()
+                .bg(color)
+                .flex()
+                .items_center()
+                .justify_center()
+                .text_size(px(9.0))
+                .line_height(px(BOX))
+                .font_weight(FontWeight::BOLD)
+                .text_color(bg)
+                .child("!")
+                .into_any_element(),
+            _ => div()
+                .size(px(6.0))
+                .rounded_full()
+                .bg(color)
+                .into_any_element(),
+        }
     };
     div()
         .flex_shrink_0()
